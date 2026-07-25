@@ -10,22 +10,28 @@
     <a href="/" class="crumb">← Map</a>
     <h1>HAULAGE CAPABILITY</h1>
     <div class="filters">
-      <span><label>From</label> <input type="date" id="f-from"></span>
-      <span><label>To</label> <input type="date" id="f-to"></span>
-      <div class="ms"><button class="ms-btn" id="ms-type-btn" onclick="msToggle('type')">Types: All ▾</button><div class="ms-panel" id="ms-type-panel"></div></div>
-      <label class="muted" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;text-transform:none;letter-spacing:0" title="Exclude IWIP (a different mine) from WMT — their trucks still add road congestion, but their tonnage isn't WBN's"><input type="checkbox" id="excl-iwip"> Exclude IWIP</label>
-      <div style="display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden">
-        <button class="mode-btn on" id="fm-sd" onclick="setFilterMode('sd')">Source + Dest</button>
-        <button class="mode-btn" id="fm-path" onclick="setFilterMode('path')">Path</button>
+      <div class="filter-group">
+        <span><label>From</label> <input type="date" id="f-from"></span>
+        <span><label>To</label> <input type="date" id="f-to"></span>
       </div>
-      <span id="fm-sd-ctrls">
-        <div class="ms"><button class="ms-btn" id="ms-source-btn" onclick="msToggle('source')">Sources: All ▾</button><div class="ms-panel" id="ms-source-panel"></div></div>
-        <div class="ms"><button class="ms-btn" id="ms-dest-btn" onclick="msToggle('dest')">Destinations: All ▾</button><div class="ms-panel" id="ms-dest-panel"></div></div>
-      </span>
-      <span id="fm-path-ctrls" style="display:none">
-        <div class="ms"><button class="ms-btn" id="ms-path-btn" onclick="msToggle('path')">Paths: All ▾</button><div class="ms-panel" id="ms-path-panel"></div></div>
-        <button class="ms-btn" style="min-width:0;cursor:pointer" title="Add / edit constraint sections and which paths run through them" onclick="openMatrix()">⚙ Matrix</button>
-      </span>
+      <div class="filter-group plain">
+        <div class="ms"><button class="ms-btn" id="ms-type-btn" onclick="msToggle('type')">Types: All ▾</button><div class="ms-panel" id="ms-type-panel"></div></div>
+        <label class="muted" style="display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;text-transform:none;letter-spacing:0" title="Exclude IWIP (a different mine) from WMT — their trucks still add road congestion, but their tonnage isn't WBN's"><input type="checkbox" id="excl-iwip"> Exclude IWIP</label>
+      </div>
+      <div class="filter-group plain">
+        <div style="display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden">
+          <button class="mode-btn on" id="fm-sd" onclick="setFilterMode('sd')">Source + Dest</button>
+          <button class="mode-btn" id="fm-path" onclick="setFilterMode('path')">Path</button>
+        </div>
+        <span id="fm-sd-ctrls">
+          <div class="ms"><button class="ms-btn" id="ms-source-btn" onclick="msToggle('source')">Sources: All ▾</button><div class="ms-panel" id="ms-source-panel"></div></div>
+          <div class="ms"><button class="ms-btn" id="ms-dest-btn" onclick="msToggle('dest')">Destinations: All ▾</button><div class="ms-panel" id="ms-dest-panel"></div></div>
+        </span>
+        <span id="fm-path-ctrls" style="display:none">
+          <div class="ms"><button class="ms-btn" id="ms-path-btn" onclick="msToggle('path')">Paths: All ▾</button><div class="ms-panel" id="ms-path-panel"></div></div>
+          <button class="ms-btn" style="min-width:0;cursor:pointer" title="Add / edit constraint sections and which paths run through them" onclick="openMatrix()">⚙ Matrix</button>
+        </span>
+      </div>
       <button class="btn" onclick="apply()">Apply</button>
     </div>
   </div>
@@ -34,7 +40,7 @@
     <div id="content" style="display:none">
       <div class="sim-tabs" style="display:flex;gap:4px;margin:0 0 16px;border-bottom:1px solid var(--line)">
         <button class="sim-tab on" id="tabbtn-sim" onclick="setSimTab('sim')">Capability &amp; Scenario</button>
-        <button class="sim-tab" id="tabbtn-cong" onclick="setSimTab('cong')">🔬 Congestion Model <span style="opacity:.6;font-size:9px;letter-spacing:.05em">PREVIEW</span></button>
+        <button class="sim-tab" id="tabbtn-cong" onclick="setSimTab('cong')">🔬 Congestion Model <span>PREVIEW</span></button>
         <button class="sim-tab" id="tabbtn-plan" onclick="setSimTab('plan')">🧭 Plan</button>
       </div>
       <div id="tab-sim">
@@ -154,8 +160,8 @@
       </div><!-- /tab-sim -->
 
       <div id="tab-cong" style="display:none">
-        <div style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.4);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#fcd34d">
-          <b>PREVIEW — modeled, not yet validated.</b> <span style="color:#cbd5e1">At today's ~300–400 trucks/day the roads aren't congested, so speed doesn't yet visibly fall with traffic. This tab shows the <b>speed-vs-traffic data we're collecting</b> per haul-road segment and a <b>tunable model curve</b> so you can see the shape the congestion model will take. Free-flow is measured; the jam point + curvature are assumptions you set. It becomes real as denser data and higher fleets arrive.</span>
+        <div class="info-banner warn">
+          <b>PREVIEW — modeled, not yet validated.</b> <span class="banner-body">At today's ~300–400 trucks/day the roads aren't congested, so speed doesn't yet visibly fall with traffic. This tab shows the <b>speed-vs-traffic data we're collecting</b> per haul-road segment and a <b>tunable model curve</b> so you can see the shape the congestion model will take. Free-flow is measured; the jam point + curvature are assumptions you set. It becomes real as denser data and higher fleets arrive.</span>
         </div>
         <div class="optbar" style="margin-bottom:10px">
           <span class="muted">Segment</span>
@@ -170,8 +176,8 @@
         <p class="lead muted" id="cong-note" style="margin-top:8px"></p>
       </div><!-- /tab-cong -->
       <div id="tab-plan" style="display:none">
-        <div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.35);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#bfdbfe">
-          <b>Plan a shift.</b> <span style="color:#cbd5e1">Pick the contractor and haul paths, set the fleet you'd run (or the WMT you need), add expected rainfall &amp; weighbridges open, and get estimated <b>Trips/DT</b> and <b>WMT per shift</b> — using each path's <b>historical average Trips/DT</b> (20-month DB), adjusted for the contractor, fleet size and rain.</span>
+        <div class="info-banner">
+          <b>Plan a shift.</b> <span class="banner-body">Pick the contractor and haul paths, set the fleet you'd run (or the WMT you need), add expected rainfall &amp; weighbridges open, and get estimated <b>Trips/DT</b> and <b>WMT per shift</b> — using each path's <b>historical average Trips/DT</b> (20-month DB), adjusted for the contractor, fleet size and rain.</span>
         </div>
         <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start">
           <div class="card" style="flex:2;min-width:360px">
