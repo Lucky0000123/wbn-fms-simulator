@@ -114,6 +114,37 @@ function planDstChange(){
 // Live estimate panel — the visual focus of the page. Renders the breakdown (Trips/DT, total trips,
 // payload) above one big exact total: WMT in DT→WMT mode, DTs required in WMT→DT mode. Runs on every
 // input change, so a plan never has to be "added" to be seen.
+//
+// Two-stage render: the local historical-average maths draws IMMEDIATELY (no
+// flicker, works offline), then the Phase 2 model at /api/predict answers and
+// re-renders the same panel with its numbers. If that call fails or times out,
+// what stays on screen is exactly what the page showed before Phase 2 existed.
+let _planPredictSeq=0, _planPredictTimer=null;
+const PLAN_PREDICT_DEBOUNCE_MS=180;
+function _planRenderEstimate(v){
+  const box=q('plan-preview');if(!box)return;
+  const lines=[
+    ['Trips/DT',fmtExact(v.tripsPerDt,2)],
+    [v.swapped?'DTs required':'Number of trucks',fmtExact(v.dt)+' DT'],
+    ['Total trips',fmtExact(Math.round(v.trips))],
+    ['Payload/trip',fmtExact(v.payload,1)+' t'],
+  ];
+  // Model attribution: what produced this number, and how well it scores.
+  let attr;
+  if(v.model==='local')attr=`<span class="est-model pending">Historical average · asking model…</span>`;
+  else if(v.fallback)attr=`<span class="est-model warn">⚠ Using fallback formula — train the model for better accuracy</span>`;
+  else attr=`<span class="est-model ok">Predicted by ${escH(v.modelLabel||v.model)} model${Number.isFinite(v.r2)?` · R² = ${fmtExact(v.r2,2)}`:''}</span>`;
+  box.classList.remove('empty');
+  box.innerHTML=`<div class="est-head">Estimated shift output</div>`
+    +`<div class="est-lines">${lines.map(l=>`<div class="est-line"><span>${escH(l[0])}</span><b>${l[1]}</b></div>`).join('')}</div>`
+    +`<div class="est-rule"></div>`
+    +`<div class="est-total"><div class="est-total-l">${v.swapped?'DTs required':'Total WMT'}</div>`
+    +`<div class="est-total-v">${v.swapped?fmtExact(v.dt):fmtExact(Math.round(v.wmt))} <span class="u">${v.swapped?'trucks':'t'}</span></div></div>`
+    +`<div class="est-note">${escH(v.src)} → ${escH(v.dst)} · ${escH(v.contractor||'—')} · ${fmtExact(v.hours)}h shift · ${escH(v.payloadSrc)} payload`
+    +(v.swapped?` · delivers ${fmtExact(Math.round(v.wmt))} t`:'')+`</div>`
+    +`<div class="est-attr">${attr}</div>`
+    +(v.warns&&v.warns.length?`<div class="est-warn">${v.warns.map(escH).join('<br>')}</div>`:'');
+}
 function planPreview(){
   const box=q('plan-preview');if(!box)return;
   const blank=(msg)=>{box.classList.add('empty');
@@ -121,7 +152,8 @@ function planPreview(){
   const s=(q('plan-src')||{}).value,d=(q('plan-dst')||{}).value,key=s+'>'+d,m=_pathResp&&_pathResp[key];
   if(!m)return blank('Select a source and destination to see the estimate.');
   const rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0),c=planContractor(),pay=planPayload(key,c),
-    hours=Math.max(1,parseFloat((q('plan-hours')||{}).value)||12);
+    hours=Math.max(1,parseFloat((q('plan-hours')||{}).value)||12),
+    wbOpen=Math.max(1,parseFloat((q('plan-wb')||{}).value)||8);
   let dt,trips,wmt,e;
   if(_planMode==='wmt'){
     const target=Math.max(0,parseFloat((q('plan-wmt')||{}).value)||0);
@@ -135,25 +167,44 @@ function planPreview(){
   if(!e)return blank('No history for this path yet.');
   trips=dt*e.shift; wmt=trips*pay.tf;
   const swapped=_planMode==='wmt';
-  const lines=[
-    ['Trips/DT',fmtExact(e.shift,2)],
-    [swapped?'DTs required':'Number of trucks',fmtExact(dt)+' DT'],
-    ['Total trips',fmtExact(Math.round(trips))],
-    ['Payload/trip',fmtExact(pay.tf,1)+' t'],
-  ];
   const warns=[];
   if(Number.isFinite(m.dtMax)&&dt>m.dtMax)warns.push(`⚠ ${fmtExact(dt)} DT is beyond the ${fmtExact(m.dtMax)} DT ever observed on this path`);
   if(e.rainDelta<=-.03)warns.push(`☔ rain costs ${fmtExact(e.rainDelta,2)} Trips/DT at ${fmtExact(rain)} mm`);
-  box.classList.remove('empty');
-  box.innerHTML=`<div class="est-head">Estimated shift output</div>`
-    +`<div class="est-lines">${lines.map(l=>`<div class="est-line"><span>${escH(l[0])}</span><b>${l[1]}</b></div>`).join('')}</div>`
-    +`<div class="est-rule"></div>`
-    +`<div class="est-total"><div class="est-total-l">${swapped?'DTs required':'Total WMT'}</div>`
-    +`<div class="est-total-v">${swapped?fmtExact(dt):fmtExact(Math.round(wmt))} <span class="u">${swapped?'trucks':'t'}</span></div></div>`
-    +`<div class="est-note">${escH(s)} → ${escH(d)} · ${escH(c?c.name:'—')} · ${fmtExact(hours)}h shift · ${pay.src} payload`
-    +(swapped?` · delivers ${fmtExact(Math.round(wmt))} t`:'')+`</div>`
-    +(warns.length?`<div class="est-warn">${warns.map(escH).join('<br>')}</div>`:'');
+  const base={src:s,dst:d,contractor:c?c.name:'—',hours,swapped,warns,
+    dt,tripsPerDt:e.shift,trips,wmt,payload:pay.tf,payloadSrc:pay.src,model:'local'};
+  _planRenderEstimate(base);                       // stage 1 — instant, local
+  // stage 2 — the server model, debounced so typing doesn't spam the endpoint
+  const seq=++_planPredictSeq;
+  clearTimeout(_planPredictTimer);
+  _planPredictTimer=setTimeout(()=>{
+    const body={contractor:base.contractor,source:s,destination:d,shift_hours:hours,
+      rainfall:rain,shift:'day',weighbridges_open:wbOpen,
+      mode:swapped?'wmt_to_dt':'dt_to_wmt'};
+    if(swapped)body.target_wmt=Math.max(0,parseFloat((q('plan-wmt')||{}).value)||0);
+    else body.trucks=dt;
+    const ctl=('AbortController' in window)?new AbortController():null;
+    if(ctl)setTimeout(()=>ctl.abort(),4000);       // never hang the panel
+    fetch('/api/predict',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body),signal:ctl?ctl.signal:undefined})
+      .then(r=>r.ok?r.json():Promise.reject(new Error('HTTP '+r.status)))
+      .then(res=>{
+        if(seq!==_planPredictSeq)return;           // a newer edit already won
+        if(!res||!res.ok||!res.prediction)throw new Error('bad payload');
+        const p=res.prediction, ndt=swapped?p.trucks_needed:dt;
+        _planPredictLast=res;
+        _planRenderEstimate({...base, dt:ndt, tripsPerDt:p.trips_per_dt, trips:p.total_trips,
+          wmt:p.total_wmt, payload:p.payload_per_trip, payloadSrc:p.payload_source||base.payloadSrc,
+          model:res.model_used, modelLabel:PLAN_MODEL_LABELS[res.model_used]||res.model_used,
+          r2:res.model_r2, fallback:!!res.fallback});
+      })
+      .catch(()=>{                                  // keep the local estimate visible
+        if(seq!==_planPredictSeq)return;
+        _planRenderEstimate({...base, model:'offline', fallback:true});
+      });
+  },PLAN_PREDICT_DEBOUNCE_MS);
 }
+const PLAN_MODEL_LABELS={random_forest:'Random Forest',ols:'OLS regression',fallback_ols:'fallback OLS'};
+let _planPredictLast=null;
 // A plan row is one contractor on one path, so two contractors can share the same path.
 function planAddPath(){
   const s=(q('plan-src')||{}).value,d=(q('plan-dst')||{}).value,key=s+'>'+d;

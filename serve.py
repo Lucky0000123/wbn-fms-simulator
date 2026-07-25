@@ -24,6 +24,17 @@ FX = os.path.join(BASE, "fixtures")
 app = Flask(__name__, template_folder=os.path.join(BASE, "templates"))
 app.register_blueprint(simulator_api.bp)      # the real, editable model endpoints
 
+# Phase 2 prediction service (/api/predict, /api/retrain, /api/model-info).
+# Optional: if scikit-learn or pandas isn't installed the simulator still runs,
+# it just has no ML predictions.
+try:
+    import prediction_api
+    app.register_blueprint(prediction_api.bp)
+    _PREDICTION = True
+except Exception as _exc:                     # noqa: BLE001
+    print("[serve] prediction API unavailable (%s)" % _exc)
+    _PREDICTION = False
+
 
 def fx(name):
     with open(os.path.join(FX, name + ".json"), encoding="utf-8") as f:
@@ -38,7 +49,8 @@ def simulator():
 @app.route("/health")
 def health():
     return jsonify({"ok": True, "service": "wbn-fms-simulator",
-                    "dataMode": "database" if simulator_api._db_ready() else "sample-fixtures"})
+                    "dataMode": "database" if simulator_api._db_ready() else "sample-fixtures",
+                    "prediction": _PREDICTION})
 
 
 # Data-loader endpoints kept as fixtures (not part of the model math):
@@ -63,6 +75,11 @@ def _constraints_reset():
 
 
 if __name__ == "__main__":
+    if _PREDICTION:                       # warm the model cache before serving
+        _m = prediction_api.load_model()
+        print("  prediction model: %s" % (
+            ("%s R2=%.3f" % (_m["meta"]["model_type"], _m["meta"]["r2"])) if _m
+            else "none trained yet — /api/predict will use the OLS fallback"))
     mode = "REAL DB" if simulator_api._db_ready() else "sample fixtures"
     print("\n  Simulator dev server (%s) -> http://127.0.0.1:5055/simulator\n" % mode)
     app.run(host=os.environ.get("SIMULATOR_HOST", "127.0.0.1"),

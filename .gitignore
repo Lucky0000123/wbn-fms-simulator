@@ -3,3 +3,12 @@ __pycache__/
 .venv/
 venv/
 .DS_Store
+
+# Phase 2 model artifacts — regenerate with `python train_model.py`
+# or POST /api/retrain. Metadata files are committed as reference.
+data/*.csv
+data/*.pkl
+data/model_metadata.json
+data/training_metadata.json
+!data/model_metadata.sample.json
+!data/training_metadata.sample.json

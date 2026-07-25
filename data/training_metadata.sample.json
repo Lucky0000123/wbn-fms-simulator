@@ -1,0 +1,40 @@
+{
+  "extracted_at": "2026-07-25T08:55:31+00:00",
+  "row_count": 52818,
+  "date_range": [
+    "2025-09-01",
+    "2026-07-22"
+  ],
+  "features": [
+    "contractor",
+    "source",
+    "destination",
+    "shift",
+    "day_of_week",
+    "distance_km",
+    "payload_t",
+    "rainfall_mm",
+    "weighbridges_open",
+    "trucks_dt"
+  ],
+  "target": "trips_per_dt_per_shift",
+  "source": "sample fixtures (path-shift-contractor)",
+  "grain": "path-shift-contractor",
+  "columns": {
+    "date": "str",
+    "contractor": "str",
+    "source": "str",
+    "destination": "str",
+    "distance_km": "float64",
+    "payload_t": "float64",
+    "rainfall_mm": "float64",
+    "shift": "str",
+    "day_of_week": "int64",
+    "weighbridges_open": "int64",
+    "trucks_dt": "float64",
+    "trips_per_dt_per_shift": "float64",
+    "wmt_per_shift": "float64",
+    "cycle_time_min": "float64",
+    "grain": "str"
+  }
+}

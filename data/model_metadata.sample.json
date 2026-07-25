@@ -1,0 +1,97 @@
+{
+  "model_type": "random_forest",
+  "trained_at": "2026-07-25T08:56:03+00:00",
+  "training_rows": 50594,
+  "test_rows": 2224,
+  "split_date": "2026-05-16",
+  "r2": 0.8619,
+  "mae": 0.6082,
+  "rmse": 0.9549,
+  "candidates": {
+    "ols": {
+      "r2": 0.5523,
+      "mae": 0.9785,
+      "rmse": 1.7194
+    },
+    "random_forest": {
+      "r2": 0.8619,
+      "mae": 0.6082,
+      "rmse": 0.9549
+    }
+  },
+  "features": [
+    "contractor_CKB",
+    "contractor_GMG",
+    "contractor_HJS",
+    "contractor_PPP",
+    "contractor_RIM",
+    "contractor_SMA",
+    "\u2026 56 features total"
+  ],
+  "target": "trips_per_dt_per_shift",
+  "categorical": [
+    "contractor",
+    "source",
+    "destination",
+    "shift",
+    "day_of_week"
+  ],
+  "numeric": [
+    "distance_km",
+    "payload_t",
+    "rainfall_mm",
+    "weighbridges_open",
+    "trucks_dt"
+  ],
+  "top_features": [
+    [
+      "source_TF",
+      0.1867
+    ],
+    [
+      "contractor_SSS",
+      0.142
+    ],
+    [
+      "payload_t",
+      0.1127
+    ],
+    [
+      "distance_km",
+      0.1017
+    ],
+    [
+      "destination_BLB",
+      0.0923
+    ],
+    [
+      "trucks_dt",
+      0.0503
+    ],
+    [
+      "destination_POS 10",
+      0.0502
+    ],
+    [
+      "source_KR",
+      0.0393
+    ],
+    [
+      "destination_CUU_KM_10",
+      0.0312
+    ],
+    [
+      "destination_POS 14",
+      0.0298
+    ],
+    [
+      "source_POS 6",
+      0.0252
+    ],
+    [
+      "source_POS 12",
+      0.0166
+    ]
+  ],
+  "data_source": "sample fixtures (path-shift-contractor)"
+}
