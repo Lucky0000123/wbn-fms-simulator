@@ -1,6 +1,6 @@
-// regression.js — Statistics & prediction — descriptive stats for the combined analysis and the
-// regression-driven plan builder (the OLS fit itself lives in simulator_api.py).
-// Extracted verbatim from templates/simulator.html (Phase 1 refactor; no logic changes).
+// regression.js — Statistics for the combined analysis: quantiles, moments,
+// correlation, load groups and adjusted path effects.
+// The OLS fit itself lives server-side in simulator_api.py.
 
 function c3Quantile(a,p){const s=a.slice().sort((x,y)=>x-y);if(!s.length)return 0;const i=(s.length-1)*p,l=Math.floor(i),h=Math.ceil(i);return s[l]+(s[h]-s[l])*(i-l);}
 function c3Moments(a){const mean=_avg(a,x=>x),sd=a.length>1?Math.sqrt(a.reduce((s,x)=>s+(x-mean)**2,0)/(a.length-1)):0;return {n:a.length,mean,sd,median:c3Quantile(a,.5),p10:c3Quantile(a,.1),p90:c3Quantile(a,.9),min:Math.min(...a),max:Math.max(...a)};}
@@ -48,43 +48,3 @@ function runCombinedScenario(i,scroll=true){
 }
 function setC3Tool(mode){_c3Tool=mode==='select'?'select':'rotate';q('c3-tool-rotate').classList.toggle('on',_c3Tool==='rotate');q('c3-tool-select').classList.toggle('on',_c3Tool==='select');const svg=q('scatter');if(svg)svg.style.cursor=_c3Tool==='select'?'crosshair':'grab';}
 function loadC3ScenarioSelect(){const e=q('c3-scenario-select'),i=e&&parseInt(e.value,10);if(Number.isFinite(i)){setC3Tool('select');runCombinedScenario(i);}}
-function _planValidKeys(){return Object.keys(_pathResp||{}).filter(k=>{const[o,d]=k.split('>'),m=_pathResp[k];return m&&m.n>=30&&m.tf>0&&Number.isFinite(m.avgTr)&&o&&d&&o.trim()&&d.trim()&&o.trim()!==d.trim();});}
-function renderPlanBuilder(){
-  const src=q('plan-src');if(!src)return;
-  const keys=_planValidKeys();
-  if(!keys.length){src.innerHTML='<option>loading…</option>';return;}
-  const sources=[...new Set(keys.map(k=>k.split('>')[0].trim()))].sort(),cur=src.value;
-  src.innerHTML=sources.map(s=>`<option${s===cur?' selected':''}>${escH(s)}</option>`).join('');
-  planSrcChange();computePlan();
-}
-function planSrcChange(){
-  const s=(q('plan-src')||{}).value,dst=q('plan-dst');if(!dst)return;
-  const dests=[...new Set(_planValidKeys().filter(k=>k.split('>')[0].trim()===s).map(k=>k.split('>')[1].trim()))].sort();
-  dst.innerHTML=dests.map(d=>`<option>${escH(d)}</option>`).join('');
-  planDstChange();
-}
-function planDstChange(){
-  const s=(q('plan-src')||{}).value,d=(q('plan-dst')||{}).value,m=_pathResp[s+'>'+d],hint=q('plan-hint'),dt=q('plan-dt');
-  if(hint)hint.innerHTML=m?`<b>${escH(s)} → ${escH(d)}</b>: ${fmt(m.avgTr,2)} avg Trips/DT · ${fmt(m.tf,1)} t/trip · typically ~${fmt(m.avgDt)} DT · ${fmt(m.n)} shifts of history`:'';
-  if(dt&&m)dt.value=Math.round(m.avgDt||50);
-}
-function planAddPath(){const s=(q('plan-src')||{}).value,d=(q('plan-dst')||{}).value,dt=Math.max(1,parseFloat((q('plan-dt')||{}).value)||50);if(!s||!d||!_pathResp[s+'>'+d])return;_planDraft[s+'>'+d]=dt;computePlan();}
-function planRemove(k){delete _planDraft[k];computePlan();}
-function planSet(k,v){_planDraft[k]=Math.max(0,parseFloat(v)||0);computePlan();}
-function computePlan(){
-  const rows=q('plan-rows');if(!rows)return;
-  const rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0),wb=Math.max(1,parseFloat((q('plan-wb')||{}).value)||8),hours=Math.max(1,parseFloat((q('plan-hours')||{}).value)||12),keys=Object.keys(_planDraft);
-  if(!keys.length){rows.innerHTML='<tr><td colspan="7" class="muted">Add a path above to start…</td></tr>';q('plan-kpis').innerHTML='';q('plan-warn').innerHTML='';return;}
-  let totTrips=0,totWmt=0,totDt=0;
-  rows.innerHTML=keys.map(k=>{const m=_pathResp[k],dt=_planDraft[k];if(!m)return '';
-    let tr=m.avgTr;const slope=(Number.isFinite(m.bAdj)&&m.bAdj<0)?m.bAdj:(m.b<0?m.b:0);
-    if(slope<0&&Number.isFinite(m.avgDt))tr+=slope*(dt-m.avgDt);
-    let rainNote='';if(rain>0&&Number.isFinite(m.mWet)&&Number.isFinite(m.mDry)){const rd=(m.mWet-m.mDry)*(rain/10);tr+=rd;if(rd<=-0.03)rainNote='☔ '+fmt(rd,2);}
-    tr=Math.max(0.3*m.avgTr,tr);const trips=dt*tr,wmt=trips*m.tf;totTrips+=trips;totWmt+=wmt;totDt+=dt;
-    const extrap=Number.isFinite(m.dtMax)&&dt>m.dtMax?'⚠ beyond '+fmt(m.dtMax)+' DT':'';
-    return `<tr><td><b>${escH(k.replace('>',' → '))}</b></td><td class="r"><input type="number" min="0" step="1" value="${Math.round(dt)}" onchange="planSet('${escH(k)}',this.value)" style="width:56px;text-align:center"></td><td class="r">${fmt(tr,2)}</td><td class="r">${fmt(trips,0)}</td><td class="r">${fmtM(wmt)}</td><td class="muted" style="font-size:10px">${rainNote} ${extrap}</td><td><a onclick="planRemove('${escH(k)}')" style="cursor:pointer;color:#f87171" title="remove">✕</a></td></tr>`;}).join('');
-  const avgEff=totDt?totTrips/totDt:0;
-  q('plan-kpis').innerHTML=[['Est. WMT / shift',fmtM(totWmt)],['Total trips',fmt(totTrips,0)],['Fleet',fmt(totDt)+' DT'],['Avg Trips/DT',fmt(avgEff,2)]].map(x=>`<div class="effkpi"><div class="v">${x[1]}</div><div class="l">${x[0]}</div></div>`).join('');
-  const wbCap=wb*30*hours;
-  q('plan-warn').innerHTML=totTrips>wbCap?`<span class="er">⚠ Weighbridge bottleneck: ${fmt(totTrips,0)} trips exceed ~${fmt(wbCap,0)} weigh capacity (${fmt(wb)} bridges × ~30/hr × ${fmt(hours)}h). Add bridges or trim fleet.</span>`:`<span class="muted">Weighbridge capacity OK (~${fmt(wbCap,0)} trips headroom at ${fmt(wb)} bridges). Estimates use each path's 20-month average Trips/DT, adjusted for fleet size${rain>0?' and rainfall':''}. First-level estimate — not a committed plan.</span>`;
-}
