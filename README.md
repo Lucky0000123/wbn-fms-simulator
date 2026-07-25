@@ -9,7 +9,7 @@ pip install flask
 python serve.py
 ```
 
-Open **http://127.0.0.1:5055/simulator**
+Open **https://wbn-fms-mac.ngrok.app/simulator**
 
 Keep that terminal running while you work; use a second terminal for git.
 
