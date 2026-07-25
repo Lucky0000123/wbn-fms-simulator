@@ -35,6 +35,11 @@ def fx(name):
 def simulator():
     return render_template("simulator.html", can_edit_matrix=True)
 
+@app.route("/health")
+def health():
+    return jsonify({"ok": True, "service": "wbn-fms-simulator",
+                    "dataMode": "database" if simulator_api._db_ready() else "sample-fixtures"})
+
 
 # Data-loader endpoints kept as fixtures (not part of the model math):
 @app.route("/api/simulator/capability")
@@ -60,4 +65,6 @@ def _constraints_reset():
 if __name__ == "__main__":
     mode = "REAL DB" if simulator_api._db_ready() else "sample fixtures"
     print("\n  Simulator dev server (%s) -> http://127.0.0.1:5055/simulator\n" % mode)
-    app.run(host="127.0.0.1", port=5055, debug=True)
+    app.run(host=os.environ.get("SIMULATOR_HOST", "127.0.0.1"),
+            port=int(os.environ.get("SIMULATOR_PORT", "5055")),
+            debug=False, use_reloader=False)
