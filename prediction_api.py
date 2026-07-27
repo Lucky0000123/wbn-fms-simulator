@@ -277,6 +277,13 @@ def api_predict():
         "model_used": "fallback_ols" if fallback else meta.get("model_type", "unknown"),
         "model_trained_at": meta.get("trained_at"),
         "model_r2": meta.get("r2"),
+        # Additive fields only — existing consumers keep working. R2 alone
+        # flatters a model: 0.63 sounds strong until you learn a plain
+        # (path, contractor, shift) lookup already scores 0.53. The lift is the
+        # part that says how much the model is actually contributing.
+        "model_baseline_r2": meta.get("baseline_r2"),
+        "model_baseline_lift": meta.get("baseline_lift"),
+        "model_beats_baseline": meta.get("beats_baseline"),
         "model_instance": (bundle or {}).get("instance"),
         "fallback": bool(fallback),
         "inputs": {"contractor": contractor, "source": source, "destination": destination,
@@ -318,6 +325,13 @@ def api_retrain():
                         "model_type": meta["model_type"], "r2": meta["r2"], "mae": meta["mae"],
                         "rmse": meta["rmse"], "training_rows": meta["training_rows"],
                         "test_rows": meta["test_rows"], "candidates": meta["candidates"],
+                        # Surfaced at the top level so the UI can report the
+                        # gain over a lookup table without digging into
+                        # candidates{} — the number that says whether the
+                        # retrain was actually worth anything.
+                        "baseline_r2": meta.get("baseline_r2"),
+                        "baseline_lift": meta.get("baseline_lift"),
+                        "beats_baseline": meta.get("beats_baseline"),
                         "data_source": meta.get("data_source")})
     except Exception as exc:                           # noqa: BLE001
         print("[retrain] FAILED: %s" % exc)

@@ -129,11 +129,25 @@ function _planRenderEstimate(v){
     ['Total trips',fmtExact(Math.round(v.trips))],
     ['Payload/trip',fmtExact(v.payload,1)+' t'],
   ];
-  // Model attribution: what produced this number, and how well it scores.
+  // Model attribution: what produced this number, and how much to trust it.
+  // R² on its own is misleading — a lookup table of per-route averages already
+  // scores ~0.53 here — so the lift over that baseline is shown beside it.
   let attr;
-  if(v.model==='local')attr=`<span class="est-model pending">Historical average · asking model…</span>`;
-  else if(v.fallback)attr=`<span class="est-model warn">⚠ Using fallback formula — train the model for better accuracy</span>`;
-  else attr=`<span class="est-model ok">Predicted by ${escH(v.modelLabel||v.model)} model${Number.isFinite(v.r2)?` · R² = ${fmtExact(v.r2,2)}`:''}</span>`;
+  if(v.model==='local'){
+    attr=`<span class="est-model pending">Historical average · asking model…</span>`;
+  }else if(v.fallback){
+    attr=`<span class="est-model warn">⚠ Using fallback formula — train the model for better accuracy</span>`;
+  }else{
+    const lift=v.baselineLift, hasLift=Number.isFinite(lift), weak=hasLift&&lift<0.01;
+    attr=`<span class="est-model ${weak?'warn':'ok'}">Predicted by ${escH(v.modelLabel||v.model)} model`
+        +`${Number.isFinite(v.r2)?` · R² = ${fmtExact(v.r2,2)}`:''}</span>`;
+    const bits=[];
+    if(v.trainedAt)bits.push(`Trained ${escH(String(v.trainedAt).slice(0,10))}`);
+    if(hasLift)bits.push(`Lift over baseline: ${lift>=0?'+':''}${fmtExact(lift*100,1)}%`
+        +(Number.isFinite(v.baselineR2)?` (lookup R² ${fmtExact(v.baselineR2,2)})`:''));
+    if(bits.length)attr+=`<span class="est-model-sub">${bits.join(' · ')}</span>`;
+    if(weak)attr+=`<span class="est-model-sub warn">⚠ Model is barely better than historical averages — treat as a lookup.</span>`;
+  }
   box.classList.remove('empty');
   box.innerHTML=`<div class="est-head">Estimated shift output</div>`
     +`<div class="est-lines">${lines.map(l=>`<div class="est-line"><span>${escH(l[0])}</span><b>${l[1]}</b></div>`).join('')}</div>`
@@ -195,7 +209,9 @@ function planPreview(){
         _planRenderEstimate({...base, dt:ndt, tripsPerDt:p.trips_per_dt, trips:p.total_trips,
           wmt:p.total_wmt, payload:p.payload_per_trip, payloadSrc:p.payload_source||base.payloadSrc,
           model:res.model_used, modelLabel:PLAN_MODEL_LABELS[res.model_used]||res.model_used,
-          r2:res.model_r2, fallback:!!res.fallback});
+          r2:res.model_r2, fallback:!!res.fallback,
+          trainedAt:res.model_trained_at, baselineR2:res.model_baseline_r2,
+          baselineLift:res.model_baseline_lift});
       })
       .catch(()=>{                                  // keep the local estimate visible
         if(seq!==_planPredictSeq)return;
@@ -246,4 +262,3 @@ function computePlan(){
   const wbCap=wb*30*hours;
   q('plan-warn').innerHTML=totTrips>wbCap?`<span class="er">⚠ Weighbridge bottleneck: ${fmtExact(Math.round(totTrips))} trips exceed ~${fmtExact(Math.round(wbCap))} weigh capacity (${fmtExact(wb)} bridges × ~30/hr × ${fmtExact(hours)}h). Add bridges or trim fleet.</span>`:`<span class="muted">Weighbridge capacity OK (~${fmtExact(Math.round(wbCap))} trips headroom at ${fmtExact(wb)} bridges). Trips/DT is per <b>${fmtExact(hours)}h shift</b>, from each path's 20-month average adjusted for contractor, fleet size${rain>0?' and rainfall':''}. First-level estimate — not a committed plan.</span>`;
 }
-

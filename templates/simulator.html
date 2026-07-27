@@ -217,6 +217,18 @@
       <button onclick="closeMatrix()" style="margin-left:auto;background:none;border:0;color:var(--muted2);font-size:22px;cursor:pointer;line-height:1">×</button>
     </div>
     <div id="mat-body" style="padding:14px 20px;overflow:auto"></div>
+    <!-- Admin: retrain the prediction model. Kept inside the Matrix dialog
+         rather than on the Plan tab so a planner cannot trigger a minute-long
+         job by accident, while an admin still has it without a shell. -->
+    <div style="padding:11px 20px;border-top:1px solid var(--line);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <div style="flex:1;min-width:230px">
+        <b style="font-size:12px;color:var(--txt)">Prediction model</b>
+        <div class="muted" id="retrain-status" style="font-size:10.5px;margin-top:2px">Loading model status…</div>
+      </div>
+      <button class="ms-btn" id="retrain-btn" style="min-width:0;cursor:pointer"
+              title="Re-extract the training data and retrain. Takes about a minute."
+              onclick="retrainModel()">⟳ Retrain model</button>
+    </div>
     <div style="display:flex;gap:10px;align-items:center;padding:13px 20px;border-top:1px solid var(--line)">
       <button class="ms-btn" style="min-width:0;cursor:pointer;margin-right:auto" title="Restore the built-in 8-path default mapping" onclick="resetMatrix()">↺ Reset to default</button>
       <button class="ms-btn" style="min-width:0;cursor:pointer" onclick="closeMatrix()">Cancel</button>

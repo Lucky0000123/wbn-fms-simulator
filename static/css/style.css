@@ -259,6 +259,11 @@ tbody tr:hover{background:var(--panel-hover)}
 .plan-estimate .est-model.ok{background:var(--good-dim);border-color:rgba(63,185,80,.4);color:var(--good)}
 .plan-estimate .est-model.warn{background:var(--amber-dim);border-color:rgba(210,153,34,.45);color:var(--amber)}
 .plan-estimate .est-model.pending{opacity:.75}
+/* Provenance line under the model badge: training date and the lift over a
+   plain per-route lookup. Deliberately quieter than the badge — it is context
+   for judging the number, not the number itself. */
+.plan-estimate .est-model-sub{display:block;font-size:9.5px;margin-top:4px;color:var(--txt-muted);letter-spacing:.02em}
+.plan-estimate .est-model-sub.warn{color:var(--amber)}
 .plan-estimate .est-warn{text-align:center;font-size:11.5px;margin-top:8px;color:var(--amber)}
 .plan-estimate.empty{border-color:var(--line);background:var(--bg)}
 .plan-estimate.empty .est-total-v{font-size:22px;color:var(--txt-muted);text-shadow:none;animation:none}

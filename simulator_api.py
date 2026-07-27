@@ -28,10 +28,58 @@ from flask import Blueprint, request, jsonify
 bp = Blueprint("sim_api", __name__)
 _FX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
 
+# ── One canonicaliser, shared with the model ────────────────────────────────
+# The Plan tab lets an operator pick a route and shows a predicted tonnage for
+# it. That is only meaningful if the name in the dropdown and the name the model
+# trained on denote the SAME physical haul. They used to be produced by two
+# independent normalisers that disagreed: the SQL CASE below mapped every FENI
+# tip to "FENI" while the pipeline emitted "FENI KM0", and each table spells
+# places differently ("KRENE" vs "KR", "HUAFEI C01" vs "HUAFEI.C01",
+# "CUU_KM10" vs "CUU KM10"). Importing the pipeline's resolver makes it the
+# single source of truth. It is import-guarded so this module keeps working —
+# on fixtures — if pandas/sklearn are absent.
+try:
+    from prediction_pipeline import canonical_area as _canon
+except Exception:                                    # noqa: BLE001
+    def _canon(name):                                # pragma: no cover
+        return " ".join(str(name or "").strip().upper().split())
+
 
 def _fixture(name):
     with open(os.path.join(_FX, name + ".json"), encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+    return _canonical_fixture(name, data)
+
+
+def _canonical_fixture(name, data):
+    """Rewrite route keys in a fixture so fallback mode speaks the same
+    vocabulary as the database path.
+
+    Without this the app changes its route names the moment the VPN drops:
+    "BLB>FENI A" on fixtures versus "BLB>FENI KM0" on the DB. The Plan tab
+    would then offer routes the model cannot score, which is exactly the
+    mismatch this endpoint is supposed to prevent.
+
+    Colliding keys keep the entry fitted on the most history (largest n), since
+    these are regression fits and averaging their coefficients is meaningless.
+    """
+    if name != "path-response" or not isinstance(data, dict):
+        return data
+    paths = data.get("paths")
+    if not isinstance(paths, dict):
+        return data
+    merged = {}
+    for key, m in paths.items():
+        o, _, d = str(key).partition(">")
+        co, cd = _canon(o), _canon(d)
+        if not co or not cd:
+            continue
+        k = "%s>%s" % (co, cd)
+        prev = merged.get(k)
+        if prev is None or (m or {}).get("n", 0) > (prev or {}).get("n", 0):
+            merged[k] = m
+    data["paths"] = merged
+    return data
 
 
 # DB credentials come ONLY from the environment — never hardcode them here.
@@ -182,7 +230,11 @@ def api_simulator_path_response():
         cur = conn.cursor()
         cur.execute("SELECT ORIGIN, DESTINATION, NB_DT, RIT, WMT, [DATE] FROM [DISPATCH RESULTS LITE 3] "
                     "WHERE (CONTRACTOR IS NULL OR CONTRACTOR<>'IWIP') "
-                    "AND DATE>=DATEADD(month,-20,GETDATE()) AND NB_DT>0 AND RIT>0")
+                    "AND DATE>=DATEADD(month,-20,GETDATE()) AND NB_DT>0 AND RIT>0 "
+                    # ~200 rows carry a NULL DESTINATION. They produced an
+                    # unselectable blank entry in the Plan tab's route list.
+                    "AND ORIGIN IS NOT NULL AND LTRIM(RTRIM(ORIGIN))<>'' "
+                    "AND DESTINATION IS NOT NULL AND LTRIM(RTRIM(DESTINATION))<>''")
         rows = cur.fetchall()
         # per-day rainfall by mine area — TOFU serves TF routes, KAO RAHAI serves KR routes
         rain = {}
@@ -198,9 +250,11 @@ def api_simulator_path_response():
     except Exception as exc:
         return jsonify({"ok": False, "error": "history unavailable — %s" % str(exc)[:120]}), 200
     from collections import defaultdict
-    _kr = lambda x: "KR" if (x or "").strip().upper() == "KRENE" else (x or "")
-    _area = lambda o: "TOFU" if (o or "").strip().upper().startswith("TF") else (
-        "KAO RAHAI" if (o or "").strip().upper().startswith("KR") else None)
+    # Route labels come from the shared canonicaliser so path keys match the
+    # model's vocabulary exactly. The rain gauge is then chosen from that
+    # canonical node rather than from a raw-string prefix.
+    _kr = _canon
+    _area = lambda o: {"TF": "TOFU", "KR": "KAO RAHAI"}.get(_canon(o))
 
     def _ols2(pts):
         """Multivariate OLS  eff = a + b·DT + c·rain  over rows that have a rain match.
@@ -396,13 +450,21 @@ def api_simulator_shift_context():
 
         def _case(col):                                  # group a raw area column into a corridor node
             # keep %% literal so pymssql leaves the LIKE wildcards intact; substitute the column via replace
+            # Labels MUST match canonical_area() — "FENI KM0", not "FENI" — or
+            # the congestion breakdown names routes differently from the model
+            # and the Plan tab. This runs server-side for a GROUP BY, so it
+            # cannot call the Python resolver; keep the two in step by hand.
             return ("CASE "
                     "WHEN UPPER(COL) LIKE 'TOS_TF%%' OR UPPER(COL) LIKE 'TF%%' OR UPPER(COL) LIKE '%%TOFU%%' THEN 'TF' "
                     "WHEN UPPER(COL) LIKE 'KR%%' OR UPPER(COL) LIKE '%%KRENE%%' THEN 'KR' "
                     "WHEN UPPER(COL) LIKE '%%POS 12%%' OR UPPER(COL) LIKE '%%POS12%%' THEN 'POS 12' "
                     "WHEN UPPER(COL) LIKE '%%POS 10%%' OR UPPER(COL) LIKE '%%POS10%%' THEN 'POS 10' "
                     "WHEN UPPER(COL) LIKE '%%CRUSHER%%' THEN 'CRUSHER' "
-                    "WHEN UPPER(COL) LIKE '%%FENI%%' THEN 'FENI' ELSE 'OTHER' END").replace("COL", col)
+                    "WHEN UPPER(COL) LIKE '%%FENI KM15%%' OR UPPER(COL) LIKE '%%FENI 15%%' THEN 'FENI KM15' "
+                    "WHEN UPPER(COL) LIKE '%%FENI%%' THEN 'FENI KM0' "
+                    "WHEN UPPER(COL) LIKE '%%HUAFEI%%' THEN 'HUAFEI' "
+                    "WHEN UPPER(COL) LIKE '%%BSE%%' THEN 'BSE' "
+                    "WHEN UPPER(COL) LIKE '%%BLB%%' THEN 'BLB' ELSE 'OTHER' END").replace("COL", col)
         ocase, dcase = _case("ORIGIN_AREA"), _case("DESTINATION_AREA")
         cur.execute("SELECT " + ocase + " og, " + dcase + " dg, COUNT(*) trips, COUNT(DISTINCT TRUCK_ID) trucks "
                     "FROM HAULAGE_IWIP_CLEAN WHERE CONVERT(date,[DATE])=%s" + shift_sql +

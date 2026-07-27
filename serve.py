@@ -41,6 +41,77 @@ def fx(name):
         return json.load(f)
 
 
+# ── Canonical route names for the fixture-backed capability payload ─────────
+# The capability endpoint feeds the Routes/Destinations tables and the Plan tab
+# dropdowns, but it is served straight from fixtures/capability.json, which was
+# captured before canonicalisation existed. Left alone it offers the operator
+# "FENI A", "HUAFEI.C01" and "CUU_KM_10" — names the model has never seen — so a
+# selected route could not be predicted. Rewriting the labels on the way out
+# keeps one vocabulary everywhere without regenerating the fixture.
+#
+# Merging labels creates duplicates ("HUAFEI.B01" and "HUAFEI.C01" both become
+# HUAFEI), so rows are re-aggregated: additive quantities are summed and rate
+# columns are rebuilt from those sums. Averaging the rates instead would quietly
+# corrupt them, since a 5-trip route would count as much as a 500-trip one.
+try:
+    from prediction_pipeline import canonical_area as _canon
+except Exception:                                     # noqa: BLE001
+    def _canon(name):                                 # pragma: no cover
+        return " ".join(str(name or "").strip().upper().split())
+
+_SUM_KEYS = ("t", "trips", "dt", "planDt", "planWmt", "wmt",
+             "nb", "rit", "sw", "snb", "srit", "dtp", "pw", "ptr", "sc")
+
+
+def _merge_rows(rows, keyfields):
+    """Group rows whose canonical key collides, summing additive columns."""
+    out = {}
+    for r in rows:
+        k = tuple(_canon(r.get(f)) for f in keyfields)
+        if not all(k):
+            continue
+        tgt = out.get(k)
+        if tgt is None:
+            tgt = dict(r)
+            for f, v in zip(keyfields, k):
+                tgt[f] = v
+            out[k] = tgt
+            continue
+        for col in _SUM_KEYS:
+            if isinstance(r.get(col), (int, float)) and isinstance(tgt.get(col), (int, float)):
+                tgt[col] = tgt[col] + r[col]
+    for row in out.values():                          # rebuild rates from sums
+        t, trips, dt = row.get("t"), row.get("trips"), row.get("dt")
+        if isinstance(trips, (int, float)) and trips and isinstance(t, (int, float)):
+            row["tf"] = round(t / trips, 3)
+        if isinstance(dt, (int, float)) and dt:
+            if isinstance(trips, (int, float)):
+                row["tripsPerDT"] = round(trips / dt, 3)
+            if isinstance(t, (int, float)):
+                row["tPerDT"] = round(t / dt, 3)
+    return list(out.values())
+
+
+def _canonical_capability(d):
+    """Rewrite every route/area label in the capability payload."""
+    if not isinstance(d, dict):
+        return d
+    if isinstance(d.get("routes"), list):
+        d["routes"] = _merge_rows(d["routes"], ("origin", "dest"))
+    if isinstance(d.get("paths"), list):
+        d["paths"] = _merge_rows(d["paths"], ("origin", "dest"))
+    if isinstance(d.get("destinations"), list):
+        d["destinations"] = _merge_rows(d["destinations"], ("dest",))
+    if isinstance(d.get("dailyByPath"), list):
+        # Per-day rows: keep the day, canonicalise the two area fields. These
+        # drive the scatter/3D view, which re-aggregates client-side already.
+        for r in d["dailyByPath"]:
+            r["o"] = _canon(r.get("o"))
+            r["dd"] = _canon(r.get("dd"))
+        d["dailyByPath"] = [r for r in d["dailyByPath"] if r["o"] and r["dd"]]
+    return d
+
+
 @app.route("/")
 @app.route("/simulator")
 def simulator():
@@ -56,7 +127,7 @@ def health():
 # Data-loader endpoints kept as fixtures (not part of the model math):
 @app.route("/api/simulator/capability")
 def _capability():
-    return jsonify(fx("capability"))
+    return jsonify(_canonical_capability(fx("capability")))
 
 
 @app.route("/api/simulator/trucks")

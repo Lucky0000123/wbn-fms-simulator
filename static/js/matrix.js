@@ -104,8 +104,54 @@ function openMatrix(){
   // window underneath as an unchecked candidate. Unchecked candidates are not persisted on Save.
   ((_D&&_D.routes)||[]).forEach(r=>{ const k=pathKey(r.origin,r.dest); if(!sel[k]) sel[k]={o:r.origin,d:r.dest,secs:new Set()}; });
   _matEdit={secs,sel}; q('mat-backdrop').style.display='flex'; renderMatrix();
+  loadModelStatus();
 }
 function closeMatrix(){ q('mat-backdrop').style.display='none'; }
+
+// ── Prediction-model status + retrain (admin) ───────────────────────────────
+// R² alone flatters a model, so the status line always pairs it with the lift
+// over a plain per-route lookup. If that lift is negligible the model is a
+// lookup table wearing a hat, and the line says so.
+function _modelLine(m){
+  if(!m||!m.trained)return 'No trained model — predictions use the OLS fallback.';
+  const lift=m.baseline_lift, has=Number.isFinite(lift);
+  const when=m.trained_at?String(m.trained_at).slice(0,10):'unknown date';
+  const rows=Number.isFinite(m.training_rows)?fmt(m.training_rows)+' rows · ':'';
+  let s=`${escH(m.model_type||'model')} · trained ${escH(when)} · ${rows}R² ${fmt(m.r2,3)}`;
+  if(has)s+=` · lift ${lift>=0?'+':''}${fmt(lift*100,1)}% over lookup`;
+  if(has&&lift<0.01)s+=' ⚠ barely better than historical averages';
+  return s;
+}
+async function loadModelStatus(){
+  const el=q('retrain-status'); if(!el)return;
+  try{ const m=await(await fetch('/api/model-info',{cache:'no-store'})).json();
+    el.textContent=_modelLine(m); }
+  catch(e){ el.textContent='Model status unavailable.'; }
+}
+async function retrainModel(){
+  const btn=q('retrain-btn'), el=q('retrain-status'); if(!btn)return;
+  if(!confirm('This will take ~30-60 seconds. Retrain now?'))return;
+  const label=btn.textContent;
+  btn.disabled=true; btn.textContent='⟳ Retraining…';
+  if(el)el.textContent='Extracting data and training — this can take a minute…';
+  try{
+    const r=await fetch('/api/retrain',{method:'POST'});
+    const d=await r.json();
+    if(!r.ok||!d.ok)throw new Error((d&&d.error)||('HTTP '+r.status));
+    const lift=d.baseline_lift, has=Number.isFinite(lift);
+    if(el)el.innerHTML=`<span class="${has&&lift<0.01?'ea':'eg'}">✓ Retrained in ${fmt(d.elapsed_s,1)}s — `
+      +`${escH(d.model_type)} · R² ${fmt(d.r2,3)} · MAE ${fmt(d.mae,3)}`
+      +(has?` · lift ${lift>=0?'+':''}${fmt(lift*100,1)}% over lookup`:'')
+      +`</span><br><span class="muted">${fmt(d.training_rows)} training rows · ${escH(d.data_source||'')}</span>`;
+    // The server hot-swaps its cached model, so the next estimate uses the new
+    // one. Re-render the open Plan tab so the badge updates without a reload.
+    if(typeof planPreview==='function')planPreview();
+  }catch(e){
+    if(el)el.innerHTML=`<span class="er">✗ Retrain failed: ${escH(e.message)}</span>`;
+  }finally{
+    btn.disabled=false; btn.textContent=label;
+  }
+}
 function matAddSection(){ _matEdit.secs.push({id:_matNextId(),name:'New section'}); renderMatrix(); }
 function matDelSection(id){ _matEdit.secs=_matEdit.secs.filter(s=>s.id!==id); Object.values(_matEdit.sel).forEach(v=>v.secs.delete(id)); renderMatrix(); }
 function matRename(id,v){ const s=_matEdit.secs.find(x=>x.id===id); if(s)s.name=v; }

@@ -79,13 +79,20 @@ def _norm(name: str) -> str:
 # the first two characters of the source: raw "TOS_TF" yields "TO", which
 # matches no gauge, so every row got 0 mm and the weather signal vanished
 # entirely. Both bugs are invisible without the DB, which is why they survived.
-# Cut from the first non-ASCII (CJK) character onward, plus any "-WBN"/"-BSE"
-# department tag. Matching on the hyphen alone is not enough: "POS16-WBN矿业部"
-# has one but "CUU_KM10-WBN矿业部" needs the CJK rule, and the department name
-# can appear with or without a separator.
+# Cut from the first non-ASCII (CJK) character onward, plus any owner/department
+# tag. Matching on the hyphen alone is not enough: "POS16-WBN矿业部" has one but
+# "CUU_KM10-WBN矿业部" needs the CJK rule, and the tag appears with or without a
+# separator. Vendor tags ("-PT.BSE", "-LVMI镍铁事业部", "-HUAFEI") name the
+# COMPANY, not the place, so they are noise for a route label.
 _STRIP_SUFFIX = re.compile(r"[^\x00-\x7F].*$")
-_STRIP_DEPT = re.compile(r"[-–_\s]*(?:WBN|BSE|IWIP)\s*$")
+_STRIP_DEPT = re.compile(
+    r"[-–_\s]*(?:PT\.?\s*)?(?:WBN|BSE|IWIP|LVMI|HUAFEI|HPN|WASTECINTERNATIONAL)"
+    r"[A-Z0-9.\s]*$")
+# "TOS" is a stockpile prefix. It appears as "TOS_TF" and, unhelpfully, glued on
+# as "TOSTOFU"/"TOSBLB". Only strip the glued form when a known node remains,
+# so a genuine name merely starting with those letters is never mangled.
 _TOS_PREFIX = re.compile(r"^TOS[_\s]+")
+_TOS_GLUED = re.compile(r"^TOS(?=[A-Z])")
 _TRAILING_UNIT = re.compile(r"[-_\s]+(?:[A-Z]{2,4})?[-_\s]*\d{1,2}(?:[-_\s]*EXT)?$")
 
 # Explicit aliases beat clever regex. These are the raw spellings the DB uses
@@ -93,8 +100,21 @@ _TRAILING_UNIT = re.compile(r"[-_\s]+(?:[A-Z]{2,4})?[-_\s]*\d{1,2}(?:[-_\s]*EXT)
 _AREA_ALIAS = {
     "TOFU": "TF", "KRENE": "KR",
     "FENI 0": "FENI KM0", "FENI": "FENI KM0", "FENI 15": "FENI KM15",
+    "CUU KM 10": "CUU KM10", "CUU KM10": "CUU KM10", "POS CUU": "CUU KM10",
+    "POSCBB": "POS CBB", "POSBLB": "BLB", "TOSBLB": "BLB", "TOSTOFU": "TF",
 }
 _POS_SPACING = re.compile(r"^POS[\s_]*(\d+)$")
+# BSE tips (BSE-1, BSE1, BSE2, BSE5, BSE101, "BSE1号堆场") are bays of one
+# hydrometallurgy plant; HUAFEI.B01/C01/HUAFEIC01 likewise. Collapsing each
+# family to a single node stops one destination fragmenting into six routes,
+# which is what made trips-per-truck unstable for those tips.
+_BSE_FAMILY = re.compile(r"^BSE[-\s.]?\d*$")
+_HUAFEI_FAMILY = re.compile(r"^HUAFEI[-\s.]?[A-Z]?\.?\d*$")
+
+# A few tips are recorded ONLY in Chinese ("华飞KM8-4-华飞镍钴" is Huafei KM8).
+# Stripping non-ASCII first would leave nothing and silently discard the rows,
+# so these are matched before any cleaning. 华飞 = Huafei, 镍钴 = nickel-cobalt.
+_CJK_HINTS = (("华飞", "HUAFEI"), ("湿法冶金", "BSE"))
 
 
 def canonical_area(name: str) -> str:
@@ -110,13 +130,34 @@ def canonical_area(name: str) -> str:
     s = _norm(name)
     if not s:
         return ""
+    # A name that OPENS with a CJK marker has no usable ASCII node to recover
+    # ("华飞KM8-4" leaves only "KM"), so resolve it from the marker itself.
+    for hint, node in _CJK_HINTS:
+        if s.startswith(hint):
+            return node
     s = _STRIP_SUFFIX.sub("", s).strip()      # drop CJK tail ("...矿业部")
-    s = _STRIP_DEPT.sub("", s).strip(" -–_")  # drop the "-WBN"/"-BSE" dept tag
+    if not s:
+        return ""                             # name was purely CJK
+    # Drop the owner/department tag, but never let it consume the whole name:
+    # "BSE101" is a tip, not a department, and must survive as BSE.
+    _dept = _STRIP_DEPT.sub("", s).strip(" -–_.")
+    s = _dept if _dept else s
     s = _TOS_PREFIX.sub("", s).strip()        # drop the "TOS_" stockpile prefix
     s = s.replace("_", " ").strip()
     s = re.sub(r"\s+", " ", s).strip(" -–")
+    if not s:
+        return ""
     s = _POS_SPACING.sub(r"POS \1", s)        # "POS16" -> "POS 16"
     s = _AREA_ALIAS.get(s, s)
+    # Un-glue "TOSTOFU"/"TOSBLB" only if a known node is left behind.
+    if s not in CORRIDOR_KM and _TOS_GLUED.match(s):
+        candidate = _AREA_ALIAS.get(s[3:], s[3:])
+        if candidate in CORRIDOR_KM or candidate in ("BLB", "TF", "KR"):
+            s = candidate
+    if _BSE_FAMILY.match(s):                  # BSE-1 / BSE1 / BSE2 / BSE101
+        return "BSE"
+    if _HUAFEI_FAMILY.match(s) or s.startswith("HUAFEI"):
+        return "HUAFEI"
     if s in CORRIDOR_KM:                      # exact node, e.g. "POS 12"
         return s
     # Strip a trailing crew/pad number ("TF STM 13" -> "TF"), but only when what
