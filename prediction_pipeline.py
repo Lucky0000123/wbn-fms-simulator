@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 from datetime import datetime, timezone
 
 import numpy as np
@@ -67,13 +68,85 @@ def _norm(name: str) -> str:
     return " ".join(str(name or "").strip().upper().split())
 
 
+# ── Area-name canonicalisation ──────────────────────────────────────────────
+# The DB does not store clean node names. Real ORIGIN_AREA values look like
+# "TOS_TF", "TOS_KRENE_PPP_06-WBN矿业部", "TOS_BLB"; destinations look like
+# "FENI A", "HUAFEI.C01", "POS16-WBN矿业部", "CUU_KM10-WBN矿业部".
+#
+# This matters more than it appears. CORRIDOR_KM is keyed on clean names, so
+# without this every real row missed the lookup and silently took the 25 km
+# median — a constant, useless distance feature. The rainfall join also keys on
+# the first two characters of the source: raw "TOS_TF" yields "TO", which
+# matches no gauge, so every row got 0 mm and the weather signal vanished
+# entirely. Both bugs are invisible without the DB, which is why they survived.
+# Cut from the first non-ASCII (CJK) character onward, plus any "-WBN"/"-BSE"
+# department tag. Matching on the hyphen alone is not enough: "POS16-WBN矿业部"
+# has one but "CUU_KM10-WBN矿业部" needs the CJK rule, and the department name
+# can appear with or without a separator.
+_STRIP_SUFFIX = re.compile(r"[^\x00-\x7F].*$")
+_STRIP_DEPT = re.compile(r"[-–_\s]*(?:WBN|BSE|IWIP)\s*$")
+_TOS_PREFIX = re.compile(r"^TOS[_\s]+")
+_TRAILING_UNIT = re.compile(r"[-_\s]+(?:[A-Z]{2,4})?[-_\s]*\d{1,2}(?:[-_\s]*EXT)?$")
+
+# Explicit aliases beat clever regex. These are the raw spellings the DB uses
+# for corridor nodes; anything not listed keeps its cleaned name.
+_AREA_ALIAS = {
+    "TOFU": "TF", "KRENE": "KR",
+    "FENI 0": "FENI KM0", "FENI": "FENI KM0", "FENI 15": "FENI KM15",
+}
+_POS_SPACING = re.compile(r"^POS[\s_]*(\d+)$")
+
+
+def canonical_area(name: str) -> str:
+    """Reduce a raw DB area string to the corridor node it belongs to.
+
+    "TOS_TF_STM_13-WBN矿业部" -> "TF"      (a loading spur at Tofu)
+    "TOS_KRENE_PPP_06"        -> "KR"      (a loading spur at Krene)
+    "FENI A" / "FENI U2"      -> "FENI KM0" (tips at the FENI plant)
+    "POS16-WBN矿业部"          -> "POS 16"
+    Unknown names are returned normalised so they stay distinguishable as
+    categorical values rather than being collapsed into one bucket.
+    """
+    s = _norm(name)
+    if not s:
+        return ""
+    s = _STRIP_SUFFIX.sub("", s).strip()      # drop CJK tail ("...矿业部")
+    s = _STRIP_DEPT.sub("", s).strip(" -–_")  # drop the "-WBN"/"-BSE" dept tag
+    s = _TOS_PREFIX.sub("", s).strip()        # drop the "TOS_" stockpile prefix
+    s = s.replace("_", " ").strip()
+    s = re.sub(r"\s+", " ", s).strip(" -–")
+    s = _POS_SPACING.sub(r"POS \1", s)        # "POS16" -> "POS 16"
+    s = _AREA_ALIAS.get(s, s)
+    if s in CORRIDOR_KM:                      # exact node, e.g. "POS 12"
+        return s
+    # Strip a trailing crew/pad number ("TF STM 13" -> "TF"), but only when what
+    # remains is a known node, so "POS 12" is never truncated to "POS".
+    stripped = _TRAILING_UNIT.sub("", s).strip()
+    stripped = _AREA_ALIAS.get(stripped, stripped)
+    if stripped != s and (stripped in CORRIDOR_KM or stripped in WBN_HAULERS):
+        s = stripped
+    head = s.split()[0] if s else ""
+    if head == "FENI":
+        # FENI KM15 is a distinct point 15 km up the corridor; every other FENI
+        # tip (A/W/Q/U1/U2/M/S/K/L1...) is a bay inside the plant at KM0.
+        return "FENI KM15" if s in ("FENI KM15", "FENI 15") else "FENI KM0"
+    if head in ("HUAFEI", "HUAFEI.B01", "HUAFEI.C01") or s.startswith("HUAFEI."):
+        return "HUAFEI"
+    if s in CORRIDOR_KM:
+        return s
+    if head in CORRIDOR_KM and head in ("TF", "KR"):
+        return head
+    return s
+
+
 def distance_km(source: str, destination: str) -> float:
     """Haul distance from the corridor chainage lookup.
 
     Both endpoints on the corridor → |Δ chainage|. Otherwise fall back to the
     median observed haul so an unmapped spur never produces a null feature.
     """
-    a, b = CORRIDOR_KM.get(_norm(source)), CORRIDOR_KM.get(_norm(destination))
+    a = CORRIDOR_KM.get(canonical_area(source))
+    b = CORRIDOR_KM.get(canonical_area(destination))
     if a is None or b is None:
         return _MEDIAN_HAUL_KM
     return round(abs(a - b), 2)
@@ -85,6 +158,18 @@ def _fx(name):
 
 
 # ── Extraction path 1: the real database (trip level) ───────────────────────
+# HAULAGE_IWIP_CLEAN is a WEIGHBRIDGE-TICKET table: one row per weighed load,
+# NOT one row per timed haul cycle. It therefore carries no CYCLE_TIME /
+# LOADING_TIME / HAULING_TIME / DUMPING_TIME / RETURN_TIME columns, and the
+# payload column is WMT (wet metric tonnes), not TONNAGE. An earlier version of
+# this query asked for those six columns; SQL Server rejected it and _register's
+# blanket except sent every request silently back to the fixtures — the DB path
+# looked "available" while never actually running. Keep this SELECT aligned with
+# INFORMATION_SCHEMA or that failure mode returns.
+#
+# One ticket == one completed delivery == one trip, so trips are counted by
+# ticket. Cycle time is derived below from FIRST_WB_TIME/SECOND_WB_TIME rather
+# than read from a column that does not exist.
 TRIP_LEVEL_SQL = """
 SELECT  h.[DATE]                AS date,
         h.CONTRACTOR            AS contractor,
@@ -92,17 +177,16 @@ SELECT  h.[DATE]                AS date,
         h.ORIGIN_AREA           AS source,
         h.DESTINATION_AREA      AS destination,
         h.SHIFT                 AS shift,
-        h.TONNAGE               AS payload_t,
-        h.CYCLE_TIME            AS cycle_time_min,
-        h.LOADING_TIME          AS loading_time_min,
-        h.HAULING_TIME          AS hauling_time_min,
-        h.DUMPING_TIME          AS dumping_time_min,
-        h.RETURN_TIME           AS return_time_min
+        h.WMT                   AS payload_t,
+        h.FIRST_WB_TIME         AS first_wb_time,
+        h.SECOND_WB_TIME        AS second_wb_time
 FROM    HAULAGE_IWIP_CLEAN h
 WHERE   h.[DATE] >= DATEADD(month, -20, GETDATE())
-  AND   h.[DATE] <= '2100-01-01'
+  AND   h.[DATE] <= CONVERT(date, GETDATE())
   AND   h.CONTRACTOR IN ({haulers})
-  AND   h.TONNAGE > 0
+  AND   h.WMT > 0
+  AND   h.TRUCK_ID IS NOT NULL AND h.TRUCK_ID <> ''
+  AND   h.ORIGIN_AREA IS NOT NULL AND h.DESTINATION_AREA IS NOT NULL
 """
 
 RAIN_SQL = """
@@ -137,26 +221,55 @@ def extract_from_db():
         wb = pd.read_sql(WB_SQL, conn)
         conn.close()
     except Exception as exc:                               # noqa: BLE001
-        print("[pipeline] DB extraction failed (%s) — using fixtures" % str(exc)[:120])
+        # Loud, and with the real error text. This used to print a truncated
+        # message and silently return fixtures, which is how a query naming six
+        # non-existent columns survived unnoticed: the app reported a "database"
+        # data mode while actually serving sample data.
+        print("\n[pipeline] !! DB EXTRACTION FAILED — FALLING BACK TO FIXTURES !!")
+        print("[pipeline] %s: %s" % (type(exc).__name__, exc))
+        print("[pipeline] Training data will be SYNTHETIC. Fix the query above "
+              "before trusting any metric produced from this run.\n")
         return None
     if trips.empty:
         return None
 
     trips["date"] = pd.to_datetime(trips["date"]).dt.date
-    trips["source"] = trips["source"].map(_norm)
-    trips["destination"] = trips["destination"].map(_norm)
+    # Canonicalise BEFORE grouping: the raw table splits one physical route
+    # across dozens of per-crew spur names ("TOS_TF_STM_13", "TOS_TF_SMA_02"),
+    # which would otherwise shatter each path into tiny groups and make
+    # trips-per-truck meaningless.
+    trips["source"] = trips["source"].map(canonical_area)
+    trips["destination"] = trips["destination"].map(canonical_area)
+    trips = trips[(trips["source"] != "") & (trips["destination"] != "")
+                  & (trips["source"] != trips["destination"])]
 
     # Rainfall: TOFU gauge serves TF routes, KAO RAHAI serves KR routes.
+    # Joined on the canonical origin node, not source[:2] — raw origins begin
+    # "TOS_", so the old prefix produced "TO" and never matched a gauge.
     rain["date"] = pd.to_datetime(rain["date"]).dt.date
     rain["origin_prefix"] = rain["area"].map({"TOFU": "TF", "KAO RAHAI": "KR"})
-    trips["origin_prefix"] = trips["source"].str[:2]
+    rain = rain.dropna(subset=["origin_prefix", "rainfall_mm"])
+    rain = rain.groupby(["date", "origin_prefix"], as_index=False)["rainfall_mm"].max()
+    trips["origin_prefix"] = trips["source"]
     trips = trips.merge(rain[["date", "origin_prefix", "rainfall_mm"]],
                         on=["date", "origin_prefix"], how="left")
+    # Gauges stopped reporting after 2026-04-06. Leave those rows NaN here and
+    # record the true coverage, so a gap is never silently modelled as "dry".
+    rain_cov = float(trips["rainfall_mm"].notna().mean()) if len(trips) else 0.0
     trips["rainfall_mm"] = trips["rainfall_mm"].fillna(0.0)
 
     wb["date"] = pd.to_datetime(wb["date"]).dt.date
     trips = trips.merge(wb, on=["date", "shift"], how="left")
     trips["weighbridges_open"] = trips["weighbridges_open"].fillna(8).astype(int)
+
+    # Cycle time is not stored; derive it from the two weighbridge timestamps
+    # (loaded weigh -> tare weigh). Implausible values are dropped rather than
+    # clamped so they cannot drag the mean: negatives come from clock skew and
+    # multi-hour gaps are shift breaks, not cycles.
+    fwb = pd.to_datetime(trips["first_wb_time"], errors="coerce")
+    swb = pd.to_datetime(trips["second_wb_time"], errors="coerce")
+    cycle = (swb - fwb).dt.total_seconds() / 60.0
+    trips["cycle_time_min"] = cycle.where((cycle > 0) & (cycle < 720))
 
     # Trip rows → the modelled grain: trips achieved per truck per shift.
     grp = (trips.groupby(["date", "shift", "contractor", "source", "destination"])
@@ -174,6 +287,7 @@ def extract_from_db():
     grp["day_of_week"] = pd.to_datetime(grp["date"]).dt.dayofweek
     grp["shift"] = grp["shift"].map({1: "day", 2: "night", "1": "day", "2": "night"}).fillna("day")
     grp["grain"] = "trip"
+    grp.attrs["rain_coverage"] = round(rain_cov, 4)
     return grp
 
 

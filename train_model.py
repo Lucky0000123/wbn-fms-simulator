@@ -42,6 +42,33 @@ MODEL_META = os.path.join(pp.DATA, "model_metadata.json")
 RANDOM_STATE = 42
 TEST_FRACTION = 0.20
 
+# The key a plain lookup table would use. If a trained model cannot beat the
+# average of these groups, it has learned nothing worth serving.
+BASELINE_KEY = ["source", "destination", "contractor", "shift"]
+
+
+class GroupMeanBaseline:
+    """Predict the training mean of (path, contractor, shift).
+
+    Deliberately trivial. Its job is to be the bar every real model must clear:
+    an R² that looks impressive can still be worthless if a lookup table scores
+    the same, which is exactly what happened while this project was training on
+    synthetic fixture data.
+    """
+
+    def __init__(self, key=None):
+        self.key = list(key or BASELINE_KEY)
+
+    def fit(self, df: pd.DataFrame, target: str):
+        self.global_mean_ = float(df[target].mean())
+        self.table_ = df.groupby(self.key)[target].mean()
+        return self
+
+    def predict(self, df: pd.DataFrame) -> np.ndarray:
+        idx = df.set_index(self.key).index
+        return (pd.Series(idx.map(self.table_), index=df.index)
+                  .astype(float).fillna(self.global_mean_).to_numpy())
+
 
 def _metrics(y_true, y_pred) -> dict:
     from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
@@ -98,6 +125,9 @@ def train(extract: bool = True, verbose: bool = True) -> dict:
     from sklearn.linear_model import LinearRegression
 
     results = {}
+    baseline = GroupMeanBaseline().fit(train_df, pp.TARGET)
+    results["group_mean_baseline"] = _metrics(y_test, baseline.predict(test_df))
+
     ols = LinearRegression().fit(X_train, y_train)
     results["ols"] = _metrics(y_test, ols.predict(X_test))
 
@@ -112,7 +142,7 @@ def train(extract: bool = True, verbose: bool = True) -> dict:
     results["random_forest"] = _metrics(y_test, rf.predict(X_test))
 
     log("[5/5] held-out performance")
-    for name in ("ols", "random_forest"):
+    for name in ("group_mean_baseline", "ols", "random_forest"):
         m = results[name]
         log("      %-14s R2=%7.4f  MAE=%7.4f  RMSE=%7.4f"
             % (name, m["r2"], m["mae"], m["rmse"]))
@@ -120,6 +150,17 @@ def train(extract: bool = True, verbose: bool = True) -> dict:
     # 5 ── keep the better model (ties → OLS: cheaper and explainable)
     best = "random_forest" if results["random_forest"]["r2"] > results["ols"]["r2"] + 0.005 else "ols"
     model = rf if best == "random_forest" else ols
+
+    # Report the gain over a lookup table, not just the raw R². A model that
+    # only matches the baseline is memorising group averages, and saying so
+    # here is the difference between an honest metric and a flattering one.
+    base_r2 = results["group_mean_baseline"]["r2"]
+    lift = results[best]["r2"] - base_r2
+    log("      baseline R2=%.4f -> %s R2=%.4f (lift %+.4f)"
+        % (base_r2, best, results[best]["r2"], lift))
+    if lift < 0.01:
+        log("      WARNING: the selected model barely beats a group-mean lookup.")
+        log("               Treat its predictions as a lookup table, not a model.")
 
     import joblib
     os.makedirs(pp.DATA, exist_ok=True)
@@ -139,6 +180,9 @@ def train(extract: bool = True, verbose: bool = True) -> dict:
         "r2": results[best]["r2"],
         "mae": results[best]["mae"],
         "rmse": results[best]["rmse"],
+        "baseline_r2": base_r2,
+        "baseline_lift": round(lift, 4),
+        "beats_baseline": bool(lift >= 0.01),
         "candidates": results,
         "features": names,
         "target": pp.TARGET,
