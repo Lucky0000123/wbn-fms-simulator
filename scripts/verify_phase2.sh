@@ -8,7 +8,7 @@
 cd "$(dirname "$0")/.." || exit 2
 PY=.venv/bin/python
 BASE=http://127.0.0.1:5055
-PASS=0; FAIL=0; TOTAL=24
+PASS=0; FAIL=0; TOTAL=33
 ok(){ printf '  \033[32mPASS\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
 no(){ printf '  \033[31mFAIL\033[0m %s — %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
 chk(){ if [ "$1" = "0" ]; then ok "$2"; else no "$2" "$3"; fi; }
@@ -138,6 +138,50 @@ O=$(git ls-remote --heads origin main 2>/dev/null | cut -f1)
 M=$(git ls-remote --heads mirror main 2>/dev/null | cut -f1)
 [ -n "$LOCAL" ] && [ "$LOCAL" = "$O" ] && [ "$LOCAL" = "$M" ]
 chk $? "G24  origin + mirror match local HEAD" "not pushed to both"
+
+echo "── H · Phase 3 · OLS, validation, leakage ────────────────────────"
+[ -f data/model_ols.pkl ]; chk $? "H25  model_ols.pkl written" "missing"
+[ -f data/validation_results.json ]; chk $? "H26  validation_results.json written" "missing"
+[ -f data/model_comparison.json ]; chk $? "H27  model_comparison.json written" "missing"
+[ -f data/feature_significance.json ]; chk $? "H28  feature_significance.json written" "missing"
+$PY - <<'EOF' >/dev/null 2>&1
+import json, sys
+v = json.load(open('data/validation_results.json'))
+folds = (v.get('ols') or {}).get('folds', [])
+sys.exit(0 if len(folds) >= 4 else 1)
+EOF
+chk $? "H29  rolling-origin CV has >= 4 folds" "too few folds"
+$PY - <<'EOF' >/dev/null 2>&1
+import json, sys
+c = json.load(open('data/model_comparison.json')).get('per_model', {})
+need = {'ols', 'random_forest', 'group_mean_baseline'}
+sys.exit(0 if need <= set(c) else 1)
+EOF
+chk $? "H30  comparison covers OLS + RF + baseline" "missing a model"
+# Hard fail: a VIF above 10 means coefficients are not separately identified,
+# so the p-values and signs cannot be reported as findings.
+$PY - <<'EOF' >/dev/null 2>&1
+import json, sys
+s = json.load(open('data/feature_significance.json'))
+sys.exit(1 if s.get('vif_over_10') else 0)
+EOF
+chk $? "H31  no feature has VIF > 10" "multicollinearity"
+# Hard fail: these columns are exact algebraic restatements of the target
+# (wmt = target*payload*trucks, trips = target*trucks), so their presence would
+# make the model score ~1.0 while being unable to predict anything.
+$PY - <<'EOF' >/dev/null 2>&1
+import json, sys
+bad = {'trips', 'wmt_per_shift', 'cycle_time_min', 'trips_per_dt_per_shift'}
+feats = set(json.load(open('data/feature_significance.json')).get('coefficients', {}))
+sys.exit(1 if (bad & feats) else 0)
+EOF
+chk $? "H32  no target-leakage feature in the OLS" "LEAKAGE"
+$PY - <<'EOF' >/dev/null 2>&1
+import json, sys
+m = json.load(open('data/model_metadata.json'))
+sys.exit(0 if m.get('selected_model') and m.get('ols_training_timestamp') else 1)
+EOF
+chk $? "H33  metadata has selected_model + ols timestamp" "missing fields"
 
 echo
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"

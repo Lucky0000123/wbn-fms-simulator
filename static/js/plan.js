@@ -139,14 +139,26 @@ function _planRenderEstimate(v){
     attr=`<span class="est-model warn">⚠ Using fallback formula — train the model for better accuracy</span>`;
   }else{
     const lift=v.baselineLift, hasLift=Number.isFinite(lift), weak=hasLift&&lift<0.01;
+    // Prefer the CROSS-VALIDATED R² when Phase 3 has produced one. The
+    // single-split figure is measured on one block of held-out shifts and runs
+    // optimistic; the walk-forward mean is what actually survived being tested
+    // on months the model had never seen.
+    const cv=Number.isFinite(v.cvR2), shown=cv?v.cvR2:v.r2;
     attr=`<span class="est-model ${weak?'warn':'ok'}">Predicted by ${escH(v.modelLabel||v.model)} model`
-        +`${Number.isFinite(v.r2)?` · R² = ${fmtExact(v.r2,2)}`:''}</span>`;
+        +`${Number.isFinite(shown)?` · R² = ${fmtExact(shown,2)}`:''}</span>`;
     const bits=[];
     if(v.trainedAt)bits.push(`Trained ${escH(String(v.trainedAt).slice(0,10))}`);
+    if(cv)bits.push(escH(v.cvBasis||'cross-validated'));
     if(hasLift)bits.push(`Lift over baseline: ${lift>=0?'+':''}${fmtExact(lift*100,1)}%`
         +(Number.isFinite(v.baselineR2)?` (lookup R² ${fmtExact(v.baselineR2,2)})`:''));
     if(bits.length)attr+=`<span class="est-model-sub">${bits.join(' · ')}</span>`;
     if(weak)attr+=`<span class="est-model-sub warn">⚠ Model is barely better than historical averages — treat as a lookup.</span>`;
+    // The served model is not always the one that validated best. Saying so is
+    // the difference between reporting a score and implying an endorsement.
+    if(v.isCvWinner===false&&Number.isFinite(v.cvBest)){
+      attr+=`<span class="est-model-sub warn">⚠ A simpler ${escH(PLAN_MODEL_LABELS[v.selectedModel]||v.selectedModel||'model')} `
+           +`validates better (R² ${fmtExact(v.cvBest,2)}) under walk-forward testing.</span>`;
+    }
   }
   box.classList.remove('empty');
   box.innerHTML=`<div class="est-head">Estimated shift output</div>`
@@ -211,7 +223,10 @@ function planPreview(){
           model:res.model_used, modelLabel:PLAN_MODEL_LABELS[res.model_used]||res.model_used,
           r2:res.model_r2, fallback:!!res.fallback,
           trainedAt:res.model_trained_at, baselineR2:res.model_baseline_r2,
-          baselineLift:res.model_baseline_lift});
+          baselineLift:res.model_baseline_lift,
+          cvR2:res.model_cv_r2, cvBasis:res.model_cv_basis,
+          cvBest:res.model_cv_best, isCvWinner:res.model_is_cv_winner,
+          selectedModel:res.model_selected});
       })
       .catch(()=>{                                  // keep the local estimate visible
         if(seq!==_planPredictSeq)return;
@@ -219,7 +234,8 @@ function planPreview(){
       });
   },PLAN_PREDICT_DEBOUNCE_MS);
 }
-const PLAN_MODEL_LABELS={random_forest:'Random Forest',ols:'OLS regression',fallback_ols:'fallback OLS'};
+const PLAN_MODEL_LABELS={random_forest:'Random Forest',ols:'OLS regression',fallback_ols:'fallback OLS',
+  group_mean_baseline:'per-route average'};
 let _planPredictLast=null;
 // A plan row is one contractor on one path, so two contractors can share the same path.
 function planAddPath(){

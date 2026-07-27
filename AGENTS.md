@@ -88,6 +88,68 @@ curl https://wbn-fms-simulator.ngrok-free.app/api/model-info   # 404 == stale
 
 A 404 there means the deployed copy predates the Phase 2 prediction API.
 
+## Phase 3 — what the honest validation found
+
+Run `python train_model.py` (Phase 3 runs by default; `--no-phase3` skips it).
+Artifacts land in `data/`: `model_ols.pkl`, `validation_results.json`,
+`model_comparison.json`, `feature_significance.json`, `residual_diagnostics.json`.
+All are gitignored — they are derived from real production tonnages.
+
+**Under rolling-origin (walk-forward) CV, no fitted model beats the lookup:**
+
+| Model | mean CV R² |
+|---|---|
+| group-mean baseline | **0.459** |
+| OLS (39 features) | 0.238 |
+| RandomForest | 0.238 |
+
+The single chronological split reports OLS 0.560 / RF 0.585, which is
+optimistic: it scores one 325-row block. OLS loses to the baseline on **all
+five folds**. With ~6 months of data and a level shift between months, a
+per-route average generalises better than anything that extrapolates a trend.
+
+Three data facts that constrain any future modelling here:
+
+- **Rain gauges died 2026-04-06.** Everything after reads 0.0 mm — an outage,
+  not a drought. The pipeline imputes a seasonal mean and sets
+  `rainfall_missing`. Folds with `test_rain_all_zero: true` cannot validate any
+  rainfall coefficient; `validation_results.json` records this per fold.
+- **`is_wet_season` is unusable**: corr −0.89 with `rainfall_missing`, because
+  the wet season is almost exactly the window in which the gauges worked.
+- **`distance_km` is redundant**: it is a deterministic function of the route
+  (0 of 45 path-pairs have more than one distance). Dropping it costs 0.0000 R².
+
+Residuals are **heteroscedastic** (corr |resid| vs fitted = 0.48) with no
+single non-linear feature flagged. That is the evidence for Phase 4: the error
+grows with the prediction, so a constant-variance linear model is the wrong
+shape — but more data matters more than a fancier model here.
+
+### Target leakage — never add these as features
+
+Verified against the data, not assumed:
+
+```
+wmt_per_shift == target * payload_t * trucks_dt    (max abs error 0.000000)
+trips / trucks_dt == target                        (max abs error < 1e-8)
+```
+
+Both are exact restatements of the target and would drive R² to ~1.0 while
+being unknown at planning time. `cycle_time_min` is excluded too: it is derived
+from weighbridge timestamps *after* the shift ran. `verify_phase2.sh` H32 fails
+hard if any of them reaches the feature list.
+
+### Track B — features the roadmap wants that the data cannot yet support
+
+Do **not** fabricate these. Each needs a new data source:
+
+| Feature | Blocker |
+|---|---|
+| Road grade | No survey/DEM per path. Needs a road-geometry table or elevation raster. |
+| Operator experience | No operator ID on haul records. Needs FMS operator assignment + hire date or logged hours. |
+| Truck type / capacity | `trucks_dt` is a count, not a spec. Check `WBN_DATABASE` for a truck master with model/payload class and join it. |
+| Cycle-time components | Only aggregate `cycle_time_min` is derivable, and only post-hoc. Loading/hauling/dumping/returning need geofence entry-exit timestamps. |
+| Weather beyond rain | No temperature/humidity/visibility. Could come from an external API keyed on date, low priority while gauges are down. |
+
 The last command must print nothing: a duplicate top-level declaration across
 files breaks the whole page.
 

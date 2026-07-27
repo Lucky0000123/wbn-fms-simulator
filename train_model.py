@@ -200,13 +200,69 @@ def train(extract: bool = True, verbose: bool = True) -> dict:
     return meta
 
 
+def train_with_phase3(extract: bool = True, verbose: bool = True) -> dict:
+    """Phase 2 training, then the Phase 3 OLS + rolling-origin evaluation.
+
+    The single chronological split above is kept because the Phase 2 harness and
+    the retrain endpoint report against it. It is optimistic, though: it scores
+    one 325-row block. The Phase 3 numbers merged in here come from walk-forward
+    CV across every fold and are the ones to quote.
+    """
+    log = print if verbose else (lambda *a, **k: None)
+    meta = train(extract=extract, verbose=verbose)
+    try:
+        df = pd.read_csv(pp.TRAINING_CSV)
+        p3 = pp.run_phase3(df, verbose=verbose)
+    except Exception as exc:                                   # noqa: BLE001
+        log("      Phase 3 evaluation failed: %s" % str(exc)[:200])
+        meta["phase3_error"] = str(exc)[:300]
+        with open(MODEL_META, "w", encoding="utf-8") as fh:
+            json.dump(meta, fh, indent=2)
+        return meta
+
+    meta.update({k: p3[k] for k in
+                 ("ols_training_timestamp", "ols_features", "ols_in_sample",
+                  "selected_model", "selection_rationale", "cv_mean_r2",
+                  "cv_baseline_lift", "feature_meta", "residual_flags")})
+    # Honest headline: quote the cross-validated score of the SELECTED model,
+    # not the single-split score of whichever candidate looked best on one block.
+    sel = p3.get("selected_model")
+    cv = (p3.get("cv_mean_r2") or {}).get(sel)
+    if cv is not None:
+        meta["cv_r2_selected"] = cv
+        meta["headline_r2"] = cv
+        n_folds = 0
+        try:
+            with open(pp.VALIDATION_JSON, encoding="utf-8") as fh:
+                n_folds = len((json.load(fh).get("ols") or {}).get("folds", []))
+        except Exception:                                      # noqa: BLE001
+            pass
+        meta["headline_basis"] = ("rolling-origin CV mean (%d folds)" % n_folds
+                                  if n_folds else "rolling-origin CV mean")
+        # The served model and the CV winner can differ: /api/predict serves
+        # model.pkl (the single-split pick), while the comparison may crown the
+        # group-mean lookup. Record both so the UI can attribute the number to
+        # whatever actually produced it instead of quietly mixing them.
+        meta["cv_r2_served"] = (p3.get("cv_mean_r2") or {}).get(meta.get("model_type"))
+        meta["served_model"] = meta.get("model_type")
+        meta["served_is_cv_winner"] = bool(meta.get("model_type") == sel)
+    with open(MODEL_META, "w", encoding="utf-8") as fh:
+        json.dump(meta, fh, indent=2)
+    return meta
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Train the WBN productivity model")
     ap.add_argument("--no-extract", action="store_true",
                     help="retrain on the existing data/training_data.csv")
+    ap.add_argument("--no-phase3", action="store_true",
+                    help="skip the Phase 3 OLS + rolling-origin evaluation")
     args = ap.parse_args()
     try:
-        train(extract=not args.no_extract)
+        if args.no_phase3:
+            train(extract=not args.no_extract)
+        else:
+            train_with_phase3(extract=not args.no_extract)
     except Exception as exc:                               # noqa: BLE001
         print("training failed: %s" % exc, file=sys.stderr)
         raise

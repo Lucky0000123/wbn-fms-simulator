@@ -10,5 +10,11 @@ data/*.csv
 data/*.pkl
 data/model_metadata.json
 data/training_metadata.json
+# Phase 3 artifacts — derived from real production tonnages, and the mirror is
+# public. Regenerate with `python train_model.py`.
+data/validation_results.json
+data/model_comparison.json
+data/feature_significance.json
+data/residual_diagnostics.json
 !data/model_metadata.sample.json
 !data/training_metadata.sample.json

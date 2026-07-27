@@ -284,6 +284,20 @@ def api_predict():
         "model_baseline_r2": meta.get("baseline_r2"),
         "model_baseline_lift": meta.get("baseline_lift"),
         "model_beats_baseline": meta.get("beats_baseline"),
+        # Phase 3: the cross-validated score OF THE MODEL THAT ANSWERED. model_r2
+        # above comes from ONE chronological split and is optimistic; this is the
+        # mean across every walk-forward fold. It must describe the served model,
+        # not the comparison winner, or the badge would credit this prediction
+        # with another model's accuracy.
+        "model_cv_r2": meta.get("cv_r2_served"),
+        "model_cv_basis": meta.get("headline_basis"),
+        "model_cv_lift": meta.get("cv_baseline_lift"),
+        # When the rolling-origin comparison crowns a different candidate, say
+        # so plainly rather than letting the UI imply the best available model
+        # produced this number.
+        "model_selected": meta.get("selected_model"),
+        "model_cv_best": (meta.get("cv_mean_r2") or {}).get(meta.get("selected_model")),
+        "model_is_cv_winner": meta.get("served_is_cv_winner"),
         "model_instance": (bundle or {}).get("instance"),
         "fallback": bool(fallback),
         "inputs": {"contractor": contractor, "source": source, "destination": destination,
@@ -302,7 +316,56 @@ def api_model_info():
                         "message": "No trained model — predictions use the OLS fallback."})
     meta = dict(bundle["meta"])
     meta.pop("features", None)                         # keep the payload small
-    return jsonify({"ok": True, "trained": True, "loaded_at": bundle["loaded_at"], **meta})
+    meta.pop("ols_features", None)
+    return jsonify({"ok": True, "trained": True, "loaded_at": bundle["loaded_at"],
+                    **meta, **_phase3_payload()})
+
+
+def _read_json(path, default=None):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:                                  # noqa: BLE001
+        return default
+
+
+def _phase3_payload() -> dict:
+    """Phase 3 evidence for the UI: coefficients, significance and honest CV.
+
+    Deliberately trimmed. The full coefficient table is ~40 entries and the
+    residual sample is thousands of points; the endpoint carries the summary a
+    planner or reviewer needs, and the JSON files in data/ hold the rest.
+    """
+    sig = _read_json(pp.SIGNIFICANCE_JSON) or {}
+    val = _read_json(pp.VALIDATION_JSON) or {}
+    cmp_ = _read_json(pp.COMPARISON_JSON) or {}
+    res = _read_json(pp.RESIDUALS_JSON) or {}
+    coefs = sig.get("coefficients") or {}
+    # Rank by |t|: the features the data actually pins down, not the ones with
+    # the biggest raw coefficient (which just reflects unit scale).
+    top = sorted((c for c in coefs.items() if c[0] != "const"),
+                 key=lambda kv: abs(kv[1].get("t") or 0), reverse=True)[:15]
+    out = {
+        "phase3": bool(sig or val or cmp_),
+        "ols_coefficients": {k: v for k, v in top},
+        "ols_significant": sig.get("significant_features", []),
+        "max_vif": sig.get("max_vif"),
+        "vif_over_5": sig.get("vif_over_5", []),
+        "vif_over_10": sig.get("vif_over_10", []),
+        "condition_number": sig.get("condition_number"),
+        "validation": {"protocol": val.get("protocol"),
+                       "n_folds": val.get("n_folds"),
+                       "ols_mean": (val.get("ols") or {}).get("mean"),
+                       "folds": (val.get("ols") or {}).get("folds", [])},
+        "comparison": {"mean_r2": cmp_.get("mean_r2"),
+                       "selected_model": cmp_.get("selected_model"),
+                       "selection_rationale": cmp_.get("selection_rationale"),
+                       "baseline_lift": cmp_.get("baseline_lift")},
+        "residuals": {"heteroscedastic": res.get("heteroscedastic_flag"),
+                      "heteroscedasticity_corr": res.get("heteroscedasticity_corr"),
+                      "nonlinear_features": res.get("nonlinear_features", [])},
+    }
+    return out
 
 
 @bp.route("/api/retrain", methods=["POST", "GET"])
@@ -315,7 +378,11 @@ def api_retrain():
     try:
         import train_model
         print("[retrain] started at %s" % datetime.now(timezone.utc).isoformat(timespec="seconds"))
-        meta = train_model.train(extract=True, verbose=True)
+        # Phase 3 path: retrains AND re-runs the rolling-origin evaluation, so a
+        # retrain can never leave the metadata without its validation evidence.
+        # Calling plain train() here silently dropped selected_model and the CV
+        # scores, which made the served numbers look better than they were.
+        meta = train_model.train_with_phase3(extract=True, verbose=True)
         invalidate_model()
         load_model(force=True)
         elapsed = round(time.perf_counter() - started, 1)
@@ -332,6 +399,10 @@ def api_retrain():
                         "baseline_r2": meta.get("baseline_r2"),
                         "baseline_lift": meta.get("baseline_lift"),
                         "beats_baseline": meta.get("beats_baseline"),
+                        "selected_model": meta.get("selected_model"),
+                        "cv_mean_r2": meta.get("cv_mean_r2"),
+                        "cv_r2_selected": meta.get("cv_r2_selected"),
+                        "selection_rationale": meta.get("selection_rationale"),
                         "data_source": meta.get("data_source")})
     except Exception as exc:                           # noqa: BLE001
         print("[retrain] FAILED: %s" % exc)
