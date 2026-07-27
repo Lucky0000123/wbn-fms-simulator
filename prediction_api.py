@@ -73,6 +73,8 @@ def invalidate_model():
     with _LOCK:
         _MODEL = None
     pp.reset_transformers()
+    global _SELECTED_CACHE
+    _SELECTED_CACHE = None
 
 
 # ── fallback: the existing per-path OLS ─────────────────────────────────────
@@ -145,8 +147,66 @@ def _payload_for(contractor, source, destination):
 
 
 # ── core prediction ─────────────────────────────────────────────────────────
+_SELECTED_CACHE = None
+
+
+def _load_selected():
+    """Load the model the rolling-origin comparison actually selected.
+
+    Phase 3 judges OLS, RandomForest and the group-mean lookup under identical
+    walk-forward folds. Whichever wins is what a planner should be answered
+    with; serving a different one because it happened to look good on a single
+    split is how a model ends up flattering itself in production.
+
+    Returns None when the selection is the RandomForest (already served by the
+    existing cache) or when the artifacts are absent.
+    """
+    global _SELECTED_CACHE
+    if _SELECTED_CACHE is not None:
+        return _SELECTED_CACHE or None
+    bundle = load_model()
+    sel = ((bundle or {}).get("meta") or {}).get("selected_model")
+    if not sel or sel == "random_forest":
+        _SELECTED_CACHE = {}
+        return None
+    try:
+        import joblib
+        if sel == "group_mean_baseline":
+            _SELECTED_CACHE = {"kind": "baseline", "art": joblib.load(pp.BASELINE_PKL)}
+        elif sel == "ols":
+            _SELECTED_CACHE = {"kind": "ols", "art": joblib.load(pp.OLS_PKL)}
+        else:
+            _SELECTED_CACHE = {}
+    except Exception as exc:                          # noqa: BLE001
+        print("[prediction] could not load selected model '%s': %s" % (sel, exc))
+        _SELECTED_CACHE = {}
+    return _SELECTED_CACHE or None
+
+
+def _predict_selected(payload: dict):
+    """Predict with the CV-selected model. (value, model_name) or (None, None)."""
+    sm_ = _load_selected()
+    if not sm_:
+        return None, None
+    try:
+        if sm_["kind"] == "baseline":
+            art = sm_["art"]
+            k = "|".join(str(payload.get(c, "")) for c in art["key"])
+            v = art["table"].get(k)
+            if v is None:                             # unseen cell -> fleet mean
+                v = art["global_mean"]
+            return float(v), "group_mean_baseline"
+    except Exception as exc:                          # noqa: BLE001
+        print("[prediction] selected-model inference failed: %s" % exc)
+    return None, None
+
+
 def _predict_trips_per_dt(payload: dict):
     """Model-based trips/DT/shift. Returns (value, used_model) or (None, False)."""
+    # The CV winner answers first when it is not the RandomForest.
+    val, name = _predict_selected(payload)
+    if val is not None and val > 0:
+        return val, True
     bundle = load_model()
     if not bundle:
         return None, False
@@ -274,7 +334,11 @@ def api_predict():
     return jsonify({
         "ok": True,
         "prediction": prediction,
-        "model_used": "fallback_ols" if fallback else meta.get("model_type", "unknown"),
+        # Name what ACTUALLY produced the number: the CV-selected model when one
+        # is served, else the RandomForest, else the OLS fallback.
+        "model_used": ("fallback_ols" if fallback
+                       else (meta.get("selected_model")
+                             if _load_selected() else meta.get("model_type", "unknown"))),
         "model_trained_at": meta.get("trained_at"),
         "model_r2": meta.get("r2"),
         # Additive fields only — existing consumers keep working. R2 alone
@@ -289,7 +353,8 @@ def api_predict():
         # mean across every walk-forward fold. It must describe the served model,
         # not the comparison winner, or the badge would credit this prediction
         # with another model's accuracy.
-        "model_cv_r2": meta.get("cv_r2_served"),
+        "model_cv_r2": ((meta.get("cv_mean_r2") or {}).get(meta.get("selected_model"))
+                        if _load_selected() else meta.get("cv_r2_served")),
         "model_cv_basis": meta.get("headline_basis"),
         "model_cv_lift": meta.get("cv_baseline_lift"),
         # When the rolling-origin comparison crowns a different candidate, say
@@ -297,7 +362,7 @@ def api_predict():
         # produced this number.
         "model_selected": meta.get("selected_model"),
         "model_cv_best": (meta.get("cv_mean_r2") or {}).get(meta.get("selected_model")),
-        "model_is_cv_winner": meta.get("served_is_cv_winner"),
+        "model_is_cv_winner": bool(_load_selected()) or meta.get("served_is_cv_winner"),
         "model_instance": (bundle or {}).get("instance"),
         "fallback": bool(fallback),
         "inputs": {"contractor": contractor, "source": source, "destination": destination,

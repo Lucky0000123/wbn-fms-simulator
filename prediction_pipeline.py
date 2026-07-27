@@ -43,6 +43,7 @@ SCALER_PKL = os.path.join(DATA, "scaler.pkl")
 
 # Phase 3 artifacts
 OLS_PKL = os.path.join(DATA, "model_ols.pkl")
+BASELINE_PKL = os.path.join(DATA, "model_baseline.pkl")
 VALIDATION_JSON = os.path.join(DATA, "validation_results.json")
 COMPARISON_JSON = os.path.join(DATA, "model_comparison.json")
 SIGNIFICANCE_JSON = os.path.join(DATA, "feature_significance.json")
@@ -1045,6 +1046,15 @@ def run_phase3(df: pd.DataFrame | None = None, n_folds: int = 5, verbose: bool =
     joblib.dump({"params": res.params.to_dict(), "features": list(X.columns),
                  "kept_routes": fmeta.get("kept_routes", []),
                  "rain_outage_from": RAIN_OUTAGE_DATE}, OLS_PKL)
+
+    # Persist the group-mean lookup as a servable model. It wins the
+    # rolling-origin comparison, and a winner that cannot be served is a report,
+    # not a decision — /api/predict has to be able to actually use it.
+    _bkey = ["source", "destination", "contractor", "shift"]
+    _tbl = df.groupby(_bkey)[TARGET].mean()
+    joblib.dump({"key": _bkey,
+                 "table": {"|".join(map(str, k)): float(v) for k, v in _tbl.items()},
+                 "global_mean": float(df[TARGET].mean())}, BASELINE_PKL)
 
     _write_json(SIGNIFICANCE_JSON, {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
