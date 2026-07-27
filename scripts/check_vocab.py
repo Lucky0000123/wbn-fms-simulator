@@ -77,6 +77,14 @@ CASES = [
     ("POS CUU", "CUU KM10"),
     ("李白2#煤堆场-LIPE镍铁事业部", ""),        # coal yard: not a haul-road node
     ("", ""),
+    # Crew pads: the trailing code names the CONTRACTOR, not the place. A
+    # hauler must never surface as an origin ("RIM -> POS 10" is nonsense).
+    ("TOS_KRENE_01_RIM-WBN矿业部", "KR"),
+    ("TOS_TF/TOFU_09_SMA-WBN矿业部", "TF"),
+    ("TOS_CRUSHER_RIM-WBN矿业部", "CRUSHER"),
+    ("TOS_RIM_01-WBN矿业部", ""),
+    ("TOS_RIM_09-WBN矿业部", ""),
+    ("PMA矿山-CMI镍铁事业部", "PMA"),          # a real mine, keeps its name
 ]
 
 

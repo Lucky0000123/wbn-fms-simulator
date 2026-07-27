@@ -111,6 +111,14 @@ _POS_SPACING = re.compile(r"^POS[\s_]*(\d+)$")
 _BSE_FAMILY = re.compile(r"^BSE[-\s.]?\d*$")
 _HUAFEI_FAMILY = re.compile(r"^HUAFEI[-\s.]?[A-Z]?\.?\d*$")
 
+# Stockpile names often end in a crew/contractor code: "TOS_KRENE_01_RIM" is a
+# pad at Krene run by RIM, and "TOS_TF/TOFU_09_SMA" is a Tofu pad run by SMA.
+# Left in place the hauler's name becomes the ORIGIN, so "RIM -> POS 10" reads
+# as if a contractor were a place. Strip a trailing hauler code whenever a real
+# node survives underneath.
+_TRAILING_HAULER = re.compile(
+    r"[-_\s/]+(?:%s)$" % "|".join(WBN_HAULERS))
+
 # A few tips are recorded ONLY in Chinese ("华飞KM8-4-华飞镍钴" is Huafei KM8).
 # Stripping non-ASCII first would leave nothing and silently discard the rows,
 # so these are matched before any cleaning. 华飞 = Huafei, 镍钴 = nickel-cobalt.
@@ -149,6 +157,21 @@ def canonical_area(name: str) -> str:
         return ""
     s = _POS_SPACING.sub(r"POS \1", s)        # "POS16" -> "POS 16"
     s = _AREA_ALIAS.get(s, s)
+    # Drop a trailing hauler code ("KRENE 01 RIM" -> "KRENE 01"), then let the
+    # pad-number rule below reduce it to the node itself.
+    _nohaul = _TRAILING_HAULER.sub("", s).strip(" -–_/")
+    if _nohaul and _nohaul != s:
+        cand = _AREA_ALIAS.get(_nohaul, _nohaul)
+        stripped_cand = _AREA_ALIAS.get(
+            _TRAILING_UNIT.sub("", cand).strip(), _TRAILING_UNIT.sub("", cand).strip())
+        if cand in CORRIDOR_KM or stripped_cand in CORRIDOR_KM:
+            s = cand
+    # "TF/TOFU 09 SMA" style: a slash-joined alias pair. Take the first half,
+    # which is the node, once the hauler suffix is gone.
+    if "/" in s:
+        head_alias = _AREA_ALIAS.get(s.split("/")[0].strip(), s.split("/")[0].strip())
+        if head_alias in CORRIDOR_KM:
+            s = head_alias
     # Un-glue "TOSTOFU"/"TOSBLB" only if a known node is left behind.
     if s not in CORRIDOR_KM and _TOS_GLUED.match(s):
         candidate = _AREA_ALIAS.get(s[3:], s[3:])
@@ -164,8 +187,13 @@ def canonical_area(name: str) -> str:
     # remains is a known node, so "POS 12" is never truncated to "POS".
     stripped = _TRAILING_UNIT.sub("", s).strip()
     stripped = _AREA_ALIAS.get(stripped, stripped)
-    if stripped != s and (stripped in CORRIDOR_KM or stripped in WBN_HAULERS):
+    if stripped != s and stripped in CORRIDOR_KM:
         s = stripped
+    # "TOS_RIM_01" names the crew, not the place. A contractor code is not a
+    # location, so refuse it rather than inventing an origin called "RIM".
+    # Checked with any pad number removed, so "RIM 01" is caught too.
+    if s in WBN_HAULERS or _TRAILING_UNIT.sub("", s).strip() in WBN_HAULERS:
+        return ""
     head = s.split()[0] if s else ""
     if head == "FENI":
         # FENI KM15 is a distinct point 15 km up the corridor; every other FENI
