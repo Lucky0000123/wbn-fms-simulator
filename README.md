@@ -3,6 +3,16 @@
 Standalone FMS Haul-Road Simulator. It runs with sample fixtures when the FMS database is unavailable,
 so the public simulator does not go down with the database.
 
+## Model findings
+
+**[MODEL_FINDINGS.md](MODEL_FINDINGS.md)** — what predicts haul productivity, what
+does not, and how well. Coefficients with p-values and confidence intervals,
+rolling-origin cross-validation, and the features the data cannot yet support.
+
+Short version: under walk-forward validation a per-route average still beats both
+the OLS and the RandomForest, so that lookup is what `/api/predict` serves.
+Regenerate with `python train_model.py && python scripts/publish_findings.py`.
+
 ## Public simulator
 
 **https://wbn-fms-simulator.ngrok-free.app/simulator**
