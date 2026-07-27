@@ -59,6 +59,35 @@ for f in static/js/*.js; do node --check "$f" || echo "FAIL $f"; done
 grep -hoE "^(let|const|var|function) [A-Za-z_$][A-Za-z0-9_$]*" static/js/*.js | sort | uniq -d
 ```
 
+Also run the two gates:
+
+```bash
+.venv/bin/python scripts/check_vocab.py --api   # route-name convergence
+bash scripts/verify_phase2.sh                   # must stay 24/24
+```
+
+`check_vocab.py` exits non-zero if any route name reaching the UI is not the
+name the model trained on. That mismatch is silent and expensive: the Plan tab
+would show a tonnage for a different physical haul than the one selected.
+`canonical_area()` in `prediction_pipeline.py` is the single source of truth —
+`simulator_api.py` and `serve.py` import it. Do not add a second normaliser.
+(The one exception is the SQL `CASE` in the shift-context query, which runs
+server-side for a `GROUP BY`; its labels must be kept in step by hand.)
+
+## The public site is deployed from a DIFFERENT machine
+
+`https://wbn-fms-simulator.ngrok-free.app` is served from Rudolf's Mac at
+`/Users/rdinkelmann/simulator-standalone`, not from this checkout. Pushing to
+`origin` does **not** deploy. Until someone runs the pull + `launchctl
+kickstart` there (see README "Git deployment"), the public site keeps serving
+the older build — verify with:
+
+```bash
+curl https://wbn-fms-simulator.ngrok-free.app/api/model-info   # 404 == stale
+```
+
+A 404 there means the deployed copy predates the Phase 2 prediction API.
+
 The last command must print nothing: a duplicate top-level declaration across
 files breaks the whole page.
 
