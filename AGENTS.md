@@ -292,3 +292,54 @@ in mind. Measured, not assumed:
 artifacts and the extraction checks fail until you train once. That is the
 harness working, not a regression. The Phase 3.5 block skips entirely when
 `data/cycle_model_report.json` is absent.
+
+---
+
+## Pre-Phase 4 — trip grain was tested and did NOT pay
+
+`trip_extraction.py` -> `trip_diagnostic.py`. Read this before proposing to
+model individual trips again.
+
+**The hypothesis was good.** Cycle-time variance at trip grain splits 25.4%
+between (route, shift, date) groups and 74.6% within them. Path-shift averaging
+throws the 74.6% away, so Phase 3's model was structurally capped near R2 0.25
+whatever features it had. Extracting 483,425 trips (117x Phase 3's 4,141) was
+the right way to test it.
+
+**The result was negative and should not be re-litigated without new features.**
+
+| Model | CV R2 | MAE (min) |
+|---|---|---|
+| `ols_raw` | 0.1378 | 66.4 |
+| `route_shift_baseline` | 0.1256 | 66.0 |
+| `hist_gradient_boosting` | 0.1016 | 60.5 |
+| `oracle_group_mean` | **0.2575** | 60.4 |
+
+The oracle knows each test group's true mean, so it is the best any model could
+do with this grouping. The best fitted model reaches **53.5%** of it. Two trucks
+on the same route, same shift, same day differ for reasons no available column
+explains: queueing, operator behaviour, individual breakdowns.
+
+**What would change the answer:** per-trip queue time, loader assignment,
+operator identity, or live congestion. More rows of the same columns will not.
+
+**Benchmark carefully.** Score against the per-fold oracle, not a global
+variance decomposition. Per-fold oracles range 0.172 (May) to 0.428 (July)
+against a global 0.2543, so the global number compares different populations. I
+made that mistake first; the oracle is now a model in the comparison.
+
+**Features dropped, not imputed:** `truck_age` at 14.6% coverage (EQUIPMENTS
+matches 1,537 of 3,236 trip-grain trucks) and `road_grade` at 0%.
+
+**`dem_grade.py` does not ship a grade, on purpose.** Real survey data exists
+(`FMS_GEOFENCES`, 3,490 rows with CENTER_LAT/LNG) but only 3 of 26 model nodes
+match by name and `ELEVATIONS` is 100% NULL, so there is no height to
+difference. GPS does not rescue it: `FMS_PLAYBACK_TRACK_DATA` covers 217 trucks
+against 2,650 in tickets and its `plateNumber` ("SS074") does not join to ticket
+`TRUCK_ID` ("N962"). The module reports its own coverage and enables itself once
+>= 60% of nodes have coordinates. Do not hardcode lat/lons to make it run.
+
+**Schema reality** for anyone writing new SQL here: the ticket table is
+`HAULAGE_IWIP_CLEAN` with `ORIGIN_AREA` / `DESTINATION_AREA` / `TICKET_NO`;
+there is no `SOURCE`, `DESTINATION`, `CORRIDOR_KM`, `ID` or `DRIVER_ID` column,
+no `DRIVERS` table in `WBN_DATABASE`, and `EQUIPMENTS` keys on `ID_EQ`.
