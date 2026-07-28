@@ -19,5 +19,8 @@ data/residual_diagnostics.json
 # Phase 3.5 cycle-time artifacts — built from real haul telemetry.
 data/cycle_metadata.json
 data/cycle_model_report.json
+data/trip_metadata.json
+data/trip_diagnostic.json
+data/elevation_cache.json
 !data/model_metadata.sample.json
 !data/training_metadata.sample.json
