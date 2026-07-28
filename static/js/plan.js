@@ -349,3 +349,62 @@ async function mfLoad(){
     body.innerHTML='<span class="er">Could not load match factor: '+escH(e.message)+'</span>';
   }finally{ if(btn)btn.disabled=false; }
 }
+
+
+// -- Phase 5: dispatch replay + rules engine -------------------------------
+// Two questions in one panel: what would MF-balanced dispatch have produced,
+// and what is alerting right now. The dispatch numbers are shown SPLIT between
+// shifts that can be rebalanced and shifts where the whole fleet is short,
+// because averaging them produces a figure that describes neither.
+async function p5Load(){
+  const card=q('p5-card'), dis=q('p5-dispatch'), al=q('p5-alerts'),
+        note=q('p5-note'), btn=q('p5-btn');
+  if(!card||!dis)return;
+  card.style.display='block';
+  dis.innerHTML='<span class="muted">Loading...</span>';
+  if(btn)btn.disabled=true;
+  try{
+    const [rp,rl]=await Promise.all([
+      fetch('/api/dispatch/replay',{cache:'no-store'}).then(r=>r.json()),
+      fetch('/api/rules',{cache:'no-store'}).then(r=>r.json())]);
+    const s=(rp&&rp.summary)||{}, rb=s.rebalanceable||{}, fl=s.fleet_limited||{};
+    const pct=v=>Number.isFinite(v)?fmtExact(v,1)+'%':'-';
+    dis.innerHTML='<div class="est-line"><span>Shifts analysed</span><b>'
+      +fmtExact(s.shifts_total||0)+'</b></div>'
+      +'<table style="width:100%;font-size:11px;margin-top:4px">'
+      +'<thead><tr><th style="text-align:left">Shift type</th><th>Count</th>'
+      +'<th>Balanced before</th><th>Balanced after</th></tr></thead><tbody>'
+      +'<tr><td>Rebalanceable</td><td>'+fmtExact(s.shifts_rebalanceable||0)+'</td>'
+      +'<td>'+pct(rb.balanced_before_pct)+'</td>'
+      +'<td><b class="eg">'+pct(rb.balanced_after_pct)+'</b></td></tr>'
+      +'<tr><td>Fleet-limited</td><td>'+fmtExact(s.shifts_fleet_limited||0)+'</td>'
+      +'<td colspan="2" class="muted">under-trucked '+pct(fl.under_before_pct)
+      +' &rarr; '+pct(fl.under_after_pct)+' (dispatch cannot help)</td></tr>'
+      +'</tbody></table>';
+    const sev=(rl&&rl.by_severity)||{};
+    const chip=(k,n)=>n?('<span class="'+(k==='high'?'er':(k==='medium'?'ea':'muted'))
+      +'">'+escH(k)+' '+fmtExact(n)+'</span>'):'';
+    al.innerHTML='<div class="est-line"><span>Active alerts</span><b>'
+      +fmtExact((rl&&rl.alert_count)||0)+'</b></div>'
+      +'<span class="est-model-sub">'
+      +['critical','high','medium','low'].map(k=>chip(k,sev[k])).filter(Boolean).join(' &middot; ')
+      +'</span>'
+      +'<table style="width:100%;font-size:11px;margin-top:4px">'
+      +'<thead><tr><th style="text-align:left">Rule</th><th>Condition</th>'
+      +'<th>Status</th><th>Hits</th></tr></thead><tbody>'
+      +((rl&&rl.rules)||[]).map(r=>'<tr><td>'+escH(r.name)+'</td>'
+        +'<td>'+escH(r.metric)+' '+escH(r.operator)+' '+escH(String(r.threshold))+'</td>'
+        +'<td>'+(!r.enabled?'<span class="muted">disabled</span>'
+          :(r.firing?'<span class="er">firing</span>':'<span class="eg">clear</span>'))+'</td>'
+        +'<td>'+fmtExact(r.fire_count||0)+'</td></tr>').join('')
+      +'</tbody></table>';
+    const bits=[];
+    if(rp&&rp.is_fixture)bits.push('&#9888; dispatch: sample data, not measured');
+    if(rl&&rl.is_fixture)bits.push('&#9888; rules: sample data, not measured');
+    if(s.verdict)bits.push(escH(s.verdict));
+    bits.push('shift-level simulation, not real-time dispatch');
+    if(note)note.innerHTML=bits.join('<br>');
+  }catch(e){
+    dis.innerHTML='<span class="er">Could not load: '+escH(e.message)+'</span>';
+  }finally{ if(btn)btn.disabled=false; }
+}

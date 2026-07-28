@@ -121,9 +121,15 @@ def balance_shift(points: pd.DataFrame, max_moves_fraction=MAX_MOVES_FRACTION):
         recv = p[valid]["mf_now"].idxmin()
         if donor == recv:
             break
-        # Only move while the donor is above the target band and the receiver
-        # is below it. Moving a truck between two balanced points is churn.
-        if not (p.at[donor, "mf_now"] > TARGET_HI and p.at[recv, "mf_now"] < TARGET_LO):
+        # Only take from a point that is genuinely OVER-TRUCKED, not merely
+        # above the middle of the band. Using TARGET_HI (1.00) here pulled
+        # trucks off points sitting at MF 1.04 -- inside the acceptable band
+        # and labelled "balanced" -- which is churn dressed up as optimisation
+        # and it fired on 36 shifts that had no over-trucked point at all.
+        # OVER_TRUCKED (1.15) is the threshold the rest of the system uses to
+        # call a point over-trucked, so dispatch must use the same one.
+        if not (p.at[donor, "mf_now"] > OVER_TRUCKED
+                and p.at[recv, "mf_now"] < TARGET_LO):
             break
         # A move must not overshoot: it should not push the donor below the
         # band or the receiver above it, or the "fix" just relocates the problem.

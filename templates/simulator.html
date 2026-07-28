@@ -204,6 +204,18 @@
             </div>
             <div style="margin-top:6px"><button class="plan-add" type="button"
                  onclick="mfLoad()" id="mf-btn">Check loading balance</button></div>
+            <!-- Phase 5: dispatch replay + rules. One card, two questions:
+                 what would balanced dispatch have done, and what is currently
+                 alerting. Loaded on demand so the Plan tab stays fast. -->
+            <div id="p5-card" class="plan-estimate" style="margin-top:10px;display:none">
+              <div class="est-head">Fleet balance &amp; alerts (Phase 5)</div>
+              <div id="p5-dispatch"></div>
+              <div id="p5-alerts" style="margin-top:8px"></div>
+              <div id="p5-note" class="est-model-sub"></div>
+            </div>
+            <div style="margin-top:6px">
+              <button class="plan-add" type="button" onclick="p5Load()" id="p5-btn">Dispatch &amp; alerts</button>
+            </div>
             <div style="margin-top:10px"><button class="plan-add" onclick="planAddPath()">+ Add this path to plan</button></div>
           </div>
           <div class="card" style="flex:1;min-width:250px">

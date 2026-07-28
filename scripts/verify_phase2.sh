@@ -338,6 +338,61 @@ EOF
 chk $? "J47  trip metadata matches the extract" "row count or ceiling drifted"
 fi
 
+# ── Phase 5: dynamic dispatch + rules engine ───────────────────────────────
+# Endpoints are dual-mode, so they are checked unconditionally.
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/dispatch/replay")" = "200" ]
+chk $? "J48  /api/dispatch/replay returns 200" "endpoint down"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/dispatch/forward" \
+     -H 'Content-Type: application/json' -d '{"trucks":10,"loading_points":["TOS8"]}')" = "200" ]
+chk $? "J49  /api/dispatch/forward returns 200" "endpoint down"
+$PY - <<'EOF' >/dev/null 2>&1
+import json, sys, urllib.request
+d = json.loads(urllib.request.urlopen(
+    "http://127.0.0.1:5055/api/dispatch/replay", timeout=25).read())
+s = d.get("summary") or {}
+# Rebalanceable and fleet-limited must stay SEPARATE. Collapsing them into one
+# average would claim a dispatch win on shifts where the fleet is simply short.
+sys.exit(0 if (d.get("ok") and isinstance(s.get("rebalanceable"), dict)
+               and isinstance(s.get("fleet_limited"), dict)
+               and d.get("caveat")) else 1)
+EOF
+chk $? "J50  replay reports rebalanceable and fleet-limited separately" "headline collapsed"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/rules")" = "200" ]
+chk $? "J51  /api/rules returns 200" "endpoint down"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/rules/alerts")" = "200" ]
+chk $? "J52  /api/rules/alerts returns 200" "endpoint down"
+# A malformed rule must be REJECTED. A rule that is accepted but silently never
+# fires is worse than one refused, because the operator believes they covered it.
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/rules" \
+     -H 'Content-Type: application/json' \
+     -d '{"id":"BAD","name":"x","when":{"metric":"nope","operator":"<","threshold":1},"then":{"severity":"high","message":"m"}}')" = "400" ]
+chk $? "J53  invalid rule rejected with 400" "bad rule accepted"
+$PY tests/test_phase5.py >/dev/null 2>&1
+chk $? "J54  phase 5 unit tests pass" "see: python tests/test_phase5.py"
+if [ -f data/dispatch_replay_results.csv ]; then
+$PY - <<'EOF' >/dev/null 2>&1
+import pandas as pd, sys
+d = pd.read_csv('data/dispatch_replay_results.csv')
+reb = d[d.rebalanceable]
+# Dispatch must never make a rebalanceable shift worse, and must never touch a
+# fleet-limited one (there is nothing to take from).
+ok = ((reb.after_balanced >= reb.before_balanced).all()
+      and (d[~d.rebalanceable].moves == 0).all()
+      and len(reb) > 0)
+sys.exit(0 if ok else 1)
+EOF
+chk $? "J55  dispatch never worsens a shift" "replay made a shift worse"
+fi
+$PY - <<'EOF' >/dev/null 2>&1
+import json, sys
+sys.path.insert(0, '.')
+import rules_engine as re_
+cfg = re_.load_rules()
+bad = [r.get('id') for r in cfg.get('rules', []) if re_.validate_rule(r)]
+sys.exit(0 if (len(cfg.get('rules', [])) >= 3 and not bad) else 1)
+EOF
+chk $? "J56  shipped rules.json validates" "a shipped rule is malformed"
+
 echo
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"
 [ "$FAIL" = "0" ]

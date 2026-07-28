@@ -507,6 +507,98 @@ def api_match_factor():
     })
 
 
+@bp.route("/api/rules", methods=["GET", "POST"])
+def api_rules():
+    """List rules with live firing status, or add/update one.
+
+    Rules are policy, not code: thresholds like "when is a shovel starved
+    enough to act on" belong to the people running the mine, so they live in
+    rules.json and this endpoint edits them without a deploy.
+    """
+    started = time.perf_counter()
+    try:
+        import rules_engine as re_
+    except Exception as exc:                               # noqa: BLE001
+        return jsonify({"ok": False, "error": str(exc)[:120]}), 500
+
+    if request.method == "POST":
+        rule = request.get_json(silent=True) or {}
+        ok, errs = re_.upsert_rule(rule)
+        # A rule that silently never fires is worse than one rejected at the
+        # door, because the operator believes they are covered.
+        if not ok:
+            return jsonify({"ok": False, "error": "invalid rule",
+                            "validation_errors": errs}), 400
+        return jsonify({"ok": True, "saved": rule.get("id"),
+                        "rules": re_.rule_status().get("rules")})
+
+    date = str(request.args.get("date") or "").strip() or None
+    try:
+        st = re_.rule_status(date=date)
+        source = "database"
+    except Exception:                                      # noqa: BLE001
+        st, source = {"ok": True, "rules": [], "enabled": 0, "disabled": 0,
+                      "firing": 0, "alert_count": 0, "by_severity": {}}, "fixtures"
+    return jsonify({**st, "source": source,
+                    "is_fixture": source == "fixtures",
+                    "elapsed_ms": round((time.perf_counter() - started) * 1000, 2)})
+
+
+@bp.route("/api/rules/alerts", methods=["GET"])
+def api_rule_alerts():
+    """Alerts that fired, optionally for one date."""
+    started = time.perf_counter()
+    date = str(request.args.get("date") or "").strip() or None
+    limit = min(int(request.args.get("limit") or 200), 1000)
+    try:
+        import rules_engine as re_
+        ev = re_.evaluate(date=date)
+        source = "database"
+    except Exception:                                      # noqa: BLE001
+        ev, source = {"ok": True, "alerts": [], "alert_count": 0,
+                      "by_severity": {}}, "fixtures"
+    if source == "fixtures" or not ev.get("ok"):
+        ev = {"ok": True, "alert_count": 1, "by_severity": {"high": 1},
+              "alerts": [{"rule_id": "R001", "rule_name": "Shovel Starving",
+                          "severity": "high", "date": date or "2026-07-01",
+                          "shift": "day", "loading_point": "TOS8",
+                          "metric": "match_factor", "value": 0.51,
+                          "threshold": 0.75, "consecutive_periods": 2,
+                          "message": "Sample alert - not measured"}]}
+        source = "fixtures"
+    alerts = ev.get("alerts", [])[:limit]
+    return jsonify({"ok": True, "source": source,
+                    "is_fixture": source == "fixtures",
+                    "date": date, "alert_count": ev.get("alert_count"),
+                    "by_severity": ev.get("by_severity"),
+                    "returned": len(alerts), "alerts": alerts,
+                    "rules_skipped": ev.get("rules_skipped", []),
+                    "elapsed_ms": round((time.perf_counter() - started) * 1000, 2)})
+
+
+@bp.route("/api/rules/<rule_id>", methods=["PUT", "DELETE"])
+def api_rule_item(rule_id):
+    """Update a rule, or disable it. DELETE disables rather than removing:
+    an audit trail of what was once alerted on is worth more than a tidy file."""
+    try:
+        import rules_engine as re_
+    except Exception as exc:                               # noqa: BLE001
+        return jsonify({"ok": False, "error": str(exc)[:120]}), 500
+
+    if request.method == "DELETE":
+        found = re_.disable_rule(rule_id)
+        return (jsonify({"ok": True, "disabled": rule_id, "note": "disabled, not deleted"})
+                if found else (jsonify({"ok": False, "error": "no such rule"}), 404))
+
+    rule = request.get_json(silent=True) or {}
+    rule["id"] = rule_id
+    ok, errs = re_.upsert_rule(rule)
+    if not ok:
+        return jsonify({"ok": False, "error": "invalid rule",
+                        "validation_errors": errs}), 400
+    return jsonify({"ok": True, "updated": rule_id})
+
+
 @bp.route("/api/dispatch/replay", methods=["GET"])
 def api_dispatch_replay():
     """Mode A: what MF-balanced dispatch would have produced historically.
