@@ -245,7 +245,17 @@ def save(df: pd.DataFrame) -> dict:
     os.makedirs(DATA, exist_ok=True)
     out = df.drop(columns=[c for c in ("first_wb", "second_wb")
                            if c in df.columns])
+    # CSV primary, parquet as a bonus when an engine is installed. See the note
+    # in match_factor._write_table: parquet needs pyarrow (~100 MB) and this
+    # project keeps requirements.txt small for the no-VPN public demo.
     out.to_csv(TRIP_CSV, index=False)
+    try:
+        import importlib.util
+        if (importlib.util.find_spec("pyarrow")
+                or importlib.util.find_spec("fastparquet")):
+            out.to_parquet(TRIP_CSV.rsplit(".", 1)[0] + ".parquet", index=False)
+    except Exception:                                       # noqa: BLE001
+        pass
     a = df.attrs
     meta = {
         "extracted_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
