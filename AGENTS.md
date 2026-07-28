@@ -343,3 +343,53 @@ against 2,650 in tickets and its `plateNumber` ("SS074") does not join to ticket
 `HAULAGE_IWIP_CLEAN` with `ORIGIN_AREA` / `DESTINATION_AREA` / `TICKET_NO`;
 there is no `SOURCE`, `DESTINATION`, `CORRIDOR_KM`, `ID` or `DRIVER_ID` column,
 no `DRIVERS` table in `WBN_DATABASE`, and `EQUIPMENTS` keys on `ID_EQ`.
+
+---
+
+## Phase 4 — what FMS_DB does and does not contain
+
+Full scan in `reports/fms_db_schema.md`. Read it before proposing to mine that
+database for model features.
+
+**GPS queue time is not obtainable. Do not retry this.** The telematics feed
+(`FMS_PLAYBACK_TRACK_DATA`) carries 217 units; all 217 resolve in
+`FMS_EQUIPMENTS`, so it is not an ID-mapping problem. Of the 940 haul trucks in
+that registry, **zero** are in the feed: instrumented vehicles belong to
+engineering (工程) and logistics (后勤) workshops, haul trucks to `RIM运输部`.
+Plate prefixes agree (GPS SS/Y/P/F/W, tickets N/R/L/K/B/S/PP/SM). The trucks are
+simply not instrumented. Trip-weighted join 0.0%.
+
+**Operator identity is not obtainable.** `RES_EMPLOYEES` is 8,958 rows of
+`FULL_NAME, GENDER, ORIGIN, ORIGIN_CLASS, EMPLOYEE_ID, CONTRACTOR, DIVISION,
+JOB_TITLE, GRADE`. No equipment assignment, no roster, **no hire date**.
+
+Together these confirm the Phase 3 ceiling rather than leaving it unbeaten: the
+variables that would break it are absent from both databases.
+
+**There is no shovel identity anywhere**, and no dispatch or loader event log.
+This constrains every future Tier 3 module, not just Match Factor.
+
+### Match Factor (`match_factor.py`, `/api/match_factor`)
+
+Shipped and validated. **69.8% of loading-point shifts are under-trucked**,
+18.4% balanced, 11.8% over-trucked — the shovel waits for trucks far more often
+than trucks queue.
+
+Three things to know before changing it:
+
+1. **It is keyed to a loading point, not a shovel.** The server count is the
+   observed peak of simultaneous load intervals. Gate `J43` fails if the
+   response ever drops that caveat.
+2. **Validate against queue share, not cycle time.** MF correlates −0.325 with
+   cycle time and +0.767 with queue-share, because cycle time is dominated by
+   haul distance: a short-haul point can be heavily queued and still fast. Gate
+   `J45` enforces the queue correlation stays above 0.30.
+3. **Two earlier formulations failed and were discarded.** Deriving servers from
+   throughput is circular (trips ≈ 1/cycle, so the formula contains its target).
+   Joining concurrency to the trip dataset reaches only 28.3%, because
+   `WAITING_TIME` names loading points (TOS8, BLB 10) while trips name areas
+   (BLB) — a real hierarchy, not dirty data. Everything is computed inside
+   `WAITING_TIME` at its native grain to avoid both.
+
+The briefed bunching threshold (CV > 0.5) fires on 99.0% of point-shifts, so it
+was re-derived from the observed distribution (CV > 3.05, flagging 25%).

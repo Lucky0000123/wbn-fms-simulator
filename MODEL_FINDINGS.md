@@ -6,7 +6,7 @@ Derived statistics only — no tonnages or route-level production volumes.
 
 | | |
 |---|---|
-| Generated | 2026-07-28T04:29:16+00:00 |
+| Generated | 2026-07-28T08:14:24+00:00 |
 | Training rows | 4,141 |
 | Date range | 2025-12-27 to 2026-07-08 |
 | Data source | database (trip level) |
@@ -138,7 +138,7 @@ Phase 3's target, trips per truck per shift, is a ratio whose denominator is a p
 | `ols` | 0.6464 | 29.7414 |
 | `ols_log` | 0.6565 | 29.5018 |
 | `ols_physics_only` | 0.1634 | 67.4696 |
-| `random_forest` | 0.4036 | 49.6332 |
+| `random_forest` | 0.4035 | 49.6362 |
 | `route_mean_baseline` | 0.648 | 37.8408 |
 
 The pre-registered bar was **R² lift ≥ 0.05** over the per-route lookup. The model returns **0.0085**, so `beats_baseline` is **False**.
@@ -185,5 +185,37 @@ Some routes still disagree by more than 25%. That is surfaced in the API (`vs_we
 Route identity carries most of the signal: dropping the 524 route dummies and keeping only physical and operational features scores 0.1634, which is the honest estimate of how much transfers to a road never seen before.
 
 ---
+
+---
+
+## Phase 4 — cross-database recon and Match Factor
+
+### The missing variables are not in the other database either
+
+Phase 3 showed 74.6% of cycle-time variance lives *within* (route, shift, date) groups, driven by queueing, operator behaviour and breakdowns — none of which are columns in the ticket database. `FMS_DB` was checked for them. Both leads are dead, and the evidence is conclusive enough to stop rather than keep trying.
+
+**GPS queue time: the haul fleet is not instrumented.** The telematics feed carries 217 distinct units. All 217 resolve cleanly in the fleet registry, so this is not an ID-format problem. Of the 940 haul trucks in that registry, **zero** appear in the GPS feed — the instrumented vehicles belong to engineering and logistics workshops, while the trucks producing weighbridge tickets belong to the transport division. Plate prefixes confirm the split independently. Trip-weighted join rate: 0.0% against a 60% gate.
+
+**Operator identity: the link table does not exist.** The employee master is 8,958 rows of name, division, job title and grade. No equipment assignment, no shift roster, and no hire date, so operator experience is not derivable either.
+
+So the Phase 3 ceiling stands as **confirmed**, not merely unbeaten: the features that would break it are absent from both databases, not just the one first searched.
+
+### Match Factor: the mine is under-trucked, not over-trucked
+
+`MF = (trucks per server × service time) / cycle time` (Burt & Caccetta 2007), computed over 6,852 point-shifts across 165 loading points.
+
+| Status | Share |
+|---|---:|
+| under-trucked | **69.8%** |
+| balanced | **18.4%** |
+| over-trucked | **11.8%** |
+
+Nearly seven in ten loading-point shifts have the shovel waiting for trucks. The intuition that a busy mine is over-trucked is wrong here, and that is an actionable difference: adding trucks to an under-trucked face raises output, whereas adding them to a queue only burns fuel.
+
+**It is keyed to a loading point, not a shovel.** No excavator, shovel or loader identity exists in either database, and no dispatch log. The server count is the observed peak of simultaneous loads at that point. The API returns this caveat in every response rather than letting the name imply a machine.
+
+**Validation.** MF correlates **0.767** with queue wait as a share of cycle, and mean wait rises monotonically across the bands (20.9 → 32.8 → 38.2 min). It correlates *negatively* with total cycle time, which looks wrong and is not: cycle time is dominated by haul distance, so a short-haul point can be heavily queued and still turn trucks around quickly. Two earlier formulations that failed this check were discarded rather than published.
+
+**Bunching.** The specified threshold (CV > 0.5) fires on 99.0% of point-shifts here, so it is a constant rather than a detector. The shipped threshold is the 75th percentile of the observed distribution (CV > 3.05), flagging 25.0%.
 
 Reproduce: `python train_model.py` (needs VPN for the DB; falls back to fixtures otherwise), then `python scripts/publish_findings.py`.

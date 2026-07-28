@@ -191,6 +191,85 @@ def _phase35_section() -> str:
     return "\n".join(L)
 
 
+
+def _phase4_section() -> str:
+    """Phase 4: the cross-database negatives and the Match Factor result."""
+    mfm = _load("match_factor_meta.json")
+    L, A = [], lambda x: L.append(x)
+    A("---")
+    A("")
+    A("## Phase 4 \u2014 cross-database recon and Match Factor")
+    A("")
+    A("### The missing variables are not in the other database either")
+    A("")
+    A("Phase 3 showed 74.6% of cycle-time variance lives *within* "
+      "(route, shift, date) groups, driven by queueing, operator behaviour and "
+      "breakdowns \u2014 none of which are columns in the ticket database. "
+      "`FMS_DB` was checked for them. Both leads are dead, and the evidence is "
+      "conclusive enough to stop rather than keep trying.")
+    A("")
+    A("**GPS queue time: the haul fleet is not instrumented.** The telematics "
+      "feed carries 217 distinct units. All 217 resolve cleanly in the fleet "
+      "registry, so this is not an ID-format problem. Of the 940 haul trucks in "
+      "that registry, **zero** appear in the GPS feed \u2014 the instrumented "
+      "vehicles belong to engineering and logistics workshops, while the trucks "
+      "producing weighbridge tickets belong to the transport division. Plate "
+      "prefixes confirm the split independently. Trip-weighted join rate: 0.0% "
+      "against a 60% gate.")
+    A("")
+    A("**Operator identity: the link table does not exist.** The employee "
+      "master is 8,958 rows of name, division, job title and grade. No "
+      "equipment assignment, no shift roster, and no hire date, so operator "
+      "experience is not derivable either.")
+    A("")
+    A("So the Phase 3 ceiling stands as **confirmed**, not merely unbeaten: the "
+      "features that would break it are absent from both databases, not just "
+      "the one first searched.")
+    A("")
+    if not mfm:
+        return "\n".join(L)
+    v = mfm.get("validation") or {}
+    pct = mfm.get("status_pct") or {}
+    A("### Match Factor: the mine is under-trucked, not over-trucked")
+    A("")
+    A("`MF = (trucks per server \u00d7 service time) / cycle time` "
+      "(Burt & Caccetta 2007), computed over %s point-shifts across %s loading "
+      "points." % (format(mfm.get("rows", 0), ","), mfm.get("loading_points")))
+    A("")
+    A("| Status | Share |")
+    A("|---|---:|")
+    for k in ("under-trucked", "balanced", "over-trucked"):
+        if k in pct:
+            A("| %s | **%.1f%%** |" % (k, pct[k]))
+    A("")
+    A("Nearly seven in ten loading-point shifts have the shovel waiting for "
+      "trucks. The intuition that a busy mine is over-trucked is wrong here, "
+      "and that is an actionable difference: adding trucks to an under-trucked "
+      "face raises output, whereas adding them to a queue only burns fuel.")
+    A("")
+    A("**It is keyed to a loading point, not a shovel.** No excavator, shovel or "
+      "loader identity exists in either database, and no dispatch log. The "
+      "server count is the observed peak of simultaneous loads at that point. "
+      "The API returns this caveat in every response rather than letting the "
+      "name imply a machine.")
+    A("")
+    A("**Validation.** MF correlates **%.3f** with queue wait as a share of "
+      "cycle, and mean wait rises monotonically across the bands "
+      "(20.9 \u2192 32.8 \u2192 38.2 min). It correlates *negatively* with total "
+      "cycle time, which looks wrong and is not: cycle time is dominated by haul "
+      "distance, so a short-haul point can be heavily queued and still turn "
+      "trucks around quickly. Two earlier formulations that failed this check "
+      "were discarded rather than published."
+      % (v.get("corr_mf_queue_share") or 0))
+    A("")
+    A("**Bunching.** The specified threshold (CV > 0.5) fires on 99.0%% of "
+      "point-shifts here, so it is a constant rather than a detector. The "
+      "shipped threshold is the 75th percentile of the observed distribution "
+      "(CV > %s), flagging %.1f%%."
+      % (mfm.get("bunching_threshold_cv"), mfm.get("bunching_flagged_pct") or 0))
+    return "\n".join(L)
+
+
 def build() -> str:
     sig = _load("feature_significance.json") or {}
     cmp_ = _load("model_comparison.json") or {}
@@ -377,6 +456,8 @@ def build() -> str:
     A(_phase35_section())
     A("")
     A("---")
+    A("")
+    A(_phase4_section())
     A("")
     A("Reproduce: `python train_model.py` (needs VPN for the DB; falls back to fixtures "
       "otherwise), then `python scripts/publish_findings.py`.")
