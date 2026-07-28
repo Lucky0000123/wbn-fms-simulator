@@ -8,10 +8,14 @@
 cd "$(dirname "$0")/.." || exit 2
 PY=.venv/bin/python
 BASE=http://127.0.0.1:5055
-PASS=0; FAIL=0; TOTAL=33
+PASS=0; FAIL=0
+# TOTAL is derived, not hardcoded: a literal drifts the moment a check is added
+# and turns the score into decoration (it read 33 while 39 checks ran). The
+# Phase 3.5 block is conditional, so count what actually executed.
+TOTAL=0
 ok(){ printf '  \033[32mPASS\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
 no(){ printf '  \033[31mFAIL\033[0m %s — %s\n' "$1" "$2"; FAIL=$((FAIL+1)); }
-chk(){ if [ "$1" = "0" ]; then ok "$2"; else no "$2" "$3"; fi; }
+chk(){ TOTAL=$((TOTAL+1)); if [ "$1" = "0" ]; then ok "$2"; else no "$2" "$3"; fi; }
 
 echo "── A · data extraction ───────────────────────────────────────────"
 [ -f data/training_data.csv ]; chk $? "A1  training_data.csv exists" "missing"
@@ -193,6 +197,65 @@ m = json.load(open('data/model_metadata.json'))
 sys.exit(0 if m.get('selected_model') and m.get('ols_training_timestamp') else 1)
 EOF
 chk $? "H33  metadata has selected_model + ols timestamp" "missing fields"
+
+# ── Phase 3.5: cycle-time model ────────────────────────────────────────────
+# These skip cleanly when no cycle model has been trained (no VPN, fresh clone)
+# so the public demo still scores full marks without the database.
+if [ -f data/cycle_model_report.json ]; then
+$PY - <<'EOF' >/dev/null 2>&1
+import json, sys
+r = json.load(open('data/cycle_model_report.json'))
+sys.exit(0 if r.get('rows', 0) >= 2000 and r.get('months_ok', True) else 1)
+EOF
+chk $? "I34  cycle dataset >= 2,000 rows" "too little data to model"
+# Hard fail: load+haul+dump IS the target. Any of them as a feature would score
+# ~1.0 while being unknowable when planning a future shift.
+$PY - <<'EOF' >/dev/null 2>&1
+import json, sys
+bad = {'load_min', 'haul_min', 'dump_min', 'return_min', 'cycle_time_min',
+       'avg_cycle_time_min', 'wmt_per_shift', 'trips', 'trips_per_dt_per_shift'}
+feats = set(json.load(open('data/cycle_model_report.json')).get('coefficients', {}))
+sys.exit(1 if (bad & feats) else 0)
+EOF
+chk $? "I35  no cycle-component leakage in the cycle OLS" "LEAKAGE"
+$PY - <<'EOF' >/dev/null 2>&1
+import json, sys
+v = (json.load(open('data/cycle_model_report.json')).get('in_sample') or {}).get('max_vif_interpretable')
+sys.exit(0 if (v is not None and v < 10) else 1)
+EOF
+chk $? "I36  cycle model interpretable VIF < 10" "multicollinearity"
+$PY - <<'EOF' >/dev/null 2>&1
+import json, sys
+r = json.load(open('data/cycle_model_report.json'))
+sys.exit(0 if len((r.get('sign_checks') or {}).get('violations', [])) == 0 else 1)
+EOF
+chk $? "I37  no unexplained coefficient sign violations" "physics violated"
+# The served scale must match the fitted scale, or the API exponentiates raw
+# minutes and returns e^68. This is the bug that shipped once; it stays gated.
+$PY - <<'EOF' >/dev/null 2>&1
+import pickle, sys
+b = pickle.load(open('data/cycle_model.pkl', 'rb'))
+c = float(b['params']['const'])
+ok = (2.0 < c < 8.0) if b.get('param_scale') == 'log_minutes' else (10 < c < 600)
+sys.exit(0 if ok else 1)
+EOF
+chk $? "I38  served param scale matches recorded scale" "would serve exp(raw minutes)"
+$PY - <<'EOF' >/dev/null 2>&1
+import sys
+sys.path.insert(0, '.')
+import cycle_serving as cs
+day = cs.predict_cycle_time('TF', 'FENI KM0', 'day', trucks=30, rainfall_mm=0)
+night = cs.predict_cycle_time('TF', 'FENI KM0', 'night', trucks=30, rainfall_mm=0)
+wet = cs.predict_cycle_time('TF', 'FENI KM0', 'day', trucks=30, rainfall_mm=40)
+unknown = cs.predict_cycle_time('NOWHERE', 'NOPLACE', 'day', trucks=30)
+ok = (day and night and wet and unknown
+      and 5 < day['cycle_time_min'] < 900                 # physically sane
+      and wet['cycle_time_min'] > day['cycle_time_min']   # rain slows trucks
+      and unknown['basis'] in ('route_mean', 'global_mean'))
+sys.exit(0 if ok else 1)
+EOF
+chk $? "I39  cycle serving is sane and falls back" "serving misbehaves"
+fi
 
 echo
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"
