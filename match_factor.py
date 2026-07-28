@@ -10,9 +10,18 @@ MF < 1 means the shovel waits for trucks; MF > 1 means trucks queue for the
 shovel. Target band 0.85-1.0.
 
 WHAT "SHOVEL" MEANS HERE, AND WHY IT IS NOT A SHOVEL
-There is no excavator, shovel or loader identity anywhere in either database,
-and no dispatch or loader event log (verified in reports/fms_db_schema.md,
-Q6). So MF cannot be keyed to a machine. It is keyed to a LOADING POINT
+An excavator identity DOES exist: `PRODUCTION_PIT_HOURLY` carries 839,609 rows
+since 2025-12-27 with EXCAVATOR_ID and TRUCK_ID, 252 excavators over 938 trucks.
+It cannot be joined to haul trips, because the two systems use different truck
+namespaces: mining records fleet numbers like `AD4059`, weighbridge tickets use
+`A342`, and the overlap across 1,482 trip trucks is ZERO. `EQUIPMENTS` looked
+like a crosswalk (ID_EQ matches 1,147 production trucks and 1,531 trip trucks)
+but only 25 rows carry both, so the namespaces share values without sharing
+rows. Trip-weighted join: 0.0% against a 60% gate.
+
+So MF cannot currently be keyed to a machine, and the blocker is a missing
+identity map rather than missing data. If someone supplies that map, this
+module can be re-keyed to a real excavator with no change to the formula. It is keyed to a LOADING POINT
 (`WAITING_TIME.ORIGIN_AREA`, 194 of them), and the server count is measured
 rather than assumed: sweeping every truck's load interval gives the peak number
 loading simultaneously at that point in that shift, which is the number of

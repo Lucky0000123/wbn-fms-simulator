@@ -247,8 +247,11 @@ def _phase4_section() -> str:
       "and that is an actionable difference: adding trucks to an under-trucked "
       "face raises output, whereas adding them to a queue only burns fuel.")
     A("")
-    A("**It is keyed to a loading point, not a shovel.** No excavator, shovel or "
-      "loader identity exists in either database, and no dispatch log. The "
+    A("**It is keyed to a loading point, not a shovel.** An excavator identity "
+      "does exist in the mining production tables, but it cannot be joined to "
+      "haul trips: the two systems use different truck namespaces (mining fleet "
+      "numbers vs weighbridge plate ids) with zero overlap across 1,482 trucks, "
+      "and no crosswalk table bridges them. The "
       "server count is the observed peak of simultaneous loads at that point. "
       "The API returns this caveat in every response rather than letting the "
       "name imply a machine.")

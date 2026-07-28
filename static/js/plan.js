@@ -341,7 +341,7 @@ async function mfLoad(){
     if(d.summary)bits.push(Object.entries(d.summary)
       .map(([k,v])=>escH(k)+' '+fmtExact(v,1)+'%').join(' &middot; '));
     if(d.is_fixture)bits.push('&#9888; sample data, not measured');
-    bits.push('keyed by loading point, not shovel: no shovel identity exists in the source data');
+    bits.push('keyed by loading point, not shovel: excavator ids exist but cannot be joined to haul trips (different truck namespaces)');
     if(d.validation&&Number.isFinite(d.validation.corr_mf_queue_share))
       bits.push('validated against queue wait (r='+fmtExact(d.validation.corr_mf_queue_share,2)+')');
     if(note)note.innerHTML=bits.join('<br>');

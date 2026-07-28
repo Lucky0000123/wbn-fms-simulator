@@ -483,8 +483,10 @@ def api_match_factor():
         # response still learns that the key is a place, not a machine.
         "keyed_by": "loading_point",
         "shovel_identity_available": False,
-        "caveat": ("MF is computed per LOADING POINT, not per shovel: no "
-                   "excavator or loader identity exists in the source data. "
+        "caveat": ("MF is computed per LOADING POINT, not per shovel. An "
+                   "excavator identity exists in the mining tables but cannot "
+                   "be joined to haul trips: the two systems use different "
+                   "truck namespaces with zero overlap and no crosswalk. "
                    "Server count is the observed peak of simultaneous loads."),
         "bands": {"target": [mf_TARGET_LO, mf_TARGET_HI],
                   "over_trucked_above": mf_OVER, "under_trucked_below": mf_UNDER},

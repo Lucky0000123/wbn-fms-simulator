@@ -366,8 +366,18 @@ JOB_TITLE, GRADE`. No equipment assignment, no roster, **no hire date**.
 Together these confirm the Phase 3 ceiling rather than leaving it unbeaten: the
 variables that would break it are absent from both databases.
 
-**There is no shovel identity anywhere**, and no dispatch or loader event log.
-This constrains every future Tier 3 module, not just Match Factor.
+**Excavator identity exists but cannot reach haul trips.**
+`PRODUCTION_PIT_HOURLY` has 839,609 rows since 2025-12-27 with EXCAVATOR_ID +
+TRUCK_ID (252 excavators, 938 trucks) and `FMS_TRUCK_ASSIGNMENTS` has a small
+EXCAVATOR column too. The blocker is a namespace split: mining uses fleet
+numbers (`AD4059`), weighbridge tickets use plate-style ids (`A342`), and the
+overlap across 1,482 trip trucks is **zero**. `EQUIPMENTS.ID_EQ` matches values
+in both namespaces but only 25 rows carry both, so it is not a crosswalk.
+Trip-weighted join 0.0%.
+
+This is worth revisiting: unlike GPS coverage, it needs an identity map rather
+than new instrumentation. Ask the site for the mining-fleet to plate mapping and
+Match Factor can be re-keyed to a real excavator without changing the formula.
 
 ### Match Factor (`match_factor.py`, `/api/match_factor`)
 

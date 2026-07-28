@@ -6,7 +6,7 @@ Derived statistics only — no tonnages or route-level production volumes.
 
 | | |
 |---|---|
-| Generated | 2026-07-28T08:14:24+00:00 |
+| Generated | 2026-07-28T09:03:42+00:00 |
 | Training rows | 4,141 |
 | Date range | 2025-12-27 to 2026-07-08 |
 | Data source | database (trip level) |
@@ -74,7 +74,7 @@ Plus 22 route and 7 contractor fixed effects (not listed: naming every route wit
 |---|---|
 | Heteroscedastic | **yes** (corr \|residual\| vs fitted = 0.477) |
 | Non-linear features flagged | none |
-| Residual mean / std | -0.0000 / 0.545 |
+| Residual mean / std | 0.0000 / 0.545 |
 
 Error grows with the size of the prediction, so a constant-variance linear
 model is the wrong shape. But **no single feature shows curvature**, and every
@@ -212,7 +212,7 @@ So the Phase 3 ceiling stands as **confirmed**, not merely unbeaten: the feature
 
 Nearly seven in ten loading-point shifts have the shovel waiting for trucks. The intuition that a busy mine is over-trucked is wrong here, and that is an actionable difference: adding trucks to an under-trucked face raises output, whereas adding them to a queue only burns fuel.
 
-**It is keyed to a loading point, not a shovel.** No excavator, shovel or loader identity exists in either database, and no dispatch log. The server count is the observed peak of simultaneous loads at that point. The API returns this caveat in every response rather than letting the name imply a machine.
+**It is keyed to a loading point, not a shovel.** An excavator identity does exist in the mining production tables, but it cannot be joined to haul trips: the two systems use different truck namespaces (mining fleet numbers vs weighbridge plate ids) with zero overlap across 1,482 trucks, and no crosswalk table bridges them. The server count is the observed peak of simultaneous loads at that point. The API returns this caveat in every response rather than letting the name imply a machine.
 
 **Validation.** MF correlates **0.767** with queue wait as a share of cycle, and mean wait rises monotonically across the bands (20.9 → 32.8 → 38.2 min). It correlates *negatively* with total cycle time, which looks wrong and is not: cycle time is dominated by haul distance, so a short-haul point can be heavily queued and still turn trucks around quickly. Two earlier formulations that failed this check were discarded rather than published.
 
