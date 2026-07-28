@@ -693,17 +693,19 @@ def engineer_features(df: pd.DataFrame, feature_names: list | None = None,
     # exactly 0.0000 R2 and removes a VIF-10 offender.
     numeric.remove("distance_km")
 
-    # payload_t is the same defect one column over: each contractor hauls with
-    # one fleet spec, so payload is a pure function of contractor (measured on
-    # the live DB extract: 8 contractors, 8 distinct payloads, every contractor
-    # showing exactly 1 unique value). With contractor dummies present the
-    # design is singular — that is where max VIF 6.5e12 came from, flagging
-    # payload_t and all 7 contractor dummies at once.
+    # payload_t can become the same defect one column over. When payload is
+    # carried as a per-contractor average, it is a pure function of contractor,
+    # and with contractor dummies present the design goes singular: that is
+    # where an observed max VIF of 6.5e12 came from, flagging payload_t and all
+    # 7 contractor dummies at once.
     #
-    # This only became visible when the VPN came up: the fixture path has
-    # varied payloads, so the fixture-trained model never tripped it. Detected
-    # rather than assumed, so a future contractor with a mixed fleet keeps its
-    # payload feature instead of silently losing it.
+    # It is NOT always degenerate. At trip-level grain each shift carries its
+    # own measured payload (4,113 distinct values across 4,141 rows, 21.3-63.2 t),
+    # so payload_t is genuinely informative and is kept — max VIF 8.41.
+    #
+    # Hence a runtime test rather than a hardcoded drop: the same code is
+    # correct for both extraction grains, and a future contractor with a mixed
+    # fleet keeps its payload feature instead of silently losing it.
     if d["contractor"].nunique() > 1:
         _per_contractor = d.groupby("contractor")["payload_t"].nunique()
         if bool((_per_contractor <= 1).all()) and "payload_t" in numeric:
