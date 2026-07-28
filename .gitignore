@@ -22,5 +22,7 @@ data/cycle_model_report.json
 data/trip_metadata.json
 data/trip_diagnostic.json
 data/elevation_cache.json
+data/match_factor_meta.json
+data/match_factor_results.csv
 !data/model_metadata.sample.json
 !data/training_metadata.sample.json

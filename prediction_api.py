@@ -39,6 +39,8 @@ bp = Blueprint("prediction_api", __name__)
 MODEL_PKL = os.path.join(pp.DATA, "model.pkl")
 MODEL_META = os.path.join(pp.DATA, "model_metadata.json")
 CYCLE_REPORT = os.path.join(pp.DATA, "cycle_model_report.json")
+# Mirrored from match_factor.py so the API never imports pandas on this path.
+mf_TARGET_LO, mf_TARGET_HI, mf_OVER, mf_UNDER = 0.85, 1.00, 1.15, 0.75
 
 _MODEL = None            # {"model", "meta", "instance", "loaded_at"}
 _LOCK = threading.Lock()
@@ -415,6 +417,83 @@ def api_predict():
         "inputs": {"contractor": contractor, "source": source, "destination": destination,
                    "distance_km": dist, "shift": shift, "shift_hours": shift_hours,
                    "rainfall_mm": rainfall, "weighbridges_open": wb_open, "mode": mode},
+        "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
+    })
+
+
+@bp.route("/api/match_factor", methods=["GET"])
+def api_match_factor():
+    """Match Factor per loading point for a date (Tier 3, Module 1).
+
+    Deliberately NOT called /api/shovel_factor: there is no shovel identity in
+    the source data, so the key is a loading point and the response says so in
+    every payload rather than letting the name imply a machine.
+
+    Dual-mode like the rest of the app: with no results file it returns a small
+    illustrative fixture and flags it, so the public demo keeps working without
+    the VPN and nobody mistakes fixtures for measurements.
+    """
+    started = time.perf_counter()
+    date = str(request.args.get("date") or "").strip()
+    point = str(request.args.get("loading_point") or "").strip()
+    status = str(request.args.get("status") or "").strip()
+
+    rows, source, meta = [], "fixtures", {}
+    try:
+        import match_factor as mf
+        df = mf.load_results()
+        if df is not None and len(df):
+            source = "database"
+            meta = _read_json(mf.MF_META, {}) or {}
+            if date:
+                df = df[df["date"] == date]
+            if point:
+                df = df[df["loading_point"].astype(str).str.upper() == point.upper()]
+            if status:
+                df = df[df["status"] == status]
+            rows = df.head(500).to_dict("records")
+    except Exception:                                      # noqa: BLE001
+        rows, source = [], "fixtures"
+
+    if source == "fixtures":
+        rows = [
+            {"loading_point": "TOS8", "shift": "day", "date": date or "2026-07-01",
+             "n_trucks": 24, "servers_observed": 5, "avg_service_time_min": 14.0,
+             "avg_cycle_time_min": 96.0, "avg_queue_wait_min": 31.0,
+             "trucks_per_server": 4.8, "match_factor": 0.7, "queue_share": 0.32,
+             "status": "under-trucked", "cv_interarrival": 1.4,
+             "bunching_flag": False},
+            {"loading_point": "BLB 10", "shift": "day", "date": date or "2026-07-01",
+             "n_trucks": 41, "servers_observed": 6, "avg_service_time_min": 15.0,
+             "avg_cycle_time_min": 82.0, "avg_queue_wait_min": 39.0,
+             "trucks_per_server": 6.8, "match_factor": 1.25, "queue_share": 0.48,
+             "status": "over-trucked", "cv_interarrival": 3.4,
+             "bunching_flag": True},
+        ]
+
+    val = meta.get("validation") or {}
+    return jsonify({
+        "ok": True,
+        "source": source,
+        "is_fixture": source == "fixtures",
+        "date": date or None,
+        "count": len(rows),
+        "results": rows,
+        # The caveat travels with the data. A consumer reading only this
+        # response still learns that the key is a place, not a machine.
+        "keyed_by": "loading_point",
+        "shovel_identity_available": False,
+        "caveat": ("MF is computed per LOADING POINT, not per shovel: no "
+                   "excavator or loader identity exists in the source data. "
+                   "Server count is the observed peak of simultaneous loads."),
+        "bands": {"target": [mf_TARGET_LO, mf_TARGET_HI],
+                  "over_trucked_above": mf_OVER, "under_trucked_below": mf_UNDER},
+        "validation": {"corr_mf_queue_share": val.get("corr_mf_queue_share"),
+                       "passes": val.get("passes"),
+                       "gate": val.get("gate")},
+        "summary": meta.get("status_pct"),
+        "bunching_threshold_cv": meta.get("bunching_threshold_cv"),
+        "generated_at": meta.get("generated_at"),
         "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
     })
 

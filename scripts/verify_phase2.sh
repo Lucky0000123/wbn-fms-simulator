@@ -282,6 +282,46 @@ fi
 $PY tests/test_cycle.py >/dev/null 2>&1
 chk $? "I41  cycle unit tests pass" "see: python tests/test_cycle.py"
 
+# ── Phase 4: Match Factor (Tier 3 Module 1) ────────────────────────────────
+# Endpoint is checked unconditionally because it is dual-mode: it must answer
+# from fixtures with no results file and no database.
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/match_factor?date=2026-07-01")" = "200" ]
+chk $? "J42  /api/match_factor returns 200" "endpoint down"
+$PY - <<'EOF' >/dev/null 2>&1
+import json, sys, urllib.request
+d = json.loads(urllib.request.urlopen(
+    "http://127.0.0.1:5055/api/match_factor", timeout=20).read())
+# The caveat must travel with the data: MF is keyed to a loading point, not a
+# shovel, and a consumer reading only this response has to learn that.
+sys.exit(0 if (d.get("ok") and d.get("keyed_by") == "loading_point"
+               and d.get("shovel_identity_available") is False
+               and d.get("caveat")) else 1)
+EOF
+chk $? "J43  match_factor states it is keyed by loading point" "caveat missing"
+$PY tests/test_match_factor.py >/dev/null 2>&1
+chk $? "J44  match factor unit tests pass" "see: python tests/test_match_factor.py"
+# The validation gate is the whole point: two earlier MF formulations looked
+# fine in a table and were measuring the wrong thing. Ship only if MF still
+# tracks queueing.
+if [ -f data/match_factor_meta.json ]; then
+$PY - <<'EOF' >/dev/null 2>&1
+import json, sys
+v = (json.load(open('data/match_factor_meta.json')).get('validation') or {})
+r = v.get('corr_mf_queue_share')
+sys.exit(0 if (v.get('passes') is True and r is not None and r > 0.30) else 1)
+EOF
+chk $? "J45  match factor passes its queue-correlation gate" "MF no longer tracks queueing"
+$PY - <<'EOF' >/dev/null 2>&1
+import pandas as pd, sys
+d = pd.read_csv('data/match_factor_results.csv')
+# A server count above the truck count is physically impossible and did occur
+# (8 rows) before the sweep deduplicated per truck.
+sys.exit(0 if (d.servers_observed <= d.n_trucks).all()
+         and (d.servers_observed >= 1).all() else 1)
+EOF
+chk $? "J46  servers never exceed trucks present" "impossible server count"
+fi
+
 echo
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"
 [ "$FAIL" = "0" ]
