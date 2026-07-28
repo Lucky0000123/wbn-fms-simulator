@@ -152,6 +152,37 @@ def _phase35_section() -> str:
         A("| %s | %+.2f min | %s |" % (FRIENDLY.get(k, k), v["coef"],
                                        _stars(v.get("p_value", 1))))
     A("")
+    u = r.get("utilisation") or {}
+    if u.get("utilisation"):
+        A("### Turning cycle time into tonnage")
+        A("")
+        A("Cycle time alone is not a plan. The conversion needs to know what "
+          "fraction of a rostered shift a truck actually spends on cycles, and "
+          "that factor is **fitted, not assumed**: for every route present in "
+          "both the haul telemetry and the weighbridge tickets, "
+          "`utilisation = observed trips x cycle minutes / shift minutes`, "
+          "weighted by ticket count.")
+        A("")
+        A("| | |")
+        A("|---|---|")
+        A("| Fitted utilisation | **%s** |" % u["utilisation"])
+        A("| Routes it was fitted on | %s |" % u.get("routes"))
+        A("| Reconciliation error | %s%% median |"
+          % u.get("reconcile_median_abs_pct"))
+        A("")
+        A("A planning convention would have suggested 0.85. That would have "
+          "been wrong by more than 2x, and briefly was: the same API response "
+          "reported 5,046 t and 10,667 t for an identical 101-truck fleet. The "
+          "two sides are independent \u2014 cycle time from FMS telemetry, tonnage "
+          "from weighbridge tickets \u2014 so their agreement is a genuine "
+          "cross-check rather than a circular fit.")
+        A("")
+        A("Some routes still disagree by more than 25%. That is surfaced in the "
+          "API (`vs_weighbridge_pct`, `models_agree`) and warned about in the "
+          "planner, because a large gap says that route's telemetry and its "
+          "tickets tell different stories, which is worth knowing before "
+          "trusting either.")
+        A("")
     A("Route identity carries most of the signal: dropping the %d route dummies "
       "and keeping only physical and operational features scores %s, which is "
       "the honest estimate of how much transfers to a road never seen before."

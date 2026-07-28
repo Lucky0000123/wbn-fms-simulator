@@ -6,7 +6,7 @@ Derived statistics only — no tonnages or route-level production volumes.
 
 | | |
 |---|---|
-| Generated | 2026-07-28T03:57:39+00:00 |
+| Generated | 2026-07-28T04:29:16+00:00 |
 | Training rows | 4,141 |
 | Date range | 2025-12-27 to 2026-07-08 |
 | Data source | database (trip level) |
@@ -138,7 +138,7 @@ Phase 3's target, trips per truck per shift, is a ratio whose denominator is a p
 | `ols` | 0.6464 | 29.7414 |
 | `ols_log` | 0.6565 | 29.5018 |
 | `ols_physics_only` | 0.1634 | 67.4696 |
-| `random_forest` | 0.4035 | 49.6348 |
+| `random_forest` | 0.4036 | 49.6332 |
 | `route_mean_baseline` | 0.648 | 37.8408 |
 
 The pre-registered bar was **R² lift ≥ 0.05** over the per-route lookup. The model returns **0.0085**, so `beats_baseline` is **False**.
@@ -167,6 +167,20 @@ After correcting both, **4 of 4 gated signs confirmed, 0 violations**.
 | Rainfall (mm) | +0.28 min | *** |
 | Fleet on this route (trucks) | +0.09 min | *** |
 | Rain x haul distance (interaction) | +0.02 min | ** |
+
+### Turning cycle time into tonnage
+
+Cycle time alone is not a plan. The conversion needs to know what fraction of a rostered shift a truck actually spends on cycles, and that factor is **fitted, not assumed**: for every route present in both the haul telemetry and the weighbridge tickets, `utilisation = observed trips x cycle minutes / shift minutes`, weighted by ticket count.
+
+| | |
+|---|---|
+| Fitted utilisation | **0.3998** |
+| Routes it was fitted on | 12 |
+| Reconciliation error | 17.8% median |
+
+A planning convention would have suggested 0.85. That would have been wrong by more than 2x, and briefly was: the same API response reported 5,046 t and 10,667 t for an identical 101-truck fleet. The two sides are independent — cycle time from FMS telemetry, tonnage from weighbridge tickets — so their agreement is a genuine cross-check rather than a circular fit.
+
+Some routes still disagree by more than 25%. That is surfaced in the API (`vs_weighbridge_pct`, `models_agree`) and warned about in the planner, because a large gap says that route's telemetry and its tickets tell different stories, which is worth knowing before trusting either.
 
 Route identity carries most of the signal: dropping the 524 route dummies and keeping only physical and operational features scores 0.1634, which is the honest estimate of how much transfers to a road never seen before.
 

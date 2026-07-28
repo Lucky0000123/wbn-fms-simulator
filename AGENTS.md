@@ -63,7 +63,7 @@ Also run the two gates:
 
 ```bash
 .venv/bin/python scripts/check_vocab.py --api   # route-name convergence
-bash scripts/verify_phase2.sh                   # must stay all-pass (39/39 here; see note below)
+bash scripts/verify_phase2.sh                   # must stay all-pass (40/40 here; see note below)
 ```
 
 `check_vocab.py` exits non-zero if any route name reaching the UI is not the
@@ -219,6 +219,22 @@ months) because its LOADING/DUMPING columns are clock times that can be
 differenced. Re-check the geofence counts before assuming this is still true;
 if that table fills in, it is the better source.
 
+**Cycle time is not tonnage.** Converting one to the other needs a utilisation
+factor, and it is *fitted*, not chosen: `calibrate_utilisation()` solves
+`utilisation = observed_trips x cycle_minutes / shift_minutes` on routes present
+in both datasets, weighted by ticket count. It came out at **0.40**, not the
+0.85 a planning convention would suggest. That mistake was live long enough to
+make `/api/predict` report 5,046 t and 10,667 t for the same 101-truck fleet.
+Gate `I40` keeps it honest. If you change the shift model, re-fit rather than
+re-guess.
+
+**The two models still disagree on some routes**, by design of the honesty
+rather than by neglect: cycle time comes from FMS haul telemetry, tonnage from
+weighbridge tickets. `/api/predict` returns `vs_weighbridge_pct` and
+`models_agree`, and the Plan panel warns above 25%. A route with a large gap is
+telling you its telemetry and its tickets disagree, which is worth
+investigating before either number is trusted.
+
 **Read the result correctly.** R2 lift over the per-route lookup is 0.0085
 against a pre-registered bar of 0.05, so `beats_baseline` is **false** and is
 reported that way in the API, the report and the UI. MAE is 8.3 min (22%)
@@ -250,6 +266,11 @@ and a serving smoke test. Each was mutation-tested (corrupt the report to inject
 intercept, and exactly `I34`-`I39` fail). If you add a gate, break it
 deliberately once and confirm it fails, or it is decoration.
 
+One trap when doing that: the harness calls `/api/retrain`, which now rebuilds
+the cycle artifacts mid-run and will overwrite whatever you corrupted, giving a
+false PASS. Test a Phase 3.5 gate by running its snippet directly against a
+corrupted `data/cycle_model_report.json`, not through the full script.
+
 **Denominator moves with what you have trained**, so read the score with that
 in mind. Measured, not assumed:
 
@@ -257,7 +278,7 @@ in mind. Measured, not assumed:
 |---|---|
 | Fresh clone, nothing trained | 24/33 — the A/B checks need `data/` artifacts |
 | After `python train_model.py`, no VPN | 32/33 (33/33 with remotes configured) |
-| Full: cycle model trained too | 39/39 |
+| Full: cycle model trained too | 40/40 |
 
 `data/` is gitignored (real tonnages, public mirror), so a clone starts with no
 artifacts and the extraction checks fail until you train once. That is the
