@@ -693,6 +693,22 @@ def engineer_features(df: pd.DataFrame, feature_names: list | None = None,
     # exactly 0.0000 R2 and removes a VIF-10 offender.
     numeric.remove("distance_km")
 
+    # payload_t is the same defect one column over: each contractor hauls with
+    # one fleet spec, so payload is a pure function of contractor (measured on
+    # the live DB extract: 8 contractors, 8 distinct payloads, every contractor
+    # showing exactly 1 unique value). With contractor dummies present the
+    # design is singular — that is where max VIF 6.5e12 came from, flagging
+    # payload_t and all 7 contractor dummies at once.
+    #
+    # This only became visible when the VPN came up: the fixture path has
+    # varied payloads, so the fixture-trained model never tripped it. Detected
+    # rather than assumed, so a future contractor with a mixed fleet keeps its
+    # payload feature instead of silently losing it.
+    if d["contractor"].nunique() > 1:
+        _per_contractor = d.groupby("contractor")["payload_t"].nunique()
+        if bool((_per_contractor <= 1).all()) and "payload_t" in numeric:
+            numeric.remove("payload_t")
+
     d["route"] = d["source"].astype(str) + ">" + d["destination"].astype(str)
     if keep_routes is not None:
         _routes = set(keep_routes)

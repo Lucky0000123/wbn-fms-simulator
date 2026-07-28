@@ -29,10 +29,16 @@ from flask import Blueprint, jsonify, request
 
 import prediction_pipeline as pp
 
+try:                                                   # Phase 3.5, optional
+    import cycle_serving as cycsrv
+except Exception:                                      # noqa: BLE001
+    cycsrv = None
+
 bp = Blueprint("prediction_api", __name__)
 
 MODEL_PKL = os.path.join(pp.DATA, "model.pkl")
 MODEL_META = os.path.join(pp.DATA, "model_metadata.json")
+CYCLE_REPORT = os.path.join(pp.DATA, "cycle_model_report.json")
 
 _MODEL = None            # {"model", "meta", "instance", "loaded_at"}
 _LOCK = threading.Lock()
@@ -331,6 +337,32 @@ def api_predict():
     prediction["confidence"] = round(float(meta.get("r2", 0.0)), 3) if not fallback else 0.4
     prediction["payload_source"] = payload_src
 
+    # ── Phase 3.5: cycle time, additive ────────────────────────────────────
+    # Attached alongside the existing answer rather than replacing it. The
+    # cycle model is trained on FMS haul telemetry (a different table and a
+    # different target from the Phase 2/3 tonnage model), so overwriting
+    # trips_per_dt here would silently change the meaning of a field every
+    # existing consumer already depends on. Callers opt in by reading `cycle`.
+    cycle_block = None
+    if cycsrv is not None:
+        try:
+            c = cycsrv.predict_cycle_time(
+                source=pp.canonical_area(source),
+                destination=pp.canonical_area(destination),
+                shift=shift, trucks=float(trucks),
+                rainfall_mm=float(rainfall), distance_km=float(dist))
+            if c:
+                n_trucks = float(prediction.get("trucks_needed") or trucks)
+                plan = cycsrv.cycle_to_tonnage(
+                    c["cycle_time_min"], n_trucks, payload_t,
+                    shift_hours=float(shift_hours))
+                cycle_block = {**c, **plan,
+                               "trucks_assumed": n_trucks,
+                               "target": "avg_cycle_time_min",
+                               "units": "minutes"}
+        except Exception:                              # noqa: BLE001
+            cycle_block = None                         # never break /api/predict
+
     return jsonify({
         "ok": True,
         "prediction": prediction,
@@ -364,6 +396,9 @@ def api_predict():
         "model_cv_best": (meta.get("cv_mean_r2") or {}).get(meta.get("selected_model")),
         "model_is_cv_winner": bool(_load_selected()) or meta.get("served_is_cv_winner"),
         "model_instance": (bundle or {}).get("instance"),
+        # Phase 3.5. Null when no cycle model is trained, so the UI can hide the
+        # panel instead of rendering a placeholder number.
+        "cycle": cycle_block,
         "fallback": bool(fallback),
         "inputs": {"contractor": contractor, "source": source, "destination": destination,
                    "distance_km": dist, "shift": shift, "shift_hours": shift_hours,
@@ -383,7 +418,41 @@ def api_model_info():
     meta.pop("features", None)                         # keep the payload small
     meta.pop("ols_features", None)
     return jsonify({"ok": True, "trained": True, "loaded_at": bundle["loaded_at"],
-                    **meta, **_phase3_payload()})
+                    **meta, **_phase3_payload(), "cycle_model": _cycle_payload()})
+
+
+def _cycle_payload() -> dict | None:
+    """Phase 3.5 status for the UI.
+
+    Returns the honest verdict, not just the headline: the model wins MAE on
+    every fold but does not clear the pre-registered R2 bar, and both facts
+    travel together so no consumer can quote one without the other.
+    """
+    rep = _read_json(CYCLE_REPORT)
+    if not rep:
+        return None
+    return {
+        "target": rep.get("target"),
+        "units": rep.get("target_units"),
+        "rows": rep.get("rows"),
+        "date_range": rep.get("date_range"),
+        "winner": rep.get("winner"),
+        "cv_r2": rep.get("winner_cv_r2"),
+        "cv_mae_min": rep.get("winner_cv_mae_min"),
+        "baseline_cv_r2": rep.get("baseline_cv_r2"),
+        "baseline_cv_mae_min": rep.get("baseline_cv_mae_min"),
+        "beats_baseline": rep.get("beats_baseline"),
+        "verdict": rep.get("verdict"),
+        "mae_gain_min": rep.get("mae_gain_min"),
+        "mae_gain_pct": rep.get("mae_gain_pct"),
+        "folds_won_r2": rep.get("folds_won_r2"),
+        "folds_won_mae": rep.get("folds_won_mae"),
+        "folds_total": rep.get("folds_total"),
+        "r2_vs_mae_note": rep.get("r2_vs_mae_note"),
+        "sign_checks": {k: rep.get("sign_checks", {}).get(k)
+                        for k in ("checked", "violations", "advisory")},
+        "max_vif_interpretable": (rep.get("in_sample") or {}).get("max_vif_interpretable"),
+    }
 
 
 def _read_json(path, default=None):

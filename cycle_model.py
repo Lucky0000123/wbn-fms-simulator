@@ -393,13 +393,30 @@ def run(df: pd.DataFrame | None = None, n_folds: int = 5, verbose: bool = True) 
         json.dump(report, fh, indent=2, default=str)
 
     import pickle
-    # Persist both predictors. The serving layer needs the log-OLS params and
-    # the route lookup, because the honest recommendation is a blend: model for
-    # the typical shift, lookup as the fallback for unseen routes.
+    # Persist the SERVED model, which is the CV winner, not the in-sample OLS
+    # fitted above for its p-values. Those two are different fits: `res` is on
+    # raw minutes for interpretable coefficients, while the winner is log-scale.
+    # Pickling `res.params` while labelling it ols_log would make serving
+    # compute exp(67.9) — caught by asserting the scale below rather than by a
+    # user seeing an absurd cycle time.
+    import statsmodels.api as sm
+    log_res = sm.OLS(np.log(y), sm.add_constant(X, has_constant="add")).fit()
+    served_params = (log_res.params if best_model == "ols_log" else res.params)
+    served_scale = "log_minutes" if best_model == "ols_log" else "minutes"
+    smearing = float(np.mean(np.exp(log_res.resid))) if best_model == "ols_log" else 1.0
+    if served_scale == "log_minutes" and not (2.0 < float(served_params["const"]) < 8.0):
+        raise ValueError("log-scale intercept %.2f is implausible; refusing to "
+                         "ship a model that would serve exp() of raw minutes"
+                         % float(served_params["const"]))
+
     with open(CYCLE_MODEL_PKL, "wb") as fh:
-        pickle.dump({"feature_names": names, "params": res.params.to_dict(),
+        pickle.dump({"feature_names": names,
+                     "params": served_params.to_dict(),
+                     "param_scale": served_scale,
+                     "smearing_factor": smearing,
                      "winner": best_model, "cv_r2": best_r2,
                      "cv_mae_min": best_mae, "verdict": verdict,
+                     "baseline_cv_r2": base, "baseline_cv_mae_min": base_mae,
                      "route_means": df.groupby(["source", "destination", "shift"])
                                       [TARGET].mean().to_dict(),
                      "global_mean": float(df[TARGET].mean())}, fh)
