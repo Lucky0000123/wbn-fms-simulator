@@ -160,6 +160,24 @@ function _planRenderEstimate(v){
            +`validates better (R² ${fmtExact(v.cvBest,2)}) under walk-forward testing.</span>`;
     }
   }
+  // Phase 3.5 cycle time. Shown as a separate line, not folded into the
+  // headline, because it comes from a different model on different data and
+  // carries a different accuracy. Hidden entirely when no cycle model has
+  // answered, rather than rendering a dash that looks like a real zero.
+  let cyc='';
+  if(v.cycle&&Number.isFinite(v.cycle.cycle_time_min)){
+    const c=v.cycle, mae=Number.isFinite(c.cv_mae_min)?fmtExact(c.cv_mae_min,0):null;
+    // Name the branch that answered. A route the model never saw is served by
+    // a historical average, and claiming the model's accuracy for it would be
+    // a lie the user cannot detect.
+    const modelled=c.basis&&c.basis.indexOf('ols')===0;
+    cyc=`<div class="est-rule"></div>`
+      +`<div class="est-line"><span>Cycle time</span><b>${fmtExact(c.cycle_time_min,0)} min</b></div>`
+      +`<span class="est-model-sub">`
+      +(modelled?`Cycle model`:`Per-route average (this route is new to the model)`)
+      +(mae?` · typically within ±${mae} min`:'')
+      +`</span>`;
+  }
   box.classList.remove('empty');
   box.innerHTML=`<div class="est-head">Estimated shift output</div>`
     +`<div class="est-lines">${lines.map(l=>`<div class="est-line"><span>${escH(l[0])}</span><b>${l[1]}</b></div>`).join('')}</div>`
@@ -169,6 +187,7 @@ function _planRenderEstimate(v){
     +`<div class="est-note">${escH(v.src)} → ${escH(v.dst)} · ${escH(v.contractor||'—')} · ${fmtExact(v.hours)}h shift · ${escH(v.payloadSrc)} payload`
     +(v.swapped?` · delivers ${fmtExact(Math.round(v.wmt))} t`:'')+`</div>`
     +`<div class="est-attr">${attr}</div>`
+    +cyc
     +(v.warns&&v.warns.length?`<div class="est-warn">${v.warns.map(escH).join('<br>')}</div>`:'');
 }
 function planPreview(){
@@ -226,7 +245,7 @@ function planPreview(){
           baselineLift:res.model_baseline_lift,
           cvR2:res.model_cv_r2, cvBasis:res.model_cv_basis,
           cvBest:res.model_cv_best, isCvWinner:res.model_is_cv_winner,
-          selectedModel:res.model_selected});
+          selectedModel:res.model_selected, cycle:res.cycle});
       })
       .catch(()=>{                                  // keep the local estimate visible
         if(seq!==_planPredictSeq)return;
