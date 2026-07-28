@@ -63,7 +63,7 @@ Also run the two gates:
 
 ```bash
 .venv/bin/python scripts/check_vocab.py --api   # route-name convergence
-bash scripts/verify_phase2.sh                   # must stay all-pass (40/40 here; see note below)
+bash scripts/verify_phase2.sh                   # must stay all-pass (41/41 here; see note below)
 ```
 
 `check_vocab.py` exits non-zero if any route name reaching the UI is not the
@@ -266,6 +266,14 @@ and a serving smoke test. Each was mutation-tested (corrupt the report to inject
 intercept, and exactly `I34`-`I39` fail). If you add a gate, break it
 deliberately once and confirm it fails, or it is decoration.
 
+`tests/test_cycle.py` covers the maths BETWEEN the model and the user, which is
+where this phase's real bugs lived: both the scale mismatch and the guessed
+utilisation were arithmetic errors invisible to every model metric. It runs
+without a trained model (prediction tests skip, arithmetic tests do not) and is
+gated by `I41`. Notably it asserts the reverse/forward round trip, since sizing
+a fleet for a target and then computing that fleet's output are the two
+directions the planner offers and they must not disagree.
+
 One trap when doing that: the harness calls `/api/retrain`, which now rebuilds
 the cycle artifacts mid-run and will overwrite whatever you corrupted, giving a
 false PASS. Test a Phase 3.5 gate by running its snippet directly against a
@@ -278,7 +286,7 @@ in mind. Measured, not assumed:
 |---|---|
 | Fresh clone, nothing trained | 24/33 — the A/B checks need `data/` artifacts |
 | After `python train_model.py`, no VPN | 32/33 (33/33 with remotes configured) |
-| Full: cycle model trained too | 40/40 |
+| Full: cycle model trained too | 41/41 |
 
 `data/` is gitignored (real tonnages, public mirror), so a clone starts with no
 artifacts and the extraction checks fail until you train once. That is the

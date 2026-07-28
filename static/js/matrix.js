@@ -120,6 +120,20 @@ function _modelLine(m){
   let s=`${escH(m.model_type||'model')} · trained ${escH(when)} · ${rows}R² ${fmt(m.r2,3)}`;
   if(has)s+=` · lift ${lift>=0?'+':''}${fmt(lift*100,1)}% over lookup`;
   if(has&&lift<0.01)s+=' ⚠ barely better than historical averages';
+  // The cycle model is a second model on a second table. It was reachable only
+  // by curl, which meant the operator could not tell whether it was trained,
+  // how old it was, or that it misses its own R2 bar while beating the lookup
+  // on MAE. Both halves of that verdict are shown, never one.
+  const c=m.cycle_model;
+  if(c&&c.cv_mae_min!=null){
+    s+=`\nCycle model · ${fmt(c.rows)} rows${c.date_range?` to ${escH(String(c.date_range[1]))}`:''}`
+      +` · ±${fmt(c.cv_mae_min,0)} min vs ±${fmt(c.baseline_cv_mae_min,0)} for a route average`;
+    // 3 dp: the lift is 0.0085 and fmt() to fewer places renders it as a bare
+    // "0", which reads as "no improvement at all" rather than "real but small".
+    if(c.beats_baseline===false)s+=` · R² lift ${(c.lift_over_baseline??0).toFixed(3)} misses the ${(c.min_lift_required??0.05).toFixed(2)} bar`;
+  }else{
+    s+='\nCycle model · not trained (run python cycle_pipeline.py && python cycle_model.py)';
+  }
   return s;
 }
 async function loadModelStatus(){
@@ -130,10 +144,13 @@ async function loadModelStatus(){
 }
 async function retrainModel(){
   const btn=q('retrain-btn'), el=q('retrain-status'); if(!btn)return;
-  if(!confirm('This will take ~30-60 seconds. Retrain now?'))return;
+  // Honest duration: retrain now rebuilds the cycle model too, which
+  // re-extracts ~663k trip rows over the VPN. Promising 30-60s made a working
+  // 5-minute job look hung.
+  if(!confirm('This retrains the tonnage AND cycle models (~5 minutes over the VPN). Retrain now?'))return;
   const label=btn.textContent;
   btn.disabled=true; btn.textContent='⟳ Retraining…';
-  if(el)el.textContent='Extracting data and training — this can take a minute…';
+  if(el)el.textContent='Extracting data and training both models — this takes several minutes…';
   try{
     const r=await fetch('/api/retrain',{method:'POST'});
     const d=await r.json();
@@ -142,7 +159,8 @@ async function retrainModel(){
     if(el)el.innerHTML=`<span class="${has&&lift<0.01?'ea':'eg'}">✓ Retrained in ${fmt(d.elapsed_s,1)}s — `
       +`${escH(d.model_type)} · R² ${fmt(d.r2,3)} · MAE ${fmt(d.mae,3)}`
       +(has?` · lift ${lift>=0?'+':''}${fmt(lift*100,1)}% over lookup`:'')
-      +`</span><br><span class="muted">${fmt(d.training_rows)} training rows · ${escH(d.data_source||'')}</span>`;
+      +`</span><br><span class="muted">${fmt(d.training_rows)} training rows · ${escH(d.data_source||'')}`
+      +(d.cycle_model?` · cycle model: ${escH(String(d.cycle_model))}`:'')+`</span>`;
     // The server hot-swaps its cached model, so the next estimate uses the new
     // one. Re-render the open Plan tab so the badge updates without a reload.
     if(typeof planPreview==='function')planPreview();

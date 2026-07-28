@@ -274,6 +274,13 @@ sys.exit(0 if (v and 0.1 < v < 0.9 and u.get('routes', 0) >= 5
 EOF
 chk $? "I40  utilisation is fitted and reconciles both models" "cycle/weighbridge tonnage disagree"
 fi
+# Unit tests for the maths BETWEEN the model and the user. That layer is where
+# this phase's real bugs lived (a scale mismatch that would have served
+# exp(67.9) minutes; a guessed utilisation that reported two tonnages for one
+# fleet) and neither showed up in a model metric. Runs with or without a trained
+# model: the prediction tests skip themselves, the arithmetic tests do not.
+$PY tests/test_cycle.py >/dev/null 2>&1
+chk $? "I41  cycle unit tests pass" "see: python tests/test_cycle.py"
 
 echo
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"

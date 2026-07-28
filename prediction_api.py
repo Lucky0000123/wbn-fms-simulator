@@ -453,6 +453,11 @@ def _cycle_payload() -> dict | None:
         "cv_mae_min": rep.get("winner_cv_mae_min"),
         "baseline_cv_r2": rep.get("baseline_cv_r2"),
         "baseline_cv_mae_min": rep.get("baseline_cv_mae_min"),
+        # Forward the lift and the bar it is judged against. Without them the UI
+        # can only say "misses the bar" without saying by how much, and a small
+        # real improvement reads as none at all.
+        "lift_over_baseline": rep.get("lift_over_baseline"),
+        "min_lift_required": rep.get("min_lift_required"),
         "beats_baseline": rep.get("beats_baseline"),
         "verdict": rep.get("verdict"),
         "mae_gain_min": rep.get("mae_gain_min"),
