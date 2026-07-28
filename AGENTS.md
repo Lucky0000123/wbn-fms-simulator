@@ -167,3 +167,59 @@ WMT→DT round-trip returns 60.
 No DB credentials are committed. With no `FMS_DB_*` env vars set, every
 endpoint falls back to `fixtures/*.json` via the `_register()` wrapper in
 `simulator_api.py`. Never break that path.
+
+## Weather now comes from an API, not the site gauges
+
+`scripts/fetch_weather.py` pulls daily rainfall, temperature, humidity and wind
+for the site (-0.7297, 127.9056) from Open-Meteo's ERA5 archive and caches it to
+`data/weather_cache.csv` (gitignored, regenerable):
+
+```bash
+python scripts/fetch_weather.py --start 2025-01-01 --end 2026-07-31
+```
+
+No API key, so there is nothing to leak into the public mirror. 573 days cached
+with zero gaps. It matters most where the site gauges failed: across the outage
+from **2026-04-06** the API reports 112 days including **16 wet days (>=10 mm)**,
+where Phase 3 had a hard-coded seasonal constant. Two consequences:
+
+- rainfall becomes a measured feature instead of an imputed one, and
+- `is_wet_season` stops being unusable. Its -0.89 correlation with
+  `rainfall_missing` existed only because the gauge outage happened to line up
+  with the dry season. With API weather there is no `rainfall_missing`.
+
+## Phase 3.5 (FMS cycle-time model) — what the data will and will not support
+
+Measured from `reports/db_reconnaissance.json`, not assumed. Read this before
+building the cycle-time model: three common assumptions do not hold.
+
+**Do not compute the target by pairing geofence events.** The intended
+`cycle_time = load + haul + dump + return` needs matched loading and dumping
+events, and those are the two sparsest types in the table:
+
+| Geofence type | Rows | Distinct units | First seen |
+|---|---:|---:|---|
+| `pit` | 12,617 | 767 | 2025-12-07 |
+| `weighbridge` | 11,524 | 560 | 2026-07-15 |
+| `dumping` | 706 | 213 | 2026-06-25 |
+| `loading` | **518** | **17** | 2026-06-25 |
+
+That caps the target at roughly 500 trips over 32 days from 17 of ~1,800 trucks.
+Phase 2/3 trained on 4,141 path-shift rows over six months.
+`FMS_GEOFENCE_VISITS` also has no trip key — only a per-visit `EVENT_ID` — so
+cycles would have to be stitched by truck plus timestamp ordering.
+
+**Use `WAITING_TIME` instead** (878,240 rows, 2025-01-01 → 2026-07-22).
+`LOADING_TIME` is 99.6% non-null, `DUMPING_TIME` 79.7%, `DRIVER_ID` 99.4%
+(2,955 drivers), and `ORIGIN_AREA` / `DESTINATION` / `SHIFT` / `DATE` give the
+same path-shift grain the rest of the pipeline already uses. Differencing the
+clock columns yields median load 13 min, haul 48 min, dump 15 min.
+
+**Congestion and GPS features are too recent to join.** `FMS_CONGESTION_SEG`
+covers 2026-07-15 → 07-27 (12 days, 94 segments) and `FMS_GPS_Historical`
+2026-07-15 → 07-20 (5 days). Joined to a Dec-2025 → Jul-2026 training window
+they are null for ~95% of rows. Either restrict the model to the recent window
+or leave them out; do not mass-impute them into existence.
+
+**Gate before switching the target**: at least 2,000 cycle-time rows spanning
+4+ months, and any FMS feature below 60% coverage is dropped rather than imputed.
