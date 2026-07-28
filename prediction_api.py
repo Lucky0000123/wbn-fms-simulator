@@ -507,6 +507,98 @@ def api_match_factor():
     })
 
 
+@bp.route("/api/dispatch/replay", methods=["GET"])
+def api_dispatch_replay():
+    """Mode A: what MF-balanced dispatch would have produced historically.
+
+    The headline is deliberately SPLIT. Averaging a shift where trucks are
+    misallocated with one where the whole fleet is too small produces a number
+    that describes neither, so rebalanceable and fleet-limited shifts are
+    reported separately and the API never collapses them.
+    """
+    started = time.perf_counter()
+    date = str(request.args.get("date") or "").strip()
+    rows, source, meta = [], "fixtures", {}
+    try:
+        import dynamic_dispatch as dd
+        df = dd.load_replay()
+        if df is not None and len(df):
+            source = "database"
+            meta = _read_json(dd.REPLAY_META, {}) or {}
+            if date:
+                df = df[df["date"].astype(str) == date]
+            rows = df.head(500).to_dict("records")
+    except Exception:                                      # noqa: BLE001
+        rows, source = [], "fixtures"
+
+    if source == "fixtures":
+        rows = [{"date": date or "2026-07-01", "shift": "day", "n_points": 5,
+                 "rebalanceable": True, "moves": 7, "trucks": 120,
+                 "before_under": 3, "before_balanced": 1,
+                 "after_under": 2, "after_balanced": 3}]
+        meta = {"mode": "A - historical replay (fixture)",
+                "verdict": "sample data, not measured"}
+
+    return jsonify({
+        "ok": True, "source": source, "is_fixture": source == "fixtures",
+        "date": date or None, "count": len(rows), "results": rows,
+        "grain": "loading point x shift (shift-level simulation, not real time)",
+        "summary": {k: meta.get(k) for k in
+                    ("shifts_total", "shifts_rebalanceable", "shifts_fleet_limited",
+                     "moves_total", "rebalanceable", "fleet_limited", "all_shifts",
+                     "improves_rebalanceable", "verdict")},
+        "caveat": ("Shifts where every point is starved cannot be fixed by "
+                   "reassignment; those are reported under fleet_limited and "
+                   "are a fleet-size finding, not a dispatch result."),
+        "generated_at": meta.get("generated_at"),
+        "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
+    })
+
+
+@bp.route("/api/dispatch/forward", methods=["POST", "GET"])
+def api_dispatch_forward():
+    """Mode B: recommended truck-to-point assignments for a planned shift."""
+    started = time.perf_counter()
+    data = request.get_json(silent=True) or {}
+    if not data:
+        data = request.args.to_dict()
+    pts = data.get("loading_points")
+    if isinstance(pts, str):
+        pts = [x.strip() for x in pts.split(",") if x.strip()]
+    plan = {"trucks": data.get("trucks") or data.get("n_trucks") or 0,
+            "loading_points": pts or [],
+            "shift": data.get("shift") or "day"}
+    try:
+        plan["trucks"] = int(float(plan["trucks"]))
+    except Exception:                                      # noqa: BLE001
+        plan["trucks"] = 0
+
+    try:
+        import dynamic_dispatch as dd
+        out = dd.forward(plan)
+        source = "database"
+    except Exception as exc:                               # noqa: BLE001
+        out, source = {"ok": False, "error": str(exc)[:120]}, "fixtures"
+
+    if not out.get("ok") and source == "fixtures":
+        out = {"ok": True, "shift": plan["shift"],
+               "trucks_requested": plan["trucks"] or 30,
+               "trucks_assigned": plan["trucks"] or 30,
+               "assignments": [
+                   {"loading_point": "TOS8", "trucks_assigned": 18,
+                    "projected_match_factor": 0.92,
+                    "projected_status": "balanced", "known": True},
+                   {"loading_point": "BLB 10", "trucks_assigned": 12,
+                    "projected_match_factor": 0.88,
+                    "projected_status": "balanced", "known": True}],
+               "unknown_points": [], "basis": "sample data, not measured"}
+
+    return jsonify({**out, "source": source,
+                    "is_fixture": source == "fixtures",
+                    "grain": "shift-level recommendation, not real-time dispatch",
+                    "elapsed_ms": round((time.perf_counter() - started) * 1000, 2)})
+
+
 @bp.route("/api/model-info", methods=["GET"])
 def api_model_info():
     """Current model status — used by the UI and for debugging."""

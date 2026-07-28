@@ -23,6 +23,9 @@ data/trip_metadata.json
 data/trip_diagnostic.json
 data/elevation_cache.json
 data/*.parquet
+data/dispatch_replay_results.csv
+data/dispatch_moves.csv
+data/dispatch_meta.json
 data/match_factor_meta.json
 data/match_factor_results.csv
 !data/model_metadata.sample.json
