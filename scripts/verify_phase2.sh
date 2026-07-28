@@ -321,6 +321,22 @@ sys.exit(0 if (d.servers_observed <= d.n_trucks).all()
 EOF
 chk $? "J46  servers never exceed trucks present" "impossible server count"
 fi
+# The trip layer and its metadata must agree. A truncated or partially
+# regenerated extract silently invalidates every published figure derived from
+# it, and that is exactly what a stale row count looks like.
+if [ -f data/trip_metadata.json ] && [ -f data/trip_level_base.csv ]; then
+$PY - <<'EOF' >/dev/null 2>&1
+import json, sys, csv
+m = json.load(open('data/trip_metadata.json'))
+with open('data/trip_level_base.csv', newline='') as fh:
+    n = sum(1 for _ in fh) - 1
+ok = (m.get('rows') == n and n > 100000
+      and 0 < (m.get('variance_decomposition') or {}).get(
+          'aggregate_model_r2_ceiling', 0) < 1)
+sys.exit(0 if ok else 1)
+EOF
+chk $? "J47  trip metadata matches the extract" "row count or ceiling drifted"
+fi
 
 echo
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"

@@ -63,7 +63,7 @@ Also run the two gates:
 
 ```bash
 .venv/bin/python scripts/check_vocab.py --api   # route-name convergence
-bash scripts/verify_phase2.sh                   # must stay all-pass (41/41 here; see note below)
+bash scripts/verify_phase2.sh                   # must stay all-pass (47/47 here; see note below)
 ```
 
 `check_vocab.py` exits non-zero if any route name reaching the UI is not the
@@ -286,7 +286,7 @@ in mind. Measured, not assumed:
 |---|---|
 | Fresh clone, nothing trained | 24/33 — the A/B checks need `data/` artifacts |
 | After `python train_model.py`, no VPN | 32/33 (33/33 with remotes configured) |
-| Full: cycle model trained too | 41/41 |
+| Full: cycle model + match factor | 47/47 |
 
 `data/` is gitignored (real tonnages, public mirror), so a clone starts with no
 artifacts and the extraction checks fail until you train once. That is the
