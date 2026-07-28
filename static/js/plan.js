@@ -177,6 +177,13 @@ function _planRenderEstimate(v){
       +(modelled?`Cycle model`:`Per-route average (this route is new to the model)`)
       +(mae?` · typically within ±${mae} min`:'')
       +`</span>`;
+    // Two independent models, two data sources. When they disagree materially
+    // the user should see it rather than be handed whichever number the layout
+    // happened to put first.
+    if(c.models_agree===false&&Number.isFinite(c.vs_weighbridge_pct)){
+      cyc+=`<span class="est-model-sub warn">⚠ Haul telemetry implies `
+         +`${c.vs_weighbridge_pct>0?'+':''}${fmtExact(c.vs_weighbridge_pct,0)}% vs the weighbridge model on this route — treat both as approximate.</span>`;
+    }
   }
   box.classList.remove('empty');
   box.innerHTML=`<div class="est-head">Estimated shift output</div>`

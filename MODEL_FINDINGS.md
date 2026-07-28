@@ -6,10 +6,10 @@ Derived statistics only — no tonnages or route-level production volumes.
 
 | | |
 |---|---|
-| Generated | 2026-07-28T02:44:53+00:00 |
-| Training rows | 52,818 |
-| Date range | 2025-09-01 to 2026-07-22 |
-| Data source | sample fixtures (path-shift-contractor) |
+| Generated | 2026-07-28T03:57:39+00:00 |
+| Training rows | 4,141 |
+| Date range | 2025-12-27 to 2026-07-08 |
+| Data source | database (trip level) |
 | Target | `trips_per_dt_per_shift` (trips per truck per shift) |
 
 ## Headline: no fitted model beats a lookup table
@@ -19,11 +19,11 @@ the past, test on the next block, never shuffle. All models see identical folds.
 
 | Model | mean CV R² | |
 |---|---|---|
-| Group-mean lookup (per route/contractor/shift) | 0.638 |  |
-| OLS regression | -0.700 |  |
-| **RandomForest** | **0.652** | **selected** |
+| **Group-mean lookup (per route/contractor/shift)** | **0.459** | **selected** |
+| OLS regression | 0.238 |  |
+| RandomForest | 0.238 |  |
 
-**Selected: `random_forest`** — highest mean CV R2 under identical rolling-origin folds
+**Selected: `group_mean_baseline`** — highest mean CV R2 under identical rolling-origin folds
 
 > A single chronological split reports much higher numbers (OLS ~0.56, RF ~0.59)
 > because it scores one held-out block. The cross-validated figures above are
@@ -33,11 +33,11 @@ the past, test on the next block, never shuffle. All models see identical folds.
 
 | Test period | Train rows | Test rows | R² | MAE | MAPE | Rain varies? |
 |---|---|---|---|---|---|---|
-| 2026-03..2026-03 | 38,620 | 7,066 | -0.324 | 0.945 | 34.8% | yes |
-| 2026-04..2026-04 | 45,686 | 3,920 | -0.778 | 1.141 | 45.3% | yes |
-| 2026-05..2026-05 | 49,606 | 1,352 | 0.595 | 1.314 | 37.7% | yes |
-| 2026-06..2026-06 | 50,958 | 1,298 | -1.907 | 1.975 | 96.5% | yes |
-| 2026-07..2026-07 | 52,256 | 562 | -1.088 | 1.113 | 53.6% | yes |
+| 2026-03..2026-03 | 1,796 | 1,081 | 0.197 | 0.543 | 24.7% | yes |
+| 2026-04..2026-04 | 2,877 | 791 | 0.388 | 0.481 | 26.4% | yes |
+| 2026-05..2026-05 | 3,668 | 152 | -0.031 | 0.645 | 42.5% | no |
+| 2026-06..2026-06 | 3,820 | 259 | 0.180 | 0.674 | 47.6% | no |
+| 2026-07..2026-07 | 4,079 | 62 | 0.456 | 0.481 | 31.3% | no |
 
 Folds where rain does not vary **cannot validate any rainfall coefficient** —
 the gauges stopped reporting on 2026-04-06, so rain is constant there.
@@ -48,32 +48,33 @@ OLS coefficients in **trips per truck per shift**. `***` p<0.001, `**` p<0.01, `
 
 | Factor | Effect | 95% CI | p | |
 |---|---|---|---|---|
-| Fleet on this route (trucks) | +0.00234 | [+0.0013, +0.0033] | 0.000 | *** |
-| Rainfall (mm) | +0.01298 | [+0.0119, +0.0140] | 0.000 | *** |
-| Weighbridges open | -0.04600 | [-0.0663, -0.0257] | 0.000 | *** |
-| Total trucks sharing the road (congestion) | -0.00057 | [-0.0008, -0.0003] | 0.000 | *** |
-| Rain x haul distance (interaction) | -0.00032 | [-0.0004, -0.0002] | 0.000 | *** |
-| Rain x fleet size (interaction) | +0.00067 | [+0.0006, +0.0007] | 0.000 | *** |
-| Weekend shift | -0.01488 | [-0.0304, +0.0006] | 0.060 |  |
-| Rainfall reading missing (gauge outage) | -0.22784 | [-0.2560, -0.1997] | 0.000 | *** |
+| Fleet on this route (trucks) | +0.00059 | [-0.0003, +0.0015] | 0.193 |  |
+| Rainfall (mm) | -0.00267 | [-0.0074, +0.0021] | 0.268 |  |
+| Payload per trip (t) | -0.00557 | [-0.0120, +0.0009] | 0.090 |  |
+| Weighbridges open | +0.02376 | [+0.0086, +0.0389] | 0.002 | ** |
+| Total trucks sharing the road (congestion) | +0.00118 | [+0.0008, +0.0016] | 0.000 | *** |
+| Rain x haul distance (interaction) | +0.00015 | [-0.0001, +0.0004] | 0.180 |  |
+| Rain x fleet size (interaction) | +0.00001 | [-0.0001, +0.0001] | 0.820 |  |
+| Weekend shift | -0.02399 | [-0.0607, +0.0127] | 0.200 |  |
+| Rainfall reading missing (gauge outage) | +0.07259 | [+0.0242, +0.1210] | 0.003 | ** |
 
-Plus 64 route and 7 contractor fixed effects (not listed: naming every route with its productivity would publish the shape of the operation).
+Plus 22 route and 7 contractor fixed effects (not listed: naming every route with its productivity would publish the shape of the operation).
 
-**Significant at p<0.05: 78 of 80 features.** Max VIF 12.72 (nothing above 10, so coefficients are separately identified). Condition number 8,660.
+**Significant at p<0.05: 28 of 39 features.** Max VIF 8.41 (nothing above 10, so coefficients are separately identified). Condition number 3,443.
 
 ### Reading the significant effects
 
-- **Weighbridges open -0.046** — each additional open weighbridge is worth about -0.046 extra trips per truck per shift. The clearest operational lever in the model.
-- **Shared-road congestion -0.00057** — the sign is *positive*, which is not what a congestion story predicts. Busy roads are busy because the routes are productive; this is association, not a causal claim that adding trucks helps.
-- **Rainfall missing -0.228** — rows after the gauge outage read higher. This is a data-quality marker, not weather: it separates imputed rows from measured ones so the model does not treat a guess as a reading.
+- **Weighbridges open +0.024** — each additional open weighbridge is worth about 0.024 extra trips per truck per shift. The clearest operational lever in the model.
+- **Shared-road congestion +0.00118** — the sign is *positive*, which is not what a congestion story predicts. Busy roads are busy because the routes are productive; this is association, not a causal claim that adding trucks helps.
+- **Rainfall missing +0.073** — rows after the gauge outage read higher. This is a data-quality marker, not weather: it separates imputed rows from measured ones so the model does not treat a guess as a reading.
 
 ## Residual diagnostics — the Phase 4 decision
 
 | Check | Result |
 |---|---|
-| Heteroscedastic | **yes** (corr \|residual\| vs fitted = 0.464) |
+| Heteroscedastic | **yes** (corr \|residual\| vs fitted = 0.477) |
 | Non-linear features flagged | none |
-| Residual mean / std | -0.0000 / 0.803 |
+| Residual mean / std | -0.0000 / 0.545 |
 
 Error grows with the size of the prediction, so a constant-variance linear
 model is the wrong shape. But **no single feature shows curvature**, and every
@@ -99,7 +100,7 @@ excluded too: it is derived from weighbridge timestamps *after* the shift ran.
 
 ### Rainfall imputation
 
-seasonal-mean + rainfall_missing flag. Gauges stopped reporting **2026-04-06**; 5,978 rows are imputed with a seasonal mean and flagged via `rainfall_missing`, so the model can tell a guess from a measurement.
+seasonal-mean + rainfall_missing flag. Gauges stopped reporting **2026-04-06**; 1,066 rows are imputed with a seasonal mean and flagged via `rainfall_missing`, so the model can tell a guess from a measurement.
 
 ## Features the roadmap wants that the data cannot support
 
@@ -136,8 +137,8 @@ Phase 3's target, trips per truck per shift, is a ratio whose denominator is a p
 |---|---|---|
 | `ols` | 0.6464 | 29.7414 |
 | `ols_log` | 0.6565 | 29.5018 |
-| `ols_physics_only` | 0.1634 | 67.4697 |
-| `random_forest` | 0.4036 | 49.633 |
+| `ols_physics_only` | 0.1634 | 67.4696 |
+| `random_forest` | 0.4035 | 49.6348 |
 | `route_mean_baseline` | 0.648 | 37.8408 |
 
 The pre-registered bar was **R² lift ≥ 0.05** over the per-route lookup. The model returns **0.0085**, so `beats_baseline` is **False**.

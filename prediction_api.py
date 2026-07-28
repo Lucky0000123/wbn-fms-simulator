@@ -360,6 +360,18 @@ def api_predict():
                                "trucks_assumed": n_trucks,
                                "target": "avg_cycle_time_min",
                                "units": "minutes"}
+                # Two independent models now answer the same question, and they
+                # do not always agree: cycle time comes from FMS haul telemetry,
+                # tonnage from weighbridge tickets. Publishing the gap turns a
+                # silent contradiction into a usable signal — a large gap means
+                # the route's telemetry and its tickets disagree, which is worth
+                # knowing before either number is trusted.
+                legacy_wmt = prediction.get("total_wmt")
+                cyc_wmt = plan.get("total_wmt")
+                if legacy_wmt and cyc_wmt:
+                    gap = round(100.0 * cyc_wmt / legacy_wmt - 100.0, 1)
+                    cycle_block["vs_weighbridge_pct"] = gap
+                    cycle_block["models_agree"] = bool(abs(gap) <= 25)
         except Exception:                              # noqa: BLE001
             cycle_block = None                         # never break /api/predict
 

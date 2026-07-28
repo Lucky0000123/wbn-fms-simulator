@@ -255,6 +255,17 @@ ok = (day and night and wet and unknown
 sys.exit(0 if ok else 1)
 EOF
 chk $? "I39  cycle serving is sane and falls back" "serving misbehaves"
+# Cycle time only becomes tonnage through a utilisation factor. A guessed 0.85
+# made the two models report 5,046 t and 10,667 t for the SAME fleet, so this
+# gates that the factor is FITTED and still reconciles them.
+$PY - <<'EOF' >/dev/null 2>&1
+import json, sys
+u = (json.load(open('data/cycle_model_report.json')).get('utilisation') or {})
+v, err = u.get('utilisation'), u.get('reconcile_median_abs_pct')
+sys.exit(0 if (v and 0.1 < v < 0.9 and u.get('routes', 0) >= 5
+               and err is not None and err < 35) else 1)
+EOF
+chk $? "I40  utilisation is fitted and reconciles both models" "cycle/weighbridge tonnage disagree"
 fi
 
 echo

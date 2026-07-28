@@ -30,11 +30,18 @@ _CACHE: dict | None = None
 _MTIME: float | None = None
 
 DEFAULT_SHIFT_HOURS = 12.0
-# Trucks do not haul for every minute of a rostered shift: refuelling, shift
-# handover, safety briefings and queueing at the gate are real. 85% is the
-# planning convention used elsewhere in this app; it is a stated assumption,
-# not a fitted quantity, and is returned in the payload so it can be argued with.
-SHIFT_UTILISATION = 0.85
+# Fraction of a rostered shift a truck actually spends on cycles. FITTED by the
+# trainer against weighbridge trips on routes both datasets share, not assumed.
+#
+# This constant used to be 0.85 on a plausible-sounding argument about
+# refuelling and handovers. It was wrong by more than 2x: the same API response
+# then reported 5,046 t (weighbridge model) and 10,667 t (cycle model) for an
+# identical 101-truck fleet. Measured utilisation is ~0.40, which reconciles the
+# two to 17.8% median error across 12 routes.
+#
+# The value below is only the fallback for a pickle trained before calibration
+# existed; the served number comes from the bundle.
+SHIFT_UTILISATION = 0.40
 
 
 def load_cycle_model() -> dict | None:
@@ -139,9 +146,16 @@ def predict_cycle_time(source: str, destination: str, shift: str = "day",
     }
 
 
+def fitted_utilisation(default: float = SHIFT_UTILISATION) -> float:
+    """Utilisation from the trained bundle, falling back to the constant."""
+    b = load_cycle_model() or {}
+    u = (b.get("utilisation") or {}).get("utilisation")
+    return float(u) if u and 0.05 < u < 1.0 else default
+
+
 def cycle_to_tonnage(cycle_min: float, trucks: float, payload_t: float,
                      shift_hours: float = DEFAULT_SHIFT_HOURS,
-                     utilisation: float = SHIFT_UTILISATION) -> dict:
+                     utilisation: float | None = None) -> dict:
     """Convert a cycle time into a shift plan.
 
         trips per truck = (shift minutes * utilisation) / cycle minutes
@@ -152,6 +166,7 @@ def cycle_to_tonnage(cycle_min: float, trucks: float, payload_t: float,
     """
     if not cycle_min or cycle_min <= 0:
         return {}
+    utilisation = fitted_utilisation() if utilisation is None else utilisation
     eff_min = float(shift_hours) * 60.0 * float(utilisation)
     trips_per_truck = eff_min / float(cycle_min)
     total_trips = trips_per_truck * float(trucks)
@@ -166,11 +181,12 @@ def cycle_to_tonnage(cycle_min: float, trucks: float, payload_t: float,
 
 def trucks_for_target(cycle_min: float, target_wmt: float, payload_t: float,
                       shift_hours: float = DEFAULT_SHIFT_HOURS,
-                      utilisation: float = SHIFT_UTILISATION) -> int | None:
+                      utilisation: float | None = None) -> int | None:
     """Fleet size for a tonnage target — closed form, no fixed-point loop
     needed, because trips scale linearly in truck count once cycle time is
     known."""
     if not (cycle_min and payload_t and target_wmt > 0):
         return None
+    utilisation = fitted_utilisation() if utilisation is None else utilisation
     per_truck = (float(shift_hours) * 60.0 * float(utilisation) / float(cycle_min)) * float(payload_t)
     return max(1, math.ceil(float(target_wmt) / per_truck)) if per_truck > 0 else None

@@ -70,6 +70,61 @@ VIF_EXEMPT_PREFIX = "rt_"
 MIN_LIFT_OVER_BASELINE = 0.05
 
 
+
+def calibrate_utilisation(df: pd.DataFrame) -> dict:
+    """Fraction of a rostered shift a truck actually spends on cycles.
+
+    Cycle time alone does not give tonnage. Converting one to the other needs
+    to know how much of a 12-hour shift is productive, and a plausible-sounding
+    constant is not good enough: assuming 0.85 made the cycle model predict
+    2.19 trips per truck on TF>FENI KM0 where the weighbridge recorded 1.09,
+    so the same API response showed 5,046 t and 10,667 t for the same fleet.
+
+    So it is measured instead. For every route present in BOTH datasets:
+
+        utilisation = observed_trips_per_truck * cycle_minutes / shift_minutes
+
+    weighted by ticket count, because a route with 500 tickets is better
+    evidence than one with 30. The two sides are independent: cycle time comes
+    from FMS haul telemetry, trips come from weighbridge tickets. Agreement
+    between them is a real cross-check rather than a circular fit.
+
+    Returns the fitted value plus the reconciliation error, so a future run
+    that drifts is visible instead of silently re-anchoring.
+    """
+    out = {"utilisation": None, "basis": "unavailable", "routes": 0}
+    try:
+        tickets = pd.read_csv(os.path.join(DATA, "training_data.csv"))
+    except Exception:                                       # noqa: BLE001
+        return out                                          # keep the default
+
+    c = df.copy(); t = tickets.copy()
+    for f in (c, t):
+        f["k"] = f["source"].astype(str) + ">" + f["destination"].astype(str)
+    j = pd.concat([c.groupby("k")[TARGET].mean(),
+                   t.groupby("k")["trips_per_dt_per_shift"].mean(),
+                   t.groupby("k").size().rename("n")], axis=1).dropna()
+    j.columns = ["cycle_min", "actual_trips", "n"]
+    j = j[(j["actual_trips"] > 0.2) & (j["n"] >= 30)]
+    if len(j) < 5:              # too few overlapping routes to trust a fit
+        return out
+
+    shift_min = 12 * 60.0
+    u = j["actual_trips"] * j["cycle_min"] / shift_min
+    fitted = float(np.average(u, weights=j["n"]))
+    pred = (shift_min * fitted) / j["cycle_min"]
+    err = ((pred - j["actual_trips"]).abs() / j["actual_trips"])
+    return {
+        "utilisation": round(fitted, 4),
+        "basis": "fitted against weighbridge trips on shared routes",
+        "routes": int(len(j)),
+        "median": round(float(u.median()), 4),
+        "iqr": [round(float(u.quantile(0.25)), 4), round(float(u.quantile(0.75)), 4)],
+        "reconcile_median_abs_pct": round(float(100 * err.median()), 1),
+        "routes_within_25pct": int((err < 0.25).sum()),
+    }
+
+
 def build_features(df: pd.DataFrame, feature_names: list | None = None,
                    keep_routes: set | None = None, use_route: bool = True):
     """Design matrix for cycle time.
@@ -409,8 +464,18 @@ def run(df: pd.DataFrame | None = None, n_folds: int = 5, verbose: bool = True) 
                          "ship a model that would serve exp() of raw minutes"
                          % float(served_params["const"]))
 
+    util = calibrate_utilisation(df)
+    if util.get("utilisation"):
+        say("utilisation fitted at %.3f from %d shared routes "
+            "(reconciles to %.1f%% median error)"
+            % (util["utilisation"], util["routes"],
+               util["reconcile_median_abs_pct"]))
+    report["utilisation"] = util
+    with open(CYCLE_REPORT, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2, default=str)
+
     with open(CYCLE_MODEL_PKL, "wb") as fh:
-        pickle.dump({"feature_names": names,
+        pickle.dump({"feature_names": names, "utilisation": util,
                      "params": served_params.to_dict(),
                      "param_scale": served_scale,
                      "smearing_factor": smearing,
