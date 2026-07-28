@@ -304,3 +304,48 @@ function computePlan(){
   const wbCap=wb*30*hours;
   q('plan-warn').innerHTML=totTrips>wbCap?`<span class="er">⚠ Weighbridge bottleneck: ${fmtExact(Math.round(totTrips))} trips exceed ~${fmtExact(Math.round(wbCap))} weigh capacity (${fmtExact(wb)} bridges × ~30/hr × ${fmtExact(hours)}h). Add bridges or trim fleet.</span>`:`<span class="muted">Weighbridge capacity OK (~${fmtExact(Math.round(wbCap))} trips headroom at ${fmtExact(wb)} bridges). Trips/DT is per <b>${fmtExact(hours)}h shift</b>, from each path's 20-month average adjusted for contractor, fleet size${rain>0?' and rainfall':''}. First-level estimate — not a committed plan.</span>`;
 }
+
+
+// -- Phase 4: Match Factor panel -------------------------------------------
+// MF = (trucks per server x service time) / cycle time. Below ~0.85 the loading
+// point is starved (the shovel waits); above ~1.15 trucks are queuing. Measured
+// on this site 69.8%% of point-shifts are UNDER-trucked, so the usual assumption
+// that a busy mine is over-trucked is wrong here more often than not.
+async function mfLoad(){
+  const card=q('mf-card'), body=q('mf-body'), note=q('mf-note'), btn=q('mf-btn');
+  if(!card||!body)return;
+  card.style.display='block';
+  body.innerHTML='<span class="muted">Loading...</span>';
+  if(btn)btn.disabled=true;
+  try{
+    const r=await fetch('/api/match_factor',{cache:'no-store'});
+    const d=await r.json();
+    if(!d||!d.ok)throw new Error('unavailable');
+    const rows=(d.results||[]).slice(0,12);
+    if(!rows.length){body.innerHTML='<span class="muted">No loading-point data yet.</span>';return;}
+    const cls=s=>s==='over-trucked'?'er':(s==='under-trucked'?'ea':'eg');
+    body.innerHTML='<table style="width:100%;font-size:11px">'
+      +'<thead><tr><th style="text-align:left">Loading point</th><th>Shift</th>'
+      +'<th>Trucks</th><th>Bays</th><th>MF</th><th>Wait</th>'
+      +'<th style="text-align:left">Status</th></tr></thead><tbody>'
+      +rows.map(x=>`<tr><td>${escH(x.loading_point)}</td><td>${escH(x.shift)}</td>`
+        +`<td>${fmtExact(x.n_trucks)}</td><td>${fmtExact(x.servers_observed)}</td>`
+        +`<td><b>${fmtExact(x.match_factor,2)}</b></td>`
+        +`<td>${fmtExact(x.avg_queue_wait_min,0)} min</td>`
+        +`<td><span class="${cls(x.status)}">${escH(x.status)}</span></td></tr>`).join('')
+      +'</tbody></table>';
+    // The caveat travels with the numbers. There is no shovel identity in the
+    // source data, so "Bays" is the observed peak of simultaneous loads at a
+    // PLACE. Letting the column imply a machine would overstate this.
+    const bits=[];
+    if(d.summary)bits.push(Object.entries(d.summary)
+      .map(([k,v])=>escH(k)+' '+fmtExact(v,1)+'%').join(' &middot; '));
+    if(d.is_fixture)bits.push('&#9888; sample data, not measured');
+    bits.push('keyed by loading point, not shovel: no shovel identity exists in the source data');
+    if(d.validation&&Number.isFinite(d.validation.corr_mf_queue_share))
+      bits.push('validated against queue wait (r='+fmtExact(d.validation.corr_mf_queue_share,2)+')');
+    if(note)note.innerHTML=bits.join('<br>');
+  }catch(e){
+    body.innerHTML='<span class="er">Could not load match factor: '+escH(e.message)+'</span>';
+  }finally{ if(btn)btn.disabled=false; }
+}

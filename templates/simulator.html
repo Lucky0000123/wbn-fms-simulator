@@ -193,6 +193,17 @@
             </div>
             <div id="plan-hint" class="muted" style="font-size:10.5px;margin-top:7px"></div>
             <div id="plan-preview" class="plan-estimate"></div>
+            <!-- Phase 4: Match Factor. A separate card because it answers a
+                 different question from the tonnage estimate: not "how much
+                 will this move" but "is this loading point starved or
+                 queued". Loaded on demand so the Plan tab stays fast. -->
+            <div id="mf-card" class="plan-estimate" style="margin-top:10px;display:none">
+              <div class="est-head">Loading point balance (Match Factor)</div>
+              <div id="mf-body"></div>
+              <div id="mf-note" class="est-model-sub"></div>
+            </div>
+            <div style="margin-top:6px"><button class="plan-add" type="button"
+                 onclick="mfLoad()" id="mf-btn">Check loading balance</button></div>
             <div style="margin-top:10px"><button class="plan-add" onclick="planAddPath()">+ Add this path to plan</button></div>
           </div>
           <div class="card" style="flex:1;min-width:250px">

@@ -646,11 +646,32 @@ def api_retrain():
             if want_cycle:
                 cycle_status = "not retrained (%s)" % str(exc)[:120]
         print("[retrain] cycle model %s" % cycle_status)
+
+        # Match Factor is a third artifact on a third grain. A retrain that
+        # refreshed the two models and left the MF table stale would show a
+        # planner fresh cycle times beside week-old queue diagnostics with
+        # nothing saying they came from different vintages. Same failure mode
+        # as the cycle model. Best-effort and opt-out for the same reasons.
+        mf_status = "skipped (cycle=0)" if not want_cycle else "skipped"
+        try:
+            if not want_cycle:
+                raise RuntimeError("caller opted out")
+            import match_factor
+            mfm = match_factor.run(verbose=False)
+            val = (mfm.get("validation") or {})
+            mf_status = ("refreshed: %s point-shifts, gate passes=%s (r=%s)"
+                         % (mfm.get("rows"), val.get("passes"),
+                            val.get("corr_mf_queue_share")))
+        except Exception as exc:                       # noqa: BLE001
+            if want_cycle:
+                mf_status = "not refreshed (%s)" % str(exc)[:120]
+        print("[retrain] match factor %s" % mf_status)
         elapsed = round(time.perf_counter() - started, 1)
         print("[retrain] done in %ss — %s R2=%.4f MAE=%.4f on %d rows"
               % (elapsed, meta["model_type"], meta["r2"], meta["mae"], meta["training_rows"]))
         return jsonify({"ok": True, "retrained_at": meta["trained_at"], "elapsed_s": elapsed,
                         "cycle_model": cycle_status,
+                        "match_factor": mf_status,
                         "model_type": meta["model_type"], "r2": meta["r2"], "mae": meta["mae"],
                         "rmse": meta["rmse"], "training_rows": meta["training_rows"],
                         "test_rows": meta["test_rows"], "candidates": meta["candidates"],
