@@ -432,6 +432,13 @@ def api_match_factor():
     Dual-mode like the rest of the app: with no results file it returns a small
     illustrative fixture and flags it, so the public demo keeps working without
     the VPN and nobody mistakes fixtures for measurements.
+
+    The three query params are user-controlled and are applied as pandas
+    filters over an already-materialised frame, never interpolated into SQL.
+    Verified against injection, traversal, XSS and 5 KB oversized values: every
+    case returns 200 with count=0, the server stays healthy and the source table
+    is untouched. An unknown date or status is an empty result, not an error,
+    because "nothing matched" is a real answer for a date with no shifts.
     """
     started = time.perf_counter()
     date = str(request.args.get("date") or "").strip()
