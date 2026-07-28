@@ -519,10 +519,30 @@ def api_retrain():
         meta = train_model.train_with_phase3(extract=True, verbose=True)
         invalidate_model()
         load_model(force=True)
+        # The cycle model is a second model on a second table, and a retrain
+        # that refreshed only the tonnage model would leave /api/predict
+        # serving a fresh trips number beside a stale cycle time with no
+        # indication that they came from different vintages. Same failure mode
+        # as H33. Best-effort: it needs the VPN, so a failure here must not
+        # fail a retrain that otherwise succeeded.
+        cycle_status = "skipped"
+        try:
+            import cycle_model, cycle_pipeline
+            frame = cycle_pipeline.attach_context(cycle_pipeline.extract_cycle_data())
+            cycle_pipeline.save_cycle_data(frame)
+            crep = cycle_model.run(frame, verbose=False)
+            if cycsrv is not None:
+                cycsrv.reset_cycle_model()         # drop the cached pickle
+            cycle_status = "retrained: %s rows, %s CV R2 %s" % (
+                crep.get("rows"), crep.get("winner"), crep.get("winner_cv_r2"))
+        except Exception as exc:                       # noqa: BLE001
+            cycle_status = "not retrained (%s)" % str(exc)[:120]
+        print("[retrain] cycle model %s" % cycle_status)
         elapsed = round(time.perf_counter() - started, 1)
         print("[retrain] done in %ss — %s R2=%.4f MAE=%.4f on %d rows"
               % (elapsed, meta["model_type"], meta["r2"], meta["mae"], meta["training_rows"]))
         return jsonify({"ok": True, "retrained_at": meta["trained_at"], "elapsed_s": elapsed,
+                        "cycle_model": cycle_status,
                         "model_type": meta["model_type"], "r2": meta["r2"], "mae": meta["mae"],
                         "rmse": meta["rmse"], "training_rows": meta["training_rows"],
                         "test_rows": meta["test_rows"], "candidates": meta["candidates"],

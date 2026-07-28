@@ -63,7 +63,7 @@ Also run the two gates:
 
 ```bash
 .venv/bin/python scripts/check_vocab.py --api   # route-name convergence
-bash scripts/verify_phase2.sh                   # must stay 24/24
+bash scripts/verify_phase2.sh                   # must stay all-pass (39/39 here; see note below)
 ```
 
 `check_vocab.py` exits non-zero if any route name reaching the UI is not the
@@ -188,38 +188,78 @@ where Phase 3 had a hard-coded seasonal constant. Two consequences:
   `rainfall_missing` existed only because the gauge outage happened to line up
   with the dry season. With API weather there is no `rainfall_missing`.
 
-## Phase 3.5 (FMS cycle-time model) — what the data will and will not support
+## Phase 3.5 — the cycle-time model (BUILT)
 
-Measured from `reports/db_reconnaissance.json`, not assumed. Read this before
-building the cycle-time model: three common assumptions do not hold.
+Predicts `avg_cycle_time_min`: how long one truck takes to load, haul, dump and
+return. Tonnage then follows by arithmetic instead of a second fit:
 
-**Do not compute the target by pairing geofence events.** The intended
-`cycle_time = load + haul + dump + return` needs matched loading and dumping
-events, and those are the two sparsest types in the table:
+    tonnage = trucks x payload x (shift_minutes x utilisation / cycle_time)
 
-| Geofence type | Rows | Distinct units | First seen |
-|---|---:|---:|---|
-| `pit` | 12,617 | 767 | 2025-12-07 |
-| `weighbridge` | 11,524 | 560 | 2026-07-15 |
-| `dumping` | 706 | 213 | 2026-06-25 |
-| `loading` | **518** | **17** | 2026-06-25 |
+Full numbers live in `MODEL_FINDINGS.md` (committed). Rebuild with:
 
-That caps the target at roughly 500 trips over 32 days from 17 of ~1,800 trucks.
-Phase 2/3 trained on 4,141 path-shift rows over six months.
-`FMS_GEOFENCE_VISITS` also has no trip key — only a per-visit `EVENT_ID` — so
-cycles would have to be stitched by truck plus timestamp ordering.
+```bash
+python cycle_pipeline.py     # extract from WAITING_TIME  (needs VPN, ~5 min)
+python cycle_model.py        # fit, validate, write data/cycle_model.pkl
+python scripts/publish_findings.py
+```
 
-**Use `WAITING_TIME` instead** (878,240 rows, 2025-01-01 → 2026-07-22).
-`LOADING_TIME` is 99.6% non-null, `DUMPING_TIME` 79.7%, `DRIVER_ID` 99.4%
-(2,955 drivers), and `ORIGIN_AREA` / `DESTINATION` / `SHIFT` / `DATE` give the
-same path-shift grain the rest of the pipeline already uses. Differencing the
-clock columns yields median load 13 min, haul 48 min, dump 15 min.
+`cycle_pipeline.py` needs the database and has no fixture path, by design: a
+fixture cycle time would be a made-up number that looks real. Without the VPN
+the serving layer keeps using the last-trained `data/cycle_model.pkl`, and if
+that is missing too, `/api/predict` returns `cycle: null` and the UI hides the
+row rather than showing a placeholder.
 
-**Congestion and GPS features are too recent to join.** `FMS_CONGESTION_SEG`
-covers 2026-07-15 → 07-27 (12 days, 94 segments) and `FMS_GPS_Historical`
-2026-07-15 → 07-20 (5 days). Joined to a Dec-2025 → Jul-2026 training window
-they are null for ~95% of rows. Either restrict the model to the recent window
-or leave them out; do not mass-impute them into existence.
+**The target does not come from geofences, and should not.** The obvious route
+(`load + haul + dump` from paired `loading`/`dumping` events) fails on volume:
+`loading` is the sparsest event type in `FMS_GEOFENCE_VISITS` at ~600 rows from
+22 distinct trucks starting 2026-06-25, i.e. ~500 trips over a month from 22 of
+~1,800 trucks. `WAITING_TIME` carries the same information at scale (663k rows
+since 2025-12, 396k passing physical bounds, 10,058 path-shift rows over 8
+months) because its LOADING/DUMPING columns are clock times that can be
+differenced. Re-check the geofence counts before assuming this is still true;
+if that table fills in, it is the better source.
 
-**Gate before switching the target**: at least 2,000 cycle-time rows spanning
-4+ months, and any FMS feature below 60% coverage is dropped rather than imputed.
+**Read the result correctly.** R2 lift over the per-route lookup is 0.0085
+against a pre-registered bar of 0.05, so `beats_baseline` is **false** and is
+reported that way in the API, the report and the UI. MAE is 8.3 min (22%)
+better, winning 5/5 folds. Both are true: R2 squares the residual so it is
+dominated by breakdown shifts, while MAE weights every shift equally. The model
+is closer at p50/p75/p90 and worse at p99. Quote both or neither.
+
+**Two pre-registered signs were wrong and were corrected in place**, with the
+reasoning kept in `cycle_model.py`: night shifts are *faster* (109.5 vs 141.7
+min), and mean driver tenure is a weak proxy whose real effect lives in
+`pct_experienced_drivers`. Do not silently delete an expectation that fails;
+investigate it, then either correct it with evidence or record it as a
+violation.
+
+**Collinearity traps already found here** (both were VIF > 1e12 singularities):
+`distance_km` is a pure function of route, and `payload_t` is a pure function of
+contractor. Both are detected at runtime rather than hardcoded, so a future
+mixed-fleet contractor keeps its feature. If you add a feature that is
+determined by an existing categorical, expect the same and check `max_vif`.
+
+**Congestion and GPS are still too recent to join.** `FMS_CONGESTION_SEG` and
+`FMS_GPS_Historical` start 2026-07-15, so against a Dec-2025 window they are
+null for ~95% of rows. Left out rather than mass-imputed.
+
+**Gates** `I34`-`I39` in `scripts/verify_phase2.sh` cover dataset size, cycle
+leakage, interpretable VIF, sign violations, served-vs-fitted parameter scale,
+and a serving smoke test. Each was mutation-tested (corrupt the report to inject
+`haul_min`, VIF 42, a negative rain coefficient, 100 rows, a raw-minutes
+intercept, and exactly `I34`-`I39` fail). If you add a gate, break it
+deliberately once and confirm it fails, or it is decoration.
+
+**Denominator moves with what you have trained**, so read the score with that
+in mind. Measured, not assumed:
+
+| State | Score |
+|---|---|
+| Fresh clone, nothing trained | 24/33 — the A/B checks need `data/` artifacts |
+| After `python train_model.py`, no VPN | 32/33 (33/33 with remotes configured) |
+| Full: cycle model trained too | 39/39 |
+
+`data/` is gitignored (real tonnages, public mirror), so a clone starts with no
+artifacts and the extraction checks fail until you train once. That is the
+harness working, not a regression. The Phase 3.5 block skips entirely when
+`data/cycle_model_report.json` is absent.
