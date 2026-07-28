@@ -273,6 +273,85 @@ def _phase4_section() -> str:
     return "\n".join(L)
 
 
+
+def _phase5_section() -> str:
+    """Phase 5: dispatch verdict and the rules engine."""
+    dm = _load("dispatch_meta.json")
+    if not dm:
+        return ""
+    L, A = [], lambda x: L.append(x)
+    rb = dm.get("rebalanceable") or {}
+    fl = dm.get("fleet_limited") or {}
+    A("---")
+    A("")
+    A("## Phase 5 \u2014 is the fleet misallocated, or too small?")
+    A("")
+    A("Phase 4 found 69.8%% of loading-point shifts under-trucked. That has two "
+      "very different causes and they need different fixes, so the first job "
+      "was separating them. Measured across %s shifts with at least three "
+      "active loading points:" % format(dm.get("shifts_total", 0), ","))
+    A("")
+    A("| | Shifts | Meaning |")
+    A("|---|---:|---|")
+    A("| Rebalanceable | %s | a starved AND a saturated point in the same "
+      "shift, so trucks are in the wrong place |" % dm.get("shifts_rebalanceable"))
+    A("| Fleet-limited | %s | every point starved at once, so no reassignment "
+      "can help |" % dm.get("shifts_fleet_limited"))
+    A("")
+    A("### Result")
+    A("")
+    A("| | Balanced before | Balanced after |")
+    A("|---|---:|---:|")
+    A("| Rebalanceable shifts | %s%% | **%s%%** |"
+      % (rb.get("balanced_before_pct"), rb.get("balanced_after_pct")))
+    A("| Fleet-limited shifts | \u2014 | unchanged (under-trucked %s%% \u2192 %s%%) |"
+      % (fl.get("under_before_pct"), fl.get("under_after_pct")))
+    A("")
+    A("Where trucks are genuinely misallocated, MF-balanced dispatch nearly "
+      "doubles the share of loading points inside the target band, using %s "
+      "reassignments. Where the whole fleet is short, it correctly does nothing "
+      "and reports that rather than claiming a win. Those two numbers are never "
+      "averaged, because a combined figure would describe neither case."
+      % format(dm.get("moves_total", 0), ","))
+    A("")
+    A("**Verdict: %s**" % dm.get("verdict"))
+    A("")
+    A("### What makes this trustworthy")
+    A("")
+    A("A dispatch simulation is easy to flatter, so four invariants are checked "
+      "on every run: no infeasible moves (donor and receiver must both be "
+      "active loading points in that exact shift), truck conservation (dispatch "
+      "reallocates, it never invents trucks), move direction (every move takes "
+      "from an over-trucked point and gives to a starved one without pushing "
+      "either out of the band), and no-harm (no shift ends with fewer balanced "
+      "points than it started).")
+    A("")
+    A("That discipline caught a real defect. The donor threshold was initially "
+      "the middle of the band rather than the over-trucked line, so trucks were "
+      "being pulled off points sitting at MF 1.04 \u2014 inside the acceptable "
+      "range. Correcting it removed 1,858 moves and changed the benefit by 0.2 "
+      "percentage points, which is the clearest evidence those moves were churn.")
+    A("")
+    A("This is a **shift-level simulation**, not real-time dispatch. There is no "
+      "live truck feed, so it answers \"what would balanced dispatch have "
+      "produced\" and \"how should the next shift be allocated\", not "
+      "second-by-second control.")
+    A("")
+    A("### Alerts")
+    A("")
+    A("Rules live in `rules.json` and are editable without a deploy, because "
+      "thresholds like *when is a shovel starved enough to act on* are "
+      "operational policy rather than fitted parameters.")
+    A("")
+    A("Duration is what makes an alert useful. With 69.8%% of point-shifts "
+      "under-trucked, a single-shift alert fires constantly and gets ignored; "
+      "requiring two consecutive shifts cuts it from 4,784 to 4,655, and ten "
+      "shifts to 955. The bunching threshold was also re-derived: the specified "
+      "CV > 0.5 fires on 99.0%%% of point-shifts here, so it ships at the observed "
+      "75th percentile instead, with the original value recorded in the file.")
+    return "\n".join(L)
+
+
 def build() -> str:
     sig = _load("feature_significance.json") or {}
     cmp_ = _load("model_comparison.json") or {}
@@ -461,6 +540,8 @@ def build() -> str:
     A("---")
     A("")
     A(_phase4_section())
+    A("")
+    A(_phase5_section())
     A("")
     A("Reproduce: `python train_model.py` (needs VPN for the DB; falls back to fixtures "
       "otherwise), then `python scripts/publish_findings.py`.")

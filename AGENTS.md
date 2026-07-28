@@ -63,7 +63,7 @@ Also run the two gates:
 
 ```bash
 .venv/bin/python scripts/check_vocab.py --api   # route-name convergence
-bash scripts/verify_phase2.sh                   # must stay all-pass (47/47 here; see note below)
+bash scripts/verify_phase2.sh                   # must stay all-pass (56/56 here; see note below)
 ```
 
 `check_vocab.py` exits non-zero if any route name reaching the UI is not the
@@ -286,7 +286,7 @@ in mind. Measured, not assumed:
 |---|---|
 | Fresh clone, nothing trained | 24/33 — the A/B checks need `data/` artifacts |
 | After `python train_model.py`, no VPN | 32/33 (33/33 with remotes configured) |
-| Full: cycle model + match factor | 47/47 |
+| Full: cycle model + match factor + dispatch | 56/56 |
 
 `data/` is gitignored (real tonnages, public mirror), so a clone starts with no
 artifacts and the extraction checks fail until you train once. That is the
@@ -403,3 +403,43 @@ Three things to know before changing it:
 
 The briefed bunching threshold (CV > 0.5) fires on 99.0% of point-shifts, so it
 was re-derived from the observed distribution (CV > 3.05, flagging 25%).
+
+---
+
+## Phase 5 — dynamic dispatch and the rules engine
+
+`dynamic_dispatch.py` (`/api/dispatch/replay`, `/api/dispatch/forward`) and
+`rules_engine.py` + `rules.json` (`/api/rules`, `/api/rules/alerts`).
+
+**The verdict, split on purpose.** Of 400 shifts with >= 3 active loading
+points, 320 are *rebalanceable* (a starved and a saturated point at the same
+time) and 80 are *fleet-limited* (everything starved). On the rebalanceable
+ones, MF-balanced dispatch lifts the balanced share **18.4% -> 32.8%** with
+4,843 moves. On the fleet-limited ones it makes **zero** moves, correctly.
+Never average these: a combined number claims a dispatch win on shifts where the
+fleet is simply too small. Gate `J50` fails if the API ever collapses them.
+
+**Four invariants are enforced, and they caught a real bug.** No infeasible
+moves, truck conservation, correct move direction, and no shift made worse. Gate
+`J55` initially failed on 36 fleet-limited shifts, which exposed that the donor
+threshold was `TARGET_HI` (1.00) instead of `OVER_TRUCKED` (1.15) — trucks were
+being pulled off points at MF 1.04, inside the acceptable band. Fixing it removed
+1,858 moves and changed the benefit by 0.2pp, proving those moves were churn.
+**If you change the thresholds, re-run the four checks; the metric improves just
+as happily on churn.**
+
+**It is a shift-level simulation.** There is no live truck feed, so every
+response says so. Do not present it as real-time dispatch.
+
+**Rules are policy, not code.** `rules.json` is admin-editable without a deploy.
+Two things to preserve:
+- *Duration is what makes an alert useful.* With 69.8% of point-shifts
+  under-trucked, a one-shift alert is a constant. R001 at 1/2/5/10 consecutive
+  shifts gives 4,784 / 4,655 / 2,104 / 955.
+- *Validation is strict on purpose.* A rule accepted but silently never firing is
+  worse than one rejected, because the operator believes they are covered.
+  Unknown metrics are refused (`J53`), and DELETE disables rather than removes so
+  there is an audit trail.
+
+R003 ships at CV > 3.05, not the briefed 0.5, which fires on 99.0% of
+point-shifts here. The original is kept in `threshold_note`.

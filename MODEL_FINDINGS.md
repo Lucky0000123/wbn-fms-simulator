@@ -6,7 +6,7 @@ Derived statistics only — no tonnages or route-level production volumes.
 
 | | |
 |---|---|
-| Generated | 2026-07-28T09:03:42+00:00 |
+| Generated | 2026-07-28T10:10:26+00:00 |
 | Training rows | 4,141 |
 | Date range | 2025-12-27 to 2026-07-08 |
 | Data source | database (trip level) |
@@ -74,7 +74,7 @@ Plus 22 route and 7 contractor fixed effects (not listed: naming every route wit
 |---|---|
 | Heteroscedastic | **yes** (corr \|residual\| vs fitted = 0.477) |
 | Non-linear features flagged | none |
-| Residual mean / std | 0.0000 / 0.545 |
+| Residual mean / std | -0.0000 / 0.545 |
 
 Error grows with the size of the prediction, so a constant-variance linear
 model is the wrong shape. But **no single feature shows curvature**, and every
@@ -217,5 +217,41 @@ Nearly seven in ten loading-point shifts have the shovel waiting for trucks. The
 **Validation.** MF correlates **0.767** with queue wait as a share of cycle, and mean wait rises monotonically across the bands (20.9 → 32.8 → 38.2 min). It correlates *negatively* with total cycle time, which looks wrong and is not: cycle time is dominated by haul distance, so a short-haul point can be heavily queued and still turn trucks around quickly. Two earlier formulations that failed this check were discarded rather than published.
 
 **Bunching.** The specified threshold (CV > 0.5) fires on 99.0% of point-shifts here, so it is a constant rather than a detector. The shipped threshold is the 75th percentile of the observed distribution (CV > 3.05), flagging 25.0%.
+
+---
+
+## Phase 5 — is the fleet misallocated, or too small?
+
+Phase 4 found 69.8% of loading-point shifts under-trucked. That has two very different causes and they need different fixes, so the first job was separating them. Measured across 400 shifts with at least three active loading points:
+
+| | Shifts | Meaning |
+|---|---:|---|
+| Rebalanceable | 320 | a starved AND a saturated point in the same shift, so trucks are in the wrong place |
+| Fleet-limited | 80 | every point starved at once, so no reassignment can help |
+
+### Result
+
+| | Balanced before | Balanced after |
+|---|---:|---:|
+| Rebalanceable shifts | 18.4% | **32.8%** |
+| Fleet-limited shifts | — | unchanged (under-trucked 81.9% → 81.9%) |
+
+Where trucks are genuinely misallocated, MF-balanced dispatch nearly doubles the share of loading points inside the target band, using 4,843 reassignments. Where the whole fleet is short, it correctly does nothing and reports that rather than claiming a win. Those two numbers are never averaged, because a combined figure would describe neither case.
+
+**Verdict: dispatch helps where imbalance exists; the rest is fleet size**
+
+### What makes this trustworthy
+
+A dispatch simulation is easy to flatter, so four invariants are checked on every run: no infeasible moves (donor and receiver must both be active loading points in that exact shift), truck conservation (dispatch reallocates, it never invents trucks), move direction (every move takes from an over-trucked point and gives to a starved one without pushing either out of the band), and no-harm (no shift ends with fewer balanced points than it started).
+
+That discipline caught a real defect. The donor threshold was initially the middle of the band rather than the over-trucked line, so trucks were being pulled off points sitting at MF 1.04 — inside the acceptable range. Correcting it removed 1,858 moves and changed the benefit by 0.2 percentage points, which is the clearest evidence those moves were churn.
+
+This is a **shift-level simulation**, not real-time dispatch. There is no live truck feed, so it answers "what would balanced dispatch have produced" and "how should the next shift be allocated", not second-by-second control.
+
+### Alerts
+
+Rules live in `rules.json` and are editable without a deploy, because thresholds like *when is a shovel starved enough to act on* are operational policy rather than fitted parameters.
+
+Duration is what makes an alert useful. With 69.8%% of point-shifts under-trucked, a single-shift alert fires constantly and gets ignored; requiring two consecutive shifts cuts it from 4,784 to 4,655, and ten shifts to 955. The bunching threshold was also re-derived: the specified CV > 0.5 fires on 99.0%%% of point-shifts here, so it ships at the observed 75th percentile instead, with the original value recorded in the file.
 
 Reproduce: `python train_model.py` (needs VPN for the DB; falls back to fixtures otherwise), then `python scripts/publish_findings.py`.
