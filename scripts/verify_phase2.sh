@@ -134,9 +134,16 @@ for u in /simulator /api/simulator/capability /api/simulator/path-response /api/
   [ "$(curl -s -o /dev/null -w '%{http_code}' $BASE$u)" = "200" ] || BAD=$((BAD+1))
 done
 [ "$BAD" = "0" ]; chk $? "F22  all 11 pre-existing endpoints 200" "$BAD endpoint(s) broken"
-curl -s -o /dev/null -w '' $BASE/api/retrain -X POST 2>/dev/null
-[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST $BASE/api/retrain)" = "200" ]
-chk $? "F23  /api/retrain returns 200" "retrain endpoint down"
+# ONE retrain, not two. There was a redundant warm-up POST here, harmless while
+# a retrain was quick; once retrain also rebuilt the cycle model (~5 min against
+# the live DB) it doubled to >10 min and looked like a hang.
+#
+# cycle=0 because this check asks "does the endpoint work", not "rebuild every
+# model". The cycle model is verified separately by I34-I40 against artifacts
+# that cycle_model.py writes. --max-time stops a genuinely stuck endpoint from
+# stalling the harness instead of failing it.
+[ "$(curl -s -o /dev/null --max-time 900 -w '%{http_code}' -X POST "$BASE/api/retrain?cycle=0")" = "200" ]
+chk $? "F23  /api/retrain returns 200" "retrain endpoint down or >900s"
 LOCAL=$(git rev-parse HEAD 2>/dev/null)
 O=$(git ls-remote --heads origin main 2>/dev/null | cut -f1)
 M=$(git ls-remote --heads mirror main 2>/dev/null | cut -f1)

@@ -537,8 +537,19 @@ def api_retrain():
         # indication that they came from different vintages. Same failure mode
         # as H33. Best-effort: it needs the VPN, so a failure here must not
         # fail a retrain that otherwise succeeded.
-        cycle_status = "skipped"
+        # Re-extracting 663k trips takes ~5 minutes against the live DB. That is
+        # right for a scheduled retrain and wrong for a health check, so callers
+        # opt out with ?cycle=0. The default stays "refresh both", because the
+        # failure this guards against — a fresh trips number beside a stale
+        # cycle time — is silent, and a slow correct answer beats a fast wrong
+        # one.
+        want_cycle = str(_arg(request.get_json(silent=True) or request.args
+                              or {}, "cycle", default="1")).lower() not in (
+                                  "0", "false", "no")
+        cycle_status = "skipped (cycle=0)" if not want_cycle else "skipped"
         try:
+            if not want_cycle:
+                raise RuntimeError("caller opted out")
             import cycle_model, cycle_pipeline
             frame = cycle_pipeline.attach_context(cycle_pipeline.extract_cycle_data())
             cycle_pipeline.save_cycle_data(frame)
@@ -548,7 +559,8 @@ def api_retrain():
             cycle_status = "retrained: %s rows, %s CV R2 %s" % (
                 crep.get("rows"), crep.get("winner"), crep.get("winner_cv_r2"))
         except Exception as exc:                       # noqa: BLE001
-            cycle_status = "not retrained (%s)" % str(exc)[:120]
+            if want_cycle:
+                cycle_status = "not retrained (%s)" % str(exc)[:120]
         print("[retrain] cycle model %s" % cycle_status)
         elapsed = round(time.perf_counter() - started, 1)
         print("[retrain] done in %ss — %s R2=%.4f MAE=%.4f on %d rows"
