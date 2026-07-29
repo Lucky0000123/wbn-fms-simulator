@@ -153,6 +153,11 @@ if __name__ == "__main__":
             else "none trained yet — /api/predict will use the OLS fallback"))
     mode = "REAL DB" if simulator_api._db_ready() else "sample fixtures"
     print("\n  Simulator dev server (%s) -> http://127.0.0.1:5055/simulator\n" % mode)
+    # threaded=True because a retrain holds the worker for ~45 s with no DB and
+    # several minutes with one. Single-threaded, every other request queues
+    # behind it: a health check issued during a retrain waited 3,044 s for a
+    # response the server had produced in 45.6 s. That is indistinguishable
+    # from a hang to anything checking liveness, including the verify harness.
     app.run(host=os.environ.get("SIMULATOR_HOST", "127.0.0.1"),
             port=int(os.environ.get("SIMULATOR_PORT", "5055")),
-            debug=False, use_reloader=False)
+            debug=False, use_reloader=False, threaded=True)
