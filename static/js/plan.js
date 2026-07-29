@@ -408,3 +408,35 @@ async function p5Load(){
     dis.innerHTML='<span class="er">Could not load: '+escH(e.message)+'</span>';
   }finally{ if(btn)btn.disabled=false; }
 }
+
+
+// -- Phase 6: Tier 3 overview ----------------------------------------------
+// Shows every module including the blocked ones, with the reason. Hiding a
+// blocked module would let someone assume coverage that does not exist.
+async function t3Load(){
+  const card=q('t3-card'), body=q('t3-body'), note=q('t3-note'), btn=q('t3-btn');
+  if(!card||!body)return;
+  card.style.display='block';
+  body.innerHTML='<span class="muted">Loading...</span>';
+  if(btn)btn.disabled=true;
+  try{
+    const d=await fetch('/api/tier3/overview',{cache:'no-store'}).then(r=>r.json());
+    if(!d||!d.ok)throw new Error('unavailable');
+    const cls=s=>String(s).indexOf('live')===0?'eg':(s==='blocked'?'er':'ea');
+    body.innerHTML='<table style="width:100%;font-size:11px">'
+      +'<thead><tr><th style="text-align:left">Module</th><th>Tier</th>'
+      +'<th>Status</th><th style="text-align:left">Detail</th></tr></thead><tbody>'
+      +(d.modules||[]).map(m=>'<tr><td>'+escH(m.module)+'</td>'
+        +'<td>'+escH(m.tier)+'</td>'
+        +'<td><span class="'+cls(m.status)+'">'+escH(m.status)+'</span></td>'
+        +'<td>'+escH(String(m.detail||'').slice(0,90))
+        +(m.blocked_by?'<br><span class="muted">'+escH(m.blocked_by)+'</span>':'')
+        +'</td></tr>').join('')
+      +'</tbody></table>';
+    if(note)note.innerHTML=fmtExact(d.live)+' live &middot; '
+      +fmtExact(d.blocked)+' blocked &middot; '+fmtExact(d.not_built)+' not built'
+      +'<br>'+(d.dependency_chain||[]).map(escH).join('<br>');
+  }catch(e){
+    body.innerHTML='<span class="er">Could not load: '+escH(e.message)+'</span>';
+  }finally{ if(btn)btn.disabled=false; }
+}

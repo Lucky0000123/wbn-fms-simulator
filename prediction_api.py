@@ -507,6 +507,101 @@ def api_match_factor():
     })
 
 
+@bp.route("/api/tier3/overview", methods=["GET"])
+def api_tier3_overview():
+    """Every Tier 3 module in one payload, including the blocked ones.
+
+    A dashboard that only lists what works is a sales page. The modules that
+    are blocked, and why, are the information a planner needs before trusting
+    any of it, so they are first-class entries here.
+    """
+    started = time.perf_counter()
+    mods = []
+
+    def _add(name, tier, meta, status, detail, blocked=None):
+        mods.append({"module": name, "tier": tier, "status": status,
+                     "detail": detail, "blocked_by": blocked,
+                     "generated_at": (meta or {}).get("generated_at")})
+
+    tally = _read_json(os.path.join(pp.DATA, "tonnage_meta.json"), {}) or {}
+    rec = (tally.get("reconciliation") or {})
+    _add("Tonnage Tally", "T1", tally, "live" if tally else "not built",
+         ("%s trips, %s t, reconciles=%s"
+          % (format(tally.get("trips", 0), ","),
+             format(int(rec.get("grand_total_wmt", 0)), ","),
+             rec.get("reconciles")) if tally else "run tonnage_tally.py"))
+
+    cyc = _read_json(os.path.join(pp.DATA, "cycle_model_report.json"), {}) or {}
+    _add("Cycle Timing", "T1", cyc, "live" if cyc else "not built",
+         ("MAE %s min, %s" % (cyc.get("winner_cv_mae_min"), cyc.get("verdict"))
+          if cyc else "run cycle_model.py"))
+
+    tags = _read_json(os.path.join(pp.DATA, "material_tags_meta.json"), {}) or {}
+    _add("Ore/Waste Tags", "T2", tags,
+         "live (ore-only feed)" if tags else "not built",
+         (tags.get("finding") or "")[:150] if tags else "run ore_waste_tags.py")
+
+    mf = _read_json(os.path.join(pp.DATA, "match_factor_meta.json"), {}) or {}
+    pct = mf.get("status_pct") or {}
+    _add("Match Factor", "T3", mf, "live" if mf else "not built",
+         ("%s point-shifts; %s%% under-trucked, %s%% balanced"
+          % (format(mf.get("rows", 0), ","), pct.get("under-trucked"),
+             pct.get("balanced")) if mf else "run match_factor.py"))
+
+    dsp = _read_json(os.path.join(pp.DATA, "dispatch_meta.json"), {}) or {}
+    rb = dsp.get("rebalanceable") or {}
+    _add("Dynamic Dispatch", "T3.5", dsp, "live" if dsp else "not built",
+         ("%s rebalanceable shifts: balanced %s%% -> %s%%; %s fleet-limited"
+          % (dsp.get("shifts_rebalanceable"), rb.get("balanced_before_pct"),
+             rb.get("balanced_after_pct"), dsp.get("shifts_fleet_limited"))
+          if dsp else "run dynamic_dispatch.py"))
+
+    sp_meta = _read_json(os.path.join(pp.DATA, "stockpile_meta.json"), {}) or {}
+    sr = (sp_meta.get("reconciliation") or {})
+    _add("Stockpile FIFO", "T3", sp_meta, "live" if sp_meta else "not built",
+         ("%s piles; GF=%s (trustworthy), F flagged scope-incomparable"
+          % (sp_meta.get("piles"), sr.get("overall_GF"))
+          if sp_meta else "run stockpile_fifo.py"))
+
+    try:
+        import rules_engine as re_
+        st = re_.rule_status()
+        _add("When-Then Rules", "T3", {}, "live",
+             "%d enabled, %d firing, %d alerts"
+             % (st["enabled"], st["firing"], st["alert_count"]))
+    except Exception:                                      # noqa: BLE001
+        _add("When-Then Rules", "T3", {}, "not built", "rules_engine unavailable")
+
+    # Blocked modules are reported, not omitted.
+    _add("GPS Queue Time", "T2", {}, "blocked",
+         "0 of 940 haul trucks appear in the GPS feed; the instrumented fleet "
+         "is engineering and logistics vehicles",
+         "site data: haul trucks are not instrumented")
+    _add("Operator Identity", "T2", {}, "blocked",
+         "RES_EMPLOYEES has no equipment assignment, roster or hire date",
+         "site data: no operator-to-equipment link exists")
+    _add("Shovel-level Match Factor", "T3", {}, "blocked",
+         "excavator ids exist (839,609 rows) but mining uses fleet numbers "
+         "(AD4059) and tickets use plate ids (A342) with zero overlap",
+         "site data: need the fleet-number to plate crosswalk")
+
+    live = sum(1 for m in mods if str(m["status"]).startswith("live"))
+    return jsonify({
+        "ok": True,
+        "modules": mods,
+        "live": live,
+        "blocked": sum(1 for m in mods if m["status"] == "blocked"),
+        "not_built": sum(1 for m in mods if m["status"] == "not built"),
+        "dependency_chain": [
+            "Tonnage Tally (T1) -> Match Factor (T3)",
+            "Cycle Timing (T1) -> Match Factor (T3)",
+            "Match Factor (T3) -> Dynamic Dispatch (T3.5)",
+            "Match Factor (T3) -> When-Then Rules (T3)",
+            "Ore/Waste Tags (T2) -> Stockpile FIFO (T3)",
+        ],
+        "elapsed_ms": round((time.perf_counter() - started) * 1000, 2)})
+
+
 @bp.route("/api/tonnage", methods=["GET"])
 def api_tonnage():
     """Rolled-up payload totals. group_by = truck|shovel|destination|material."""
