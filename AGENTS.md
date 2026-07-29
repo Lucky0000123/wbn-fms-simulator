@@ -63,7 +63,7 @@ Also run the two gates:
 
 ```bash
 .venv/bin/python scripts/check_vocab.py --api   # route-name convergence
-bash scripts/verify_phase2.sh                   # must stay all-pass (56/56 here; see note below)
+bash scripts/verify_phase2.sh                   # must stay all-pass (42/42 here; see note below)
 ```
 
 `check_vocab.py` exits non-zero if any route name reaching the UI is not the
@@ -286,7 +286,7 @@ in mind. Measured, not assumed:
 |---|---|
 | Fresh clone, nothing trained | 24/33 — the A/B checks need `data/` artifacts |
 | After `python train_model.py`, no VPN | 32/33 (33/33 with remotes configured) |
-| Full: cycle model + match factor + dispatch | 56/56 |
+| Full: cycle model trained too | 42/42 |
 
 `data/` is gitignored (real tonnages, public mirror), so a clone starts with no
 artifacts and the extraction checks fail until you train once. That is the
@@ -344,102 +344,3 @@ against 2,650 in tickets and its `plateNumber` ("SS074") does not join to ticket
 there is no `SOURCE`, `DESTINATION`, `CORRIDOR_KM`, `ID` or `DRIVER_ID` column,
 no `DRIVERS` table in `WBN_DATABASE`, and `EQUIPMENTS` keys on `ID_EQ`.
 
----
-
-## Phase 4 — what FMS_DB does and does not contain
-
-Full scan in `reports/fms_db_schema.md`. Read it before proposing to mine that
-database for model features.
-
-**GPS queue time is not obtainable. Do not retry this.** The telematics feed
-(`FMS_PLAYBACK_TRACK_DATA`) carries 217 units; all 217 resolve in
-`FMS_EQUIPMENTS`, so it is not an ID-mapping problem. Of the 940 haul trucks in
-that registry, **zero** are in the feed: instrumented vehicles belong to
-engineering (工程) and logistics (后勤) workshops, haul trucks to `RIM运输部`.
-Plate prefixes agree (GPS SS/Y/P/F/W, tickets N/R/L/K/B/S/PP/SM). The trucks are
-simply not instrumented. Trip-weighted join 0.0%.
-
-**Operator identity is not obtainable.** `RES_EMPLOYEES` is 8,958 rows of
-`FULL_NAME, GENDER, ORIGIN, ORIGIN_CLASS, EMPLOYEE_ID, CONTRACTOR, DIVISION,
-JOB_TITLE, GRADE`. No equipment assignment, no roster, **no hire date**.
-
-Together these confirm the Phase 3 ceiling rather than leaving it unbeaten: the
-variables that would break it are absent from both databases.
-
-**Excavator identity exists but cannot reach haul trips.**
-`PRODUCTION_PIT_HOURLY` has 839,609 rows since 2025-12-27 with EXCAVATOR_ID +
-TRUCK_ID (252 excavators, 938 trucks) and `FMS_TRUCK_ASSIGNMENTS` has a small
-EXCAVATOR column too. The blocker is a namespace split: mining uses fleet
-numbers (`AD4059`), weighbridge tickets use plate-style ids (`A342`), and the
-overlap across 1,482 trip trucks is **zero**. `EQUIPMENTS.ID_EQ` matches values
-in both namespaces but only 25 rows carry both, so it is not a crosswalk.
-Trip-weighted join 0.0%.
-
-This is worth revisiting: unlike GPS coverage, it needs an identity map rather
-than new instrumentation. Ask the site for the mining-fleet to plate mapping and
-Match Factor can be re-keyed to a real excavator without changing the formula.
-
-### Match Factor (`match_factor.py`, `/api/match_factor`)
-
-Shipped and validated. **69.8% of loading-point shifts are under-trucked**,
-18.4% balanced, 11.8% over-trucked — the shovel waits for trucks far more often
-than trucks queue.
-
-Three things to know before changing it:
-
-1. **It is keyed to a loading point, not a shovel.** The server count is the
-   observed peak of simultaneous load intervals. Gate `J43` fails if the
-   response ever drops that caveat.
-2. **Validate against queue share, not cycle time.** MF correlates −0.325 with
-   cycle time and +0.767 with queue-share, because cycle time is dominated by
-   haul distance: a short-haul point can be heavily queued and still fast. Gate
-   `J45` enforces the queue correlation stays above 0.30.
-3. **Two earlier formulations failed and were discarded.** Deriving servers from
-   throughput is circular (trips ≈ 1/cycle, so the formula contains its target).
-   Joining concurrency to the trip dataset reaches only 28.3%, because
-   `WAITING_TIME` names loading points (TOS8, BLB 10) while trips name areas
-   (BLB) — a real hierarchy, not dirty data. Everything is computed inside
-   `WAITING_TIME` at its native grain to avoid both.
-
-The briefed bunching threshold (CV > 0.5) fires on 99.0% of point-shifts, so it
-was re-derived from the observed distribution (CV > 3.05, flagging 25%).
-
----
-
-## Phase 5 — dynamic dispatch and the rules engine
-
-`dynamic_dispatch.py` (`/api/dispatch/replay`, `/api/dispatch/forward`) and
-`rules_engine.py` + `rules.json` (`/api/rules`, `/api/rules/alerts`).
-
-**The verdict, split on purpose.** Of 400 shifts with >= 3 active loading
-points, 320 are *rebalanceable* (a starved and a saturated point at the same
-time) and 80 are *fleet-limited* (everything starved). On the rebalanceable
-ones, MF-balanced dispatch lifts the balanced share **18.4% -> 32.8%** with
-4,843 moves. On the fleet-limited ones it makes **zero** moves, correctly.
-Never average these: a combined number claims a dispatch win on shifts where the
-fleet is simply too small. Gate `J50` fails if the API ever collapses them.
-
-**Four invariants are enforced, and they caught a real bug.** No infeasible
-moves, truck conservation, correct move direction, and no shift made worse. Gate
-`J55` initially failed on 36 fleet-limited shifts, which exposed that the donor
-threshold was `TARGET_HI` (1.00) instead of `OVER_TRUCKED` (1.15) — trucks were
-being pulled off points at MF 1.04, inside the acceptable band. Fixing it removed
-1,858 moves and changed the benefit by 0.2pp, proving those moves were churn.
-**If you change the thresholds, re-run the four checks; the metric improves just
-as happily on churn.**
-
-**It is a shift-level simulation.** There is no live truck feed, so every
-response says so. Do not present it as real-time dispatch.
-
-**Rules are policy, not code.** `rules.json` is admin-editable without a deploy.
-Two things to preserve:
-- *Duration is what makes an alert useful.* With 69.8% of point-shifts
-  under-trucked, a one-shift alert is a constant. R001 at 1/2/5/10 consecutive
-  shifts gives 4,784 / 4,655 / 2,104 / 955.
-- *Validation is strict on purpose.* A rule accepted but silently never firing is
-  worse than one rejected, because the operator believes they are covered.
-  Unknown metrics are refused (`J53`), and DELETE disables rather than removes so
-  there is an audit trail.
-
-R003 ships at CV > 3.05, not the briefed 0.5, which fires on 99.0% of
-point-shifts here. The original is kept in `threshold_note`.

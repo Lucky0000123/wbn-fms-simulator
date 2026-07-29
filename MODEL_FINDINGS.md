@@ -6,7 +6,7 @@ Derived statistics only — no tonnages or route-level production volumes.
 
 | | |
 |---|---|
-| Generated | 2026-07-28T10:10:26+00:00 |
+| Generated | 2026-07-29T02:52:38+00:00 |
 | Training rows | 4,141 |
 | Date range | 2025-12-27 to 2026-07-08 |
 | Data source | database (trip level) |
@@ -74,7 +74,7 @@ Plus 22 route and 7 contractor fixed effects (not listed: naming every route wit
 |---|---|
 | Heteroscedastic | **yes** (corr \|residual\| vs fitted = 0.477) |
 | Non-linear features flagged | none |
-| Residual mean / std | -0.0000 / 0.545 |
+| Residual mean / std | 0.0000 / 0.545 |
 
 Error grows with the size of the prediction, so a constant-variance linear
 model is the wrong shape. But **no single feature shows curvature**, and every
@@ -111,7 +111,7 @@ Do not fabricate these. Each needs a new data source.
 | Road grade | No survey/DEM per path. Needs road geometry or an elevation raster. |
 | Operator experience | No operator ID on haul records. Needs FMS operator assignment + hours. |
 | Truck type / capacity | DELIVERED in Phase 3.5 via EQUIPMENTS (99.6% join, 61% have a build year). |
-| Cycle-time components | DELIVERED in Phase 3.5 from WAITING_TIME, not geofences — see below. |
+| Cycle-time components | DELIVERED in Phase 3.5 from WAITING_TIME. |
 | Weather beyond rain | DELIVERED: Open-Meteo ERA5 gives temperature, humidity and wind. |
 
 ---
@@ -185,73 +185,5 @@ Some routes still disagree by more than 25%. That is surfaced in the API (`vs_we
 Route identity carries most of the signal: dropping the 524 route dummies and keeping only physical and operational features scores 0.1634, which is the honest estimate of how much transfers to a road never seen before.
 
 ---
-
----
-
-## Phase 4 — cross-database recon and Match Factor
-
-### The missing variables are not in the other database either
-
-Phase 3 showed 74.6% of cycle-time variance lives *within* (route, shift, date) groups, driven by queueing, operator behaviour and breakdowns — none of which are columns in the ticket database. `FMS_DB` was checked for them. Both leads are dead, and the evidence is conclusive enough to stop rather than keep trying.
-
-**GPS queue time: the haul fleet is not instrumented.** The telematics feed carries 217 distinct units. All 217 resolve cleanly in the fleet registry, so this is not an ID-format problem. Of the 940 haul trucks in that registry, **zero** appear in the GPS feed — the instrumented vehicles belong to engineering and logistics workshops, while the trucks producing weighbridge tickets belong to the transport division. Plate prefixes confirm the split independently. Trip-weighted join rate: 0.0% against a 60% gate.
-
-**Operator identity: the link table does not exist.** The employee master is 8,958 rows of name, division, job title and grade. No equipment assignment, no shift roster, and no hire date, so operator experience is not derivable either.
-
-So the Phase 3 ceiling stands as **confirmed**, not merely unbeaten: the features that would break it are absent from both databases, not just the one first searched.
-
-### Match Factor: the mine is under-trucked, not over-trucked
-
-`MF = (trucks per server × service time) / cycle time` (Burt & Caccetta 2007), computed over 6,852 point-shifts across 165 loading points.
-
-| Status | Share |
-|---|---:|
-| under-trucked | **69.8%** |
-| balanced | **18.4%** |
-| over-trucked | **11.8%** |
-
-Nearly seven in ten loading-point shifts have the shovel waiting for trucks. The intuition that a busy mine is over-trucked is wrong here, and that is an actionable difference: adding trucks to an under-trucked face raises output, whereas adding them to a queue only burns fuel.
-
-**It is keyed to a loading point, not a shovel.** An excavator identity does exist in the mining production tables, but it cannot be joined to haul trips: the two systems use different truck namespaces (mining fleet numbers vs weighbridge plate ids) with zero overlap across 1,482 trucks, and no crosswalk table bridges them. The server count is the observed peak of simultaneous loads at that point. The API returns this caveat in every response rather than letting the name imply a machine.
-
-**Validation.** MF correlates **0.767** with queue wait as a share of cycle, and mean wait rises monotonically across the bands (20.9 → 32.8 → 38.2 min). It correlates *negatively* with total cycle time, which looks wrong and is not: cycle time is dominated by haul distance, so a short-haul point can be heavily queued and still turn trucks around quickly. Two earlier formulations that failed this check were discarded rather than published.
-
-**Bunching.** The specified threshold (CV > 0.5) fires on 99.0% of point-shifts here, so it is a constant rather than a detector. The shipped threshold is the 75th percentile of the observed distribution (CV > 3.05), flagging 25.0%.
-
----
-
-## Phase 5 — is the fleet misallocated, or too small?
-
-Phase 4 found 69.8% of loading-point shifts under-trucked. That has two very different causes and they need different fixes, so the first job was separating them. Measured across 400 shifts with at least three active loading points:
-
-| | Shifts | Meaning |
-|---|---:|---|
-| Rebalanceable | 320 | a starved AND a saturated point in the same shift, so trucks are in the wrong place |
-| Fleet-limited | 80 | every point starved at once, so no reassignment can help |
-
-### Result
-
-| | Balanced before | Balanced after |
-|---|---:|---:|
-| Rebalanceable shifts | 18.4% | **32.8%** |
-| Fleet-limited shifts | — | unchanged (under-trucked 81.9% → 81.9%) |
-
-Where trucks are genuinely misallocated, MF-balanced dispatch nearly doubles the share of loading points inside the target band, using 4,843 reassignments. Where the whole fleet is short, it correctly does nothing and reports that rather than claiming a win. Those two numbers are never averaged, because a combined figure would describe neither case.
-
-**Verdict: dispatch helps where imbalance exists; the rest is fleet size**
-
-### What makes this trustworthy
-
-A dispatch simulation is easy to flatter, so four invariants are checked on every run: no infeasible moves (donor and receiver must both be active loading points in that exact shift), truck conservation (dispatch reallocates, it never invents trucks), move direction (every move takes from an over-trucked point and gives to a starved one without pushing either out of the band), and no-harm (no shift ends with fewer balanced points than it started).
-
-That discipline caught a real defect. The donor threshold was initially the middle of the band rather than the over-trucked line, so trucks were being pulled off points sitting at MF 1.04 — inside the acceptable range. Correcting it removed 1,858 moves and changed the benefit by 0.2 percentage points, which is the clearest evidence those moves were churn.
-
-This is a **shift-level simulation**, not real-time dispatch. There is no live truck feed, so it answers "what would balanced dispatch have produced" and "how should the next shift be allocated", not second-by-second control.
-
-### Alerts
-
-Rules live in `rules.json` and are editable without a deploy, because thresholds like *when is a shovel starved enough to act on* are operational policy rather than fitted parameters.
-
-Duration is what makes an alert useful. With 69.8%% of point-shifts under-trucked, a single-shift alert fires constantly and gets ignored; requiring two consecutive shifts cuts it from 4,784 to 4,655, and ten shifts to 955. The bunching threshold was also re-derived: the specified CV > 0.5 fires on 99.0%%% of point-shifts here, so it ships at the observed 75th percentile instead, with the original value recorded in the file.
 
 Reproduce: `python train_model.py` (needs VPN for the DB; falls back to fixtures otherwise), then `python scripts/publish_findings.py`.

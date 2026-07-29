@@ -281,52 +281,12 @@ fi
 # model: the prediction tests skip themselves, the arithmetic tests do not.
 $PY tests/test_cycle.py >/dev/null 2>&1
 chk $? "I41  cycle unit tests pass" "see: python tests/test_cycle.py"
-
-# ── Phase 4: Match Factor (Tier 3 Module 1) ────────────────────────────────
-# Endpoint is checked unconditionally because it is dual-mode: it must answer
-# from fixtures with no results file and no database.
-[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/match_factor?date=2026-07-01")" = "200" ]
-chk $? "J42  /api/match_factor returns 200" "endpoint down"
-$PY - <<'EOF' >/dev/null 2>&1
-import json, sys, urllib.request
-d = json.loads(urllib.request.urlopen(
-    "http://127.0.0.1:5055/api/match_factor", timeout=20).read())
-# The caveat must travel with the data: MF is keyed to a loading point, not a
-# shovel, and a consumer reading only this response has to learn that.
-sys.exit(0 if (d.get("ok") and d.get("keyed_by") == "loading_point"
-               and d.get("shovel_identity_available") is False
-               and d.get("caveat")) else 1)
-EOF
-chk $? "J43  match_factor states it is keyed by loading point" "caveat missing"
-$PY tests/test_match_factor.py >/dev/null 2>&1
-chk $? "J44  match factor unit tests pass" "see: python tests/test_match_factor.py"
-# The validation gate is the whole point: two earlier MF formulations looked
-# fine in a table and were measuring the wrong thing. Ship only if MF still
-# tracks queueing.
-if [ -f data/match_factor_meta.json ]; then
-$PY - <<'EOF' >/dev/null 2>&1
-import json, sys
-v = (json.load(open('data/match_factor_meta.json')).get('validation') or {})
-r = v.get('corr_mf_queue_share')
-sys.exit(0 if (v.get('passes') is True and r is not None and r > 0.30) else 1)
-EOF
-chk $? "J45  match factor passes its queue-correlation gate" "MF no longer tracks queueing"
-$PY - <<'EOF' >/dev/null 2>&1
-import pandas as pd, sys
-d = pd.read_csv('data/match_factor_results.csv')
-# A server count above the truck count is physically impossible and did occur
-# (8 rows) before the sweep deduplicated per truck.
-sys.exit(0 if (d.servers_observed <= d.n_trucks).all()
-         and (d.servers_observed >= 1).all() else 1)
-EOF
-chk $? "J46  servers never exceed trucks present" "impossible server count"
-fi
-# The trip layer and its metadata must agree. A truncated or partially
-# regenerated extract silently invalidates every published figure derived from
-# it, and that is exactly what a stale row count looks like.
+# The trip extract is KEPT (it is the simulator's data layer), so its integrity
+# guard is kept too. A truncated or partially regenerated extract silently
+# invalidates every figure derived from it.
 if [ -f data/trip_metadata.json ] && [ -f data/trip_level_base.csv ]; then
 $PY - <<'EOF' >/dev/null 2>&1
-import json, sys, csv
+import json, sys
 m = json.load(open('data/trip_metadata.json'))
 with open('data/trip_level_base.csv', newline='') as fh:
     n = sum(1 for _ in fh) - 1
@@ -335,135 +295,9 @@ ok = (m.get('rows') == n and n > 100000
           'aggregate_model_r2_ceiling', 0) < 1)
 sys.exit(0 if ok else 1)
 EOF
-chk $? "J47  trip metadata matches the extract" "row count or ceiling drifted"
+chk $? "I42  trip metadata matches the extract" "row count or ceiling drifted"
 fi
 
-# ── Phase 5: dynamic dispatch + rules engine ───────────────────────────────
-# Endpoints are dual-mode, so they are checked unconditionally.
-[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/dispatch/replay")" = "200" ]
-chk $? "J48  /api/dispatch/replay returns 200" "endpoint down"
-[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/dispatch/forward" \
-     -H 'Content-Type: application/json' -d '{"trucks":10,"loading_points":["TOS8"]}')" = "200" ]
-chk $? "J49  /api/dispatch/forward returns 200" "endpoint down"
-$PY - <<'EOF' >/dev/null 2>&1
-import json, sys, urllib.request
-d = json.loads(urllib.request.urlopen(
-    "http://127.0.0.1:5055/api/dispatch/replay", timeout=25).read())
-s = d.get("summary") or {}
-# Rebalanceable and fleet-limited must stay SEPARATE. Collapsing them into one
-# average would claim a dispatch win on shifts where the fleet is simply short.
-sys.exit(0 if (d.get("ok") and isinstance(s.get("rebalanceable"), dict)
-               and isinstance(s.get("fleet_limited"), dict)
-               and d.get("caveat")) else 1)
-EOF
-chk $? "J50  replay reports rebalanceable and fleet-limited separately" "headline collapsed"
-[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/rules")" = "200" ]
-chk $? "J51  /api/rules returns 200" "endpoint down"
-[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/rules/alerts")" = "200" ]
-chk $? "J52  /api/rules/alerts returns 200" "endpoint down"
-# A malformed rule must be REJECTED. A rule that is accepted but silently never
-# fires is worse than one refused, because the operator believes they covered it.
-[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/rules" \
-     -H 'Content-Type: application/json' \
-     -d '{"id":"BAD","name":"x","when":{"metric":"nope","operator":"<","threshold":1},"then":{"severity":"high","message":"m"}}')" = "400" ]
-chk $? "J53  invalid rule rejected with 400" "bad rule accepted"
-$PY tests/test_phase5.py >/dev/null 2>&1
-chk $? "J54  phase 5 unit tests pass" "see: python tests/test_phase5.py"
-if [ -f data/dispatch_replay_results.csv ]; then
-$PY - <<'EOF' >/dev/null 2>&1
-import pandas as pd, sys
-d = pd.read_csv('data/dispatch_replay_results.csv')
-reb = d[d.rebalanceable]
-# Dispatch must never make a rebalanceable shift worse, and must never touch a
-# fleet-limited one (there is nothing to take from).
-ok = ((reb.after_balanced >= reb.before_balanced).all()
-      and (d[~d.rebalanceable].moves == 0).all()
-      and len(reb) > 0)
-sys.exit(0 if ok else 1)
-EOF
-chk $? "J55  dispatch never worsens a shift" "replay made a shift worse"
-fi
-$PY - <<'EOF' >/dev/null 2>&1
-import json, sys
-sys.path.insert(0, '.')
-import rules_engine as re_
-cfg = re_.load_rules()
-bad = [r.get('id') for r in cfg.get('rules', []) if re_.validate_rule(r)]
-sys.exit(0 if (len(cfg.get('rules', [])) >= 3 and not bad) else 1)
-EOF
-chk $? "J56  shipped rules.json validates" "a shipped rule is malformed"
-
-# ── Phase 6: tonnage tally, material tags, stockpile FIFO ──────────────────
-[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/tonnage?group_by=shovel")" = "200" ]
-chk $? "J57  /api/tonnage returns 200" "endpoint down"
-[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/material_tags")" = "200" ]
-chk $? "J58  /api/material_tags returns 200" "endpoint down"
-[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/stockpile/balances")" = "200" ]
-chk $? "J59  /api/stockpile/balances returns 200" "endpoint down"
-[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/stockpile/reconciliation")" = "200" ]
-chk $? "J60  /api/stockpile/reconciliation returns 200" "endpoint down"
-$PY tests/test_phase6.py >/dev/null 2>&1
-chk $? "J61  phase 6 unit tests pass" "see: python tests/test_phase6.py"
-# The tally is the denominator for every downstream tonne. If it stops tying
-# back to its own trips, every stockpile and reconciliation number is wrong.
-if [ -f data/tonnage_meta.json ]; then
-$PY - <<'EOF' >/dev/null 2>&1
-import json, sys
-r = (json.load(open('data/tonnage_meta.json')).get('reconciliation') or {})
-sys.exit(0 if (r.get('reconciles') is True
-               and r.get('worst_grouping_variance_pct', 1) < 0.01) else 1)
-EOF
-chk $? "J62  tonnage tally reconciles across groupings" "tally does not tie back"
-fi
-# No waste class may be invented: this is an ore-only feed, and a fabricated
-# WASTE tonne would silently corrupt stockpile grade.
-if [ -f data/material_tags_meta.json ]; then
-$PY - <<'EOF' >/dev/null 2>&1
-import json, sys
-m = json.load(open('data/material_tags_meta.json'))
-sys.exit(0 if (m.get('waste_stream_present') is False
-               and m.get('confident_pct', 0) >= 99.0
-               and m.get('finding')) else 1)
-EOF
-chk $? "J63  material tags: no invented waste, classification confident" "tagging drifted"
-fi
-if [ -f data/stockpile_balances.csv ]; then
-$PY - <<'EOF' >/dev/null 2>&1
-import pandas as pd, sys
-b = pd.read_csv('data/stockpile_balances.csv')
-# Mass must conserve exactly, and opening stock must never be claimed as known.
-ok = (((b.tonnes_in - b.tonnes_out - b.net_movement_tonnes).abs() < 0.11).all()
-      and 'opening_stock_known' in b.columns
-      and not b.opening_stock_known.any()
-      and (b.tonnes_in >= 0).all() and (b.tonnes_out >= 0).all())
-sys.exit(0 if ok else 1)
-EOF
-chk $? "J64  stockpile mass conserves, opening stock declared unknown" "balance broken"
-fi
-if [ -f data/fifo_queues.csv ]; then
-$PY - <<'EOF' >/dev/null 2>&1
-import pandas as pd, sys
-f = pd.read_csv('data/fifo_queues.csv')
-ok = ((f.tonnes_reclaimed <= f.payload_t + 1e-6).all()
-      and (f.tonnes_remaining >= -1e-6).all()
-      and f.groupby('pile_id').queue_position.apply(
-          lambda s: list(s) == sorted(s)).all())
-sys.exit(0 if ok else 1)
-EOF
-chk $? "J65  FIFO queue ordered and never over-reclaims" "fifo broken"
-fi
-# F compares different scopes and must stay flagged. Publishing 0.26 as a
-# tonnage factor would read as production missing plan by 74%.
-if [ -f data/reconciliation.csv ]; then
-$PY - <<'EOF' >/dev/null 2>&1
-import pandas as pd, sys
-r = pd.read_csv('data/reconciliation.csv')
-ok = ('f_scope_comparable' in r.columns and not r.f_scope_comparable.any()
-      and {'F_tonnage_factor','GF_grade_factor','MF_metal_factor'} <= set(r.columns))
-sys.exit(0 if ok else 1)
-EOF
-chk $? "J66  F/GF/MF separate and F flagged scope-incomparable" "reconciliation overclaims"
-fi
 
 echo
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"
