@@ -24,6 +24,10 @@ data/trip_diagnostic.json
 data/elevation_cache.json
 data/*.parquet
 data/destination_material_map.csv
+data/stockpile_balances.csv
+data/fifo_queues.csv
+data/reconciliation.csv
+data/stockpile_meta.json
 data/tonnage_tally.csv
 data/tonnage_meta.json
 data/trip_level_tagged.csv

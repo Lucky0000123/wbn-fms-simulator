@@ -507,6 +507,162 @@ def api_match_factor():
     })
 
 
+@bp.route("/api/tonnage", methods=["GET"])
+def api_tonnage():
+    """Rolled-up payload totals. group_by = truck|shovel|destination|material."""
+    started = time.perf_counter()
+    date = str(request.args.get("tdate") or request.args.get("date") or "").strip()
+    group = str(request.args.get("group_by") or "shovel").strip().lower()
+    rows, source, meta = [], "fixtures", {}
+    try:
+        import tonnage_tally as tt
+        df = tt.load_tally()
+        if df is not None and len(df):
+            source = "database"
+            meta = _read_json(tt.TALLY_META, {}) or {}
+            if group:
+                df = df[df["group_by"] == group]
+            if date:
+                df = df[df["date"].astype(str) == date]
+            df = df.sort_values("total_wmt", ascending=False)
+            rows = df.head(500).to_dict("records")
+    except Exception:                                      # noqa: BLE001
+        rows, source = [], "fixtures"
+    if source == "fixtures":
+        rows = [{"group_by": group, "group_value": "TF", "date": date or "2026-07-01",
+                 "shift": "day", "total_wmt": 12500.0, "trip_count": 260,
+                 "avg_payload_t": 48.1, "truck_count": 30}]
+        meta = {"note": "sample data, not measured"}
+    return jsonify({
+        "ok": True, "source": source, "is_fixture": source == "fixtures",
+        "date": date or None, "group_by": group, "count": len(rows),
+        "results": rows,
+        "reconciliation": meta.get("reconciliation"),
+        "weighbridge_crosscheck": meta.get("weighbridge_crosscheck"),
+        "generated_at": meta.get("generated_at"),
+        "elapsed_ms": round((time.perf_counter() - started) * 1000, 2)})
+
+
+@bp.route("/api/material_tags", methods=["GET"])
+def api_material_tags():
+    """Material classification per destination, with its evidence.
+
+    Returns the finding as well as the data: this is an ore-only feed, so every
+    destination is ORE and no waste class was invented.
+    """
+    started = time.perf_counter()
+    rows, source, meta = [], "fixtures", {}
+    try:
+        import ore_waste_tags as ow
+        import pandas as _pd
+        dm = _pd.read_csv(ow.DEST_MAP_CSV)
+        source = "database"
+        meta = _read_json(ow.TAGS_META, {}) or {}
+        rows = dm.to_dict("records")
+    except Exception:                                      # noqa: BLE001
+        rows, source = [{"destination": "FENI KM0", "material_type": "ORE",
+                         "classification_source": "sample",
+                         "classification_confident": True}], "fixtures"
+    return jsonify({
+        "ok": True, "source": source, "is_fixture": source == "fixtures",
+        "count": len(rows), "destinations": rows,
+        "material_type_counts": meta.get("material_type_counts"),
+        "ore_type_counts": meta.get("ore_type_counts"),
+        "flow_counts": meta.get("flow_counts"),
+        "waste_stream_present": meta.get("waste_stream_present"),
+        "finding": meta.get("finding"),
+        "action_for_site": meta.get("action_for_site"),
+        "elapsed_ms": round((time.perf_counter() - started) * 1000, 2)})
+
+
+@bp.route("/api/stockpile/balances", methods=["GET"])
+def api_stockpile_balances():
+    started = time.perf_counter()
+    rows, source, meta = [], "fixtures", {}
+    try:
+        import stockpile_fifo as sp
+        df = sp.load_balances()
+        if df is not None and len(df):
+            source = "database"
+            meta = _read_json(sp.FIFO_META, {}) or {}
+            rows = df.to_dict("records")
+    except Exception:                                      # noqa: BLE001
+        pass
+    if source == "fixtures":
+        rows = [{"pile_id": "FENI KM0", "tonnes_in": 120000.0,
+                 "tonnes_out": 90000.0, "net_movement_tonnes": 30000.0,
+                 "implied_opening_stock_t": 0.0, "opening_stock_known": False,
+                 "fifo_age_days": 12}]
+    return jsonify({
+        "ok": True, "source": source, "is_fixture": source == "fixtures",
+        "count": len(rows), "balances": rows,
+        "reclaim_source": meta.get("reclaim_source"),
+        "movement_counts": meta.get("movement_counts"),
+        # Opening stock is genuinely unknown, and a balance implying otherwise
+        # would be wrong. Say so in the payload, not only in the docs.
+        "caveat": ("balances are NET MOVEMENT since the extract window opened. "
+                   "Opening stock is unknown, so piles reclaimed from day one "
+                   "show negative movement; implied_opening_stock_t is the "
+                   "minimum that must already have been on the pad."),
+        "elapsed_ms": round((time.perf_counter() - started) * 1000, 2)})
+
+
+@bp.route("/api/stockpile/fifo", methods=["GET"])
+def api_stockpile_fifo():
+    started = time.perf_counter()
+    pile = str(request.args.get("pile_id") or "").strip()
+    rows, source = [], "fixtures"
+    try:
+        import stockpile_fifo as sp
+        df = sp.load_fifo(pile or None)
+        if df is not None and len(df):
+            source = "database"
+            rows = df.head(500).to_dict("records")
+    except Exception:                                      # noqa: BLE001
+        pass
+    if source == "fixtures":
+        rows = [{"pile_id": pile or "FENI KM0", "queue_position": 0,
+                 "arrival_date": "2026-01-02", "payload_t": 48.0,
+                 "tonnes_reclaimed": 48.0, "tonnes_remaining": 0.0,
+                 "fully_reclaimed": True}]
+    return jsonify({"ok": True, "source": source,
+                    "is_fixture": source == "fixtures",
+                    "pile_id": pile or None, "count": len(rows), "queue": rows,
+                    "order": "strictly by dump timestamp (FIFO)",
+                    "elapsed_ms": round((time.perf_counter() - started) * 1000, 2)})
+
+
+@bp.route("/api/stockpile/reconciliation", methods=["GET"])
+def api_stockpile_reconciliation():
+    """F, GF and MF per deposit — reported separately, never collapsed."""
+    started = time.perf_counter()
+    rows, source, meta = [], "fixtures", {}
+    try:
+        import stockpile_fifo as sp
+        df = sp.load_reconciliation()
+        if df is not None and len(df):
+            source = "database"
+            meta = (_read_json(sp.FIFO_META, {}) or {}).get("reconciliation", {})
+            rows = df.to_dict("records")
+    except Exception:                                      # noqa: BLE001
+        pass
+    if source == "fixtures":
+        rows = [{"deposit": "TF", "planned_ni_pct": 1.44, "actual_ni_pct": 1.46,
+                 "GF_grade_factor": 1.016, "F_tonnage_factor": None,
+                 "f_scope_comparable": False, "complete": False}]
+    return jsonify({
+        "ok": True, "source": source, "is_fixture": source == "fixtures",
+        "count": len(rows), "reconciliation": rows,
+        "overall_GF": meta.get("overall_GF"),
+        "overall_F": meta.get("overall_F"),
+        "overall_MF": meta.get("overall_MF"),
+        "grade_coverage_pct": meta.get("grade_coverage_pct"),
+        "gf_trustworthy": meta.get("gf_trustworthy"),
+        "f_trustworthy": meta.get("f_trustworthy"),
+        "note": meta.get("note"),
+        "elapsed_ms": round((time.perf_counter() - started) * 1000, 2)})
+
+
 @bp.route("/api/rules", methods=["GET", "POST"])
 def api_rules():
     """List rules with live firing status, or add/update one.

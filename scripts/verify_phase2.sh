@@ -393,6 +393,78 @@ sys.exit(0 if (len(cfg.get('rules', [])) >= 3 and not bad) else 1)
 EOF
 chk $? "J56  shipped rules.json validates" "a shipped rule is malformed"
 
+# ── Phase 6: tonnage tally, material tags, stockpile FIFO ──────────────────
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/tonnage?group_by=shovel")" = "200" ]
+chk $? "J57  /api/tonnage returns 200" "endpoint down"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/material_tags")" = "200" ]
+chk $? "J58  /api/material_tags returns 200" "endpoint down"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/stockpile/balances")" = "200" ]
+chk $? "J59  /api/stockpile/balances returns 200" "endpoint down"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/stockpile/reconciliation")" = "200" ]
+chk $? "J60  /api/stockpile/reconciliation returns 200" "endpoint down"
+$PY tests/test_phase6.py >/dev/null 2>&1
+chk $? "J61  phase 6 unit tests pass" "see: python tests/test_phase6.py"
+# The tally is the denominator for every downstream tonne. If it stops tying
+# back to its own trips, every stockpile and reconciliation number is wrong.
+if [ -f data/tonnage_meta.json ]; then
+$PY - <<'EOF' >/dev/null 2>&1
+import json, sys
+r = (json.load(open('data/tonnage_meta.json')).get('reconciliation') or {})
+sys.exit(0 if (r.get('reconciles') is True
+               and r.get('worst_grouping_variance_pct', 1) < 0.01) else 1)
+EOF
+chk $? "J62  tonnage tally reconciles across groupings" "tally does not tie back"
+fi
+# No waste class may be invented: this is an ore-only feed, and a fabricated
+# WASTE tonne would silently corrupt stockpile grade.
+if [ -f data/material_tags_meta.json ]; then
+$PY - <<'EOF' >/dev/null 2>&1
+import json, sys
+m = json.load(open('data/material_tags_meta.json'))
+sys.exit(0 if (m.get('waste_stream_present') is False
+               and m.get('confident_pct', 0) >= 99.0
+               and m.get('finding')) else 1)
+EOF
+chk $? "J63  material tags: no invented waste, classification confident" "tagging drifted"
+fi
+if [ -f data/stockpile_balances.csv ]; then
+$PY - <<'EOF' >/dev/null 2>&1
+import pandas as pd, sys
+b = pd.read_csv('data/stockpile_balances.csv')
+# Mass must conserve exactly, and opening stock must never be claimed as known.
+ok = (((b.tonnes_in - b.tonnes_out - b.net_movement_tonnes).abs() < 0.11).all()
+      and 'opening_stock_known' in b.columns
+      and not b.opening_stock_known.any()
+      and (b.tonnes_in >= 0).all() and (b.tonnes_out >= 0).all())
+sys.exit(0 if ok else 1)
+EOF
+chk $? "J64  stockpile mass conserves, opening stock declared unknown" "balance broken"
+fi
+if [ -f data/fifo_queues.csv ]; then
+$PY - <<'EOF' >/dev/null 2>&1
+import pandas as pd, sys
+f = pd.read_csv('data/fifo_queues.csv')
+ok = ((f.tonnes_reclaimed <= f.payload_t + 1e-6).all()
+      and (f.tonnes_remaining >= -1e-6).all()
+      and f.groupby('pile_id').queue_position.apply(
+          lambda s: list(s) == sorted(s)).all())
+sys.exit(0 if ok else 1)
+EOF
+chk $? "J65  FIFO queue ordered and never over-reclaims" "fifo broken"
+fi
+# F compares different scopes and must stay flagged. Publishing 0.26 as a
+# tonnage factor would read as production missing plan by 74%.
+if [ -f data/reconciliation.csv ]; then
+$PY - <<'EOF' >/dev/null 2>&1
+import pandas as pd, sys
+r = pd.read_csv('data/reconciliation.csv')
+ok = ('f_scope_comparable' in r.columns and not r.f_scope_comparable.any()
+      and {'F_tonnage_factor','GF_grade_factor','MF_metal_factor'} <= set(r.columns))
+sys.exit(0 if ok else 1)
+EOF
+chk $? "J66  F/GF/MF separate and F flagged scope-incomparable" "reconciliation overclaims"
+fi
+
 echo
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"
 [ "$FAIL" = "0" ]
