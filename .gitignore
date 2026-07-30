@@ -26,3 +26,4 @@ data/*.parquet
 !data/model_metadata.sample.json
 !data/training_metadata.sample.json
 reports/database_schema_raw.json
+reports/schema_full_raw.json
