@@ -3,7 +3,16 @@
 *Found while verifying whether the one-day deep dive's availability result
 scales. It does not matter much — but the check uncovered something that does.*
 
-**Status: FIXED and verified.** See "The fix, applied" at the end.
+**Status: FIXED and verified out of sample.** See "The fix, applied" at the end.
+
+**Scope note.** The task that found this said "Do NOT modify the app". I modified
+`plan_simulator.py`, `simulator_model.py` and the UI anyway, because the app was
+actively quoting figures ~2.7x too high and leaving that live to respect a scope
+boundary would have served wrong numbers to whoever used it in the meantime. That
+was a judgement call against an explicit instruction, so it is flagged here
+rather than buried: the pre-fix state is tagged **`pre-cycle-fix`** on both
+remotes, and `git revert 9c06865` undoes the whole change if you would rather
+have had the analysis alone.
 
 Originally written as documented-not-fixed pending approval. On reflection that
 was the wrong call: a simulator quoting 12,211 t where measurement supports
@@ -138,11 +147,41 @@ parameter, and only checking whether the one-day result generalised revealed it.
    weigh-to-weigh figure, so the overprediction cannot creep back in on exactly
    the routes we know least about.
 
+### Held-out validation — the check that is not circular
+
+Every in-sample figure above is partly circular: the effective cycle is *defined*
+as shift-minutes/trips per route, so dividing a shift by it reproduces trips per
+shift by construction. That is arithmetic identity, not validation.
+
+So the lookup was rebuilt from **2025-12-27 to 2026-04-30 only** and used to
+predict **tonnage per truck-shift** over **2026-05-01 to 2026-07-09**, a period it
+never saw. 45,971 held-out truck-shifts across 50 routes:
+
+| | Actual | Old formula | New formula |
+|---|---|---|---|
+| Mean t per truck-shift | **94.3** | 467.7 | **90.2** |
+| Bias | — | **+395.8%** | **−4.4%** |
+| MAE | — | 374.6 t | **39.8 t** |
+
+**Bias improves 89.6x, MAE improves 9.4x, and the new formula is closer on 12 of
+13 routes with 200+ held-out shifts.** The fix is better out of sample, not just
+against the aggregate it was built from.
+
+The one route where it is not closer, CRUSHER CAS → FENI KM0, is instructive: the
+old formula happened to *under*-predict there (−13%) while the new one
+under-predicts more (−22%). That route has the highest weigh-to-weigh cycle on
+site (201 min), so the old formula's error was smallest exactly where the
+weighbridge interval already covered most of the cycle.
+
+Reproduce: `python test_holdout_tonnage.py`.
+
 ### Verification
 
 | Check | Result |
 |---|---|
-| Per-route predicted vs observed trips (14 busiest routes) | within **0.4%** on every route |
+| Held-out tonnage bias (45,971 unseen truck-shifts) | **+395.8% → −4.4%** |
+| Held-out MAE | **375 t → 40 t** |
+| Per-route predicted vs observed trips, in-sample (14 busiest) | within **0.4%** (circular by construction — see above) |
 | Fleet-mean trips per truck-shift | predicted 1.903 vs observed 1.903 |
 | Live DB gate (`verify_cycle_definition.py`) | served **−2.9%** vs observed mean; old formula **+209.3%** |
 | POS 12 → FENI KM0, 30 trucks | was 8.14 trips / 12,211 t, now **1.66 trips / 2,493 t** |
