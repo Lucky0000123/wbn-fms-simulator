@@ -263,15 +263,16 @@
 
         <div class="card" style="margin-top:14px">
           <h3 style="margin-bottom:3px">3 &middot; Predicted result per haul</h3>
-          <div class="sub">Trip time, dwell and production. Hover any row for the evidence behind each number.</div>
+          <div class="sub"><b>Trip time</b> is the weigh-to-weigh interval a planner recognises. <b>Effective cycle</b> is shift-minutes per completed trip &mdash; measured per route, and what trips/shift divides by, because it also covers the empty return, the shovel queue and breaks. Hover any row for the evidence behind each number.</div>
           <div class="rain-table" style="margin-top:8px"><table>
             <thead><tr>
               <th>Haul</th><th class="r">Trucks</th><th class="r">Trip time</th>
+              <th class="r">Effective cycle</th>
               <th class="r">Load</th><th class="r">Dump</th><th class="r">Travel</th>
               <th class="r">Trips/truck</th><th class="r">Planned t</th>
               <th class="r">Achievable t</th><th>Loading point</th><th></th>
             </tr></thead>
-            <tbody id="ps-rows"><tr><td colspan="11" class="muted">Add a haul above to run the simulator&hellip;</td></tr></tbody>
+            <tbody id="ps-rows"><tr><td colspan="12" class="muted">Add a haul above to run the simulator&hellip;</td></tr></tbody>
             <tfoot id="ps-foot"></tfoot>
           </table></div>
           <div id="ps-limits" class="lead muted" style="margin-top:12px;font-size:12px"></div>

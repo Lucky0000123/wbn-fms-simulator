@@ -255,6 +255,49 @@ def audit_congestion_signs(p: pd.DataFrame, n_boot: int = 300) -> dict:
     return out
 
 
+def effective_cycle_per_route(d: pd.DataFrame,
+                              shift_minutes: float = 720.0,
+                              min_shifts: int = 30) -> pd.DataFrame:
+    """Measure the shift-minutes a route consumes per completed trip.
+
+    This is the denominator for trips-per-shift, and it is NOT the weigh-to-weigh
+    cycle time. The weighbridge interval runs first-weigh to second-weigh; the
+    next trip's interval starts at its own first weigh, so the empty return, the
+    shovel queue, refuelling and crib breaks all fall in the gap between
+    intervals and are invisible to it. Measured over 438,992 consecutive trip
+    pairs, the true start-to-start interval is 240.1 min against a weigh-to-weigh
+    median of 76.9 min.
+
+    Computed as (truck-shifts x shift_minutes) / trips, aggregated per route.
+
+    Why aggregate rather than take a per-shift median: trips per truck-shift is a
+    small integer, so shift_minutes/trips can only be 720, 360, 240, 180 ... and
+    the median of that quantised ratio snaps to whichever step the median trip
+    count lands on. Aggregating the numerator and denominator first avoids the
+    bias; on this data the biased version reads 360 min against a true 380 min.
+
+    The result absorbs availability by construction, because it divides the whole
+    shift rather than an assumed working fraction. Callers must therefore NOT
+    multiply by an availability allowance as well.
+    """
+    d = d.copy()
+    key = ["truck_id", "date", "shift"]
+    g = (d.groupby(key + ["route"], observed=True)
+          .size().rename("trips").reset_index())
+    r = (g.groupby("route", observed=True)
+          .agg(truck_shifts=("trips", "size"), trips=("trips", "sum"))
+          .reset_index())
+    r = r[r["truck_shifts"] >= min_shifts].copy()
+    r["effective_cycle_min"] = ((r["truck_shifts"] * shift_minutes)
+                                / r["trips"]).round(1)
+    r["trips_per_truck_shift"] = (r["trips"] / r["truck_shifts"]).round(3)
+    r["effective_cycle_basis"] = (
+        "measured: %.0f-min shift / trips over %s truck-shifts"
+        % (shift_minutes, "route history"))
+    return r[["route", "effective_cycle_min", "trips_per_truck_shift",
+              "truck_shifts", "effective_cycle_basis"]]
+
+
 def run(verbose: bool = True) -> dict:
     say = print if verbose else (lambda *a, **k: None)
     from trip_features import load_features
@@ -344,7 +387,6 @@ def run(verbose: bool = True) -> dict:
 
     # The route lookup is the fallback the simulator falls back to, and it is
     # written whatever the verdict, because a baseline that works beats a
-    # congestion model that does not.
     lk = (p.groupby("route")
             .agg(mean_cycle_min=("cycle_time_min", "mean"),
                  median_cycle_min=("cycle_time_min", "median"),
@@ -357,8 +399,49 @@ def run(verbose: bool = True) -> dict:
                  source=("source", "first"), destination=("destination", "first"),
                  shifts=("cycle_time_min", "size"))
             .round(3).reset_index())
+
+    # EFFECTIVE CYCLE — the denominator the plan simulator must divide by.
+    #
+    # `median_cycle_min` above is the weigh-to-weigh interval, and it is NOT the
+    # repeat interval of a truck. It ends at the second weigh while the next
+    # trip's interval starts at its own first weigh, so the empty return, the
+    # queue, refuelling and breaks all fall outside it. Dividing a shift by it
+    # overpredicted trips by ~5x and therefore tonnage by the same factor.
+    #
+    # The effective cycle is measured instead: shift-minutes actually available
+    # divided by trips actually completed, aggregated per route. It is
+    # deliberately NOT a median of (720/trips) per shift, because trips is a
+    # small integer so that ratio is quantised (720, 360, 240, ...) and its
+    # median is pinned to whichever step the median trip count lands on.
+    # Aggregating first avoids that bias.
+    #
+    # It also absorbs availability, so the caller must not multiply by an
+    # allowance a second time — see plan_simulator.
+    eff = effective_cycle_per_route(d)
+    lk = lk.merge(eff, on="route", how="left")
+    # Routes with too little history to measure fall back to the site-wide
+    # figure rather than silently inheriting the weigh-to-weigh cycle, which
+    # would reintroduce the overprediction on exactly the routes we know least.
+    site_eff = float(eff["effective_cycle_min"].median()) if len(eff) else None
+    if site_eff:
+        lk["effective_cycle_min"] = lk["effective_cycle_min"].fillna(site_eff)
+        lk["effective_cycle_basis"] = lk["effective_cycle_basis"].fillna(
+            "site-wide median (insufficient route history)")
     lk.to_csv(LOOKUP_CSV, index=False)
     out["route_lookup_rows"] = int(len(lk))
+    if len(eff):
+        out["effective_cycle"] = {
+            "site_median_min": round(site_eff, 1),
+            "routes_measured": int(eff["effective_cycle_min"].notna().sum()),
+            "note": ("shift minutes per completed trip, measured per route; "
+                     "this is the denominator for trips-per-shift and it "
+                     "already includes non-hauling time"),
+        }
+        say("\neffective cycle (trips-per-shift denominator): site median "
+            "%.0f min across %d routes; weigh-to-weigh median is %.0f min, so "
+            "dividing a shift by the latter overpredicts trips by ~%.1fx"
+            % (site_eff, len(eff), lk["median_cycle_min"].median(),
+               site_eff / max(lk["median_cycle_min"].median(), 1e-9)))
 
     with open(RESULTS_JSON, "w", encoding="utf-8") as fh:
         json.dump(out, fh, indent=2, default=str)

@@ -15,12 +15,20 @@ the database: the public demo does not go down when the VPN does.
 |---|---|
 | How long is a trip on this route? | **Yes** — measured route history |
 | How long at the loader and the tip? | **Yes** — measured on 24.8% of trips, apportioned otherwise |
-| How many tonnes will this plan move? | **Yes** — derived, with an assumed availability you set |
+| How many tonnes will this plan move? | **Yes** — from a measured per-route effective cycle; no availability guess needed |
 | Where do two plans collide? | **Yes** — measured capacity at shared points |
 | Will adding trucks slow the cycle? | **No** — not identifiable from weighbridge data |
 | How fast on each road segment? | **Not yet** — GPS exists, but its retention does not reach the training period |
 
 The two "no" answers are load-bearing, not caveats.
+
+**Two cycle figures, deliberately.** `predicted_cycle_time_min` is the
+weigh-to-weigh interval a planner recognises as trip time.
+`effective_cycle_min` is shift-minutes per completed trip, measured per route,
+and is what trips-per-shift divides by — it also covers the empty return, the
+shovel queue and breaks. An earlier version divided by the former and
+**overpredicted production by ~2.7x**; see
+[reports/CRITICAL_cycle_time_defect.md](reports/CRITICAL_cycle_time_defect.md).
 
 **Congestion.** Four independent tests failed to find a queueing effect, and
 measured delay *falls* as loader utilisation rises, because trucks get deployed

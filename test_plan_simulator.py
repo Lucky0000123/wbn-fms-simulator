@@ -45,13 +45,25 @@ for n in (5, 10, 20, 40, 80, 160):
     prev = x['planned_production_t']
 
 print('\n=== 3. CAPACITY CEILING: achievable must saturate, planned must not ===')
+# Fleet sizes chosen against TF's MEASURED ceiling of 1,140 trips/shift and the
+# measured 1.47 trips per truck per shift, so 200 trucks stays inside it and
+# 2,000 breaches it. These were previously 40 and 400, which only breached
+# because the old code overpredicted trips by ~11x; correcting the trip rate
+# made 400 trucks genuinely fit, so the numbers are re-derived from the
+# capacity data rather than left to silently stop testing saturation.
 r1 = simulate({'plans': [{'route': 'TF>POS 12', 'source': 'TF',
-                          'destination': 'POS 12', 'n_trucks': 40}]})['results'][0]
+                          'destination': 'POS 12', 'n_trucks': 200}]})['results'][0]
 r2 = simulate({'plans': [{'route': 'TF>POS 12', 'source': 'TF',
-                          'destination': 'POS 12', 'n_trucks': 400}]})['results'][0]
-print('    40 trucks: planned %.0f t achievable %.0f t' % (r1['planned_production_t'], r1['achievable_production_t']))
-print('   400 trucks: planned %.0f t achievable %.0f t' % (r2['planned_production_t'], r2['achievable_production_t']))
+                          'destination': 'POS 12', 'n_trucks': 2000}]})['results'][0]
+print('    200 trucks: planned %.0f t achievable %.0f t cap %s%%'
+      % (r1['planned_production_t'], r1['achievable_production_t'],
+         round(100*(r1['capacity_ratio'] or 0))))
+print('   2000 trucks: planned %.0f t achievable %.0f t cap %s%%'
+      % (r2['planned_production_t'], r2['achievable_production_t'],
+         round(100*(r2['capacity_ratio'] or 0))))
 check('10x trucks -> 10x planned', abs(r2['planned_production_t'] / max(r1['planned_production_t'],1) - 10) < 0.5)
+check('200 trucks stays within the measured ceiling', r1['capacity_ratio'] <= 1.0,
+      r1['capacity_ratio'])
 check('achievable saturates below 10x',
       r2['achievable_production_t'] < r1['achievable_production_t'] * 9)
 check('over-capacity warning raised', 'OVER CAPACITY' in r2['capacity_note'])

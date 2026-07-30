@@ -48,10 +48,28 @@ DATA = os.path.join(BASE, "data")
 
 # A 12-hour shift is the site's roster. Overridable per request.
 DEFAULT_SHIFT_MIN = 720
-# Fraction of the shift a truck is actually hauling, after the pre-start check,
-# refuelling, crib breaks and the tramp to and from the parkup. An operational
-# assumption supplied by the planner, labelled as one, not fitted.
-DEFAULT_AVAILABILITY = 0.85
+# Fraction of the shift to divide by when the caller supplies no override.
+#
+# This is 1.0, not 0.85, and the reason matters. Trips per truck are predicted by
+# dividing the shift by the route's EFFECTIVE cycle, which is measured as
+# shift-minutes per completed trip. That measurement already contains every
+# non-hauling minute: the empty return, the shovel queue, refuelling, crib
+# breaks, and any part of the shift the truck was not hauling at all.
+#
+# Multiplying by an availability allowance on top would deduct that time twice.
+# The previous 0.85 was applied to the weigh-to-weigh interval instead, which
+# omits the between-trip gap entirely, and the combination overpredicted trips
+# by roughly 5x. A caller who genuinely wants to model a shortened shift should
+# reduce `shift_minutes`, not this factor.
+DEFAULT_AVAILABILITY = 1.0
+# Measured hauling-truck availability, for reporting only. Over 215 days it is
+# 83.6% against the 85% that used to be assumed, so the old assumption was close
+# on this axis; the error was the cycle definition, not the allowance.
+MEASURED_HAUL_AVAILABILITY = 0.836
+# Site-wide ratio of effective cycle to weigh-to-weigh cycle (389 / 83 min),
+# used only for a route with no measured history. Per-route ratios span 1.2x to
+# 24.8x, so this is a weak fallback and rows using it say so in their basis.
+FALLBACK_EFFECTIVE_RATIO = 4.7
 # Rain slows loading; this is the observed median penalty across points, used
 # only when the caller asks for a wet scenario without naming a point.
 FALLBACK_WET_UPLIFT = 1.08
@@ -186,6 +204,9 @@ def simulate(payload: dict) -> dict:
         if dump_min is None:
             dump_min, dump_basis = float(hist.get("median_dump_min") or 0), "route history"
 
+        # Keep the pre-rain figure so the same proportional uplift can be
+        # applied to the effective cycle below.
+        cycle_dry = cycle
         # Rain lengthens the whole cycle, not just the dwell, so the uplift is
         # taken from the loading point's own measured wet penalty where known.
         if cycle and wet:
@@ -199,10 +220,34 @@ def simulate(payload: dict) -> dict:
             cycle = cycle + (pen if pen is not None
                              else cycle * (FALLBACK_WET_UPLIFT - 1))
 
-        trips_per_truck = (working_min / cycle) if cycle else 0.0
+        # TWO DIFFERENT CYCLE FIGURES, USED FOR TWO DIFFERENT THINGS.
+        #
+        # `cycle` (weigh-to-weigh) is what a planner recognises as trip time and
+        # is what gets reported. `effective_cycle` is shift-minutes per completed
+        # trip, measured per route, and is the only correct denominator for trips
+        # per shift. Using the former to count trips overpredicted them by ~5x,
+        # because the weighbridge interval excludes the empty return, the shovel
+        # queue, refuelling and breaks.
+        eff = hist.get("effective_cycle_min")
+        eff = float(eff) if eff and float(eff) > 0 else None
+        eff_basis = str(hist.get("effective_cycle_basis") or "")
+        if eff is None:
+            # No measured effective cycle: fall back to the observed site-wide
+            # ratio rather than to the weigh-to-weigh figure, which would
+            # reintroduce the overprediction.
+            eff = (cycle or 0) * FALLBACK_EFFECTIVE_RATIO
+            eff_basis = ("estimated: no route history, weigh-to-weigh x %.1f "
+                         "site-wide ratio" % FALLBACK_EFFECTIVE_RATIO)
+        # Rain lengthens the whole cycle, so the same penalty applies to the
+        # effective cycle that determines trip count.
+        if cycle and wet and cycle_dry and cycle_dry > 0:
+            eff = eff * (cycle / cycle_dry)
+
+        trips_per_truck = (working_min / eff) if eff else 0.0
         resolved.append({
             "plan": p, "route": route, "source": src, "destination": dst,
             "n": n, "cycle": cycle, "basis": basis,
+            "effective_cycle": eff, "effective_basis": eff_basis,
             "load_min": load_min, "load_basis": load_basis,
             "dump_min": dump_min, "dump_basis": dump_basis,
             "trips_per_truck": trips_per_truck,
@@ -267,6 +312,7 @@ def simulate(payload: dict) -> dict:
             "route": route, "source": src, "destination": r["destination"],
             "n_trucks": int(n),
             "predicted_cycle_time_min": round(cycle, 1),
+            "effective_cycle_min": round(r["effective_cycle"], 1),
             "predicted_load_time_min": round(load_min, 1),
             "predicted_dump_time_min": round(dump_min, 1),
             "implied_travel_time_min": round(max(cycle - load_min - dump_min, 0.0), 1),
@@ -280,10 +326,18 @@ def simulate(payload: dict) -> dict:
             "congestion_note": cong,
             "shared_with": others,
             "basis": {
-                "cycle_time": r["basis"], "load_time": r["load_basis"],
-                "dump_time": r["dump_basis"],
-                "trips_and_tonnes": "derived from the above",
-                "availability": "assumed %.0f%% (caller-supplied)" % (100 * avail),
+                "cycle_time": ("%s — weigh-to-weigh interval, i.e. the trip "
+                               "time a planner recognises" % r["basis"]),
+                "effective_cycle": r["effective_basis"],
+                "trips_and_tonnes": ("derived: shift_minutes / effective_cycle. "
+                                     "NOT shift_minutes / cycle_time, which "
+                                     "omits the empty return and the queue and "
+                                     "overpredicts trips by ~5x"),
+                "availability": (
+                    "not applied (%.0f%%): the effective cycle already includes "
+                    "non-hauling time, so an allowance would double-count it. "
+                    "Measured hauling-truck availability is %.1f%%."
+                    % (100 * avail, 100 * MEASURED_HAUL_AVAILABILITY)),
             },
         })
 
@@ -305,7 +359,13 @@ def simulate(payload: dict) -> dict:
                                       if len(dst_plans.get(k, [])) > 1],
             "capacity_warnings": warnings,
             "shift_minutes": shift_min,
-            "availability_assumed": avail,
+            "availability_factor_applied": avail,
+            "availability_note": (
+                "1.0 by design: trips are predicted by dividing the shift by the "
+                "MEASURED effective cycle (shift-minutes per completed trip), "
+                "which already contains queueing, empty running and breaks. "
+                "Measured hauling-truck availability is %.1f%% over 215 days."
+                % (100 * MEASURED_HAUL_AVAILABILITY)),
             "weather": "wet" if wet else "dry",
         },
         "model_limits": {
@@ -327,5 +387,14 @@ def simulate(payload: dict) -> dict:
             "load_dump_split": (
                 "ESTIMATED. The weighbridge records one interval per trip; the "
                 "split into load, travel and dump is an apportionment."),
+            "cycle_time_vs_trip_count": (
+                "TWO FIGURES, DELIBERATELY. predicted_cycle_time_min is the "
+                "weigh-to-weigh interval and is what a planner recognises as "
+                "trip time. effective_cycle_min is shift-minutes per completed "
+                "trip, measured per route, and is what trips_per_shift divides "
+                "by. They differ by 1.2x to 24.8x depending on the route, "
+                "because the weighbridge interval cannot see the empty return, "
+                "the shovel queue, refuelling or breaks. An earlier version "
+                "divided by the former and overpredicted production by ~5x."),
         },
     }

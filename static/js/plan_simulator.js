@@ -46,14 +46,14 @@ function psRun() {
   const body = q('ps-rows');
   if (!body) return;
   if (!_psPlans.length) {
-    body.innerHTML = '<tr><td colspan="11" class="muted">Add a haul above to run the simulator…</td></tr>';
+    body.innerHTML = '<tr><td colspan="12" class="muted">Add a haul above to run the simulator…</td></tr>';
     q('ps-foot').innerHTML = '';
     q('ps-warnings').innerHTML = '';
     q('ps-limits').innerHTML = '';
     ['trucks', 'planned', 'achv'].forEach(k => q('ps-kpi-' + k).textContent = '—');
     return;
   }
-  body.innerHTML = '<tr><td colspan="11" class="muted">Simulating…</td></tr>';
+  body.innerHTML = '<tr><td colspan="12" class="muted">Simulating…</td></tr>';
   fetch('/api/simulate', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
@@ -63,14 +63,14 @@ function psRun() {
       availability: parseFloat(q('ps-avail').value) || 0.85,
     }),
   }).then(r => r.json()).then(psRender)
-    .catch(e => { body.innerHTML = '<tr><td colspan="11" class="muted">simulation failed: ' + e + '</td></tr>'; });
+    .catch(e => { body.innerHTML = '<tr><td colspan="12" class="muted">simulation failed: ' + e + '</td></tr>'; });
 }
 
 function psRender(d) {
   const rows = d.results || [], s = d.summary || {};
   const fmt = n => (n == null ? '—' : Math.round(n).toLocaleString());
   q('ps-rows').innerHTML = rows.map((r, i) => {
-    if (r.error) return `<tr><td>${r.route}</td><td colspan="10" class="muted">${r.error}</td></tr>`;
+    if (r.error) return `<tr><td>${r.route}</td><td colspan="11" class="muted">${r.error}</td></tr>`;
     const over = r.capacity_ratio > 1;
     // Only colour the capacity cell, because capacity is the only column with
     // a measured constraint behind it. Colouring predictions would imply a
@@ -81,7 +81,8 @@ function psRender(d) {
     return `<tr title="${tip.replace(/"/g, '&quot;')}">
       <td><b>${r.route}</b></td>
       <td class="r">${r.n_trucks}</td>
-      <td class="r">${r.predicted_cycle_time_min} min</td>
+      <td class="r" title="Weigh-to-weigh trip time">${r.predicted_cycle_time_min} min</td>
+      <td class="r" title="Shift-minutes per completed trip, measured per route. This is what trips/shift divides by; it includes the empty return, the queue and breaks.">${r.effective_cycle_min} min</td>
       <td class="r">${r.predicted_load_time_min}</td>
       <td class="r">${r.predicted_dump_time_min}</td>
       <td class="r">${r.implied_travel_time_min}</td>
@@ -95,7 +96,7 @@ function psRender(d) {
 
   const shortfall = (s.planned_production_t || 0) - (s.achievable_production_t || 0);
   q('ps-foot').innerHTML = `<tr><th>Total</th><th class="r">${s.total_trucks}</th>
-    <th colspan="5"></th><th class="r">${fmt(s.planned_production_t)}</th>
+    <th colspan="6"></th><th class="r">${fmt(s.planned_production_t)}</th>
     <th class="r">${fmt(s.achievable_production_t)}</th>
     <th colspan="2">${shortfall > 1 ? '<span style="color:var(--bad,#e5534b)">' + fmt(shortfall) + ' t blocked by capacity</span>' : ''}</th></tr>`;
 

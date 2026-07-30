@@ -1,0 +1,23 @@
+{
+ "generated_at": "2026-07-30T06:23:30+00:00",
+ "window": [
+  "2026-06-15",
+  "2026-07-09"
+ ],
+ "pairs": 26746,
+ "weigh_to_weigh_median_min": 94.1,
+ "start_to_start_median_min": 186.2,
+ "understatement_factor": 1.98,
+ "observed_trips_per_truck_day_mean": 3.14,
+ "observed_trips_per_truck_day_median": 2.0,
+ "day_per_shift_factor": 1.494,
+ "served_endpoint_prediction_per_day": 3.05,
+ "old_defective_formula_prediction": 6.5,
+ "true_cycle_prediction": 3.87,
+ "route_ratio_min": 0.38,
+ "route_ratio_max": 4.45,
+ "tolerance_frac": 0.2,
+ "served_error_pct": -2.9,
+ "served_within_tolerance": true,
+ "verdict": "PASS: the served endpoint reproduces observed trips within 20%"
+}

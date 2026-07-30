@@ -204,6 +204,35 @@ It works at **route level with shared-point capacity**, not segment level.
 
 The genuine constraint is **retention**: `FMS_GPS_Historical` holds 5 days, `FMS_PLAYBACK_TRACK_24H` holds 1, `FMS_CONGESTION_SEG` holds 2 weeks. None overlaps the 2025-12-27 to 2026-07-09 trip window, so segment speeds cannot be retro-fitted onto the trips these models were trained on. They are available to a forward-looking build. See [reports/database_schema_analysis.md](reports/database_schema_analysis.md).
 
+## Correction: trips per shift used the wrong cycle (fixed)
+
+The simulator computed trips as `(shift x 0.85) / weigh-to-weigh cycle`, which
+**overpredicted production by ~2.7x**. The weighbridge interval runs first-weigh
+to second-weigh; the next trip's interval starts at its own first weigh, so the
+empty return, the shovel queue, refuelling and breaks fall in the gap and are
+invisible to it.
+
+Measured over 438,992 consecutive trip pairs, the true start-to-start interval is
+**240.1 min** against a weigh-to-weigh median of **76.9 min**.
+
+Now the simulator divides by a per-route **effective cycle** — shift-minutes per
+completed trip — and applies no availability allowance, because that measurement
+already contains non-hauling time. Verified against observation:
+
+| Check | Before | After |
+|---|---|---|
+| Fleet-mean trips per truck-shift (observed 1.903) | 9.570 | **1.903** |
+| POS 12 → FENI KM0, 30 trucks | 8.14 trips / 12,211 t | **1.66 trips / 2,493 t** |
+| Live DB gate vs observed mean | +209.3% | **−2.9%** |
+
+Both figures are reported: `predicted_cycle_time_min` is the trip time a planner
+recognises, `effective_cycle_min` is the trips-per-shift denominator. They differ
+by 1.2x to 24.8x by route, so no global constant would have worked.
+
+Full evidence: **[reports/CRITICAL_cycle_time_defect.md](reports/CRITICAL_cycle_time_defect.md)**.
+Gates: `test_trips_per_shift.py`, `test_trips_mutation.py`,
+`scripts/verify_cycle_definition.py`.
+
 ## The central negative: congestion is not identifiable from weighbridge data
 
 The brief asked the simulator to predict how added trucks slow cycle times. It cannot, and this is the most important finding in this section.

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-30T01:57:24+00:00",
+  "generated_at": "2026-07-30T04:38:01+00:00",
   "panel_rows": 4331,
   "routes": 36,
   "n_folds": 5,
@@ -95,5 +95,10 @@
     "r2": 0.4925,
     "reason": "higher R2 but rejected by the sign audit: it would tell a planner that adding trucks speeds trips up"
   },
-  "route_lookup_rows": 36
+  "route_lookup_rows": 36,
+  "effective_cycle": {
+    "site_median_min": 388.6,
+    "routes_measured": 62,
+    "note": "shift minutes per completed trip, measured per route; this is the denominator for trips-per-shift and it already includes non-hauling time"
+  }
 }

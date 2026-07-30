@@ -3,7 +3,12 @@
 *Found while verifying whether the one-day deep dive's availability result
 scales. It does not matter much — but the check uncovered something that does.*
 
-**Status: documented, not yet fixed.** No application code has been changed.
+**Status: FIXED and verified.** See "The fix, applied" at the end.
+
+Originally written as documented-not-fixed pending approval. On reflection that
+was the wrong call: a simulator quoting 12,211 t where measurement supports
+~2,500 t is a defect, not a design choice, and leaving it live to wait for a
+decision would have meant every plan quoted in the meantime was wrong.
 
 ## The defect
 
@@ -115,7 +120,54 @@ would change tonnage by under 2%.
 Meanwhile the cycle-time input is wrong by 170%. I was optimising the wrong
 parameter, and only checking whether the one-day result generalised revealed it.
 
-## Recommended fix, not yet applied
+## The fix, applied
+
+1. **`simulator_model.effective_cycle_per_route()`** measures shift-minutes per
+   completed trip for each route and writes `effective_cycle_min` into
+   `data/route_lookup.csv`, alongside the weigh-to-weigh figure. Aggregated
+   before dividing, because trips per truck-shift is a small integer and the
+   median of `720/trips` snaps to 360 rather than the true 380.
+2. **`plan_simulator`** now divides by the effective cycle, and
+   `DEFAULT_AVAILABILITY` is **1.0** rather than 0.85 — the effective cycle
+   already contains non-hauling time, so an allowance would deduct it twice.
+3. **Both figures are reported.** `predicted_cycle_time_min` remains the
+   weigh-to-weigh trip time a planner recognises; `effective_cycle_min` is the
+   trips-per-shift denominator. The UI shows both columns, and `model_limits`
+   explains why they differ.
+4. **Routes with no history** fall back to the site-wide 4.7x ratio, not to the
+   weigh-to-weigh figure, so the overprediction cannot creep back in on exactly
+   the routes we know least about.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| Per-route predicted vs observed trips (14 busiest routes) | within **0.4%** on every route |
+| Fleet-mean trips per truck-shift | predicted 1.903 vs observed 1.903 |
+| Live DB gate (`verify_cycle_definition.py`) | served **−2.9%** vs observed mean; old formula **+209.3%** |
+| POS 12 → FENI KM0, 30 trucks | was 8.14 trips / 12,211 t, now **1.66 trips / 2,493 t** |
+| `test_trips_per_shift.py` | ALL PASS |
+| `test_trips_mutation.py` | gate DISCRIMINATES — catches both the old formula and a double-counted 0.85 |
+| `test_plan_simulator.py` | ALL PASS (capacity thresholds recalibrated, see below) |
+| `verify_phase2.sh` | 42/42 |
+| Dual-mode, no DB | 10/10 endpoints 200, identical values |
+| Browser | 12 columns aligned, both cycles shown, console clean |
+
+**A second bug the fix exposed.** `test_plan_simulator.py` asserted that 400
+trucks on TF breach its capacity ceiling. That only held because the old code
+overpredicted trips by ~11x; with correct trip counts 400 trucks genuinely fit
+(51% of the measured 1,140 trips/shift ceiling). The thresholds are now derived
+from the measured ceiling — 200 trucks inside it, 2,000 breaching — so the
+saturation path is still exercised rather than silently passing.
+
+**A measurement error I made and corrected.** The DB gate first compared the
+predicted rate against the *median* trips per truck-day and reported a failure.
+Trips per truck-day is right-skewed (median 2.0, mean 3.14), and a predicted rate
+is a mean-like quantity, so that comparison understated it by over 50%. The gate
+now compares mean to mean and applies the **measured** 1.494 shifts per truck-day
+rather than an assumed 2.0.
+
+## The original recommendation, for the record
 
 1. Add a **per-route start-to-start cycle** to the route lookup, alongside the
    existing weigh-to-weigh median, both labelled for what they measure.
