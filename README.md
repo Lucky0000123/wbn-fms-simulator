@@ -1,5 +1,9 @@
 # WBN Production Simulator
 
+> **New agent or new contributor?** Start with
+> [reports/HANDOVER.md](reports/HANDOVER.md) — full project handover:
+> setup, database, file tree, engine internals, gates, known traps.
+
 Predicts haul-truck productivity for mine plans at the WBN nickel operation, Halmahera.
 
 A planner asks **"30 trucks from A to B, 20 from C to D"**. The simulator returns

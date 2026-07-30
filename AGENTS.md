@@ -1,5 +1,11 @@
 # AGENTS.md — working rules for this repo
 
+> **Switching agents or new to this repo?** Read
+> [reports/HANDOVER.md](reports/HANDOVER.md) first. It carries the
+> project identity, DB tables, file tree, engine internals, the 54
+> gates and the traps. This file is the working rules and the record
+> of what was tried and failed.
+
 Applies to every agent and contributor working in this checkout.
 
 ## Push to BOTH remotes, always
