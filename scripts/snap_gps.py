@@ -152,6 +152,22 @@ def segment_speeds(gps: pd.DataFrame, trips: pd.DataFrame) -> pd.DataFrame:
         if a.empty:
             continue
         a["avg_speed_kmh"] = (a["dist_m"] / 1000.0) / (a["secs"] / 3600.0)
+        # PARTIAL TRAVERSES ARE FLAGGED, NOT DROPPED.
+        #
+        # A segment is 1 km, but a trip can clip only part of one - at a trip
+        # boundary, or where a truck stops inside it. Cross-checked against
+        # FMS_CONGESTION_SEG, the two worst-disagreeing segments (KR KM37-38 at
+        # 5.1 vs their 17.8; KR KM38-39 at 2.5 vs 12.5) both covered a fraction
+        # of the kilometre: 0.9 km and 0.075 km respectively. Those are real
+        # slow-downs, not snapping errors - the device's own SPEED field agrees
+        # with the computed value at r=+0.889 across all segments - but they are
+        # not comparable with a full-segment transit speed.
+        #
+        # Flagged rather than filtered, because a stop inside a segment is
+        # exactly the congestion the simulator cares about; silently dropping it
+        # would bias the speeds upward.
+        a["km_covered"] = a["dkm"].abs().round(3)
+        a["is_partial_traverse"] = (a["km_covered"] < 0.8).astype(int)
         a = a[a["avg_speed_kmh"] <= MAX_PLAUSIBLE_KMH]
         # Chainage falling = heading toward the coast and the dump = loaded.
         a["direction"] = np.where(a["dkm"] < 0, "loaded", "empty")
@@ -246,6 +262,14 @@ def main():
     else:
         print("%d trip-segment observations across %d trips, %d segments"
               % (len(seg), seg.trip_id.nunique(), seg.seg.nunique()))
+        if "is_partial_traverse" in seg:
+            full = seg[seg.is_partial_traverse == 0]
+            print("   full-segment transits (>=0.8 km covered): %d of %d"
+                  % (len(full), len(seg)))
+            if len(full):
+                print("   full-transit speed: median %.1f km/h (vs %.1f including "
+                      "partials)" % (full.avg_speed_kmh.median(),
+                                     seg.avg_speed_kmh.median()))
         piv = (seg.groupby(["seg", "direction"])
                   .agg(speed=("avg_speed_kmh", "mean"), n=("avg_speed_kmh", "size"),
                        trucks=("truck_id", "nunique")).reset_index())

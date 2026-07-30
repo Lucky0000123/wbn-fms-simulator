@@ -118,11 +118,43 @@ them onto a road would invent travel that never happened.
 Most segments have n=1. Direction is signed from whether chainage rises or falls,
 which separates loaded from empty legs, but only one empty observation survived.
 
-Two independent checks say the *method* is sound even though the *sample* is thin:
+### Cross-validated against the FMS's own segment speeds
 
-1. **Median GPS-derived speed is 20.6 km/h.** `FMS_CONGESTION_SEG`, computed by
-   the FMS itself from the same feed, reports a median of **17.2 km/h**. Two
-   independent pipelines landing 3 km/h apart is a genuine cross-check.
+The strongest available check: `FMS_CONGESTION_SEG` is computed by the site's own
+system, from the same GPS feed, using their segment definitions and their code. If
+my independent snapping agrees with theirs **segment by segment**, the chainage
+assignment is right. Comparing a global median would prove little — a snapper that
+scattered fixes at random would still yield a plausible average.
+
+**All 16 of my segment labels exist in the FMS's vocabulary**, and per-segment
+speeds correlate:
+
+| Subset | Segments | Correlation with FMS | Median abs difference |
+|---|---|---|---|
+| All observations | 16 | r = +0.517 | 3.9 km/h |
+| **Full transits only (≥0.8 km covered)** | 10 | **r = +0.920** | **1.6 km/h** |
+
+The jump from 0.517 to 0.920 came from a real finding. The two worst-disagreeing
+segments — KR KM37-38 (mine 5.1 vs their 17.8) and KR KM38-39 (2.5 vs 12.5) —
+both covered only a **fraction** of their kilometre, 0.05 km and 0.02 km. Those
+are genuine slow-downs where a truck nearly stopped, not snapping errors, but they
+are not comparable with a full-segment transit speed.
+
+`snap_gps.py` now flags `is_partial_traverse` (and records `km_covered`) rather
+than dropping those rows, because a stop inside a segment is exactly the
+congestion the simulator cares about and filtering it would bias speeds upward.
+11 of 19 Day X observations are full transits, median **23.9 km/h**.
+
+A third, independent check on the arithmetic: my computed speed (distance ÷ time
+between fixes) agrees with the **device's own reported `SPEED` field** at
+**r = +0.889**, median difference 1.5 km/h. That validates the speed computation
+separately from the segment assignment.
+
+Two further checks say the *method* is sound even though the *sample* is thin:
+
+1. **Median GPS-derived speed is 20.6 km/h** (23.9 for full transits) against
+   `FMS_CONGESTION_SEG`'s **17.2 km/h**. Two independent pipelines within a few
+   km/h.
 2. **A clock-offset sensitivity test** (below) moves the median only between
    **20.6 and 25.4 km/h**.
 
