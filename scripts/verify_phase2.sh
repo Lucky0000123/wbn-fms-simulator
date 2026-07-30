@@ -300,7 +300,7 @@ fi
 
 
 # ---------------------------------------------------------------------------
-# J43-J50: the production-simulator suites.
+# J43-J52: the production-simulator suites.
 #
 # These existed as standalone files and the harness did not run them, so
 # verify_phase2.sh reported 42/42 while eight suites - including the gate that
@@ -336,6 +336,12 @@ fi
 if [ -f data/route_lookup.csv ]; then
 $PY test_retrain_preserves_fix.py >/dev/null 2>&1
 chk $? "J49  a retrain preserves the cycle fix" "see: python test_retrain_preserves_fix.py"
+fi
+
+# Needs the availability extract, which requires the DB. Skipped in a clean checkout.
+if [ -f data/availability_per_truck.csv ] && [ -f data/route_lookup.csv ]; then
+$PY test_availability_usage.py >/dev/null 2>&1
+chk $? "J52  availability sizes the fleet and never scales tonnage" "see: python test_availability_usage.py"
 fi
 
 # Needs the Day X GPS extract. Absent in a clean checkout, so skipped there.

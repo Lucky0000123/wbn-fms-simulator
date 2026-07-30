@@ -66,6 +66,20 @@ DEFAULT_AVAILABILITY = 1.0
 # 83.6% against the 85% that used to be assumed, so the old assumption was close
 # on this axis; the error was the cycle definition, not the allowance.
 MEASURED_HAUL_AVAILABILITY = 0.836
+# Measured mechanical availability of haul trucks: the share of rostered shifts a
+# truck was NOT broken down or in planned maintenance. From 170,899 truck-shifts
+# in EQUIPMENTS_HOURLY_STATUS over 2026-04-01..06-30.
+#
+# This is used ONLY for fleet sizing ("roster this many to keep N hauling"). It
+# is deliberately NOT applied to tonnage. Tested against observed tonnage per
+# truck-shift on 44 routes: the current bias is +5.5%, and multiplying by 0.836,
+# 0.850, 0.765 or 0.451 moves it to -11.8%, -10.3%, -19.3% and -52.4%
+# respectively. Every factor makes it worse, because the effective cycle already
+# contains downtime. Two independent measurements confirm that: availability x
+# utilisation = 0.390 of a rostered shift is working time, and the weighbridge
+# observes 0.203 of the repeat interval, which doubles to 0.406 once the
+# invisible empty-return leg is counted. They agree within 0.016.
+MEASURED_MECHANICAL_AVAILABILITY = 0.720
 # Site-wide ratio of effective cycle to weigh-to-weigh cycle (389 / 83 min),
 # used only for a route with no measured history. Per-route ratios span 1.2x to
 # 24.8x, so this is a weak fallback and rows using it say so in their basis.
@@ -92,6 +106,10 @@ def _routes() -> pd.DataFrame | None:
 
 def _capacity() -> pd.DataFrame | None:
     return _load("capacity", os.path.join(DATA, "point_capacity.csv"))
+
+
+def _availability() -> pd.DataFrame | None:
+    return _load("avail", os.path.join(DATA, "availability_per_truck.csv"))
 
 
 def _dwell() -> pd.DataFrame | None:
@@ -333,6 +351,8 @@ def simulate(payload: dict) -> dict:
             "avg_payload_t": round(payload_t, 2),
             "planned_production_t": round(fleet_t, 0),
             "achievable_production_t": round(achievable_t, 0),
+            "trucks_to_roster": int(np.ceil(n / MEASURED_MECHANICAL_AVAILABILITY))
+            if n else 0,
             "capacity_note": cap_note,
             "capacity_ratio": cap_ratio,
             "congestion_note": cong,
@@ -372,6 +392,18 @@ def simulate(payload: dict) -> dict:
             "capacity_warnings": warnings,
             "shift_minutes": shift_min,
             "availability_factor_applied": avail,
+            "fleet_sizing": {
+                "trucks_hauling": int(sum(x["n_trucks"] for x in ok)),
+                "trucks_to_roster": int(np.ceil(
+                    sum(x["n_trucks"] for x in ok)
+                    / MEASURED_MECHANICAL_AVAILABILITY)),
+                "measured_availability": MEASURED_MECHANICAL_AVAILABILITY,
+                "basis": ("mechanical availability measured over 170,899 "
+                          "haul-truck shifts (EQUIPMENTS_HOURLY_STATUS, "
+                          "2026-04-01..06-30); the distribution is bimodal, so "
+                          "28% of truck-shifts are lost entirely rather than "
+                          "every truck running at 72%"),
+            },
             "availability_note": (
                 "1.0 by design: trips are predicted by dividing the shift by the "
                 "MEASURED effective cycle (shift-minutes per completed trip), "

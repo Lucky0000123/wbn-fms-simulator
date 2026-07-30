@@ -1,0 +1,131 @@
+{
+  "truck_shifts": 538586,
+  "equipment": 3620,
+  "date_range": [
+    "2026-04-01",
+    "2026-06-30"
+  ],
+  "all_equipment": {
+    "availability": {
+      "n": 538586,
+      "mean": 0.7831,
+      "min": 0.0,
+      "p25": 1.0,
+      "median": 1.0,
+      "p75": 1.0,
+      "max": 1.0
+    },
+    "utilisation": {
+      "n": 538586,
+      "mean": 0.433,
+      "min": 0.0,
+      "p25": 0.0,
+      "median": 0.4806,
+      "p75": 0.875,
+      "max": 1.0
+    },
+    "working_share_of_total": {
+      "n": 538586,
+      "mean": 0.4204,
+      "min": 0.0,
+      "p25": 0.0,
+      "median": 0.4167,
+      "p75": 0.875,
+      "max": 1.0
+    }
+  },
+  "haul_trucks": {
+    "equipment": 1103,
+    "truck_shifts": 170899,
+    "availability": {
+      "n": 170899,
+      "mean": 0.7201,
+      "min": 0.0,
+      "p25": 0.2567,
+      "median": 1.0,
+      "p75": 1.0,
+      "max": 1.0
+    },
+    "utilisation": {
+      "n": 170899,
+      "mean": 0.5421,
+      "min": 0.0,
+      "p25": 0.0,
+      "median": 0.875,
+      "p75": 0.875,
+      "max": 1.0
+    },
+    "shifts_fully_available": 116832,
+    "shifts_fully_down": 41619,
+    "pct_shifts_fully_down": 24.4,
+    "distribution_note": "bimodal: a truck is usually either up for the whole shift or down for the whole shift, so the mean describes few individual shifts",
+    "above_85pct": 186,
+    "below_85pct": 917,
+    "per_truck_availability": {
+      "n": 1103,
+      "mean": 0.6958,
+      "min": 0.0,
+      "p25": 0.6243,
+      "median": 0.7429,
+      "p75": 0.8156,
+      "max": 1.0
+    },
+    "by_shift": {
+      "night": {
+        "n": 85451,
+        "availability": 0.7259,
+        "utilisation": 0.548
+      },
+      "day": {
+        "n": 85448,
+        "availability": 0.7142,
+        "utilisation": 0.5362
+      }
+    },
+    "by_day_of_week": {
+      "Friday": {
+        "n": 24798,
+        "availability": 0.7259,
+        "utilisation": 0.5568
+      },
+      "Wednesday": {
+        "n": 24794,
+        "availability": 0.7241,
+        "utilisation": 0.5416
+      },
+      "Thursday": {
+        "n": 24864,
+        "availability": 0.7238,
+        "utilisation": 0.547
+      },
+      "Tuesday": {
+        "n": 22714,
+        "availability": 0.7236,
+        "utilisation": 0.5205
+      },
+      "Saturday": {
+        "n": 24618,
+        "availability": 0.7225,
+        "utilisation": 0.5554
+      },
+      "Sunday": {
+        "n": 24549,
+        "availability": 0.7193,
+        "utilisation": 0.5491
+      },
+      "Monday": {
+        "n": 24562,
+        "availability": 0.7014,
+        "utilisation": 0.5226
+      }
+    },
+    "by_contractor": {
+      "RIM": {
+        "n": 170899,
+        "availability": 0.7201,
+        "utilisation": 0.5421
+      }
+    }
+  },
+  "generated_at": "2026-07-30T08:02:22+00:00"
+}
