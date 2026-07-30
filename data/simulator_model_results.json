@@ -1,0 +1,99 @@
+{
+  "generated_at": "2026-07-30T01:32:51+00:00",
+  "panel_rows": 4331,
+  "routes": 36,
+  "n_folds": 5,
+  "target": "cycle_time_min",
+  "models": {
+    "route_mean__without_cong": {
+      "r2": 0.4792,
+      "mae": 31.88,
+      "rmse": 47.56,
+      "n": 3461
+    },
+    "ols__without_cong": {
+      "r2": 0.4647,
+      "mae": 32.58,
+      "rmse": 48.22,
+      "n": 3461
+    },
+    "ols__with_cong": {
+      "r2": 0.4925,
+      "mae": 31.74,
+      "rmse": 46.95,
+      "n": 3461
+    },
+    "hgb__without_cong": {
+      "r2": 0.2521,
+      "mae": 36.52,
+      "rmse": 57.0,
+      "n": 3461
+    },
+    "hgb__with_cong": {
+      "r2": 0.2827,
+      "mae": 36.65,
+      "rmse": 55.81,
+      "n": 3461
+    }
+  },
+  "congestion_verdict": {
+    "ols": {
+      "r2_without": 0.4647,
+      "r2_with": 0.4925,
+      "delta_r2": 0.0278,
+      "delta_mae": -0.84
+    },
+    "hgb": {
+      "r2_without": 0.2521,
+      "r2_with": 0.2827,
+      "delta_r2": 0.0306,
+      "delta_mae": 0.13
+    }
+  },
+  "congestion_sign_audit": {
+    "trucks_on_route": {
+      "coef_joint_min_per_sd": 11.9,
+      "coef_alone_min_per_sd": -3.28,
+      "boot_ci95": [
+        8.86,
+        14.49
+      ],
+      "sign_flips_when_isolated": true,
+      "usable_as_causal": false,
+      "note": "sign reverses once collinearity is removed \u2014 joint coefficient is an artefact"
+    },
+    "trucks_at_source": {
+      "coef_joint_min_per_sd": -22.72,
+      "coef_alone_min_per_sd": -14.6,
+      "boot_ci95": [
+        -25.8,
+        -19.4
+      ],
+      "sign_flips_when_isolated": false,
+      "usable_as_causal": false,
+      "note": "negative: more trucks associated with faster trips, which contradicts queueing and indicates endogenous deployment"
+    },
+    "trucks_at_dest": {
+      "coef_joint_min_per_sd": -1.52,
+      "coef_alone_min_per_sd": -3.28,
+      "boot_ci95": [
+        -3.31,
+        0.79
+      ],
+      "sign_flips_when_isolated": false,
+      "usable_as_causal": false,
+      "note": "not distinguishable from zero"
+    },
+    "_conclusion": "no congestion feature is usable as a causal lever"
+  },
+  "best_model": "route_mean__without_cong",
+  "best_r2": 0.4792,
+  "served_model": "route_mean__without_cong",
+  "congestion_features_served": false,
+  "withheld_higher_r2_model": {
+    "model": "ols__with_cong",
+    "r2": 0.4925,
+    "reason": "higher R2 but rejected by the sign audit: it would tell a planner that adding trucks speeds trips up"
+  },
+  "route_lookup_rows": 36
+}

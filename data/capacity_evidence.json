@@ -1,0 +1,42 @@
+{
+  "generated_at": "2026-07-30T01:31:47+00:00",
+  "capacity_percentile": 0.99,
+  "min_observed_hours": 200,
+  "loading_points": 14,
+  "dumping_points": 9,
+  "congestion_regression": {
+    "test": "does delay rise as a loading point approaches measured capacity?",
+    "expected_if_congestion_visible": "positive correlation, steep near util=1",
+    "corr_util_delay_within_loader": -0.1293,
+    "median_delay_by_utilisation_band": {
+      "0-20%": {
+        "n": 12230,
+        "median_delay_min": 38.7
+      },
+      "20-40%": {
+        "n": 7921,
+        "median_delay_min": 35.85
+      },
+      "40-60%": {
+        "n": 4700,
+        "median_delay_min": 34.05
+      },
+      "60-80%": {
+        "n": 2600,
+        "median_delay_min": 31.16
+      },
+      "80-100%": {
+        "n": 1080,
+        "median_delay_min": 28.6
+      },
+      ">100%": {
+        "n": 266,
+        "median_delay_min": 32.81
+      }
+    },
+    "loaders_where_delay_rises": 1,
+    "loaders_tested": 12,
+    "verdict": "NOT IDENTIFIABLE \u2014 delay falls as utilisation rises. Busy hours are hours when everything is working; deployment responds to conditions, so truck count cannot be separated from the conditions that caused it.",
+    "consequence": "the simulator does NOT scale cycle time with truck count. It reports measured capacity headroom instead."
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "generated_at": "2026-07-30T01:24:59+00:00",
+  "rows": 483425,
+  "date_range": [
+    "2025-12-27",
+    "2026-07-09"
+  ],
+  "routes": 65,
+  "sources": 27,
+  "destinations": 17,
+  "shared_sources": 14,
+  "shared_dests": 8,
+  "load_time_source_counts": {
+    "estimated": 483425
+  },
+  "load_time_note": "WAITING_TIME unavailable (no DB configured)",
+  "route_specific_floor_pct": 100.0,
+  "median_route_floor_min": 30.6,
+  "median_congestion_delay_min": 33.5,
+  "assumptions": {
+    "floor_percentile": 0.1,
+    "floor_travel_share": 0.5,
+    "floor_load_share": 0.7,
+    "queue_load_share": 0.8,
+    "note": "the weighbridge records ONE interval per trip; the per-route floor is measured, but its division into travel/load/dump is assumed, not observed"
+  },
+  "rejected": {
+    "distance_over_speed": "travel = 2*dist/speed was tried and rejected: distance_km is a placeholder, 57 of 65 routes carry the default 25.0 km and it capped 72% of trips"
+  },
+  "not_available": {
+    "segment_level_speed": "requires GPS on haul trucks; 0 of 940 registered haul trucks are in the telematics feed"
+  },
+  "files_written": [
+    "trip_features.csv",
+    "trip_features.parquet"
+  ]
+}
