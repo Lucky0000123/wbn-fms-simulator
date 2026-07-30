@@ -223,7 +223,22 @@ asset code, not haul trucks by fleet number, so it is the wrong table for this.
 Operator *experience* is derivable in principle by counting hauls per
 `DRIVER_ID` over history, but that was not attempted here.
 
-### Availability — the most useful result
+### Availability — measured, but NOT the win I first reported
+
+> **Correction after scaling out.** This section originally called availability
+> the highest-value immediate change. Checking whether it generalises beyond Day
+> X shows it does not: across **215 days**, hauling-truck availability averages
+> **83.6%** against the assumed 85% — a **1.4 pp** difference worth under 2% on
+> tonnage. Day X's 89.4% was on the high side, not representative.
+>
+> The check was still worth running, because it uncovered a far more serious
+> defect in how the simulator turns cycle time into trips. See
+> **[CRITICAL_cycle_time_defect.md](CRITICAL_cycle_time_defect.md)**: the
+> simulator divides by the weigh-to-weigh interval (median 76.9 min) when the
+> true start-to-start cycle is **240.1 min**, so it **overpredicts production by
+> ~2.7x**. That is the finding that matters, and it needs no GPS to fix.
+
+#### The Day X measurement
 
 `EQUIPMENTS_HOURLY_STATUS`, 17,692 rows for Day X across 2,733 units, 49 of them
 Day X haul trucks.
@@ -235,13 +250,23 @@ Day X haul trucks.
 
 Hours: working 23,092.4, standby 28,055.8, breakdown 15,400.2, PM 291.6.
 
-The plan simulator currently takes availability as a **caller-supplied
-assumption defaulting to 85%**. Measured, the truth depends on the population:
-**76.5% across all equipment, 89.4% for trucks actually hauling.** The assumed
-85% sits between them, so it is not wildly wrong, but it is also not measured,
-and the correct figure differs by **−8.5 pp or +4.4 pp** depending on which
-question is being asked. Utilisation at 45.1% fleet-wide is the more striking
-number: over half of available equipment-hours are standby.
+#### Scaled across 215 days
+
+| Population | Mean availability | Mean utilisation |
+|---|---|---|
+| All equipment | **77.0%** | 57.2% |
+| Trucks that hauled (192 days, ~278/day) | **83.6%** | 78.0% |
+| Simulator assumption | 85% | — |
+
+Day X's availability of 76.5% fleet-wide sits at the **45th percentile**, so the
+day itself is typical; it was the *hauling subset* figure of 89.4% that was high.
+Only **2 of 215 days** fall within 2 pp of 85% fleet-wide, but the hauling subset
+averages 83.6%, which is what the simulator actually models.
+
+**Conclusion: the 85% assumption is close enough that replacing it changes
+tonnage by under 2%.** Fleet-wide utilisation of 57.2% remains an interesting
+operational number — over 40% of available equipment-hours are standby — but it
+is not the simulator's bug.
 
 ### HRM fleet
 
@@ -290,7 +315,7 @@ the same segments.
 | Can we model queue at loading/dumping from GPS? | **Not from the current GPS window.** Partial-day retention misses the terminal events. **Yes from `WAITING_TIME`**, which measures it directly at 46.5% coverage. |
 | Can we get loader assignment? | **Partially.** Format is fine; coverage is not. 26 trucks over 23 days against the training extract. `FMS_TRUCK_ASSIGNMENTS` is the better forward source. |
 | Can we get operator identity? | **Yes**, via `WAITING_TIME.DRIVER_ID` (958 drivers, 46.5% of trucks). Not via `DAY_WORKS`. |
-| Can we replace assumed availability with real data? | **Yes.** 76.5% fleet-wide, 89.4% for hauling trucks, versus the assumed 85%. This is the highest-value immediate change. |
+| Can we replace assumed availability with real data? | **Yes, but it barely matters.** 83.6% for hauling trucks over 215 days vs the assumed 85% — under 2% on tonnage. |
 | Can we test HRM impact? | **Yes.** 134 units per day mapped to KM sections with GPS. |
 
 ### What this means for scaling
@@ -311,5 +336,14 @@ Two consequences:
    Day X density (~440 trucks per day in `FMS_GEOFENCE_VISITS`), a month of
    capture would give a usable sample.
 
-The immediately actionable finding needs no GPS at all: **availability is
-measured, not assumed**, and it multiplies every tonnage the simulator reports.
+The immediately actionable finding needs no GPS at all, and it is not the one I
+first reported. Verifying whether the availability result generalised revealed
+that **the simulator overpredicts production by ~2.7x**, because it divides the
+shift by the weigh-to-weigh interval (76.9 min) rather than the true
+start-to-start cycle (240.1 min), measured over 438,992 consecutive trip pairs.
+`720 / 240.1 = 3.00` trips, exactly the observed median.
+
+Full evidence and a proposed fix: **[CRITICAL_cycle_time_defect.md](CRITICAL_cycle_time_defect.md)**.
+The ratio varies by route from 1.2x to 7.9x, so it needs a per-route measured
+cycle rather than a global constant. It requires no GPS and covers the whole
+history.
