@@ -344,6 +344,14 @@ $PY test_segment_cross_validation.py >/dev/null 2>&1
 chk $? "J50  GPS snapping agrees with FMS_CONGESTION_SEG" "see: python test_segment_cross_validation.py"
 fi
 
+# The deliverables must match the requested shape, not just contain correct
+# numbers. Caught a real gap: segment speeds and dwell were in separate files
+# and route_path did not exist.
+if [ -f data/day_x_trip_gps_features.csv ]; then
+$PY test_deliverable_schema.py >/dev/null 2>&1
+chk $? "J51  deliverables match the requested schema" "see: python test_deliverable_schema.py"
+fi
+
 
 echo
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"

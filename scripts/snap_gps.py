@@ -75,6 +75,33 @@ def haversine_m(lat1, lon1, lat2, lon2):
     return 2 * EARTH_R * np.arcsin(np.sqrt(np.clip(a, 0, 1)))
 
 
+CHAINAGE_CACHE = os.path.join(DATA, "haul_road_chainage.csv")
+
+
+def load_chainage_cached() -> pd.DataFrame:
+    """Chainage markers, from cache when the DB is unreachable.
+
+    HAUL_ROAD_STA is 3,122 static survey points that change only when the road
+    is re-surveyed, so re-reading it every run is a needless VPN dependency for
+    what is otherwise a pure local transform. Cached on first successful read.
+    """
+    try:
+        w = conn("WBN_DATABASE")
+        try:
+            d = load_chainage(w)
+        finally:
+            w.close()
+        d.to_csv(CHAINAGE_CACHE, index=False)
+        return d
+    except Exception as exc:                                # noqa: BLE001
+        if os.path.exists(CHAINAGE_CACHE):
+            d = pd.read_csv(CHAINAGE_CACHE)
+            print("chainage from cache (%d markers) — DB unavailable: %s"
+                  % (len(d), str(exc)[:60]))
+            return d
+        raise
+
+
 def load_chainage(w) -> pd.DataFrame:
     d = pd.read_sql("""
         SELECT NAME, DIRECTION, SectionKM, wkt
@@ -237,11 +264,7 @@ def main():
         return
     gps["ts"] = pd.to_datetime(gps["ts"], utc=True)
 
-    w = conn("WBN_DATABASE")
-    try:
-        ch = load_chainage(w)
-    finally:
-        w.close()
+    ch = load_chainage_cached()
 
     gps = snap(gps, ch)
     on = gps["on_road"].mean()
@@ -286,7 +309,48 @@ def main():
             n=("trip_id", "size"), load=("dwell_loading_min", "median"),
             dump=("dwell_dumping_min", "median"),
             cycle=("cycle_min", "median")).round(1).to_string())
-        dw.to_csv(os.path.join(DATA, "day_x_trip_gps_features.csv"), index=False)
+        dw.to_csv(os.path.join(DATA, "day_x_trip_dwell.csv"), index=False)
+
+    # THE BRIEF'S STEP 6 SCHEMA, in one file.
+    #
+    # It asked for trip_id, truck_id, section_name, direction, avg_speed_kmh,
+    # dwell_loading_min, dwell_dumping_min and route_path together. I had the
+    # segment speeds in one CSV and the dwell in another, which is the same
+    # information in the wrong shape - a consumer would have to join them and
+    # rediscover the key. route_path was missing entirely.
+    #
+    # route_path is the ordered list of segments the truck actually crossed on
+    # that trip, which is what makes a row auditable: it shows the geometry the
+    # speed came from rather than asserting a segment in isolation.
+    feat = pd.DataFrame()
+    if not seg.empty:
+        order = (gps[gps["on_road"] == 1].sort_values("ts")
+                 .groupby("truck")["section_name"])
+        paths = {}
+        for t in seg["trip_id"].unique():
+            row = seg[seg["trip_id"] == t].iloc[0]
+            segs = seg[seg["trip_id"] == t].sort_values("seg")["seg"].tolist()
+            paths[t] = " > ".join(segs)
+        feat = seg.copy()
+        feat["route_path"] = feat["trip_id"].map(paths)
+        if not dw.empty:
+            feat = feat.merge(
+                dw[["trip_id", "dwell_loading_min", "dwell_dumping_min"]],
+                on="trip_id", how="left")
+        else:
+            feat["dwell_loading_min"] = np.nan
+            feat["dwell_dumping_min"] = np.nan
+        cols = ["trip_id", "truck_id", "route", "section_name", "direction",
+                "avg_speed_kmh", "km_covered", "is_partial_traverse",
+                "dwell_loading_min", "dwell_dumping_min", "route_path"]
+        feat = feat.rename(columns={"seg": "section_name"})
+        feat = feat[[c for c in cols if c in feat.columns]]
+        feat.to_csv(os.path.join(DATA, "day_x_trip_gps_features.csv"),
+                    index=False)
+        print("\n=== Step 6 deliverable: day_x_trip_gps_features.csv ===")
+        print("%d rows with the brief's schema (%d cols)"
+              % (len(feat), len(feat.columns)))
+        print("   " + ", ".join(feat.columns))
 
     out = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),

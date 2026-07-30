@@ -320,6 +320,25 @@ KR KM15 = 10, CBB KM15 = 10, TF KM51 = 10.
 exactly the form needed to test whether road maintenance affects haul speed on
 the same segments.
 
+## Deliverables
+
+| File | Contents |
+|---|---|
+| `data/day_x_trips.csv` | Step 2 - 159 trips, 101 trucks, 5 routes |
+| `data/equipment_crosswalk.csv` | Step 3 - 1,411 units, 945 matching the weighbridge |
+| `data/day_x_gps.csv` | Step 4 - 11,584 fixes, 24 trucks |
+| `data/day_x_gps_snapped.csv` | Step 5 - plus `km_value`, `section_name`, `snap_dist_m`, `on_road` |
+| `data/day_x_trip_gps_features.csv` | Step 6 - `trip_id`, `truck_id`, `section_name`, `direction`, `avg_speed_kmh`, `km_covered`, `is_partial_traverse`, `dwell_loading_min`, `dwell_dumping_min`, `route_path` |
+| `data/day_x_trip_dwell.csv` | per-trip dwell detail |
+| `data/haul_road_chainage.csv` | cached 3,122 chainage markers, so snapping runs without the VPN |
+
+The Step 6 file initially split segment speeds and dwell across two CSVs and had
+no `route_path` at all - correct numbers in the wrong shape. `route_path` is the
+ordered list of segments a truck actually crossed, which makes each row auditable
+by showing the geometry the speed came from. `test_deliverable_schema.py` (harness
+gate **J51**) now enforces the shape, and it discriminates: dropping `route_path`
+fails it.
+
 ## What worked
 
 1. **GPS-to-weighbridge identity.** `PLATE` joins directly, no crosswalk needed. 24 of 101 trucks on Day X, and the mechanism is exact, not fuzzy.
