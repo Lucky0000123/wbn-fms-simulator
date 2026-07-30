@@ -1,6 +1,11 @@
 # HANDOVER — WBN Production Simulator
 
-*Written 2026-07-30 at HEAD `0ff987f`. Harness 54/54 in both DB and no-DB modes.*
+*Written 2026-07-30. Harness 54/54 in both DB and no-DB modes.*
+
+*Commit note: the work described here landed at `0ff987f`; this document itself is
+`5b0e21b`, the commit immediately after. Run `git log --oneline -5` for the current
+tip — if it is further ahead than `5b0e21b`, work has happened that this handover
+does not cover.*
 
 **Read this first, then `AGENTS.md`** (346 lines, the working rules and the
 history of what was tried and failed). `CLAUDE.md` is a **symlink to
@@ -46,7 +51,7 @@ live at tag `fms-modules-v1`. Do not resurrect them into this repo.
 | **origin** | `https://github.com/rdinkelmann/wbn-fms-simulator.git` (Rudolf, the site owner) |
 | **mirror** | `https://github.com/Lucky0000123/wbn-fms-simulator.git` (public) |
 | **all** | a push-only remote with **both** URLs attached |
-| **HEAD** | `0ff987f` — "bank the GPS feed forward, since this is the one blocker that decays" |
+| **HEAD when this was written** | `0ff987f` — "bank the GPS feed forward, since this is the one blocker that decays"; this doc is `5b0e21b` |
 | **Branches** | `main` only. No feature branches. |
 
 ### Pushing — WARNING
