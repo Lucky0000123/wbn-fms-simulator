@@ -27,3 +27,6 @@ data/*.parquet
 !data/training_metadata.sample.json
 reports/database_schema_raw.json
 reports/schema_full_raw.json
+data/day_x_*
+reports/day_coverage.json
+reports/day_x_*.json
