@@ -238,10 +238,22 @@ def simulate(payload: dict) -> dict:
             eff = (cycle or 0) * FALLBACK_EFFECTIVE_RATIO
             eff_basis = ("estimated: no route history, weigh-to-weigh x %.1f "
                          "site-wide ratio" % FALLBACK_EFFECTIVE_RATIO)
-        # Rain lengthens the whole cycle, so the same penalty applies to the
-        # effective cycle that determines trip count.
-        if cycle and wet and cycle_dry and cycle_dry > 0:
-            eff = eff * (cycle / cycle_dry)
+        # RAIN IS DELIBERATELY NOT APPLIED TO THE EFFECTIVE CYCLE.
+        #
+        # An earlier version scaled it by (wet cycle / dry cycle), which would
+        # have reduced predicted tonnage on wet plans. Measured, that is not
+        # what happens. Within route and month — so the wet season is not being
+        # compared against the dry one — rain moves tonnage by a median +0.1%
+        # and only 49% of 122 comparable route-months show a reduction. It is a
+        # coin flip. Rain's effect on cycle time is the same: +0.2% median,
+        # slower in 51% of 104 cells.
+        #
+        # Rain DOES lengthen loading dwell at specific points (POS 12 +13.7 min,
+        # POS CBB +15.8 min, measured), which is why the reported load and cycle
+        # times still carry the wet uplift. But the fleet evidently absorbs it,
+        # so pushing it through to tonnage would warn a planner about a
+        # production loss the data does not show. The wet effect stays where it
+        # is measured and out of the number it does not support.
 
         trips_per_truck = (working_min / eff) if eff else 0.0
         resolved.append({
@@ -367,6 +379,12 @@ def simulate(payload: dict) -> dict:
                 "Measured hauling-truck availability is %.1f%% over 215 days."
                 % (100 * MEASURED_HAUL_AVAILABILITY)),
             "weather": "wet" if wet else "dry",
+            "weather_note": (
+                "wet raises reported load and cycle time (measured per loading "
+                "point) but NOT predicted tonnage: within route and month, rain "
+                "moves tonnage by a median +0.1% and reduces it in only 49% of "
+                "122 comparable route-months, so a production penalty is not "
+                "supported"),
         },
         "model_limits": {
             "cycle_time_vs_truck_count": (

@@ -119,11 +119,13 @@ dry = ps.simulate({"plans": [{"route": "POS 12>FENI KM0", "source": "POS 12",
 wet = ps.simulate({"plans": [{"route": "POS 12>FENI KM0", "source": "POS 12",
                               "destination": "FENI KM0", "n_trucks": 20}],
                    "weather": "wet"})["results"][0]
-check("wet produces no more than dry",
-      wet["planned_production_t"] <= dry["planned_production_t"] + 1,
+# Rain raises reported cycle time (measured dwell penalty) but must NOT change
+# tonnage: within route and month it moves production a median +0.1%.
+check("wet tonnage equals dry (no unsupported penalty)",
+      abs(wet["planned_production_t"] - dry["planned_production_t"]) < 1,
       "%s vs %s" % (wet["planned_production_t"], dry["planned_production_t"]))
-check("wet effective cycle >= dry",
-      wet["effective_cycle_min"] >= dry["effective_cycle_min"])
+check("wet reported cycle time >= dry",
+      wet["predicted_cycle_time_min"] >= dry["predicted_cycle_time_min"])
 
 print("\n%s  (%d failures)"
       % ("ALL PASS" if not fails else "FAILURES: " + ", ".join(fails), len(fails)))

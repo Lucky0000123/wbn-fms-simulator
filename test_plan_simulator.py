@@ -107,7 +107,18 @@ wetr = simulate({'plans': [{'route': 'POS 12>FENI KM0', 'source': 'POS 12',
                             'destination': 'FENI KM0', 'n_trucks': 20}], 'weather': 'wet'})['results'][0]
 print('   dry %.1f min -> wet %.1f min' % (dry['predicted_cycle_time_min'], wetr['predicted_cycle_time_min']))
 check('wet >= dry cycle time', wetr['predicted_cycle_time_min'] >= dry['predicted_cycle_time_min'])
-check('wet produces <= dry', wetr['planned_production_t'] <= dry['planned_production_t'] + 1)
+# Tonnage must NOT fall in the wet. Measured within route and month, rain moves
+# tonnage by a median +0.1% and reduces it in only 49% of 122 comparable
+# route-months. An earlier version applied a wet penalty to production; that
+# warned planners about a loss the data does not show, so it was removed and
+# this asserts it stays removed.
+check('wet does NOT reduce predicted tonnage (unsupported by data)',
+      abs(wetr['planned_production_t'] - dry['planned_production_t']) < 1,
+      '%s vs %s' % (wetr['planned_production_t'], dry['planned_production_t']))
+check('weather note explains what wet does and does not change',
+      'NOT predicted tonnage' in simulate({'plans': [{'route': 'POS 12>FENI KM0',
+          'source': 'POS 12', 'destination': 'FENI KM0', 'n_trucks': 20}],
+          'weather': 'wet'})['summary'].get('weather_note', ''))
 
 print('\n=== 6. EDGE CASES ===')
 check('empty plan handled', 'error' in simulate({'plans': []}))

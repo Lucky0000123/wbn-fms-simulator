@@ -191,6 +191,48 @@ identical, confirm idempotence, and assert `/api/retrain` calls the reset.
 
 Reproduce: `python test_retrain_preserves_fix.py`.
 
+### Robustness, and a third thing I had wrong
+
+Three assumptions in the fix had never been tested. `test_holdout_robustness.py`
+tests all three against unseen data.
+
+**Multiple splits, not one.** A single held-out cut can be lucky:
+
+| Cut | Held-out shifts | Old bias | New bias | New MAE |
+|---|---|---|---|---|
+| 2026-03-01 | 135,895 | +459.6% | **−7.4%** | 34.8 t |
+| 2026-04-01 | 82,439 | +447.3% | **−5.4%** | 37.6 t |
+| 2026-05-01 | 45,971 | +395.8% | **−4.4%** | 39.8 t |
+| 2026-06-01 | 24,671 | +370.2% | **−3.5%** | 38.5 t |
+
+**The 4.7x fallback earns its place.** Tested on 6,179 truck-shifts across routes
+with *no* training history — exactly what the fallback serves:
+
+| Approach | Bias | MAE |
+|---|---|---|
+| **4.7x weigh-to-weigh (shipped)** | **+8.5%** | 41.0 t |
+| Site-median effective cycle | +24.0% | 41.2 t |
+| No adjustment (the old bug) | +333.5% | 243.6 t |
+
+**The wet-weather penalty was unjustified, and is removed.** The fix originally
+scaled the effective cycle by (wet cycle / dry cycle), reducing predicted tonnage
+on wet plans. Measured, that is wrong:
+
+- Within route **and month** — so the wet season is not compared against the dry
+  one — rain moves tonnage by a median **+0.1%**, and reduces it in only **49% of
+  122** comparable route-months. A coin flip.
+- Rain's effect on cycle time is the same: **+0.2%** median, slower in 51% of 104
+  cells.
+
+Rain *does* lengthen loading dwell at specific points (POS 12 +13.7 min, POS CBB
++15.8 min, measured), so the reported load and cycle times still carry the wet
+uplift — the fleet evidently absorbs it. But pushing it through to tonnage would
+warn a planner about a production loss the data does not show. Verified in the
+browser: wet raises trip time 75.2 → 88.9 min and load 37.8 → 51.4 min while
+planned tonnage stays 2,119 t.
+
+Reproduce: `python test_holdout_robustness.py`.
+
 ### Verification
 
 | Check | Result |
