@@ -175,6 +175,22 @@ weighbridge interval already covered most of the cycle.
 
 Reproduce: `python test_holdout_tonnage.py`.
 
+### A second silent bug, found by asking how the fix could regress
+
+The fix lives in `data/route_lookup.csv`, and `plan_simulator` caches that file
+in-process on first use. So a retrain rewrote the lookup and **the endpoint kept
+serving the pre-retrain effective cycle until someone restarted the process**,
+with numbers that stayed entirely plausible, so nothing would have revealed it.
+
+`reset_cache()` already existed and nothing called it. `/api/retrain` now does,
+alongside the existing cycle-model reset, and reports `plan_simulator` status in
+its response. `test_retrain_preserves_fix.py` covers the whole loop: strip the
+effective-cycle columns, confirm the fallback does not restore the 5x
+overprediction, retrain, confirm the columns and the served prediction come back
+identical, confirm idempotence, and assert `/api/retrain` calls the reset.
+
+Reproduce: `python test_retrain_preserves_fix.py`.
+
 ### Verification
 
 | Check | Result |

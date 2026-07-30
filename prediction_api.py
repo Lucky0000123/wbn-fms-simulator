@@ -568,11 +568,27 @@ def api_retrain():
                 cycle_status = "not retrained (%s)" % str(exc)[:120]
         print("[retrain] cycle model %s" % cycle_status)
 
+        # The plan simulator reads its route lookup, point capacity and dwell
+        # tables from CSV and caches them in-process on first use. A retrain
+        # rewrites route_lookup.csv, so without this the endpoint keeps serving
+        # the pre-retrain effective cycle until someone restarts the process —
+        # and because the numbers stay plausible, nothing would reveal it.
+        # Same class of silent-staleness bug as H33 and the cycle model above.
+        sim_status = "cache not reset"
+        try:
+            import plan_simulator
+            plan_simulator.reset_cache()
+            sim_status = "lookup cache reset"
+        except Exception as exc:                           # noqa: BLE001
+            sim_status = "cache reset failed (%s)" % str(exc)[:80]
+        print("[retrain] plan simulator %s" % sim_status)
+
         elapsed = round(time.perf_counter() - started, 1)
         print("[retrain] done in %ss — %s R2=%.4f MAE=%.4f on %d rows"
               % (elapsed, meta["model_type"], meta["r2"], meta["mae"], meta["training_rows"]))
         return jsonify({"ok": True, "retrained_at": meta["trained_at"], "elapsed_s": elapsed,
                         "cycle_model": cycle_status,
+                        "plan_simulator": sim_status,
                         "model_type": meta["model_type"], "r2": meta["r2"], "mae": meta["mae"],
                         "rmse": meta["rmse"], "training_rows": meta["training_rows"],
                         "test_rows": meta["test_rows"], "candidates": meta["candidates"],
