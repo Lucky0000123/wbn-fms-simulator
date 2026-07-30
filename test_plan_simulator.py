@@ -110,7 +110,12 @@ print('\n=== 7. LIMITS ARE ALWAYS DECLARED ===')
 r = simulate({'plans': [{'route': 'TF>POS 12', 'source': 'TF', 'destination': 'POS 12', 'n_trucks': 30}]})
 check('model_limits present', 'model_limits' in r)
 check('congestion limit stated', 'NOT MODELLED' in r['model_limits']['cycle_time_vs_truck_count'])
-check('GPS limit stated', '0 of 940' in r['model_limits']['segment_level_speed'])
+# The GPS note must describe RETENTION, not absence of instrumentation. The
+# original claim ("0 of 940 haul trucks in the feed") was factually wrong; this
+# guards against it being reintroduced.
+_gps = r['model_limits']['segment_level_speed']
+check('GPS limit stated', 'retention' in _gps.lower())
+check('GPS limit does NOT repeat the false claim', '0 of 940' not in _gps, _gps[:80])
 check('every result carries a basis', all('basis' in x for x in r['results']))
 
 print('\n%s  (%d failures)' % ('ALL PASS' if not fails else 'FAILURES: ' + ', '.join(fails), len(fails)))

@@ -17,12 +17,19 @@ their routes differ. `shared_source` and `shared_dest` mark where that can
 happen, so a plan simulator can add truck counts across plans that collide.
 
 WHAT IS NOT HERE, AND WHY
-No segment-level speed. Segment speeds need GPS on the trucks that actually
-haul, and measured on this site zero of 940 registered haul trucks appear in
-the telematics feed (the 217 instrumented units are engineering and logistics
-vehicles). So this is a ROUTE-level simulator with shared-point congestion, not
-a segment-level one, and that limit is stated rather than papered over with an
-invented speed profile.
+No segment-level speed, but NOT because haul trucks lack GPS. An earlier
+version of this note claimed zero of 940 haul trucks were instrumented. That
+was wrong: it matched one table (FMS_PLAYBACK_TRACK_DATA.plateNumber, which
+really does contain only support units) and generalised. A full scan found 945
+of 1,411 FMS_EQUIPMENTS plates matching weighbridge haul trucks, 479 of them
+reporting GPS at 3-second resolution, and 95 KM segments with measured speed in
+FMS_CONGESTION_SEG.
+
+The actual blocker is RETENTION. Those feeds hold 1 to 14 days, while this
+feature table covers 2025-12-27 to 2026-07-09, so they do not overlap and
+cannot be joined to these trips. This is therefore a ROUTE-level table, and
+segment speeds become available to a forward-looking build that accumulates
+the live feed. See reports/database_schema_analysis.md.
 
 TRAVEL, LOAD AND DUMP: MEASURED WHERE POSSIBLE, ESTIMATED ELSEWHERE
 The weighbridge gives one interval per trip: first weigh to second weigh. It
@@ -346,9 +353,10 @@ def build(conn=None, verbose: bool = True) -> tuple[pd.DataFrame, dict]:
                                     "and it capped 72% of trips"),
         },
         "not_available": {
-            "segment_level_speed": ("requires GPS on haul trucks; 0 of 940 "
-                                    "registered haul trucks are in the "
-                                    "telematics feed"),
+            "segment_level_speed": ("haul-truck GPS EXISTS (479 of 945 units, "
+                                    "3-second fixes) but its retention is 1-14 "
+                                    "days and does not overlap this date range; "
+                                    "see reports/database_schema_analysis.md"),
         },
     }
     written = _write(d, FEAT_CSV)

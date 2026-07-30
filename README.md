@@ -18,7 +18,7 @@ the database: the public demo does not go down when the VPN does.
 | How many tonnes will this plan move? | **Yes** — derived, with an assumed availability you set |
 | Where do two plans collide? | **Yes** — measured capacity at shared points |
 | Will adding trucks slow the cycle? | **No** — not identifiable from weighbridge data |
-| How fast on each road segment? | **No** — needs GPS on haul trucks; none are instrumented |
+| How fast on each road segment? | **Not yet** — GPS exists, but its retention does not reach the training period |
 
 The two "no" answers are load-bearing, not caveats.
 
@@ -28,9 +28,18 @@ to points that are running well. A model fitted anyway scores a **higher** R2
 (0.4925 vs 0.4792) and was withheld, because its coefficient says adding trucks
 makes trips faster. Contention is reported as measured capacity headroom instead.
 
-**GPS.** 0 of 940 registered haul trucks appear in the telematics feed. The 217
-instrumented units are engineering and logistics vehicles. No fuzzy timestamp
-match was attempted, because it would have put invented speeds into the tool.
+**GPS.** An earlier version of this README said no haul truck was
+GPS-instrumented. **That was wrong** — it checked one table and generalised, and
+the site operator was right to challenge it. A full scan of both databases found
+945 of 1,411 registered plates matching weighbridge haul trucks, 479 reporting
+at 3-second resolution, and 95 KM road segments with measured speed already
+aggregated in `FMS_CONGESTION_SEG`.
+
+The real blocker is **retention**: those feeds keep 1 to 14 days, so they do not
+overlap the six-month trip history the route times are built from. Segment
+speeds are available to a forward-looking build, not retro-fittable to past
+trips. Full evidence in
+[reports/database_schema_analysis.md](reports/database_schema_analysis.md).
 
 ## Model findings
 

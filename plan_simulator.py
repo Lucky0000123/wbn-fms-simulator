@@ -316,8 +316,14 @@ def simulate(payload: dict) -> dict:
                 "are running well. Contention is reported as capacity "
                 "utilisation instead, which is measured."),
             "segment_level_speed": (
-                "NOT AVAILABLE. Requires GPS on haul trucks; 0 of 940 "
-                "registered haul trucks appear in the telematics feed."),
+                "NOT USED FOR THESE PREDICTIONS, but it does exist. Haul trucks "
+                "ARE GPS-instrumented at 3-second resolution (479 of 945 in "
+                "FMS_PLAYBACK_TRACK_24H) and FMS_CONGESTION_SEG carries measured "
+                "speed for 95 KM segments. The blocker is retention, not "
+                "instrumentation: those feeds hold days to two weeks, so they do "
+                "not overlap the trip history these route times are built from. "
+                "An earlier version of this note claimed no haul truck had GPS; "
+                "that was wrong and is corrected here."),
             "load_dump_split": (
                 "ESTIMATED. The weighbridge records one interval per trip; the "
                 "split into load, travel and dump is an apportionment."),

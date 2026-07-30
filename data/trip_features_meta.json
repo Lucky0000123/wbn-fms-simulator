@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-30T01:56:47+00:00",
+  "generated_at": "2026-07-30T02:54:11+00:00",
   "rows": 483425,
   "date_range": [
     "2025-12-27",
@@ -29,7 +29,7 @@
     "distance_over_speed": "travel = 2*dist/speed was tried and rejected: distance_km is a placeholder, 57 of 65 routes carry the default 25.0 km and it capped 72% of trips"
   },
   "not_available": {
-    "segment_level_speed": "requires GPS on haul trucks; 0 of 940 registered haul trucks are in the telematics feed"
+    "segment_level_speed": "haul-truck GPS EXISTS (479 of 945 units, 3-second fixes) but its retention is 1-14 days and does not overlap this date range; see reports/database_schema_analysis.md"
   },
   "files_written": [
     "trip_features.csv",

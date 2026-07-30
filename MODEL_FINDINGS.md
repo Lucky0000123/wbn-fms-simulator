@@ -198,7 +198,11 @@ Reproduce: `python train_model.py` (needs VPN for the DB; falls back to fixtures
 
 A planner asks "30 trucks from A to B, 20 from C to D". The simulator predicts trip time, loading and dumping time, trips per shift and tonnes, and flags where plans collide at a shared loading or dumping point.
 
-It works at **route level with shared-point capacity**, not segment level. Segment-level speeds need GPS on the trucks that haul, and **0 of 940 registered haul trucks appear in the telematics feed** — the 217 instrumented units are engineering and logistics vehicles. No fuzzy match was attempted, because a timestamp heuristic cannot create a spatial trace that does not exist.
+It works at **route level with shared-point capacity**, not segment level.
+
+**Correction (2026-07-30).** This section previously stated that 0 of 940 haul trucks appeared in the telematics feed. **That was wrong.** It matched one table, `FMS_PLAYBACK_TRACK_DATA.plateNumber`, whose 219 plates genuinely are support units, and generalised that to the whole database. A full read-only scan of both databases found **945 of 1,411 registered plates matching weighbridge haul trucks**, **479 reporting GPS at 3-second resolution**, and **95 KM segments with measured speed** in `FMS_CONGESTION_SEG`. The site operator challenged the original claim and was right to.
+
+The genuine constraint is **retention**: `FMS_GPS_Historical` holds 5 days, `FMS_PLAYBACK_TRACK_24H` holds 1, `FMS_CONGESTION_SEG` holds 2 weeks. None overlaps the 2025-12-27 to 2026-07-09 trip window, so segment speeds cannot be retro-fitted onto the trips these models were trained on. They are available to a forward-looking build. See [reports/database_schema_analysis.md](reports/database_schema_analysis.md).
 
 ## The central negative: congestion is not identifiable from weighbridge data
 
