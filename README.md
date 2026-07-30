@@ -17,8 +17,9 @@ the database: the public demo does not go down when the VPN does.
 | How long at the loader and the tip? | **Yes** — measured on 24.8% of trips, apportioned otherwise |
 | How many tonnes will this plan move? | **Yes** — from a measured per-route effective cycle; no availability guess needed |
 | Where do two plans collide? | **Yes** — measured capacity at shared points |
-| Will adding trucks slow the cycle? | **No** — not identifiable from weighbridge data |
-| How fast on each road segment? | **Not yet** — GPS exists, but its retention does not reach the training period |
+| How many trucks must I roster to keep N hauling? | **Yes** — measured availability, per route where it exists |
+| Will adding trucks slow the cycle? | **No** — measurable but negligible (−4.8% at the density extremes) |
+| How fast on each road segment? | **Not yet** — GPS retention does not reach the training period |
 
 The two "no" answers are load-bearing, not caveats.
 
@@ -30,7 +31,25 @@ shovel queue and breaks. An earlier version divided by the former and
 **overpredicted production by ~2.7x**; see
 [reports/CRITICAL_cycle_time_defect.md](reports/CRITICAL_cycle_time_defect.md).
 
-**Congestion.** Four independent tests failed to find a queueing effect, and
+**Fleet sizing.** `/api/simulate` returns `trucks_to_roster` per plan, so 30
+hauling trucks on BLB → FENI KM0 needs 39 rostered. Availability is measured from
+170,899 haul-truck shifts and is deliberately **not** applied to tonnage: the
+effective cycle already contains downtime, and every availability factor tested
+made the bias worse (+5.5% → −10.3% at 0.850). It is measured for trucks carrying
+only 30.3% of training tonnage, so each plan reports `roster_basis` as `measured`
+or `fleet_prior` rather than quietly extrapolating. See
+[reports/availability_analysis.md](reports/availability_analysis.md).
+
+**Congestion, now measured directly.** The site's own `FMS_CONGESTION_SEG` gives
+36,046 hourly rows with speed *and* truck count per segment. The within-segment
+effect is real, correctly signed and significant (**−0.0233 km/h per extra truck,
+t=−9.9, n=35,006**) and **negligible**: speed falls 4.8% from the emptiest density
+decile to the busiest, with no saturation threshold up to 69 trucks on a segment.
+At trip level the effect has the *wrong* sign (−0.1467) because dispatch sends
+trucks to routes that are running well. See
+[reports/gps_scaling_and_speed_density.md](reports/gps_scaling_and_speed_density.md).
+
+**Congestion (earlier evidence).** Four independent tests failed to find a queueing effect, and
 measured delay *falls* as loader utilisation rises, because trucks get deployed
 to points that are running well. A model fitted anyway scores a **higher** R2
 (0.4925 vs 0.4792) and was withheld, because its coefficient says adding trucks
@@ -43,11 +62,16 @@ the site operator was right to challenge it. A full scan of both databases found
 at 3-second resolution, and 95 KM road segments with measured speed already
 aggregated in `FMS_CONGESTION_SEG`.
 
-The real blocker is **retention**: those feeds keep 1 to 14 days, so they do not
-overlap the six-month trip history the route times are built from. Segment
-speeds are available to a forward-looking build, not retro-fittable to past
-trips. Full evidence in
-[reports/database_schema_analysis.md](reports/database_schema_analysis.md).
+The real blocker is **retention**, now quantified precisely: only **4 calendar
+days** carry both GPS and haulage, and pooling all of them yields 19 segment
+observations with no segment/direction cell reaching n≥5. The richest GPS day in
+the database (859,198 fixes) is unusable because its only haulage rows are 46
+third-party SALES trucks, which carry no telematics. The plate join itself is
+fine — 65.5% of GPS plates exist in the haulage ID space — so this is temporal,
+not a namespace mismatch. Segment speeds are available to a forward-looking
+build, not retro-fittable to past trips. Full evidence in
+[reports/database_schema_analysis.md](reports/database_schema_analysis.md) and
+[reports/gps_scaling_and_speed_density.md](reports/gps_scaling_and_speed_density.md).
 
 ## Model findings
 

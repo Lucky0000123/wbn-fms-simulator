@@ -69,8 +69,25 @@ function psRun() {
 function psRender(d) {
   const rows = d.results || [], s = d.summary || {};
   const fmt = n => (n == null ? '—' : Math.round(n).toLocaleString());
+  // An extrapolated roster figure is starred and dashed, and says so on
+  // hover, so a planner never mistakes the site-wide prior for a
+  // measurement on their own trucks.
+  const rosterCell = (r) => {
+    if (r.trucks_to_roster == null) return '<span class="muted">-</span>';
+    const measured = r.roster_basis === 'measured';
+    const t = measured
+      ? 'measured availability ' + r.roster_availability
+        + " for this route's own trucks"
+      : "no availability measured for this route's trucks; site-wide prior "
+        + r.roster_availability + ' applied';
+    const style = measured
+      ? '' : 'border-bottom:1px dashed var(--muted,#8b98a5)';
+    return '<span title="' + t + '" style="' + style + '">'
+      + r.trucks_to_roster + (measured ? '' : '*') + '</span>';
+  };
+
   q('ps-rows').innerHTML = rows.map((r, i) => {
-    if (r.error) return `<tr><td>${r.route}</td><td colspan="11" class="muted">${r.error}</td></tr>`;
+    if (r.error) return `<tr><td>${r.route}</td><td colspan="12" class="muted">${r.error}</td></tr>`;
     const over = r.capacity_ratio > 1;
     // Only colour the capacity cell, because capacity is the only column with
     // a measured constraint behind it. Colouring predictions would imply a
@@ -87,6 +104,7 @@ function psRender(d) {
       <td class="r">${r.predicted_dump_time_min}</td>
       <td class="r">${r.implied_travel_time_min}</td>
       <td class="r">${r.trips_per_shift_per_truck}</td>
+      <td class="r">${rosterCell(r)}</td>
       <td class="r">${fmt(r.planned_production_t)}</td>
       <td class="r">${over ? '<b>' + fmt(r.achievable_production_t) + '</b>' : fmt(r.achievable_production_t)}</td>
       <td>${capCell}</td>
@@ -96,7 +114,9 @@ function psRender(d) {
 
   const shortfall = (s.planned_production_t || 0) - (s.achievable_production_t || 0);
   q('ps-foot').innerHTML = `<tr><th>Total</th><th class="r">${s.total_trucks}</th>
-    <th colspan="6"></th><th class="r">${fmt(s.planned_production_t)}</th>
+    <th colspan="6"></th>
+    <th class="r" title="${(((s.fleet_sizing || {}).bases_used) || []).join(' + ')}">${(s.fleet_sizing || {}).trucks_to_roster ?? ''}</th>
+    <th class="r">${fmt(s.planned_production_t)}</th>
     <th class="r">${fmt(s.achievable_production_t)}</th>
     <th colspan="2">${shortfall > 1 ? '<span style="color:var(--bad,#e5534b)">' + fmt(shortfall) + ' t blocked by capacity</span>' : ''}</th></tr>`;
 
