@@ -124,4 +124,5 @@ but *which* trucks varies.
 |---|---|
 | `data/availability_per_truck.csv` | one row per truck per shift with hours, availability, utilisation |
 | `data/availability_raw_2026-04-01_2026-06-30.csv` | cached raw extract, so re-analysis needs no VPN |
+| `data/route_availability.csv` | per-route availability with coverage and an explicit measured/prior basis |
 | `reports/availability_analysis.json` | the full statistics including per-shift and per-contractor breakdowns |

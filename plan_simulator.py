@@ -108,8 +108,16 @@ def _capacity() -> pd.DataFrame | None:
     return _load("capacity", os.path.join(DATA, "point_capacity.csv"))
 
 
-def _availability() -> pd.DataFrame | None:
-    return _load("avail", os.path.join(DATA, "availability_per_truck.csv"))
+def _route_availability() -> pd.DataFrame | None:
+    """Per-route availability with an explicit basis column.
+
+    Availability is measured from EQUIPMENTS_HOURLY_STATUS, which covers the
+    contractors that report equipment status - trucks carrying 30.3% of training
+    tonnage. The other 69.7% have no measured availability at all, so a route
+    served by them gets the fleet prior and is labelled as such rather than
+    being quoted a figure measured on somebody else's trucks.
+    """
+    return _load("route_avail", os.path.join(DATA, "route_availability.csv"))
 
 
 def _dwell() -> pd.DataFrame | None:
@@ -169,6 +177,31 @@ def _point_dwell(point: str, kind: str, wet: bool) -> tuple[float | None, str]:
         return v, ("measured median, wet uplift applied" if wet
                    else "measured median")
     return None, "no usable dwell value"
+
+
+def _roster(n: int, route: str) -> tuple:
+    """Trucks to roster to keep n hauling, and the basis of the figure.
+
+    Returns (roster, availability_used, basis). basis is "measured" when the
+    route's own trucks are in the availability data, and "fleet_prior" when the
+    figure is extrapolated. Route-level availability spans 0.695..0.795 across
+    the 23 measured routes, so the 0.720 prior is a reasonable stand-in - but a
+    planner is told which one they got.
+    """
+    if not n:
+        return 0, None, "n/a"
+    a = MEASURED_MECHANICAL_AVAILABILITY
+    basis = "fleet_prior"
+    ra = _route_availability()
+    if ra is not None and "route" in ra.columns:
+        m = ra[ra.route.astype(str).str.upper() == str(route).upper()]
+        if len(m):
+            row = m.iloc[0]
+            if str(row.get("basis")) == "measured" and pd.notna(
+                    row.get("route_availability")):
+                a = float(row["route_availability"])
+                basis = "measured"
+    return int(np.ceil(n / a)), round(a, 4), basis
 
 
 def simulate(payload: dict) -> dict:
@@ -351,8 +384,9 @@ def simulate(payload: dict) -> dict:
             "avg_payload_t": round(payload_t, 2),
             "planned_production_t": round(fleet_t, 0),
             "achievable_production_t": round(achievable_t, 0),
-            "trucks_to_roster": int(np.ceil(n / MEASURED_MECHANICAL_AVAILABILITY))
-            if n else 0,
+            "trucks_to_roster": _roster(n, route)[0],
+            "roster_availability": _roster(n, route)[1],
+            "roster_basis": _roster(n, route)[2],
             "capacity_note": cap_note,
             "capacity_ratio": cap_ratio,
             "congestion_note": cong,
@@ -394,10 +428,15 @@ def simulate(payload: dict) -> dict:
             "availability_factor_applied": avail,
             "fleet_sizing": {
                 "trucks_hauling": int(sum(x["n_trucks"] for x in ok)),
-                "trucks_to_roster": int(np.ceil(
-                    sum(x["n_trucks"] for x in ok)
-                    / MEASURED_MECHANICAL_AVAILABILITY)),
+                "trucks_to_roster": int(sum(
+                    _roster(x["n_trucks"], x.get("route", ""))[0] for x in ok)),
+                "bases_used": sorted({
+                    _roster(x["n_trucks"], x.get("route", ""))[2] for x in ok}),
                 "measured_availability": MEASURED_MECHANICAL_AVAILABILITY,
+                "fleet_prior": MEASURED_MECHANICAL_AVAILABILITY,
+                "coverage_note": ("availability is measured for trucks carrying "
+                                  "30.3% of training tonnage; routes served by "
+                                  "the other 69.7% are labelled fleet_prior"),
                 "basis": ("mechanical availability measured over 170,899 "
                           "haul-truck shifts (EQUIPMENTS_HOURLY_STATUS, "
                           "2026-04-01..06-30); the distribution is bimodal, so "

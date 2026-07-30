@@ -76,6 +76,43 @@ check("the two spikes hold most of the mass", at_one + at_zero > 0.9,
 check("records are complete (median >= 11.5 h)", h.total_hours.median() >= 11.5,
       "%.1f" % h.total_hours.median())
 
+print("\n=== the roster figure must disclose whether it is measured or a prior ===")
+# Availability is measured for trucks carrying only 30.3% of training tonnage, so
+# quoting a RIM-derived number for a route hauled by other contractors is an
+# extrapolation and must be labelled.
+r2 = ps.simulate({"plans": [
+    {"route": "BLB>FENI KM0", "source": "BLB",
+     "destination": "FENI KM0", "n_trucks": 30},
+    {"route": "POS 12>FENI KM0", "source": "POS 12",
+     "destination": "FENI KM0", "n_trucks": 30}]})
+by = {x["route"]: x for x in r2["results"]}
+check("BLB>FENI KM0 uses its own measured availability",
+      by.get("BLB>FENI KM0", {}).get("roster_basis") == "measured",
+      "got %r" % by.get("BLB>FENI KM0", {}).get("roster_basis"))
+check("POS 12>FENI KM0 is labelled a fleet prior, not measured",
+      by.get("POS 12>FENI KM0", {}).get("roster_basis") == "fleet_prior",
+      "only 5.2%% of its trucks have measured availability; got %r"
+      % by.get("POS 12>FENI KM0", {}).get("roster_basis"))
+check("the measured route differs from the prior",
+      by.get("BLB>FENI KM0", {}).get("roster_availability")
+      != by.get("POS 12>FENI KM0", {}).get("roster_availability"),
+      "a route-aware figure that always equals the prior is not route-aware")
+check("summary lists every basis used",
+      set(r2["summary"]["fleet_sizing"]["bases_used"])
+      == {"measured", "fleet_prior"},
+      "got %r" % r2["summary"]["fleet_sizing"].get("bases_used"))
+
+ra = pd.read_csv("/Users/lucky/wbn-fms-simulator/data/route_availability.csv")
+meas = ra[ra.basis == "measured"]
+check("measured routes carry no null availability",
+      bool(meas.route_availability.notna().all()))
+check("prior routes carry no availability figure",
+      bool(ra[ra.basis == "fleet_prior"].route_availability.isna().all()),
+      "an unmeasured route must not present a number as if measured")
+check("route availability stays in a plausible band (0.6..0.9)",
+      bool(meas.route_availability.between(0.6, 0.9).all()),
+      "%.3f..%.3f" % (meas.route_availability.min(), meas.route_availability.max()))
+
 print("\n=== the two independent measurements still reconcile ===")
 lk = pd.read_csv("/Users/lucky/wbn-fms-simulator/data/route_lookup.csv")
 lk = lk[lk.effective_cycle_min.notna() & (lk.shifts >= 100)]
