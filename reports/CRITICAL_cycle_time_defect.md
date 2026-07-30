@@ -233,6 +233,24 @@ planned tonnage stays 2,119 t.
 
 Reproduce: `python test_holdout_robustness.py`.
 
+### A fourth problem: the gates were not wired into CI
+
+Every suite above existed as a standalone file that **`verify_phase2.sh` never
+ran**. The harness reported a clean 42/42 while eight suites sat orphaned —
+including `test_trips_per_shift.py`, the gate whose entire purpose is to catch a
+5x production overprediction. Two of them predated this work, so the gap was not
+new.
+
+A gate nobody runs is decoration. All eight are now wired in as **J43–J50**, and
+the harness reports **50/50**.
+
+Proven by mutation, not assumed: reintroducing the original bug
+(`effective_cycle_min := median_cycle_min`) drops the harness to **46/50 with 4
+failures** — J43, J44, J45 and J49 all fire — and restoring the lookup returns it
+to 50/50. Each gate is skipped rather than failed when its artifacts are absent,
+so a clean checkout without the Day X GPS extract still passes: verified at
+**50/50 with no database configured**.
+
 ### Verification
 
 | Check | Result |

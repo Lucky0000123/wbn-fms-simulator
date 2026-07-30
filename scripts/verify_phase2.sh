@@ -299,6 +299,52 @@ chk $? "I42  trip metadata matches the extract" "row count or ceiling drifted"
 fi
 
 
+# ---------------------------------------------------------------------------
+# J43-J50: the production-simulator suites.
+#
+# These existed as standalone files and the harness did not run them, so
+# verify_phase2.sh reported 42/42 while eight suites - including the gate that
+# catches a 5x production overprediction - were never exercised by CI. A gate
+# nobody runs is decoration, so they are wired in here.
+#
+# Each is skipped rather than failed when its artifacts are absent, because the
+# GPS ones need data/day_x_*.csv which only exists after a deep-dive extraction,
+# and a missing optional artifact must not fail the whole harness.
+# ---------------------------------------------------------------------------
+if [ -f data/route_lookup.csv ]; then
+$PY test_trips_per_shift.py >/dev/null 2>&1
+chk $? "J43  trips/shift reproduces observed trips" "see: python test_trips_per_shift.py"
+
+$PY test_trips_mutation.py >/dev/null 2>&1
+chk $? "J44  trips gate catches the weigh-to-weigh bug" "mutation test failed to discriminate"
+
+$PY test_plan_simulator.py >/dev/null 2>&1
+chk $? "J45  plan simulator invariants hold" "see: python test_plan_simulator.py"
+fi
+
+if [ -f data/trip_features.csv ]; then
+$PY test_holdout_tonnage.py >/dev/null 2>&1
+chk $? "J46  cycle fix beats the old formula out of sample" "held-out tonnage regressed"
+
+$PY test_holdout_robustness.py >/dev/null 2>&1
+chk $? "J47  holds across 4 splits + unseen-route fallback" "see: python test_holdout_robustness.py"
+
+$PY test_congestion_audit_mutation.py >/dev/null 2>&1
+chk $? "J48  congestion sign audit discriminates" "mutation test failed"
+fi
+
+if [ -f data/route_lookup.csv ]; then
+$PY test_retrain_preserves_fix.py >/dev/null 2>&1
+chk $? "J49  a retrain preserves the cycle fix" "see: python test_retrain_preserves_fix.py"
+fi
+
+# Needs the Day X GPS extract. Absent in a clean checkout, so skipped there.
+if [ -f data/day_x_segment_speeds.csv ] && [ -f data/day_x_gps_snapped.csv ]; then
+$PY test_segment_cross_validation.py >/dev/null 2>&1
+chk $? "J50  GPS snapping agrees with FMS_CONGESTION_SEG" "see: python test_segment_cross_validation.py"
+fi
+
+
 echo
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"
 [ "$FAIL" = "0" ]
