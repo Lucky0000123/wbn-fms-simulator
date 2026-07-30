@@ -24,15 +24,21 @@ vehicles). So this is a ROUTE-level simulator with shared-point congestion, not
 a segment-level one, and that limit is stated rather than papered over with an
 invented speed profile.
 
-TRAVEL, LOAD AND DUMP ARE SPLIT BY ESTIMATE, NOT MEASUREMENT
+TRAVEL, LOAD AND DUMP: MEASURED WHERE POSSIBLE, ESTIMATED ELSEWHERE
 The weighbridge gives one interval per trip: first weigh to second weigh. It
 does not say how much of that was queueing, loading, driving or tipping.
-Splitting it requires an assumption, so the split is computed explicitly, each
-component is labelled with its method, and `split_is_estimated` is carried on
-every row. When WAITING_TIME is reachable its measured load time replaces the
-estimate and the label changes to say so.
 
-WHY THE SPLIT USES AN EMPIRICAL FLOOR AND NOT distance / speed
+WAITING_TIME does. It records LOADING_DIFFERENCE_TIME and
+DUMPING_DIFFERENCE_TIME directly in minutes, and those are used wherever they
+join (about 25% of trips, on truck + date + shift). This matters: the
+apportionment below overstates loading by roughly 4.6x against the measured
+figure, 41.2 min versus 9.0 min at the median. Every row carries
+`load_time_source` saying which basis it used.
+
+For the remaining trips the split is an apportionment, and it is labelled as
+one via `split_is_estimated`.
+
+WHY THE FALLBACK SPLIT USES AN EMPIRICAL FLOOR AND NOT distance / speed
 The obvious split is travel = 2 x distance / speed. It was tried and rejected,
 because `distance_km` is not a measurement on this site: 57 of 65 routes carry
 the same default 25.0 km, and TF>FENI KM0 is recorded as 67.8 km yet has trips
@@ -45,6 +51,12 @@ of its observed cycle time is what that route looks like when nothing is in the
 way. That is the irreducible part — driving plus the minimum loading and
 tipping. Everything above it is congestion, which is precisely the quantity the
 simulator exists to predict. It needs no speed constant and no distance lookup.
+
+GROSS/TARE TIMESTAMPS WERE CHECKED AND CARRY NOTHING EXTRA
+HAULAGE_IWIP_CLEAN has four timestamps, and GROSS_WEIGHT_TIME/TARE_WEIGHT_TIME
+looked like they might bracket the haul separately. They do not: the gross-to-
+tare interval is identical to first-to-second weigh on 100.00% of 200,000 trips
+sampled. Same two events, different column names.
 """
 from __future__ import annotations
 
@@ -83,16 +95,18 @@ FLOOR_TRAVEL_SHARE = 0.50
 QUEUE_LOAD_SHARE = 0.80
 
 LOAD_TIME_SQL = """
-SELECT  w.[DATE]            AS date,
-        w.SHIFT             AS shift,
-        w.ORIGIN_AREA       AS source_raw,
-        w.EQUIPMENT_ID      AS truck_id,
-        DATEDIFF(minute, w.LOADING_WAITING_TIME, w.LOADING_TIME) AS load_min
+SELECT  w.[DATE]                    AS date,
+        w.SHIFT                     AS shift_raw,
+        w.EQUIPMENT_ID              AS truck_id,
+        w.LOADING_DIFFERENCE_TIME   AS load_min,
+        w.DUMPING_DIFFERENCE_TIME   AS dump_min
 FROM    WAITING_TIME w
 WHERE   w.[DATE] >= '{start}' AND w.[DATE] <= '{end}'
-  AND   w.LOADING_TIME IS NOT NULL
-  AND   w.LOADING_WAITING_TIME IS NOT NULL
+  AND   w.LOADING_DIFFERENCE_TIME IS NOT NULL
 """
+# A dwell beyond this is a breakdown, a shift boundary or a clerical error, not
+# a load. Verified against the distribution: p95 is 63 min.
+MAX_PLAUSIBLE_DWELL_MIN = 240
 
 
 def _write(df: pd.DataFrame, path: str) -> list[str]:
@@ -207,19 +221,29 @@ def split_cycle_components(d: pd.DataFrame) -> pd.DataFrame:
 
 
 def attach_measured_load_time(d: pd.DataFrame, conn=None) -> pd.DataFrame:
-    """Replace the estimated load time with WAITING_TIME's measured value.
+    """Replace the estimated load and dump times with measured ones.
 
-    Joined at (date, shift, source) rather than per trip: WAITING_TIME has no
-    ticket number, so a per-trip join is not possible. A shift-level median is
-    still a real measurement of that loader on that shift, which is better than
-    a fixed 70% assumption, and rows that get it are flagged.
+    WAITING_TIME records LOADING_DIFFERENCE_TIME and DUMPING_DIFFERENCE_TIME
+    directly in minutes, per truck per shift. These are measurements, not
+    apportionments, and they matter: the 70/30 estimate overstates loading by
+    roughly 4.6x against them (median 41.2 min estimated vs 9.0 min measured).
+
+    Joined on (truck_id, date, shift). Location names cannot be used — the two
+    tables use different vocabularies, PIT/ORIGIN_AREA overlapping the trip
+    extract on only 3 values — but the join does not need them: a truck on a
+    given date and shift is already known from the trip extract to be hauling a
+    specific route, so all that is wanted here is the measured minutes.
+
+    Coverage is partial (about 25% of trips), so `load_time_source` marks every
+    row as measured or estimated and downstream code must respect it rather
+    than treating the column as uniformly trustworthy.
     """
     d = d.copy()
     d["load_time_min"] = d["load_time_est_min"]
+    d["dump_time_min"] = d["dump_time_est_min"]
     d["load_time_source"] = "estimated"
     try:
         import simulator_api as sim
-        from prediction_pipeline import canonical_area
         close = False
         if conn is None:
             if not sim._db_ready():
@@ -235,26 +259,47 @@ def attach_measured_load_time(d: pd.DataFrame, conn=None) -> pd.DataFrame:
         d.attrs["load_time_note"] = "WAITING_TIME unavailable (%s)" % str(exc)[:90]
         return d
 
-    w = w[w["load_min"].between(1, 120)].copy()
+    for c in ("load_min", "dump_min"):
+        w[c] = pd.to_numeric(w[c], errors="coerce")
+    w = w[w["load_min"].between(0, MAX_PLAUSIBLE_DWELL_MIN)]
     if w.empty:
         d.attrs["load_time_note"] = "WAITING_TIME returned no usable rows"
         return d
-    w["source"] = w["source_raw"].map(canonical_area)
+
     w["date"] = pd.to_datetime(w["date"])
-    w["shift"] = np.where(w["shift"].astype(str).str.strip().str.lower()
-                          .isin(["2", "night", "n", "malam"]), "night", "day")
-    med = (w.groupby(["date", "shift", "source"])["load_min"].median()
-            .rename("load_measured").reset_index())
-    d = d.merge(med, on=["date", "shift", "source"], how="left")
+    w["truck_id"] = w["truck_id"].astype(str).str.strip().str.upper()
+    # SHIFT is 1/2 in WAITING_TIME; the trip extract uses day/night.
+    w["shift"] = np.where(w["shift_raw"].astype(str).str.strip() == "2",
+                          "night", "day")
+    agg = (w.groupby(["truck_id", "date", "shift"])
+             .agg(load_measured=("load_min", "median"),
+                  dump_measured=("dump_min", "median")).reset_index())
+
+    key = d["truck_id"].astype(str).str.strip().str.upper()
+    d["_tk"] = key
+    d = d.merge(agg, left_on=["_tk", "date", "shift"],
+                right_on=["truck_id", "date", "shift"], how="left",
+                suffixes=("", "_wt")).drop(columns=["_tk", "truck_id_wt"],
+                                           errors="ignore")
+
     hit = d["load_measured"].notna()
     d.loc[hit, "load_time_min"] = d.loc[hit, "load_measured"]
-    d.loc[hit, "load_time_source"] = "measured (WAITING_TIME, shift median)"
-    # Keep the components consistent: if load is measured, dump absorbs the rest.
-    d.loc[hit, "dump_time_est_min"] = (d.loc[hit, "terminal_time_min"]
-                                       - d.loc[hit, "load_time_min"]).clip(lower=0.5)
-    d.attrs["load_time_note"] = ("measured on %.1f%% of trips"
-                                 % (100 * float(hit.mean())))
-    return d.drop(columns=["load_measured"])
+    d.loc[hit, "load_time_source"] = "measured (WAITING_TIME, truck-shift median)"
+    dhit = hit & d["dump_measured"].notna()
+    d.loc[dhit, "dump_time_min"] = d.loc[dhit, "dump_measured"]
+    # Measured dwell can exceed the weighbridge envelope on ~7% of trips: the
+    # two systems time different things and are not guaranteed to nest. Rather
+    # than silently rescale a measurement to fit an estimate, those rows are
+    # flagged so the inconsistency stays visible.
+    over = (d["load_time_min"].fillna(0) + d["dump_time_min"].fillna(0)
+            > d["cycle_time_min"])
+    d["dwell_exceeds_cycle"] = (over & hit).astype(int)
+    d.attrs["load_time_note"] = (
+        "measured on %.1f%% of trips; %.1f%% of those exceed the weighbridge "
+        "cycle envelope and are flagged"
+        % (100 * float(hit.mean()),
+           100 * float(d.loc[hit, "dwell_exceeds_cycle"].mean()) if hit.any() else 0))
+    return d.drop(columns=["load_measured", "dump_measured"], errors="ignore")
 
 
 def build(conn=None, verbose: bool = True) -> tuple[pd.DataFrame, dict]:

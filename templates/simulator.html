@@ -42,6 +42,7 @@
         <button class="sim-tab on" id="tabbtn-sim" onclick="setSimTab('sim')">Capability &amp; Scenario</button>
         <button class="sim-tab" id="tabbtn-cong" onclick="setSimTab('cong')">🔬 Congestion Model <span>PREVIEW</span></button>
         <button class="sim-tab" id="tabbtn-plan" onclick="setSimTab('plan')">🧭 Plan</button>
+        <button class="sim-tab" id="tabbtn-plansim" onclick="setSimTab('plansim')">⚙️ Production Simulator</button>
       </div>
       <div id="tab-sim">
       <div style="display:flex;align-items:center;margin:0 0 12px">
@@ -208,6 +209,75 @@
           <div class="rain-table" style="margin-top:8px"><table><thead><tr><th>Path</th><th>Contractor</th><th class="r">Fleet DT</th><th class="r">Est. Trips/DT</th><th class="r">Trips</th><th class="r">t/trip</th><th class="r">WMT</th><th>Notes</th><th></th></tr></thead><tbody id="plan-rows"><tr><td colspan="9" class="muted">Add a path above to start… your live estimate is shown in step 1.</td></tr></tbody><tfoot id="plan-foot"></tfoot></table></div>
           <div id="plan-warn" style="margin-top:8px;font-size:11.5px"></div></div>
       </div><!-- /tab-plan -->
+
+      <div id="tab-plansim" style="display:none">
+        <div class="info-banner">
+          <b>Production simulator.</b> <span class="banner-body">Enter the plan &mdash; how many trucks on which hauls &mdash; and get predicted trip time, loading and dumping time, and tonnes per shift. Where two plans share a loading point, the combined demand is checked against that point&rsquo;s <b>measured</b> throughput ceiling. Cycle time is <b>not</b> scaled by truck count: that effect could not be identified in weighbridge data, and the reason is shown below the results.</span>
+        </div>
+
+        <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start">
+          <div class="card" style="flex:2;min-width:380px">
+            <h3 style="margin-bottom:3px">1 &middot; Build the plan</h3>
+            <div class="sub">Add one line per haul. Only routes with observed history are offered.</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">
+              <label style="flex:2;min-width:210px">
+                <div class="muted" style="font-size:11px;margin-bottom:3px">Haul route</div>
+                <select id="ps-route" style="width:100%"></select>
+              </label>
+              <label style="width:110px">
+                <div class="muted" style="font-size:11px;margin-bottom:3px">Trucks</div>
+                <input id="ps-trucks" type="number" min="1" max="500" value="30" style="width:100%">
+              </label>
+              <button class="mode-btn on" onclick="psAddPlan()" style="height:32px">Add haul</button>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:12px">
+              <label style="width:130px">
+                <div class="muted" style="font-size:11px;margin-bottom:3px">Weather</div>
+                <select id="ps-weather" style="width:100%" onchange="psRun()">
+                  <option value="dry">Dry</option><option value="wet">Wet</option>
+                </select>
+              </label>
+              <label style="width:150px">
+                <div class="muted" style="font-size:11px;margin-bottom:3px">Shift length (min)</div>
+                <input id="ps-shift" type="number" min="60" max="1440" value="720" style="width:100%" onchange="psRun()">
+              </label>
+              <label style="width:170px">
+                <div class="muted" style="font-size:11px;margin-bottom:3px">Availability (assumed)</div>
+                <input id="ps-avail" type="number" min="0.1" max="1" step="0.05" value="0.85" style="width:100%" onchange="psRun()">
+              </label>
+              <button class="mode-btn" onclick="psClear()" style="height:32px">Clear all</button>
+            </div>
+          </div>
+
+          <div class="card" style="flex:1;min-width:260px">
+            <h3 style="margin-bottom:3px">2 &middot; Shift total</h3>
+            <div class="sub">Planned is what the fleet would do unconstrained. Achievable applies measured capacity.</div>
+            <div class="c3-flow-kpis" style="margin-top:10px">
+              <div class="c3-flow-kpi"><b id="ps-kpi-trucks">&mdash;</b><span>Trucks</span></div>
+              <div class="c3-flow-kpi"><b id="ps-kpi-planned">&mdash;</b><span>Planned t / shift</span></div>
+              <div class="c3-flow-kpi"><b id="ps-kpi-achv">&mdash;</b><span>Achievable t / shift</span></div>
+            </div>
+            <div id="ps-warnings" style="margin-top:10px"></div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:14px">
+          <h3 style="margin-bottom:3px">3 &middot; Predicted result per haul</h3>
+          <div class="sub">Trip time, dwell and production. Hover any row for the evidence behind each number.</div>
+          <div class="rain-table" style="margin-top:8px"><table>
+            <thead><tr>
+              <th>Haul</th><th class="r">Trucks</th><th class="r">Trip time</th>
+              <th class="r">Load</th><th class="r">Dump</th><th class="r">Travel</th>
+              <th class="r">Trips/truck</th><th class="r">Planned t</th>
+              <th class="r">Achievable t</th><th>Loading point</th><th></th>
+            </tr></thead>
+            <tbody id="ps-rows"><tr><td colspan="11" class="muted">Add a haul above to run the simulator&hellip;</td></tr></tbody>
+            <tfoot id="ps-foot"></tfoot>
+          </table></div>
+          <div id="ps-limits" class="lead muted" style="margin-top:12px;font-size:12px"></div>
+        </div>
+      </div><!-- /tab-plansim -->
+
     </div>
   </div>
 <div id="mat-backdrop" style="display:none;position:fixed;inset:0;background:rgba(3,8,20,.72);z-index:9000;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)closeMatrix()">
@@ -245,6 +315,7 @@
 <script src="/static/js/matrix.js"></script>
 <script src="/static/js/regression.js"></script>
 <script src="/static/js/plan.js"></script>
+<script src="/static/js/plan_simulator.js"></script>
 <script src="/static/js/main.js"></script>
 </body>
 </html>

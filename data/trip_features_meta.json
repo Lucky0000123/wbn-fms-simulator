@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-30T01:24:59+00:00",
+  "generated_at": "2026-07-30T01:56:47+00:00",
   "rows": 483425,
   "date_range": [
     "2025-12-27",
@@ -11,9 +11,10 @@
   "shared_sources": 14,
   "shared_dests": 8,
   "load_time_source_counts": {
-    "estimated": 483425
+    "estimated": 363457,
+    "measured (WAITING_TIME, truck-shift median)": 119968
   },
-  "load_time_note": "WAITING_TIME unavailable (no DB configured)",
+  "load_time_note": "measured on 24.8% of trips; 7.7% of those exceed the weighbridge cycle envelope and are flagged",
   "route_specific_floor_pct": 100.0,
   "median_route_floor_min": 30.6,
   "median_congestion_delay_min": 33.5,

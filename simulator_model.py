@@ -87,7 +87,7 @@ def build_shift_panel(d: pd.DataFrame) -> pd.DataFrame:
     p = g.agg(
         cycle_time_min=("cycle_time_min", "median"),
         load_time_min=("load_time_min", "median"),
-        dump_time_min=("dump_time_est_min", "median"),
+        dump_time_min=("dump_time_min", "median"),
         congestion_delay_min=("congestion_delay_min", "median"),
         route_floor_min=("route_floor_min", "first"),
         trucks_on_route=("trucks_on_route", "first"),

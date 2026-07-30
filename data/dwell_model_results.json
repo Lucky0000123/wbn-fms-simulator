@@ -1,0 +1,39 @@
+{
+  "generated_at": "2026-07-30T01:57:09+00:00",
+  "loading_points": 14,
+  "dumping_points": 9,
+  "load_time_basis_pct": {
+    "estimated": 75.2,
+    "measured (WAITING_TIME, truck-shift median)": 24.8
+  },
+  "truck_count_test_loading": {
+    "question": "does dwell time rise when more trucks use the same point?",
+    "corr_pooled": -0.1891,
+    "corr_within_point": -0.1389,
+    "points_where_dwell_rises": 5,
+    "points_tested": 14,
+    "queue_effect_detectable": false,
+    "served": false,
+    "why_not_served": "endogenous deployment: trucks are sent to points that are running well, so truck count tracks good conditions rather than causing delay"
+  },
+  "truck_count_test_dumping": {
+    "question": "does dwell time rise when more trucks use the same point?",
+    "corr_pooled": -0.1593,
+    "corr_within_point": -0.0478,
+    "points_where_dwell_rises": 4,
+    "points_tested": 9,
+    "queue_effect_detectable": false,
+    "served": false,
+    "why_not_served": "endogenous deployment: trucks are sent to points that are running well, so truck count tracks good conditions rather than causing delay"
+  },
+  "features_served": [
+    "point",
+    "shift",
+    "is_wet",
+    "day_of_week"
+  ],
+  "features_excluded": {
+    "trucks_at_point": "endogenous, see truck_count_test_*"
+  },
+  "estimate_warning": "load and dump times are an apportionment of one weighbridge interval unless load_time_source says measured"
+}

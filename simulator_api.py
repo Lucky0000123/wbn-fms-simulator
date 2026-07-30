@@ -662,3 +662,63 @@ _register('/api/simulator/weighbridge-positions', api_simulator_weighbridge_posi
 _register('/api/simulator/shift-context', api_simulator_shift_context, 'shift-context', methods=['GET'])
 _register('/api/weighbridge-summary', api_weighbridge_summary, 'weighbridge-summary', methods=['GET'])
 _register('/api/simulator/weighbridge', api_simulator_weighbridge, 'weighbridge', methods=['GET'])
+
+
+# ---------------------------------------------------------------------------
+# Plan simulator (Task 4)
+#
+# Registered directly on the blueprint rather than through _register, because
+# unlike the DB-backed endpoints this one has no DB path to fall back FROM: it
+# reads the committed lookup CSVs (route history, measured point capacity,
+# dwell times) and therefore answers identically with or without the VPN.
+# That is the dual-mode requirement satisfied by construction instead of by a
+# fixture standing in for the real thing.
+# ---------------------------------------------------------------------------
+@bp.route('/api/simulate', methods=['POST'])
+def api_simulate():
+    """Predict trip time, dwell and production for a multi-route truck plan."""
+    import plan_simulator
+    try:
+        payload = request.get_json(force=True, silent=True) or {}
+    except Exception:                     # noqa: BLE001
+        payload = {}
+    if not isinstance(payload.get("plans"), list) or not payload["plans"]:
+        return jsonify({"error": "supply plans: [{source, destination, n_trucks}]",
+                        "results": [], "summary": {}}), 400
+    try:
+        return jsonify(plan_simulator.simulate(payload))
+    except Exception as e:                # noqa: BLE001
+        print("[sim_api] simulate failed: %s" % e)
+        return jsonify({"error": "simulation failed: %s" % e,
+                        "results": [], "summary": {}}), 500
+
+
+@bp.route('/api/simulate/options', methods=['GET'])
+def api_simulate_options():
+    """Routes, loading and dumping points the simulator has history for.
+
+    The UI populates its dropdowns from this, so a planner can only pick
+    combinations the model can actually speak to, and sees the evidence
+    behind each one (shift count, measured capacity) while choosing.
+    """
+    import plan_simulator as ps
+    r, c = ps._routes(), ps._capacity()
+    if r is None:
+        return jsonify({"routes": [], "loading_points": [], "dumping_points": [],
+                        "error": "route lookup not built; run simulator_model.py"})
+    routes = [{"route": x["route"], "source": x["source"],
+               "destination": x["destination"],
+               "median_cycle_min": x["median_cycle_min"],
+               "shifts_observed": int(x["shifts"])}
+              for _, x in r.sort_values("shifts", ascending=False).iterrows()]
+    pts = {"loading_points": [], "dumping_points": []}
+    if c is not None:
+        for kind, key in (("loading", "loading_points"), ("dumping", "dumping_points")):
+            sub = c[c["kind"] == kind]
+            pts[key] = [{"point": x["point"],
+                         "capacity_trips_shift": x["capacity_trips_shift"],
+                         "observed_hours": int(x["observed_hours"])}
+                        for _, x in sub.iterrows()]
+    return jsonify({"routes": routes, **pts,
+                    "note": ("capacity is the p99 of hourly throughput actually "
+                             "observed at that point, not a design figure")})
