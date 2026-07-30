@@ -187,3 +187,112 @@ Route identity carries most of the signal: dropping the 524 route dummies and ke
 ---
 
 Reproduce: `python train_model.py` (needs VPN for the DB; falls back to fixtures otherwise), then `python scripts/publish_findings.py`.
+
+---
+
+# Production Simulator
+
+*This section covers the plan simulator (`plan_simulator.py`, `POST /api/simulate`), built from 483,425 trips over 2025-12-27 to 2026-07-09. Regenerate with `python trip_features.py && python simulator_model.py && python capacity_model.py && python dwell_models.py`.*
+
+## What it is
+
+A planner asks "30 trucks from A to B, 20 from C to D". The simulator predicts trip time, loading and dumping time, trips per shift and tonnes, and flags where plans collide at a shared loading or dumping point.
+
+It works at **route level with shared-point capacity**, not segment level. Segment-level speeds need GPS on the trucks that haul, and **0 of 940 registered haul trucks appear in the telematics feed** — the 217 instrumented units are engineering and logistics vehicles. No fuzzy match was attempted, because a timestamp heuristic cannot create a spatial trace that does not exist.
+
+## The central negative: congestion is not identifiable from weighbridge data
+
+The brief asked the simulator to predict how added trucks slow cycle times. It cannot, and this is the most important finding in this section.
+
+Four independent tests, all pointing the same way:
+
+| Test | Expected if queueing were visible | Observed |
+|---|---|---|
+| corr(trucks on route, cycle) | positive | -0.09 |
+| within route, controlling month/shift/weather | positive | -0.03 |
+| hourly concurrency at the loader | positive | -0.05 |
+| delay vs measured loader utilisation | rises steeply near 100% | -0.1293 |
+
+The last is decisive. Queueing theory says delay explodes as utilisation approaches capacity. Measured against each point's own demonstrated ceiling, delay **falls**:
+
+| Loader utilisation | Loader-hours | Median delay |
+|---|---|---|
+| 0-20% | 12,230 | 38.7 min |
+| 20-40% | 7,921 | 35.9 min |
+| 40-60% | 4,700 | 34.0 min |
+| 60-80% | 2,600 | 31.2 min |
+| 80-100% | 1,080 | 28.6 min |
+| >100% | 266 | 32.8 min |
+
+Only **1 of 12** loading points show the expected rise.
+
+**Why.** Deployment is endogenous. Busy hours are busy *because* everything is working: shovel up, road dry, crusher accepting. Slow hours have few trucks because something broke. Truck count is a marker of good conditions, not a cause of delay, and no regression on observational data can separate the two.
+
+## A higher-R2 model was withheld
+
+Adding congestion features **improves** walk-forward R2. It was still not shipped.
+
+| Model | R2 | MAE (min) | RMSE |
+|---|---|---|---|
+| Route mean (**served**) | 0.4792 | 31.88 | 47.56 |
+| OLS, no congestion | 0.4647 | 32.58 | 48.22 |
+| OLS + congestion *(withheld)* | 0.4925 | 31.74 | 46.95 |
+| HistGradientBoosting, no congestion | 0.2521 | 36.52 | 57.00 |
+| HistGradientBoosting + congestion | 0.2827 | 36.65 | 55.81 |
+
+The reason is the coefficient direction, not the fit:
+
+| Feature | Fitted jointly | Fitted alone | Bootstrap 95%% CI | Verdict |
+|---|---|---|---|---|
+| `trucks_on_route` | +11.90 | -3.28 | [+8.86, +14.49] | sign flips |
+| `trucks_at_source` | -22.72 | -14.60 | [-25.80, -19.40] | rejected: negative |
+| `trucks_at_dest` | -1.52 | -3.28 | [-3.31, +0.79] | not significant |
+
+(minutes per standard deviation of the feature)
+
+`trucks_on_route` appears to say +11.90 min/SD, which looks like queueing. Fitted alone it says **-3.28**. The pair correlates at r=0.69, so OLS splits them into a large +/- couple that predicts adequately and means nothing individually.
+
+A simulator exists to answer *should I add trucks*. A model that says adding trucks makes trips faster would give confident, unbounded, wrong advice — worse than a lower R2, because the error is invisible in the output. So the served model is the route mean, and the truck-count question is answered with measured capacity instead.
+
+The gate that caught this (`simulator_model.audit_congestion_signs`) is mutation-tested in `test_congestion_audit_mutation.py`: it rejects the real data, **accepts** an injected true +0.5 min/truck effect, and rejects an inverted one. A gate never seen passing and failing is decoration.
+
+## What is shipped instead: measured capacity
+
+If a loading point has never exceeded N departures in an hour across 4,098 observed hours, that is a physical ceiling. It is a count, not a correlation.
+
+So the simulator answers the collision question differently: not "your cycle time rises by X minutes" (unsupported) but "POS 12 is asked for 2,811 trips/shift against a demonstrated ceiling of 1,140, so ~76,368 t will not materialise" (measured).
+
+Capacity is the p99 of observed hourly throughput, over 14 loading and 9 dumping points with at least 200 observed hours each.
+
+## Dwell times are measured, and the first estimate was wrong by 4.6x
+
+`WAITING_TIME` records `LOADING_DIFFERENCE_TIME` and `DUMPING_DIFFERENCE_TIME` directly in minutes. Joined on (truck, date, shift), this covers **24.8** of trips.
+
+This corrected a real error. The initial 70/30 apportionment of the weighbridge interval put median loading at **41.2 min**; measured, it is **9.0 min**. Dwell figures moved accordingly (BLB 41.2 to 13.0 min, TF 27.6 to 18.1 min).
+
+Every row carries `load_time_source`. The 7.7%% where measured dwell exceeds the weighbridge envelope are flagged, not silently rescaled to fit: the two systems time different things and are not guaranteed to nest.
+
+### The queue effect, re-tested on measured dwell
+
+This was the one place queueing showed up: measured load time rises with truck count at **7 of 9** loading points. It still is not served, because the size does not support it. Within loader, month, shift and weather the correlation is **+0.026** and the slope is **+0.038 min per truck** — 100 extra trucks would add under 4 minutes, and KR runs negative. Direction plausible, magnitude unusable.
+
+## Two rejected approaches worth recording
+
+**`distance_km` is a placeholder.** Travel time as `2 x distance / speed` was tried and dropped: 57 of 65 routes carry the same default 25.0 km, and TF>FENI KM0 is recorded at 67.8 km while completing trips in 18.9 minutes. It capped 72%% of trips. Replaced with a per-route p10 empirical floor measured from each route's own trips.
+
+**Gross/tare timestamps carry nothing extra.** `GROSS_WEIGHT_TIME` and `TARE_WEIGHT_TIME` looked like they might bracket the haul separately. The gross-to-tare interval is identical to first-to-second weigh on **100.00%%** of 200,000 sampled trips. Same two events, different column names.
+
+## What a planner should and should not trust
+
+| Output | Basis |
+|---|---|
+| Cycle time per route | **measured** — route median over observed shifts |
+| Loading / dumping time | **measured** on 24.8%% of trips, apportioned otherwise |
+| Point capacity | **measured** — p99 of observed hourly throughput |
+| Wet-weather penalty | **measured** — per point, wet vs dry |
+| Trips per shift, tonnes | **derived** — arithmetic on the above |
+| Availability | **assumed** — caller-supplied, default 85%% |
+| Effect of truck count on cycle time | **not modelled** — not identifiable |
+| Segment-level speed | **not available** — no GPS on haul trucks |
+
+Every `/api/simulate` result carries a `basis` block and a `model_limits` block saying which of these applies, so the limits travel with the numbers.
