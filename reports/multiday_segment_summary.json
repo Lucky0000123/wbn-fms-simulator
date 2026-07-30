@@ -1,0 +1,38 @@
+{
+  "days": [
+    {
+      "day": "2026-07-15",
+      "trips": 263,
+      "gps_fixes": 3581,
+      "on_road_pct": 91.6,
+      "segment_obs": 0
+    },
+    {
+      "day": "2026-07-16",
+      "trips": 245,
+      "gps_fixes": 3580,
+      "on_road_pct": 70.5,
+      "segment_obs": 0
+    },
+    {
+      "day": "2026-07-18",
+      "trips": 283,
+      "gps_fixes": 172,
+      "on_road_pct": 91.9,
+      "segment_obs": 0
+    },
+    {
+      "day": "2026-07-19",
+      "trips": 159,
+      "gps_fixes": 11584,
+      "on_road_pct": 82.0,
+      "segment_obs": 19
+    }
+  ],
+  "pooled_segment_obs": 19,
+  "day_x_segment_obs": 19,
+  "pooled_full_transits": 11,
+  "distinct_trips": 6,
+  "distinct_trucks": 6,
+  "distinct_segments": 16
+}

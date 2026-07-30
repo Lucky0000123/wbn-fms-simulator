@@ -50,16 +50,26 @@ for tbl in ("FMS_GPS_Historical", "FMS_PLAYBACK_TRACK_24H"):
         print("\n%s: FAILED %s" % (tbl, str(e)[:70]))
 
 print("\n=== the decisive test: match rate on the MOST RECENT full GPS day ===")
-q = """SELECT CAST(DATEADD(second, MAX(TS)/1000, '1970-01-01') AS date) AS d
-       FROM FMS_GPS_Historical"""
+# FMS_PLAYBACK_TRACK_24H is the live feed and holds far more than the archive:
+# 859,198 fixes over 715 plates on its best day vs 274,092 over 555. Pick the
+# richest day across BOTH tables rather than the newest, since the newest is a
+# partial day still being written.
+q = """SELECT TOP 1 CAST(DATEADD(second, TS/1000, '1970-01-01') AS date) AS d
+       FROM FMS_PLAYBACK_TRACK_24H WHERE PLATE IS NOT NULL
+       GROUP BY CAST(DATEADD(second, TS/1000, '1970-01-01') AS date)
+       ORDER BY COUNT(*) DESC"""
 latest = pd.read_sql(q, f).d.iloc[0]
-print("latest GPS day: %s" % latest)
+print("richest GPS day in the live feed: %s" % latest)
 
 # Trucks that hauled on that day, from the weighbridge.
-q = """SELECT DISTINCT UPPER(LTRIM(RTRIM(TRUCK_NO))) AS truck
-       FROM FMS_WEIGHBRIDGE_TICKET
-       WHERE CAST(TIMBANG_ISI AS date) = '%s'
-         AND TRUCK_NO IS NOT NULL""" % latest
+q = """SELECT DISTINCT UPPER(LTRIM(RTRIM(TRUCK_ID))) AS truck
+       FROM HAULAGE_IWIP_CLEAN
+       WHERE CAST([DATE] AS date) = '%s' AND TRUCK_ID IS NOT NULL AND WMT > 0
+       UNION
+       SELECT DISTINCT UPPER(LTRIM(RTRIM(TRUCK_ID))) AS truck
+       FROM HAULAGE
+       WHERE CAST([DATE] AS date) = '%s' AND TRUCK_ID IS NOT NULL AND WMT > 0
+    """ % (latest, latest)
 try:
     hauled = pd.read_sql(q, w)
 except Exception as e:
@@ -68,7 +78,7 @@ except Exception as e:
 print("trucks that hauled on %s: %d" % (latest, len(hauled)))
 
 q = """SELECT DISTINCT UPPER(LTRIM(RTRIM(PLATE))) AS truck
-       FROM FMS_GPS_Historical
+       FROM FMS_PLAYBACK_TRACK_24H
        WHERE CAST(DATEADD(second, TS/1000, '1970-01-01') AS date) = '%s'
          AND PLATE IS NOT NULL""" % latest
 ingps = pd.read_sql(q, f)
@@ -89,9 +99,9 @@ print("missing count: %d" % len(miss))
 print("sample: %s" % ", ".join(miss[:14]))
 
 # Is the gap concentrated by contractor? Use the equipment master.
-q = """SELECT UPPER(LTRIM(RTRIM(EQUIPMENT_ID))) AS truck,
-              MAX(CONTRACTOR) AS contractor, MAX(EQUIPMENT_TYPE) AS etype
-       FROM EQUIPMENTS_HOURLY_STATUS GROUP BY UPPER(LTRIM(RTRIM(EQUIPMENT_ID)))"""
+q = """SELECT UPPER(LTRIM(RTRIM(ID_EQ))) AS truck,
+              MAX(CONTRACTOR) AS contractor, MAX(ACTIVITY) AS etype
+       FROM EQUIPMENTS_HOURLY_STATUS GROUP BY UPPER(LTRIM(RTRIM(ID_EQ)))"""
 try:
     mst = pd.read_sql(q, w)
     mst["in_gps"] = mst.truck.isin(gs)

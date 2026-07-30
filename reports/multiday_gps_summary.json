@@ -1,0 +1,18 @@
+{
+  "usable_days": [
+    "2026-07-15",
+    "2026-07-16",
+    "2026-07-18",
+    "2026-07-19"
+  ],
+  "truck_days": 54,
+  "trucks_distinct": 36,
+  "gps_fixes": 18917,
+  "trips": 67,
+  "wmt": 3422.6000000000004,
+  "day_x_truck_days": 24,
+  "by_contractor": {
+    "RIM": 54
+  },
+  "ceiling_reason": "GPS retention is a rolling window of days while the RIM haulage feed lags behind it, so only 4 calendar days carry both. The richest GPS day (2026-07-29, 859,198 fixes) is unusable because its only haulage rows are 46 SALES third-party trucks, which carry no telematics."
+}

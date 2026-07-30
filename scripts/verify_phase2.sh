@@ -344,6 +344,12 @@ $PY test_availability_usage.py >/dev/null 2>&1
 chk $? "J52  availability sizes the fleet and never scales tonnage" "see: python test_availability_usage.py"
 fi
 
+# Needs the congestion-segment extract, which requires the DB.
+if [ -f data/congestion_seg_hourly.csv ] && [ -f reports/speed_density_fit.json ]; then
+$PY test_speed_density.py >/dev/null 2>&1
+chk $? "J53  congestion measured, negligible, and kept out of the model" "see: python test_speed_density.py"
+fi
+
 # Needs the Day X GPS extract. Absent in a clean checkout, so skipped there.
 if [ -f data/day_x_segment_speeds.csv ] && [ -f data/day_x_gps_snapped.csv ]; then
 $PY test_segment_cross_validation.py >/dev/null 2>&1

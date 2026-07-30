@@ -1,0 +1,12 @@
+{
+  "rows_total": 36046,
+  "rows_used": 35006,
+  "window_days": 15.2,
+  "segments": 95,
+  "cells_with_3plus_densities": 187,
+  "within_cell_slope_kmh_per_truck": -0.0233,
+  "t_stat": -9.89,
+  "correlation": -0.0528,
+  "within_r2": 0.0028,
+  "significant": true
+}
