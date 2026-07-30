@@ -350,6 +350,10 @@ $PY test_speed_density.py >/dev/null 2>&1
 chk $? "J53  congestion measured, negligible, and kept out of the model" "see: python test_speed_density.py"
 fi
 
+# Pure local test with a stubbed connection, so it needs no VPN.
+$PY test_accumulator.py >/dev/null 2>&1
+chk $? "J54  the GPS accumulator is idempotent and loses no history" "see: python test_accumulator.py"
+
 # Needs the Day X GPS extract. Absent in a clean checkout, so skipped there.
 if [ -f data/day_x_segment_speeds.csv ] && [ -f data/day_x_gps_snapped.csv ]; then
 $PY test_segment_cross_validation.py >/dev/null 2>&1

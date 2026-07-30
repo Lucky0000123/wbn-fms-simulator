@@ -62,6 +62,31 @@ the site operator was right to challenge it. A full scan of both databases found
 at 3-second resolution, and 95 KM road segments with measured speed already
 aggregated in `FMS_CONGESTION_SEG`.
 
+### Banking the GPS feed forward (do this once)
+
+Retention deletes segment speeds within days, so **the record only grows if
+something appends it**. `scripts/accumulate_gps.py` does that and is idempotent —
+re-runs add nothing, so it is safe to schedule and safe to run after a gap.
+
+```bash
+# what is banked right now (needs no VPN)
+python scripts/accumulate_gps.py --status
+
+# append anything new; run daily while the VPN is up
+python scripts/accumulate_gps.py
+```
+
+To schedule it on the machine that has VPN access, add one crontab line:
+
+```
+0 7,19 * * *  cd /path/to/wbn-fms-simulator && .venv/bin/python scripts/accumulate_gps.py >> /tmp/gps_accum.log 2>&1
+```
+
+Twice daily is deliberate: `FMS_PLAYBACK_TRACK_24H` keeps about one day, so a
+single missed run can lose a shift. Every day this is not running is a day of
+segment speeds gone permanently — unlike every other gap in this project, this one
+cannot be fixed later.
+
 The real blocker is **retention**, now quantified precisely: only **4 calendar
 days** carry both GPS and haulage, and pooling all of them yields 19 segment
 observations with no segment/direction cell reaching n≥5. The richest GPS day in

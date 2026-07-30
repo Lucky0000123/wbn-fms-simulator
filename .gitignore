@@ -7,6 +7,7 @@ venv/
 # Phase 2 model artifacts — regenerate with `python train_model.py`
 # or POST /api/retrain. Metadata files are committed as reference.
 data/*.csv
+data/gps_archive/
 data/*.pkl
 data/model_metadata.json
 data/training_metadata.json
