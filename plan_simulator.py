@@ -340,9 +340,14 @@ def simulate(payload: dict) -> dict:
         if dump_min is None:
             dump_min, dump_basis = float(hist.get("median_dump_min") or 0), "route history"
 
-        # Keep the pre-rain figure so the same proportional uplift can be
-        # applied to the effective cycle below.
-        cycle_dry = cycle
+        # `cycle_dry = cycle` stood here, with a comment saying it was kept "so
+        # the same proportional uplift can be applied to the effective cycle
+        # below". Both are removed: ruff F841 flagged the variable as unused, and
+        # it was unused BECAUSE the weather fix established that rain must never
+        # reach the effective cycle. The comment therefore described the exact
+        # behaviour that must not happen, which is worse than the dead line --
+        # a future reader could have "restored" it.
+        #
         # RAIN LENGTHENS THE DWELL AT BOTH ENDS, SO THE CYCLE MUST CARRY BOTH.
         #
         # This used to add only the LOADING point's wet penalty. Because

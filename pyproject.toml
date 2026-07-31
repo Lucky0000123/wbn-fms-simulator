@@ -1,0 +1,50 @@
+# Tool configuration only. This project is a Flask app run from source, not a
+# distributable package, so there is deliberately NO [build-system] or [project]
+# table -- adding one would invite `pip install -e .` against a layout that is
+# not a package.
+#
+# NOTHING HERE HAS BEEN APPLIED TO THE EXISTING CODE. Reformatting ~9,000 lines
+# would bury the audit trail this project depends on: the commit log is the
+# record of what was measured and why, and a whitespace commit touching every
+# file makes `git log -p` and `git blame` useless for exactly the questions that
+# get asked here ("when did this coefficient change, and against what
+# evidence?"). Formatters are configured for NEW and MODIFIED code only.
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = [".venv", "data", "reports", "fixtures", "__pycache__"]
+
+# Ruff moved `select`/`ignore` under [tool.ruff.lint] in 0.5; at top level they
+# still work but emit a deprecation warning on every run, which trains people to
+# ignore ruff output. Kept in the modern location.
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = [
+    "E501",  # line length -- black owns this
+    "E741",  # ambiguous name `l`: used deliberately for a Leaflet layer variable
+]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true      # pymssql, playwright and joblib ship no stubs
+warn_unused_ignores = true
+# Deliberately NOT strict. This codebase is analysis-heavy pandas, where strict
+# mode produces hundreds of untyped-DataFrame complaints that say nothing about
+# correctness. Run it on a single module when changing that module.
+
+[tool.pytest.ini_options]
+# The gates are standalone scripts invoked by scripts/verify_phase2.sh, NOT
+# pytest tests -- `pytest` collecting test_*.py at the repo root would import
+# and execute them, hitting the DB and rewriting artifacts. testpaths keeps
+# pytest to the one directory that holds real pytest tests.
+testpaths = ["tests"]
+addopts = "-q"

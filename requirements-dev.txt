@@ -1,0 +1,42 @@
+# Development and verification tooling. Kept SEPARATE from requirements.txt
+# because that file is what the deployed copy on Rudolf's Mac installs, and it
+# has no need of formatters or a browser engine.
+#
+#   .venv/bin/pip install -r requirements-dev.txt
+#   .venv/bin/playwright install chromium      # ~140 MB, needed by J56 only
+#
+# Nothing here is imported by application code. If any of it becomes a runtime
+# dependency, move it to requirements.txt rather than relying on a dev machine
+# happening to have it.
+
+# Formatting and linting. CONFIGURED BUT NOT APPLIED to existing code -- see the
+# note at the top of pyproject.toml. Reformatting ~9,000 lines would bury the
+# audit trail that the commit log exists to preserve.
+black>=25.0
+ruff>=0.16
+isort>=6.0
+mypy>=1.15
+
+# Testing. NOTE pyproject sets testpaths=["tests"]: the root test_*.py files are
+# standalone gate SCRIPTS with module-level code that hits the DB and rewrites
+# artifacts, so a bare `pytest` would import and execute them. Do not remove
+# that setting.
+pytest>=8.0
+pytest-cov>=6.0
+
+# Statistics for the correlation work (HRM impact, speed-density fits).
+# scipy supplies pearsonr and the normal CDF used for Fisher-z pooling.
+scipy>=1.11
+statsmodels>=0.14
+
+# Browser verification for gate J56 (assessment view renders, canvases actually
+# drawn, no console errors, 1366x768 without overflow).
+playwright>=1.40
+
+# DB access for the extract scripts. Not in requirements.txt because every
+# endpoint falls back to fixtures without it.
+pymssql>=2.2
+
+# SQL introspection helper. Also silences the pandas warning that read_sql emits
+# for a raw DBAPI connection.
+sqlalchemy>=2.0

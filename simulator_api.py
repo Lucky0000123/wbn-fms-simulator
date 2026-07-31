@@ -271,7 +271,7 @@ def api_simulator_path_response():
         except Exception:
             rain = {}
         conn.close()
-    except Exception as exc:
+    except Exception:
         # Re-raise so _register serves the fixture. Returning an error payload
         # with HTTP 200 looks like success to the wrapper, so the fallback never
         # fired and this endpoint went blank whenever the VPN dropped.
@@ -583,7 +583,7 @@ def api_simulator_shift_context():
             bridges.append({"wb": wb, "km": km_by_num.get(str(int(wb)) if wb.isdigit() else wb),
                             "trucks": a["trucks"], "pct": round(100 * a["trucks"] / total, 1),
                             "otherPct": round(100 * a["other"] / a["trucks"], 1) if a["trucks"] else 0})
-    except Exception as exc:
+    except Exception:
         # Re-raise so _register serves the fixture — see the note in _register.
         raise
     maxmm = max([r["mm"] for r in rain], default=0)
@@ -633,7 +633,7 @@ def api_weighbridge_summary():
                   "otherShare": round(100 * other / total, 1) if total else 0, "status": status}
         _WB_HOME_CACHE = (_time.time(), result)
         return jsonify(result)
-    except Exception as exc:
+    except Exception:
         if _WB_HOME_CACHE:
             stale = dict(_WB_HOME_CACHE[1]); stale["stale"] = True
             return jsonify(stale)
@@ -697,7 +697,7 @@ def api_simulator_weighbridge():
         except Exception:
             wait_curve = []
         conn.close()
-    except Exception as exc:
+    except Exception:
         # Re-raise so _register serves the fixture — see the note in _register.
         raise
     # WBN revenue haulers (from LITE 3 dispatch, IWIP excluded). Everything else weighed at the bridge
