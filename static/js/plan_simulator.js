@@ -13,6 +13,9 @@ let _psRoutes = [], _psPlans = [], _psReady = false;
 function psInit() {
   if (_psReady) return;
   _psReady = true;
+  // Sync once at start-up so the Plan tab shows the right figure even if the
+  // user never touches the simulator's control.
+  psSyncShift();
   fetch('/api/simulate/options').then(r => r.json()).then(d => {
     _psRoutes = d.routes || [];
     const sel = q('ps-route');
@@ -24,6 +27,40 @@ function psInit() {
     const sel = q('ps-route');
     if (sel) sel.innerHTML = '<option>could not load routes</option>';
   });
+}
+
+/* ONE shift-length control, two consumers.
+ *
+ * #ps-shift (minutes) drives the engine. #plan-hours (hours) drives plan.js's
+ * local estimate on the Plan tab. They used to be independent inputs on
+ * different tabs, so a planner could set 10 h on one and 12 h on the other and
+ * nothing on screen said which applied to the number they were reading. Two
+ * controls for one concept is precisely how the 0.85 availability override
+ * survived for as long as it did.
+ *
+ * #plan-hours is now a hidden field written from here, so divergence is not
+ * possible rather than merely discouraged. plan.js is unchanged: it still reads
+ * `q('plan-hours').value`.
+ */
+function psSyncShift() {
+  const src = q('ps-shift');
+  if (!src) return;
+  const mins = parseFloat(src.value) || 720;
+  const hours = mins / 60;
+  const hidden = q('plan-hours');
+  if (hidden) hidden.value = hours;
+  const shown = q('plan-hours-display');
+  // Whole hours read better; 7.5 h must not render as "8".
+  if (shown) shown.textContent = (Math.round(hours * 10) / 10).toString();
+}
+
+function psShiftChanged() {
+  psSyncShift();
+  // The Plan tab's estimate is derived from the same figure, so it has to be
+  // recomputed too -- otherwise switching tabs shows a stale number that
+  // silently disagrees with the simulator.
+  if (typeof computePlan === 'function') { try { computePlan(); } catch (e) {} }
+  psRun();
 }
 
 function psAddPlan() {

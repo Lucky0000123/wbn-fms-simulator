@@ -458,6 +458,15 @@ $PY test_hrm_impact.py >/dev/null 2>&1
 chk $? "J62  HRM analysis controls the route-length confound" "see: python test_hrm_impact.py"
 fi
 
+# J63 — the committed road centreline. A deliberate, ONE-FILE exception to "no
+# site geometry on the public mirror": a road centreline (road, km, lat, lng and
+# nothing else) that OpenStreetMap already renders, committed so the section-9
+# map works on a fresh clone. The schema assertion is the load-bearing one: a
+# re-export that quietly added a `zone` column would leak zone data through a
+# path that already has permission, and nothing else would notice.
+$PY test_map_geometry.py >/dev/null 2>&1
+chk $? "J63  committed road centreline, and only that" "see: python test_map_geometry.py"
+
 
 echo
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"

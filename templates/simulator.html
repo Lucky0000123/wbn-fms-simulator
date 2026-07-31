@@ -104,7 +104,7 @@
         <aside class="c3-flow" id="c3-flow">
           <div class="c3-flow-head"><h3>07:00–19:00 haul-road scenario planner</h3><span id="flow-mode-badge" class="flow-mode-badge"></span><button class="btn" id="c3-flow-play" onclick="flowRunOrPause()">▶ Run</button><button class="ms-btn" style="min-width:0" onclick="flowReset()">Reset</button></div>
           <div class="flow-planner" id="flow-planner"></div>
-          <details class="flow-advanced"><summary>Advanced simulation settings</summary><button class="ms-btn" style="min-width:0;margin-top:8px" onclick="flowEstimateSpeeds()">Estimate speeds from actuals</button><div class="c3-flow-controls"><label>Start position<select id="flow-start" onchange="flowScenarioChanged()"><option value="split">Split endpoints</option><option value="source">All at sources</option><option value="destination">All at destinations</option></select></label><label>Loaded km/h<input id="flow-loaded-speed" type="number" min="5" max="80" value="25" onchange="flowScenarioChanged(true)"></label><label>Empty km/h<input id="flow-empty-speed" type="number" min="5" max="80" value="35" onchange="flowScenarioChanged(true)"></label><label>Release stagger min<input id="flow-stagger" type="number" min="0" max="60" step="0.5" value="0" onchange="flowScenarioChanged()"></label><label>Min headway sec<input id="flow-headway" type="number" min="10" max="600" value="90" onchange="flowScenarioChanged()"></label><label>Load + dump min<input id="flow-dwell" type="number" min="0" max="120" value="12" onchange="flowScenarioChanged()"></label><label>Operating hours<input id="flow-hours" type="number" min="12" max="12" value="12" disabled></label><label>Trace elements<input id="flow-elements" type="number" min="50" max="1500" step="50" value="500" onchange="flowScenarioChanged()"></label></div></details>
+          <details class="flow-advanced"><summary>Advanced simulation settings</summary><button class="ms-btn" style="min-width:0;margin-top:8px" onclick="flowEstimateSpeeds()">Estimate speeds from actuals</button><div class="c3-flow-controls"><label>Start position<select id="flow-start" onchange="flowScenarioChanged()"><option value="split">Split endpoints</option><option value="source">All at sources</option><option value="destination">All at destinations</option></select></label><label>Loaded km/h<input id="flow-loaded-speed" type="number" min="5" max="80" value="25" onchange="flowScenarioChanged(true)"></label><label>Empty km/h<input id="flow-empty-speed" type="number" min="5" max="80" value="35" onchange="flowScenarioChanged(true)"></label><label>Release stagger min<input id="flow-stagger" type="number" min="0" max="60" step="0.5" value="0" onchange="flowScenarioChanged()"></label><label>Min headway sec<input id="flow-headway" type="number" min="10" max="600" value="90" onchange="flowScenarioChanged()"></label><label>Load + dump min<input id="flow-dwell" type="number" min="0" max="120" value="12" onchange="flowScenarioChanged()"></label><label>Trace elements<input id="flow-elements" type="number" min="50" max="1500" step="50" value="500" onchange="flowScenarioChanged()"></label></div></details>
           <div class="c3-flow-kpis"><div class="c3-flow-kpi"><b id="flow-attain">—</b><span id="flow-attain-label">Estimated trips / 12h shift</span></div><div class="c3-flow-kpi"><b id="flow-prod">—</b><span id="flow-prod-label">Est. production / shift</span></div><div class="c3-flow-kpi"><b id="flow-vc">—</b><span>Peak lane V/C</span></div><div class="c3-flow-kpi"><b id="flow-queue">—</b><span>Est. queue DT</span></div></div><div class="c3-flow-alert" id="flow-alert"></div><div class="flow-hotspots" id="flow-hotspots" aria-label="Congestion risk by haul-road section"></div><div class="c3-flow-routes" id="flow-routes"></div><div class="c3-flow-clock" id="c3-flow-clock">07:00</div><div class="c3-flow-meta" id="c3-flow-meta"></div><div class="c3-flow-progress"><i id="c3-flow-progress"></i></div><svg id="c3-flow-svg" viewBox="0 0 1000 390" role="img" aria-label="Weighted trace particles sharing one two-way left-hand-traffic road on the proportional TF to FENI corridor"></svg><p class="c3-flow-note" id="flow-note">Average-shift replay uses the database's explicit shift count: daily RIT and WMT are divided by NB_SHIFT, while NB_DT is already the average shift fleet. Missing shift counts are flagged and are never silently divided by two.</p>
         </aside>
       </div>
@@ -205,7 +205,20 @@
             <h3 style="margin-bottom:3px">2 · Conditions</h3>
             <label class="plan-cond">Expected rainfall <span><input id="plan-rain" type="number" min="0" step="1" value="0" oninput="computePlan()"> mm</span></label>
             <label class="plan-cond">Weighbridges open <span><input id="plan-wb" type="number" min="1" step="1" value="8" oninput="computePlan()"> of 18</span></label>
-            <label class="plan-cond">Shift hours <span><input id="plan-hours" type="number" min="1" step="1" value="12" oninput="computePlan()"> h</span></label>
+            <!-- Shift hours is NO LONGER editable here. It was a second,
+                 independent control for the same concept: this one drove
+                 plan.js's local estimate while #ps-shift on the Production
+                 Simulator tab drove the engine, so the two tabs could quote
+                 different shift lengths with nothing on screen saying which
+                 applied. Two controls for one concept is how the 0.85
+                 availability defect survived. The field is kept as a HIDDEN
+                 input so plan.js is untouched, and psSyncShift() drives it from
+                 #ps-shift -- they cannot diverge. -->
+            <label class="plan-cond">Shift hours <span>
+              <input id="plan-hours" type="hidden" value="12">
+              <b id="plan-hours-display">12</b> h
+              <span class="muted" style="font-size:10.5px">&mdash; set on the Production Simulator tab</span>
+            </span></label>
             <div class="effkpis" id="plan-kpis" style="margin-top:12px"></div>
           </div>
         </div>
@@ -242,9 +255,22 @@
                   <option value="dry">Dry</option><option value="wet">Wet</option>
                 </select>
               </label>
-              <label style="width:150px">
-                <div class="muted" style="font-size:11px;margin-bottom:3px">Shift length (min)</div>
-                <input id="ps-shift" type="number" min="60" max="1440" value="720" style="width:100%" onchange="psRun()">
+              <!-- THE ONLY shift-length control in the app. The Plan tab's
+                   #plan-hours used to be a second, independent one; it is now a
+                   hidden field driven from here, so the two can never disagree.
+                   Range narrowed from 60-1440 to 480-720: measured on 538,586
+                   truck-shifts, 98.5% are exactly 12.0 h, the shortest observed
+                   is 8.0 h, and NOTHING is below 6 h. The 1.3% above 12 h is
+                   almost entirely 24.00 h, which is a day-aggregated record
+                   rather than a 24-hour shift. min/max here is guidance, not a
+                   block -- a typed value outside it still runs, and the engine
+                   labels anything off 720 as an extrapolation. -->
+              <label style="width:190px">
+                <div class="muted" style="font-size:11px;margin-bottom:3px">Shift length (min)
+                  <span title="Measured over 538,586 truck-shifts: 98.5% are exactly 12.0 h (720 min), shortest observed 8.0 h. The effective cycle that trips divide by is itself calibrated at 720, so other values are extrapolations and are labelled as such.">&#9432;</span>
+                </div>
+                <input id="ps-shift" type="number" min="480" max="720" step="30" value="720" style="width:100%" onchange="psShiftChanged()">
+                <div class="muted" style="font-size:10px;margin-top:2px;line-height:1.3">data supports 8&ndash;12 h (480&ndash;720)</div>
               </label>
               <!-- The "Availability (assumed)" input that stood here is REMOVED.
                    It defaulted to 0.85 and was sent to /api/simulate, which

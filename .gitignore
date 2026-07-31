@@ -25,6 +25,14 @@ data/trip_diagnostic.json
 data/elevation_cache.json
 data/*.parquet
 !data/model_metadata.sample.json
+# The haul-road CENTRELINE is committed, on purpose. It is a road survey --
+# km marker, latitude, longitude, road code -- and nothing else: no geofences,
+# no loading or dumping zones, no security boundaries, no tonnages. The corridor
+# it describes is already rendered by OpenStreetMap. Committing it is what makes
+# the section-9 map work on a fresh clone and on the public demo, which
+# otherwise showed an empty state. Geofence and zone data stay OUT.
+!data/haul_road_chainage_public.csv
+
 !data/training_metadata.sample.json
 reports/database_schema_raw.json
 reports/schema_full_raw.json

@@ -1,6 +1,6 @@
 # HANDOVER — WBN Production Simulator
 
-*Written 2026-07-30; revised 2026-07-31. Harness **62/62** (`J55`–`J62` added).
+*Written 2026-07-30; revised 2026-07-31. Harness **63/63** (`J55`–`J63` added).
 Since the first draft: the GPS accumulator has run against the live server and is
 scheduled, the Plan Assessment View is built, a 15% tonnage under-quote in the UI
 was found and fixed, the weather path was audited (a flag I raised turned out to
@@ -809,6 +809,7 @@ simulator).
 | J60 | **`shift_minutes` labels its extrapolation** — no UI/engine disagreement, but the effective cycle is calibrated at 720 min and 98.5% of truck-shifts are exactly 12.0 h, so the fixed/per-trip split is unidentifiable |
 | J61 | **segment speeds split loaded vs empty** — `DIR` verified against tickets (100% of loaded corridor hauls run down-chainage); the majority-and-sign check catches a silent inversion |
 | J62 | **the HRM analysis controls the route-length confound** — protects the METHOD, since the first answer (r=−0.46, p≈1e−21) was route length, not HRM |
+| J63 | **the committed road centreline, and only that** — pins the 4-column schema, so a re-export cannot leak a `zone` column through a path that already has permission |
 
 Gate order in the file is A→J with J50/J51 last (they depend on optional
 extracts); numbering is not strictly sequential in the output.

@@ -565,16 +565,72 @@ WARNING: `use_reloader=False`, so **restart the server after editing
 `templates/simulator.html`** — twice this round a template change appeared to be
 a code bug because the browser was served the cached old template.
 
+## Dev tooling — configured, NOT applied
+
+`requirements-dev.txt` + `pyproject.toml`. black, ruff, isort, mypy, pytest.
+
+**Nothing is applied to existing code and that is deliberate.** black would
+reformat 60 files and ruff reports 133 findings; a whitespace commit touching
+every file makes `git log -p` and `git blame` useless for the questions actually
+asked here ("when did this coefficient change, and against what evidence?"). Use
+them on code you are already modifying.
+
+Two settings are load-bearing:
+
+- **`testpaths = ["tests"]`.** The root `test_*.py` files are standalone gate
+  SCRIPTS with module-level code that connects to the DB and rewrites artifacts.
+  A bare `pytest` would import and **execute** all of them. Do not remove this.
+- **ruff's `select`/`ignore` live under `[tool.ruff.lint]`.** At the top level
+  they still work but warn on every run, which trains people to ignore ruff.
+
+Of the 133 findings, two were acted on because they were misleading rather than
+merely untidy — a dead `cycle_dry` whose comment described behaviour the weather
+fix had made forbidden, and four `except Exception as exc:` that never used
+`exc`. The rest are house style (E702/E731 in analysis scripts, E402 where
+`sys.path` must be set before project imports) and are **not** a backlog.
+
+## ONE shift-length control
+
+There were **three**. `#ps-shift` (minutes) drove the engine; `#plan-hours`
+(hours) drove `plan.js`'s local estimate on another tab; `#flow-hours` sat
+`disabled` and unread in a collapsed panel on a third. Two controls for one
+concept is how the 0.85 availability override survived.
+
+Now: `#ps-shift` is the only editable one. `#plan-hours` is a **hidden** field
+written by `psSyncShift()` so the two cannot diverge (plan.js is unchanged and
+still reads `.value`). `#flow-hours` is deleted. `J60` counts editable
+shift/hours inputs and fails at two.
+
+Range narrowed **60–1440 → 480–720**. Measured on 538,586 truck-shifts: 98.5%
+are exactly 12.0 h, the shortest observed is 8.0 h, nothing is below 6 h, and the
+1.3% above 12 h is almost entirely `24.00` — a day-aggregated record, not a
+24-hour shift. It is guidance, not a block: a typed value outside the range still
+runs and the engine labels it as an extrapolation.
+
+## The road centreline IS committed — a one-file exception
+
+`data/haul_road_chainage_public.csv`, un-ignored explicitly. Four columns —
+`road, km, lat, lng` — and nothing else. The corridor is already rendered by
+OpenStreetMap, so withholding it bought no secrecy and cost the section-9 map on
+every fresh clone and on the public demo.
+
+**Geofences, loading and dumping zones, security boundaries, tonnages,
+contractors and equipment stay out.** `weighbridge-positions` still encodes
+`km`/`offM` rather than coordinates.
+
+`/api/simulator/corridor-geometry` prefers the full gitignored extract and falls
+back to the committed copy, reporting which in `geometrySource`. `J63` pins the
+schema — the load-bearing assertion, because a re-export that quietly added a
+`zone` column would leak zone data through a path that already has permission
+and nothing else would notice. Mutation-tested: adding a `zone` column fails it;
+so does un-ignoring `data/*.csv`, which would have exposed 22 files including
+`trip_features.csv`.
+
 ## Score
 
-**62/62**, measured 2026-07-31 in no-DB mode, with `J55`–`J62` added. `G24` gates
+**63/63**, measured 2026-07-31 in no-DB mode, with `J55`–`J63` added. `G24` gates
 the **mirror only** — see the top of this file and the comment above it in
 `scripts/verify_phase2.sh`.
-
-Site **coordinates are not committed**. `weighbridge-positions` uses `km`/`offM`
-rather than lat/lng and no fixture carries coordinates, so the section-9 map
-reads `data/haul_road_chainage.csv` (gitignored, cached, no VPN needed) and shows
-an honest empty state where it is absent — a fresh clone, or the public demo.
 
 `data/simulator_model_results.json` no longer churns: `simulator_model.
 preserve_stamp()` carries `generated_at` forward when nothing else changed, so

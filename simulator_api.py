@@ -770,32 +770,45 @@ _GEOM_CACHE = None
 def api_simulator_corridor_geometry():
     """Haul-road centreline polylines, for the map in the assessment view.
 
-    NO FIXTURE, AND NO COMMITTED COORDINATES -- deliberately. Every other
-    fixture in this repo is free of lat/lng, and `weighbridge-positions` encodes
-    chainage offsets (`km`, `offM`) rather than coordinates even though the live
-    endpoint has the geofences. AGENTS.md warns against committing geofence data
-    to the mirror, which is public. So site geometry is read from the local
-    `data/haul_road_chainage.csv` extract (cached, needs no VPN) and this returns
-    an honest empty state where that file is absent -- a fresh clone, or the
-    public demo. The map then says so instead of drawing an empty ocean.
+    TWO SOURCES, IN ORDER. The full extract `data/haul_road_chainage.csv` is
+    gitignored like the rest of `data/`; `data/haul_road_chainage_public.csv` is
+    COMMITTED and is the fallback, so the map works on a fresh clone and on the
+    public demo instead of showing an empty state.
 
-    Downsampled to ~1 point per 0.25 km: the raw table is 3,122 markers, which
-    is more resolution than a 1366px screen can show and a needlessly large
-    payload for a polyline.
+    Committing that file is a deliberate, narrow exception to "no site geometry
+    on the mirror". It holds a road CENTRELINE and nothing else -- road code, km
+    marker, latitude, longitude, verified as the only four columns -- with no
+    geofences, no loading or dumping zones, no security boundaries and no
+    tonnages. The corridor is already rendered by OpenStreetMap. Geofence and
+    zone data remain uncommitted, and `weighbridge-positions` still encodes
+    `km`/`offM` rather than coordinates.
+
+    Downsampled to ~1 point per 0.25 km: the raw table is 3,122 markers, more
+    resolution than a 1366px screen can show and a needlessly large payload.
     """
     global _GEOM_CACHE
     if _GEOM_CACHE is not None:
         return jsonify(_GEOM_CACHE)
 
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "data", "haul_road_chainage.csv")
-    if not os.path.exists(path):
+    here = os.path.dirname(os.path.abspath(__file__))
+    # Full extract first -- it is the live survey and may be newer. The
+    # committed copy is the fallback, not the primary, so a site that re-runs
+    # the extract sees its own data.
+    candidates = [(os.path.join(here, "data", "haul_road_chainage.csv"), "extract"),
+                  (os.path.join(here, "data", "haul_road_chainage_public.csv"), "committed")]
+    path, source = None, None
+    for p, tag in candidates:
+        if os.path.exists(p):
+            path, source = p, tag
+            break
+    if path is None:
         return jsonify({
             "ok": False, "roads": [],
-            "reason": ("no corridor geometry on this machine: "
-                       "data/haul_road_chainage.csv is gitignored, because site "
-                       "coordinates are not committed to a public mirror. "
-                       "Rebuild it from HAUL_ROAD_STA with the VPN up."),
+            "reason": ("no corridor geometry found: neither "
+                       "data/haul_road_chainage.csv nor "
+                       "data/haul_road_chainage_public.csv is present. The "
+                       "latter is committed, so this should not happen in a "
+                       "clean checkout."),
         })
     try:
         import csv as _csv
@@ -833,6 +846,7 @@ def api_simulator_corridor_geometry():
         "ok": True, "roads": roads,
         "roadAlias": _ROAD_ALIAS,
         "corridor": _SIM_CORRIDOR,
+        "geometrySource": source,          # "extract" (local) or "committed"
         "note": ("centreline from HAUL_ROAD_STA, downsampled to ~0.25 km. "
                  "Segment ids use TF for the road the chainage table calls TOFU."),
     }

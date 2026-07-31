@@ -115,6 +115,43 @@ js = open(os.path.join(ROOT, "static/js/plan_simulator.js")).read()
 check("the UI surfaces the extrapolation warning",
       "shift_minutes_extrapolated" in js)
 
+print("\n=== exactly ONE editable shift control in the whole app ===")
+
+# There were THREE. #ps-shift drove the engine, #plan-hours drove plan.js's
+# local estimate on another tab, and #flow-hours sat disabled and unread in a
+# collapsed panel on a third. Two controls for one concept is how the 0.85
+# availability override survived, so this counts them rather than trusting that
+# nobody adds a fourth.
+inputs = re.findall(r"<input\b[^>]*>", html)
+shifty = [t for t in inputs
+          if re.search(r'id="(ps-shift|plan-hours|flow-hours|[a-z-]*shift[a-z-]*|[a-z-]*hours[a-z-]*)"', t)]
+editable = [t for t in shifty
+            if 'type="hidden"' not in t and "disabled" not in t]
+ids = [re.search(r'id="([^"]+)"', t).group(1) for t in editable]
+check("exactly one editable shift/hours input", len(editable) == 1, ids)
+check("and it is ps-shift (the one that reaches the engine)",
+      ids == ["ps-shift"], ids)
+check("#plan-hours survives as a HIDDEN field so plan.js keeps working",
+      'id="plan-hours"' in html and 'id="plan-hours" type="hidden"' in html)
+check("the inert #flow-hours display is gone", 'id="flow-hours"' not in html)
+check("plan-hours is driven from ps-shift, so they cannot diverge",
+      "psSyncShift" in js and "plan-hours" in js)
+
+print("\n=== the input range matches what the data supports ===")
+
+lo = re.search(r'id="ps-shift"[^>]*\bmin="(\d+)"', html)
+hi = re.search(r'id="ps-shift"[^>]*\bmax="(\d+)"', html)
+check("min is 480 (8.0 h, the shortest shift observed)",
+      lo is not None and int(lo.group(1)) == 480, lo.group(1) if lo else None)
+check("max is 720 (12.0 h, 98.5% of shifts and the calibration point)",
+      hi is not None and int(hi.group(1)) == 720, hi.group(1) if hi else None)
+# The old range let a planner ask for 1440 -- a 2x extrapolation -- with nothing
+# but the warning to stop them.
+check("the old 1440 ceiling is gone",
+      not re.search(r'id="ps-shift"[^>]*max="1440"', html))
+check("the evidence is on screen, not only in the docs",
+      "538,586" in html or "538586" in html)
+
 print()
 if FAILED:
     print("J60 FAILED: %d check(s). First: %s" % (len(FAILED), FAILED[0]))
