@@ -1,0 +1,93 @@
+[
+  {
+    "name": "capability",
+    "status": 200,
+    "seconds": 0.15,
+    "ok": true,
+    "from": "2025-09-01",
+    "to": "2026-07-31",
+    "inclIwip": false,
+    "days": 323,
+    "wmtPerDay": 121083.586,
+    "n_paths": 67,
+    "servedFrom": null
+  },
+  {
+    "name": "capability-narrow",
+    "status": 200,
+    "seconds": 0.01,
+    "ok": true,
+    "from": "2026-07-01",
+    "to": "2026-07-31",
+    "inclIwip": false,
+    "days": 20,
+    "wmtPerDay": 9178.578,
+    "n_paths": 8
+  },
+  {
+    "name": "capability-warm-worst",
+    "status": 200,
+    "seconds": 0.08,
+    "note": "J64 slowest of 6 distinct filter combos"
+  },
+  {
+    "name": "mutation-no-snapshot",
+    "seconds": [
+      16.73,
+      16.07
+    ],
+    "result": "CAUGHT"
+  },
+  {
+    "name": "mutation-restored",
+    "seconds": [
+      0.06,
+      0.01,
+      0.05
+    ],
+    "result": "OK"
+  },
+  {
+    "name": "trucks",
+    "status": 200,
+    "seconds": 0.02,
+    "servedFrom": "fixture",
+    "n": 2000
+  },
+  {
+    "name": "constraints",
+    "status": 200,
+    "seconds": 0.0,
+    "n_sec": 3,
+    "n_paths": 8
+  },
+  {
+    "name": "path-response",
+    "status": 200,
+    "seconds": 14.79,
+    "n": 53,
+    "note": "cold; not on Apply path"
+  },
+  {
+    "name": "congestion-model",
+    "status": 200,
+    "seconds": 2.21,
+    "n": 94,
+    "days": 16
+  },
+  {
+    "name": "weighbridge",
+    "status": 200,
+    "seconds": 6.5,
+    "n_days": 68
+  },
+  {
+    "name": "iwip-tonnage",
+    "excl_wmt_per_day": 121083.6,
+    "incl_wmt_per_day": 165746.3
+  },
+  {
+    "name": "snapshot_rows",
+    "n": 21650
+  }
+]
