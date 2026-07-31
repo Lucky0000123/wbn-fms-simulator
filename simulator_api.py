@@ -101,16 +101,40 @@ def _conn(database="WBN_DATABASE"):
                            login_timeout=6, database=database, timeout=45)
 
 
+def _served_from_fixture(payload, why):
+    """Tag a fixture response so the client can say so.
+
+    Added 2026-07-31. The fallback was previously indistinguishable from live
+    data on the wire, which meant a UI could only be honest about cached figures
+    by guessing. Additive and defensive: a fixture that is not a dict (none are
+    today) is returned untouched rather than crashing the fallback path, which
+    is the one path that must never fail.
+    """
+    if isinstance(payload, dict):
+        payload = dict(payload)
+        payload["servedFrom"] = "fixture"
+        payload["servedFromReason"] = why
+    return payload
+
+
 def _register(path, fn, fixture, methods=None):
     """Wrap an endpoint: serve the fixture when there's no DB (or on any error), else run the real logic."""
     def wrap(*a, **k):
         if not _db_ready():
-            return jsonify(_fixture(fixture))
+            return jsonify(_served_from_fixture(
+                _fixture(fixture), "no database configured"))
         try:
             return fn(*a, **k)
         except Exception as e:            # noqa: BLE001 — any failure falls back to sample data
             print("[sim_api] %s -> fixture fallback (%s)" % (getattr(fn, "__name__", "?"), e))
-            return jsonify(_fixture(fixture))
+            # This is the "configured but unreachable" case -- the normal state
+            # here, because the site VPN drops every few minutes. An endpoint
+            # that catches its own exception and returns an error payload never
+            # reaches this line, and its section renders empty while a complete
+            # fixture sits unused. Do not swallow exceptions in endpoint logic.
+            return jsonify(_served_from_fixture(
+                _fixture(fixture),
+                "database configured but unreachable: %s" % str(e)[:120]))
     bp.add_url_rule(path, fn.__name__, wrap, methods=methods or ["GET"])
 
 
@@ -248,7 +272,10 @@ def api_simulator_path_response():
             rain = {}
         conn.close()
     except Exception as exc:
-        return jsonify({"ok": False, "error": "history unavailable — %s" % str(exc)[:120]}), 200
+        # Re-raise so _register serves the fixture. Returning an error payload
+        # with HTTP 200 looks like success to the wrapper, so the fallback never
+        # fired and this endpoint went blank whenever the VPN dropped.
+        raise
     from collections import defaultdict
     # Route labels come from the shared canonicaliser so path keys match the
     # model's vocabulary exactly. The rain gauge is then chosen from that
@@ -362,17 +389,18 @@ def api_simulator_congestion_model():
     """PREVIEW: measured speed-vs-traffic per haul-road segment (from FMS_CONGESTION_SEG) — the raw data
     for a future speed-density (fundamental-diagram) congestion model. Returns per-segment observations
     plus a data-anchored free-flow speed and observed peak throughput. Honest about the sparse coverage."""
-    try:
-        conn = _gf_db_conn(); cur = conn.cursor()
-        cur.execute("SELECT SEG_ID, TRUCK_N, CASE WHEN FIX_N>0 THEN SUM_SPD/FIX_N END, "
-                    "MIN(HOUR_TS) OVER(), MAX(HOUR_TS) OVER() FROM dbo.FMS_CONGESTION_SEG "
-                    "WHERE TRUCK_N>0 AND FIX_N>0")
-        rows = cur.fetchall(); conn.close()
-    except Exception as exc:
-        # densityFit still ships: it comes from a committed report, not this
-        # query, so the UI can caption the finding even with the DB down.
-        return jsonify({"ok": False, "densityFit": _density_fit(),
-                        "error": "congestion data unavailable — %s" % str(exc)[:120]}), 200
+    # NOT wrapped in try/except, deliberately. This used to catch its own
+    # exception and return {"ok": false, ...} with HTTP 200, which _register
+    # reads as success -- so the fixture fallback never fired and section 3 of
+    # the assessment view rendered empty whenever the VPN blipped, which is most
+    # of the time, while a complete 94-segment fixture sat unused. Letting the
+    # exception propagate is the whole mechanism: _register serves the fixture
+    # and tags it `servedFrom: "fixture"` so the UI can label it as cached.
+    conn = _gf_db_conn(); cur = conn.cursor()
+    cur.execute("SELECT SEG_ID, TRUCK_N, CASE WHEN FIX_N>0 THEN SUM_SPD/FIX_N END, "
+                "MIN(HOUR_TS) OVER(), MAX(HOUR_TS) OVER() FROM dbo.FMS_CONGESTION_SEG "
+                "WHERE TRUCK_N>0 AND FIX_N>0")
+    rows = cur.fetchall(); conn.close()
     from collections import defaultdict
     obs = defaultdict(list); span = [None, None]
     for seg, tn, spd, mn, mx in rows:
@@ -528,7 +556,8 @@ def api_simulator_shift_context():
                             "trucks": a["trucks"], "pct": round(100 * a["trucks"] / total, 1),
                             "otherPct": round(100 * a["other"] / a["trucks"], 1) if a["trucks"] else 0})
     except Exception as exc:
-        return jsonify({"ok": False, "error": "shift context unavailable — %s" % str(exc)[:100]})
+        # Re-raise so _register serves the fixture — see the note in _register.
+        raise
     maxmm = max([r["mm"] for r in rain], default=0)
     rain_assess = ("Heavy rain — likely traction/mud impact" if maxmm >= 10 else
                    "Some rain — possible impact" if maxmm >= 2 else "Dry — no rain effect")
@@ -580,7 +609,11 @@ def api_weighbridge_summary():
         if _WB_HOME_CACHE:
             stale = dict(_WB_HOME_CACHE[1]); stale["stale"] = True
             return jsonify(stale)
-        return jsonify({"ok": False, "error": "Weighbridge data unavailable", "detail": str(exc)[:100]})
+        # The stale-cache branch above is PREFERRED over the fixture: it is real
+        # data from minutes ago rather than a shipped sample, and it already
+        # flags itself with `stale`. Only when there is no cache at all does
+        # this re-raise, so _register serves the fixture.
+        raise
 
 def api_simulator_weighbridge():
     """Historical weighbridge load & queue visibility. From HAULAGE_IWIP_CLEAN (per-truck weigh events)
@@ -637,7 +670,8 @@ def api_simulator_weighbridge():
             wait_curve = []
         conn.close()
     except Exception as exc:
-        return jsonify({"ok": False, "error": "weighbridge history unavailable — %s" % str(exc)[:120]}), 200
+        # Re-raise so _register serves the fixture — see the note in _register.
+        raise
     # WBN revenue haulers (from LITE 3 dispatch, IWIP excluded). Everything else weighed at the bridge
     # (IWIP internal fleet, PT Position, etc.) uses the road/bridges but adds no WBN WMT.
     WBN_HAULERS = {"RIM", "PPP", "SSS", "SMA", "STM", "HJS", "GMG", "CKB", "HFNC"}

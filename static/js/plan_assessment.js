@@ -303,8 +303,27 @@ function paSpeed() {
   });
 
   const totalObs = list.reduce((a, s) => a + (s.n || 0), 0);
+  // Fixture-served data is labelled, never passed off as live. The server tags
+  // the fallback because the VPN here drops every few minutes, so "cached" is
+  // the normal case rather than an edge case.
+  const cached = (_paCongestion || {}).servedFrom === 'fixture';
+  // The server's reason is a raw driver error ("DB-Lib error message 20009...")
+  // with embedded newlines. Useful on hover, unreadable in a sentence, so it
+  // goes in the title and the visible text says the operational thing instead.
+  const rawReason = (_paCongestion || {}).servedFromReason || '';
+  const shortReason = /unreachable/i.test(rawReason)
+    ? 'the site link or database is down'
+    : 'no database is configured on this machine';
+  const cachedBanner = cached
+    ? '<b style="color:' + PA_C.warn + '" title="' + paEsc(rawReason) + '">'
+      + 'Cached segment speeds.</b> Live segment data is unavailable because '
+      + shortReason + ', so these are the last captured speeds shipped with the '
+      + "app, not today's. The shape of the corridor and the relative "
+      + 'differences between segments hold; absolute km/h may be stale. '
+    : '';
   document.getElementById('pa-speed-note').innerHTML =
-    `Road <b>${paEsc(_paRoad)}</b>: ${list.length} segments, ${paNum(totalObs)} `
+    cachedBanner
+    + `Road <b>${paEsc(_paRoad)}</b>: ${list.length} segments, ${paNum(totalObs)} `
     + `segment-hours over ${paNum((_paCongestion || {}).days)} days of retention. `
     + 'The two lines are <b>measured mean speed</b> and the <b>free-flow</b> speed '
     + 'anchored in the data (p85 of speeds in the bottom traffic quintile). '

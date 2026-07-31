@@ -40,7 +40,18 @@ def main():
         # SHARES a dumping point, so section 4 has something real to report.
         pg.click("#tabbtn-plansim")
         pg.wait_for_selector("#ps-route", timeout=15000)
-        pg.wait_for_timeout(1200)
+
+        # Wait for the CONDITION, not a fixed sleep. With the DB configured but
+        # unreachable, other start-up fetches stall for seconds and the options
+        # fetch lands at ~4.5s instead of well under 1s -- a 1200 ms sleep here
+        # failed all 17 checks and looked like a total page failure when nothing
+        # was wrong with the page at all.
+        try:
+            pg.wait_for_function(
+                "() => document.querySelectorAll('#ps-route option').length > 1",
+                timeout=30000)
+        except Exception:                                          # noqa: BLE001
+            pass                     # let the check below report it properly
 
         opts = pg.eval_on_selector_all(
             "#ps-route option", "els => els.map(e => e.textContent)")
@@ -55,7 +66,15 @@ def main():
             pg.select_option("#ps-route", index=idx)
             pg.fill("#ps-trucks", str(trucks))
             pg.click("text=Add haul")
-            pg.wait_for_timeout(1800)
+            # Wait for the simulation to actually land rather than sleeping: the
+            # table shows "Simulating..." until /api/simulate returns.
+            try:
+                pg.wait_for_function(
+                    "() => {const b=document.getElementById('ps-rows');"
+                    " return b && !b.textContent.includes('Simulating') "
+                    "&& b.querySelectorAll('tr').length > 0;}", timeout=30000)
+            except Exception:                                      # noqa: BLE001
+                pass
             return True
 
         # TWO DIFFERENT origins into ONE destination, so section 4 has a genuinely
@@ -80,7 +99,14 @@ def main():
         pg.click("text=Run assessment")
         pg.wait_for_timeout(2500)
         pg.click("text=Run assessment")
-        pg.wait_for_timeout(3000)
+        # Wait for the assessment to populate, then a short settle for the charts.
+        try:
+            pg.wait_for_function(
+                "() => {const b=document.getElementById('pa-breakdown-rows');"
+                " return b && b.querySelectorAll('tr').length > 0;}", timeout=30000)
+        except Exception:                                          # noqa: BLE001
+            pass
+        pg.wait_for_timeout(2500)
 
         # --- section presence and, more importantly, population ---
         vis = lambda sel: pg.eval_on_selector(

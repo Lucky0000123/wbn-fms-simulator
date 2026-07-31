@@ -296,18 +296,42 @@ def simulate(payload: dict) -> dict:
         # Keep the pre-rain figure so the same proportional uplift can be
         # applied to the effective cycle below.
         cycle_dry = cycle
-        # Rain lengthens the whole cycle, not just the dwell, so the uplift is
-        # taken from the loading point's own measured wet penalty where known.
+        # RAIN LENGTHENS THE DWELL AT BOTH ENDS, SO THE CYCLE MUST CARRY BOTH.
+        #
+        # This used to add only the LOADING point's wet penalty. Because
+        # `implied_travel_time_min` is the residual `cycle - load - dump`, the
+        # DUMPING point's penalty was subtracted from travel and never added
+        # back, so the model reported trucks travelling FASTER in the rain on
+        # 11 of 14 routes measured -- typically -1.1 min, and -7.8 min on
+        # KR>POS 10. The signature was exact: dTravel == -dDump on every route.
+        #
+        # The uplift is derived from the dwell deltas ACTUALLY APPLIED rather
+        # than re-read from wet_penalty_min, because _point_dwell has its own
+        # fallback path (median x FALLBACK_WET_UPLIFT for a point with no
+        # measured wet figure) whose effect does not appear in that column.
+        # Deriving it guarantees the two stay in step however each point was
+        # resolved.
+        #
+        # Consequence, and it is the honest one: implied travel time is now
+        # weather-INVARIANT. The wet/dry split in dwell_model_results.csv is
+        # measured AT POINTS; nothing in this dataset measures a rain effect on
+        # road speed. FMS_CONGESTION_SEG carries segment speeds but retains only
+        # ~2 weeks and has no rain join, so a travel penalty would have to be
+        # invented. Rain's measured effect stays where it was measured.
         if cycle and wet:
-            dr = _dwell()
-            pen = None
-            if dr is not None:
-                h = dr[(dr["point"].astype(str).str.upper() == src)
-                       & (dr["kind"] == "loading")]
-                if not h.empty and pd.notna(h.iloc[0].get("wet_penalty_min")):
-                    pen = float(h.iloc[0]["wet_penalty_min"])
-            cycle = cycle + (pen if pen is not None
-                             else cycle * (FALLBACK_WET_UPLIFT - 1))
+            dry_load, _ = _point_dwell(src, "loading", False)
+            dry_dump, _ = _point_dwell(dst, "dumping", False)
+            d_load = (load_min - dry_load) if (load_min is not None
+                                               and dry_load is not None) else None
+            d_dump = (dump_min - dry_dump) if (dump_min is not None
+                                               and dry_dump is not None) else None
+            if d_load is None and d_dump is None:
+                # Neither end has a measured wet figure. Fall back to the
+                # site-wide uplift rather than silently claiming rain does
+                # nothing at all.
+                cycle = cycle * FALLBACK_WET_UPLIFT
+            else:
+                cycle = cycle + (d_load or 0.0) + (d_dump or 0.0)
 
         # TWO DIFFERENT CYCLE FIGURES, USED FOR TWO DIFFERENT THINGS.
         #
@@ -493,11 +517,19 @@ def simulate(payload: dict) -> dict:
                 % (100 * MEASURED_HAUL_AVAILABILITY)),
             "weather": "wet" if wet else "dry",
             "weather_note": (
-                "wet raises reported load and cycle time (measured per loading "
-                "point) but NOT predicted tonnage: within route and month, rain "
-                "moves tonnage by a median +0.1% and reduces it in only 49% of "
-                "122 comparable route-months, so a production penalty is not "
-                "supported"),
+                "wet raises DWELL at both ends -- loading and dumping -- and the "
+                "reported cycle time carries both, measured per point, but "
+                "NOT predicted tonnage: within route and month, rain moves "
+                "tonnage by a median +0.1% and reduces it in only 49% of 122 "
+                "comparable route-months, and the raw wet-vs-dry trips/DT "
+                "comparison is a median +4.8% across 15 routes with paired data. "
+                "A production penalty is not supported in either view. Implied "
+                "travel time is weather-INVARIANT by construction: the wet/dry "
+                "split is measured at POINTS, and nothing in this dataset "
+                "measures a rain effect on road speed. An earlier version added "
+                "only the loading penalty to the cycle, which made the residual "
+                "travel figure FALL in the rain on 11 of 14 routes -- rain "
+                "appearing to speed trucks up"),
         },
         "model_limits": {
             "cycle_time_vs_truck_count": (

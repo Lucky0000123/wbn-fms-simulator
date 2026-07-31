@@ -186,29 +186,40 @@ No DB credentials are committed. With no `FMS_DB_*` env vars set, every
 endpoint falls back to `fixtures/*.json` via the `_register()` wrapper in
 `simulator_api.py`. Never break that path.
 
-### There is a THIRD mode, and it does not fall back — found 2026-07-31
+### There are THREE modes, not two — the third was broken, and is now FIXED
 
 `_register()` serves the fixture when `_db_ready()` is false **or the real logic
-throws**. But an endpoint that catches its own exception and returns an error
-*payload* satisfies neither condition, because a `200` looks like success. So:
+throws**. An endpoint that catches its own exception and returns an error
+*payload* satisfies neither condition, because a `200` looks like success:
 
-| State | Behaviour |
-|---|---|
-| No `FMS_DB_*` at all | fixture served ✔ |
-| DB configured **and reachable** | live data ✔ |
-| DB configured, **connection fails** | `{"ok": false, "error": ...}` + HTTP 200, **fixture NOT served** |
+| State | Before 2026-07-31 | Now |
+|---|---|---|
+| No `FMS_DB_*` at all | fixture ✔ | fixture, tagged ✔ |
+| DB configured **and reachable** | live ✔ | live ✔ |
+| DB configured, **unreachable** | `{"ok": false}` + 200, **no fixture** ✘ | fixture, tagged ✔ |
 
-The third row is the *normal* state here — the VPN drops every few minutes.
-`api_simulator_congestion_model` does exactly this, so section 3 of the
-assessment view renders empty (correctly explaining itself) whenever the link
-blips, while a complete 94-segment fixture sits unused.
+The third row is the *normal* state here — the VPN drops every few minutes — and
+**five endpoints** had it: `congestion-model`, `path-response`, `weighbridge`,
+`weighbridge-summary`, `shift-context`. Section 3 of the assessment view rendered
+empty whenever the link blipped, while a complete 94-segment fixture sat unused.
 
-This was **not** changed, deliberately: returning an explicit error may be more
-honest than serving two-week-old segment speeds as if they were live, and that is
-a product decision. But know the mode exists before concluding an endpoint is
-broken, and check any endpoint you add for the same shape. Gate `J56` asserts the
-correct behaviour for whichever data is actually present rather than assuming the
-feed is up.
+**The rule: never catch a DB exception in endpoint logic.** Let it propagate;
+`_register` is the fallback and it is the only thing that knows about fixtures.
+The four sites that did now `raise`. The one exception is
+`api_weighbridge_summary`, which prefers its own **stale cache** (real data from
+minutes ago, self-flagged with `stale`) and only re-raises when there is no cache.
+
+Fixture responses are now tagged `servedFrom: "fixture"` plus
+`servedFromReason`, so a UI can label cached figures instead of passing them off
+as live. Section 3 renders "Cached segment speeds… the site link or database is
+down", with the raw driver error on hover. Gate `J58` drives the real app against
+an unroutable host and asserts both the behaviour and — structurally — that no
+`ok:False … unavailable` return has re-grown anywhere.
+
+WARNING for anyone writing a browser check: in this mode start-up fetches stall
+for seconds, so the route dropdown lands at ~4.5 s instead of under 1 s. A fixed
+`wait_for_timeout(1200)` failed all 17 assertions and looked like a total page
+failure when nothing was wrong. Wait on the **condition**, not the clock.
 
 ## Weather now comes from an API, not the site gauges
 
@@ -455,9 +466,50 @@ The engine now accepts and ignores the key, echoing
 `summary.availability_override_ignored`. Do not re-add the parameter, the UI
 control, or the multiplier.
 
+## The weather input — audited, and my own flag was wrong
+
+Full write-up: `reports/weather_input_analysis.md`. Gate `J57`.
+
+The previous handover flagged weather as the next availability-style defect: "a
+wet cycle uplift reduces trips and therefore tonnes". **That was wrong.**
+Measured across 14 routes, tonnage is byte-identical dry vs wet, because rain is
+deliberately excluded from the effective cycle and the effective cycle is the
+only denominator for trips. There is no weather→tonnage path and there never was.
+The measured record supports keeping it that way: raw wet-vs-dry trips/DT is a
+median **+4.8%** across 15 paired routes, reducing on only 5 of 15.
+
+**A different defect was real.** `implied_travel_time_min` is the residual
+`cycle − load − dump`. The cycle uplift carried only the **loading** point's wet
+penalty while `predicted_dump_time_min` also carried the **dumping** point's, so
+the dump penalty was subtracted from travel and never added back:
+
+> the model reported trucks travelling **faster in the rain** on 11 of 14 routes,
+> by up to **7.8 minutes** (KR>POS 10). The signature was exact: `dTravel == −dDump`.
+
+The cycle now carries both, derived from the dwell deltas *actually applied*
+(not re-read from `wet_penalty_min`, which misses `_point_dwell`'s own fallback
+path). **Implied travel is now weather-invariant**, which is the honest position:
+the wet/dry split is measured AT POINTS, and nothing here measures a rain effect
+on road speed.
+
+`J57` asserts invariance **and** that weather still moves dwell — because an
+invariance-only gate is passed perfectly by deleting the feature.
+
+## Beware: a residual field hides errors
+
+Twice now the bug has been in a field computed as a remainder.
+`implied_travel_time_min` absorbed a one-ended dwell penalty silently and
+reported a physically impossible result. A residual never fails loudly; it just
+quietly takes up the slack for whatever is inconsistent elsewhere. When you
+change any term of `cycle − load − dump`, check the residual.
+
 ## Score
 
-**56/56**, measured 2026-07-31 in both no-DB and DB modes, with `J55` and `J56`
-added. `G24` was narrowed to gate the **mirror only** — see the top of this file
-and the comment above it in `scripts/verify_phase2.sh`.
+**59/59**, measured 2026-07-31 in no-DB mode, with `J55`–`J59` added. `G24` gates
+the **mirror only** — see the top of this file and the comment above it in
+`scripts/verify_phase2.sh`.
+
+`data/simulator_model_results.json` no longer churns: `simulator_model.
+preserve_stamp()` carries `generated_at` forward when nothing else changed, so
+`git status` is clean after a harness run and stays a usable signal. Gate `J59`.
 

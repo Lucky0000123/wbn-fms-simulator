@@ -405,6 +405,31 @@ $PY scripts/check_assessment_view.py >/dev/null 2>&1
 chk $? "J56  plan assessment view renders sections 2-8" "see: python scripts/check_assessment_view.py"
 fi
 
+# J57 — the weather input. The suspicion was that a wet cycle uplift feeds through
+# to fewer tonnes; measured, it does not, and never did. The REAL defect was that
+# the cycle carried only the LOADING point's wet penalty while implied travel is
+# the residual cycle-load-dump, so the dumping penalty was subtracted from travel
+# and never added back: rain appeared to make trucks travel FASTER on 11 of 14
+# routes. Asserts invariance AND that weather still does something, because an
+# invariance-only gate is passed perfectly by deleting the feature.
+if [ -f data/route_lookup.csv ]; then
+$PY test_weather_path.py >/dev/null 2>&1
+chk $? "J57  weather moves dwell, never tonnage or travel" "see: python test_weather_path.py"
+fi
+
+# J58 — the THIRD dual-mode state. "No DB" and "DB reachable" were both tested;
+# "DB configured but unreachable" was not, and it is the normal state here because
+# the VPN drops every few minutes. Five endpoints caught their own exception and
+# returned ok:false with HTTP 200, which _register reads as success, so the
+# fixture fallback never fired. Drives the real app against an unroutable host.
+$PY test_dualmode_unreachable.py >/dev/null 2>&1
+chk $? "J58  unreachable DB still serves a tagged fixture" "see: python test_dualmode_unreachable.py"
+
+# J59 — regenerating identical results must not churn the tree. Once git status is
+# always dirty it stops being a signal and a real accidental change hides in it.
+$PY test_stamp_stability.py >/dev/null 2>&1
+chk $? "J59  identical results keep their generated_at" "see: python test_stamp_stability.py"
+
 
 echo
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"

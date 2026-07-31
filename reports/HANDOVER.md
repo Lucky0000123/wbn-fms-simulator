@@ -1,10 +1,12 @@
 # HANDOVER — WBN Production Simulator
 
-*Written 2026-07-30; revised 2026-07-31. Harness **56/56** in both DB and no-DB
-modes (`J55` and `J56` added). Since the first draft: the GPS accumulator has run
-against the live server and is scheduled, the Plan Assessment View is built, a
-15% tonnage under-quote in the UI was found and fixed, and the push rule reversed
-to **mirror only**.*
+*Written 2026-07-30; revised 2026-07-31. Harness **59/59** (`J55`–`J59` added).
+Since the first draft: the GPS accumulator has run against the live server and is
+scheduled, the Plan Assessment View is built, a 15% tonnage under-quote in the UI
+was found and fixed, the weather path was audited (a flag I raised turned out to
+be **wrong**, and a different defect turned out to be real), the third dual-mode
+state was fixed across five endpoints, and the push rule reversed to **mirror
+only**.*
 
 *Commit note: the work described here landed at `0ff987f`; this document itself is
 `5b0e21b`, the commit immediately after. Run `git log --oneline -5` for the current
@@ -801,6 +803,9 @@ simulator).
 | J54 | **the GPS accumulator is idempotent and loses no history** |
 | J55 | **a caller-supplied availability never scales tonnage** — tests the payload path `J52` cannot see, and greps the front end so the key cannot come back |
 | J56 | **the plan assessment view renders sections 2–8** — counts drawn canvases after repeated renders, and asserts the honesty labels |
+| J57 | **weather moves dwell, never tonnage or travel** — and still moves dwell, because an invariance-only gate is passed by deleting the feature |
+| J58 | **an unreachable DB still serves a tagged fixture** — the third dual-mode state, plus a structural check that no endpoint re-grows a self-catch |
+| J59 | **identical results keep their `generated_at`** — so `git status` stays a signal |
 
 Gate order in the file is A→J with J50/J51 last (they depend on optional
 extracts); numbering is not strictly sequential in the output.
@@ -926,10 +931,25 @@ Items 1–3 and 5 of the previous list are **done** (2026-07-30/31):
 Still open:
 
 4. **Check whether the public ngrok site is still stale** (§12). Not re-checked
-   this round; it was up-but-stale on 2026-07-30 and nothing in this round
-   changes that, because deploying needs Rudolf's Mac.
-6. **A defect was found and fixed this round that nobody was looking for:** the
-   UI applied a 0.85 availability the engine did not, under-quoting tonnage by
-   15%. `reports/CRITICAL_availability_override_defect.md`, gate `J55`. Its
-   residual risk — the `weather` input, which is still caller-supplied and
-   unexamined — is the first place to look next.
+   in either round; it was up-but-stale on 2026-07-30 and nothing here changes
+   that, because deploying needs Rudolf's Mac.
+
+Closed since:
+
+6. The UI applied a 0.85 availability the engine did not, under-quoting tonnage
+   by 15%. `reports/CRITICAL_availability_override_defect.md`, gate `J55`.
+7. **The weather follow-up was audited and my flag on it was wrong.** I wrote
+   that "a wet cycle uplift reduces trips and therefore tonnes"; measured, it
+   does not and never did — tonnage is byte-identical dry vs wet on all 14
+   routes tested. A *different* defect was real: the cycle carried only the
+   loading point's wet penalty, so the residual travel figure fell in the rain
+   on 11 of 14 routes. `reports/weather_input_analysis.md`, gate `J57`.
+8. The third dual-mode state (DB configured but unreachable) served no fixture in
+   **five** endpoints. Fixed; fixtures are now tagged `servedFrom` and the UI
+   labels cached speeds. Gate `J58`.
+9. `data/simulator_model_results.json` no longer churns. Gate `J59`.
+
+Next most likely place to find this class of bug: `shift_minutes`, the last
+caller-supplied field that scales tonnage. It is a legitimate planner input and
+the UI currently sends `720`, matching `DEFAULT_SHIFT_MIN`, so there is no live
+discrepancy — but it has not been audited for a UI/engine disagreement.
