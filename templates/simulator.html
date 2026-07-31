@@ -400,7 +400,14 @@
                 <option value="emptySpeed">Colour by empty speed</option>
                 <option value="avgSpeed">Colour by pooled mean speed</option>
                 <option value="dropPct">Colour by % below free-flow</option>
-              </select></div>
+              </select>
+              <!-- 2D is the default and Cesium is NOT loaded until 3D is
+                   clicked: the library is ~4 MB and this tool is demonstrated on
+                   site connections. -->
+              <span style="display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-left:8px;vertical-align:middle">
+                <button class="mode-btn on" id="pa-view-2d" onclick="paMapView('2d')">2D</button>
+                <button class="mode-btn" id="pa-view-3d" onclick="paMapView('3d')">3D</button>
+              </span></div>
             <!-- Map beside a panel, not full width. The corridor is ~0.33 deg
                  tall by 0.14 wide -- a 2.4:1 PORTRAIT shape. In a full-width
                  landscape box Leaflet fits it correctly and it still renders as
@@ -408,6 +415,7 @@
                  that would have been wasted carries the detail panel. -->
             <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;align-items:stretch">
               <div id="pa-map" style="flex:0 0 420px;height:560px;border-radius:8px;overflow:hidden;min-width:300px"></div>
+              <div id="pa-map3d" style="flex:0 0 420px;height:560px;border-radius:8px;overflow:hidden;min-width:300px;display:none;background:#0b1120"></div>
               <div style="flex:1;min-width:280px;display:flex;flex-direction:column;gap:10px">
                 <div id="pa-map-legend"></div>
                 <div id="pa-map-detail" style="font-size:12px"></div>

@@ -28,7 +28,9 @@ def check(name, ok, detail=""):
 
 def main():
     with sync_playwright() as pw:
-        b = pw.chromium.launch()
+        # swiftshader so CesiumJS can create a WebGL context in headless.
+        b = pw.chromium.launch(args=['--use-gl=swiftshader',
+                                     '--enable-unsafe-swiftshader'])
         pg = b.new_page(viewport={"width": 1366, "height": 768})
         pg.on("console", lambda m: CONSOLE.append((m.type, m.text)))
         pg.on("pageerror", lambda e: CONSOLE.append(("pageerror", str(e))))
@@ -210,6 +212,51 @@ def main():
             check("S9 note states the colour scale is anchored on measurement",
                   "measured distribution" in text("#pa-map-note").lower(),
                   text("#pa-map-note")[:90])
+            # --- 3D toggle ---
+            check("S9 defaults to 2D and has NOT loaded Cesium",
+                  pg.evaluate("() => _paMapMode") == "2d"
+                  and pg.evaluate("() => typeof Cesium === 'undefined'"),
+                  "mode=%s cesium=%s" % (pg.evaluate("() => _paMapMode"),
+                                         pg.evaluate("() => typeof Cesium !== 'undefined'")))
+            pg.click("#pa-view-3d")
+            loaded3d = True
+            try:
+                pg.wait_for_function("() => typeof Cesium !== 'undefined'", timeout=90000)
+            except Exception:                                      # noqa: BLE001
+                loaded3d = False
+            if not loaded3d:
+                print("  INFO CesiumJS did not load (CDN unreachable) — asserting the "
+                      "degraded path instead")
+                pg.wait_for_timeout(2000)
+                check("S9 3D degrades to a visible note when the CDN is unreachable",
+                      "unavailable" in text("#pa-map3d").lower(), text("#pa-map3d")[:100])
+            else:
+                pg.wait_for_timeout(14000)
+                three = pg.evaluate(
+                    """() => {try{ return {
+                         mode: _paMapMode,
+                         viewer: !!_paViewer,
+                         entities: _paViewer ? _paViewer.entities.values.length : 0,
+                         imagery: _paViewer ? _paViewer.imageryLayers.length : -1,
+                         canvas: document.querySelectorAll('#pa-map3d canvas').length,
+                         hidden2d: document.getElementById('pa-map').style.display};
+                       }catch(e){return {err:String(e)};}}""")
+                check("S9 3D built a viewer with entities", three.get("entities", 0) > 50, three)
+                # THE assertion that matters. `imageryProvider:` was removed around
+                # Cesium 1.107 and is silently ignored in 1.114, giving a viewer
+                # with ZERO imagery layers and a blue globe -- no error anywhere.
+                check("S9 3D actually has a basemap (imageryLayers > 0)",
+                      three.get("imagery", 0) >= 1, three.get("imagery"))
+                check("S9 3D drew a canvas", three.get("canvas", 0) >= 1, three)
+                check("S9 3D hid the 2D map", three.get("hidden2d") == "none", three)
+                check("S9 3D note says height is SPEED, not elevation",
+                      "not elevation" in text("#pa-map-note").lower(),
+                      text("#pa-map-note")[:110])
+                pg.click("#pa-view-2d")
+                pg.wait_for_timeout(2000)
+                check("S9 toggles back to 2D",
+                      pg.evaluate("() => _paMapMode") == "2d"
+                      and pg.eval_on_selector_all("#pa-map canvas", "e => e.length") >= 1)
         else:
             print("  INFO corridor geometry unavailable (data/haul_road_chainage.csv "
                   "is gitignored) — asserting the honest empty state instead")

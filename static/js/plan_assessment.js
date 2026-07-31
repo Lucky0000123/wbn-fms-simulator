@@ -46,6 +46,9 @@ let _paLastSim = null, _paCharts = {}, _paRoad = null;
  * not committed to the public mirror. */
 let _paGeom = null, _paMap = null, _paLayer = null, _paMapMetric = 'loadedSpeed';
 let _paSegIndex = {};
+/* 3D view state. Cesium is lazy-loaded on first use, so _paCesiumLoading
+ * doubles as the once-only guard and the in-flight promise. */
+let _paMapMode = '2d', _paViewer = null, _paCesiumLoading = null;
 
 /* ---------- small helpers ---------- */
 
@@ -924,6 +927,241 @@ function paMap() {
       + 'Scale is anchored on the measured distribution (median loaded 16.6 km/h, '
       + 'empty 18.3), so it saturates at 8 and 30 km/h rather than 0 and 100 &mdash; '
       + 'a generic scale would paint the whole corridor one shade.';
+  }
+}
+
+/* ---------- Section 9b · the 3D view ---------- */
+
+/* CesiumJS, loaded ON DEMAND. It is ~4 MB and this tool is demonstrated on site
+ * connections, so the default 2D path must not pay for a view most sessions
+ * never open. No ion token is used or needed: OpenStreetMap imagery and the
+ * plain ellipsoid are both token-free, and a token could not be committed to a
+ * public mirror anyway. Verified working without one.
+ */
+const PA_CESIUM = 'https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/';
+
+function paLoadCesium() {
+  if (_paCesiumLoading) return _paCesiumLoading;
+  if (typeof Cesium !== 'undefined') { _paCesiumLoading = Promise.resolve(true); return _paCesiumLoading; }
+  _paCesiumLoading = new Promise((resolve) => {
+    // Cesium resolves its workers and assets relative to this.
+    window.CESIUM_BASE_URL = PA_CESIUM;
+    const css = document.createElement('link');
+    css.rel = 'stylesheet'; css.href = PA_CESIUM + 'Widgets/widgets.css';
+    document.head.appendChild(css);
+    const s = document.createElement('script');
+    s.src = PA_CESIUM + 'Cesium.js';
+    s.onload = () => resolve(typeof Cesium !== 'undefined');
+    s.onerror = () => resolve(false);
+    document.head.appendChild(s);
+  });
+  return _paCesiumLoading;
+}
+
+function paMapView(mode) {
+  const m2 = document.getElementById('pa-map');
+  const m3 = document.getElementById('pa-map3d');
+  const b2 = document.getElementById('pa-view-2d');
+  const b3 = document.getElementById('pa-view-3d');
+  if (!m2 || !m3) return;
+  _paMapMode = mode;
+  const on3 = mode === '3d';
+  m2.style.display = on3 ? 'none' : '';
+  m3.style.display = on3 ? '' : 'none';
+  if (b2) b2.classList.toggle('on', !on3);
+  if (b3) b3.classList.toggle('on', on3);
+  if (on3) {
+    m3.innerHTML = '<div class="muted" style="padding:20px;font-size:12px">Loading 3D view…</div>';
+    paLoadCesium().then((ok) => {
+      if (!ok) {
+        m3.innerHTML = '<div class="muted" style="padding:20px;font-size:12px;'
+          + 'border:1px dashed var(--line,#30363d);border-radius:8px">'
+          + '3D unavailable: CesiumJS loads from a CDN and this machine appears '
+          + 'to be offline. The 2D map and every figure in section 3 still work.'
+          + '</div>';
+        return;
+      }
+      paMap3D();
+    });
+  } else {
+    // Leaflet needs a nudge after being un-hidden, or it keeps the size it had
+    // while display:none.
+    setTimeout(() => { try { _paMap && _paMap.invalidateSize(); } catch (e) {} }, 60);
+  }
+}
+
+function paMap3D() {
+  const el = document.getElementById('pa-map3d');
+  const geo = _paGeom || {};
+  if (!el) return;
+  if (!geo.ok || !(geo.roads || []).length) {
+    el.innerHTML = '<div class="muted" style="padding:20px;font-size:12px">'
+      + paEsc(geo.reason || 'corridor geometry unavailable') + '</div>';
+    return;
+  }
+  el.innerHTML = '';
+
+  const alias = geo.roadAlias || {};
+  const segs = ((_paCongestion || {}).segments) || [];
+  const byRoad = {};
+  segs.forEach(s => {
+    const p = paParseSeg(s.seg);
+    if (!p) return;
+    const road = (alias[p.road] || p.road).toUpperCase();
+    (byRoad[road] = byRoad[road] || []).push(Object.assign({}, s, p));
+  });
+
+  if (_paViewer) { try { _paViewer.destroy(); } catch (e) {} _paViewer = null; }
+
+  // OSM imagery + the plain ellipsoid: both work with NO ion token. Real terrain
+  // would need one, and there is no elevation in this database to drape on it
+  // anyway (ELEVATIONS is 100% NULL).
+  //
+  // The provider is passed as `baseLayer`, NOT the older `imageryProvider:`
+  // constructor option. That option was removed around Cesium 1.107 and is
+  // SILENTLY IGNORED in 1.114 -- no error, no warning, just a viewer with zero
+  // imagery layers and the default blue globe. It looked like a tile-loading
+  // problem; imageryLayers.length was 0.
+  const osm = new Cesium.OpenStreetMapImageryProvider(
+    {url: 'https://tile.openstreetmap.org/'});
+  const opts = {
+    terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+    baseLayerPicker: false, geocoder: false, homeButton: false,
+    sceneModePicker: false, navigationHelpButton: false, animation: false,
+    timeline: false, infoBox: false, selectionIndicator: false,
+    fullscreenButton: false, creditContainer: document.createElement('div'),
+  };
+  try {
+    opts.baseLayer = new Cesium.ImageryLayer(osm);      // 1.104+
+  } catch (e) { /* older build: added below instead */ }
+  _paViewer = new Cesium.Viewer(el, opts);
+  // Belt and braces across Cesium versions: if the viewer still has no imagery,
+  // attach it directly rather than shipping a blue void.
+  try {
+    if (_paViewer.imageryLayers.length === 0) {
+      _paViewer.imageryLayers.addImageryProvider(osm);
+    }
+  } catch (e) { /* nothing more to try */ }
+  _paViewer.scene.globe.enableLighting = false;
+
+  const metric = _paMapMetric || 'loadedSpeed';
+  const val = (s) => (metric === 'dropPct'
+    ? (s.freeFlow ? 100 * (s.freeFlow - s.avgSpeed) / s.freeFlow : null)
+    : s[metric]);
+  const col = (v) => (metric === 'dropPct' ? paDropColour(v) : paSpeedColour(v));
+
+  // HEIGHT ENCODES SPEED, NOT ELEVATION. On a 3D globe a raised ribbon reads as
+  // terrain unless it is said otherwise, and this database has no elevation at
+  // all -- so the note below states it and the units are km/h, not metres.
+  // Slower sections stand taller, because the planner is looking for the slow
+  // ones.
+  // Ribbon height at the slowest end. Tuned against the corridor, not picked:
+  // the road runs ~37 km, so a 900 m wall is 2.4% of its length and reads as
+  // flat from any useful camera angle. 2,600 m is legible while still
+  // obviously a data encoding rather than a mountain.
+  const H = 2600;
+  let drawn = 0, blank = 0;
+
+  geo.roads.forEach(r => {
+    const pts = r.points;
+    const measured = byRoad[r.road.toUpperCase()] || [];
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], mid = (a.km + b.km) / 2;
+      const seg = measured.find(s => mid >= s.from && mid <= s.to);
+      const v = seg ? val(seg) : null;
+      if (v === null || v === undefined) {
+        blank++;
+        _paViewer.entities.add({
+          polyline: {
+            positions: Cesium.Cartesian3.fromDegreesArray([a.lng, a.lat, b.lng, b.lat]),
+            width: 2, material: Cesium.Color.fromCssColorString('#4a5568').withAlpha(0.6),
+            clampToGround: true,
+          },
+        });
+        continue;
+      }
+      drawn++;
+      // Invert for speed metrics so SLOW is TALL; dropPct is already
+      // "worse = bigger".
+      const t = metric === 'dropPct'
+        ? Math.max(0, Math.min(1, v / 60))
+        : 1 - Math.max(0, Math.min(1, (v - 8) / (30 - 8)));
+      const c = Cesium.Color.fromCssColorString(col(v));
+      _paViewer.entities.add({
+        name: seg.seg,
+        paSeg: seg.seg,
+        wall: {
+          positions: Cesium.Cartesian3.fromDegreesArrayHeights(
+            [a.lng, a.lat, 0, b.lng, b.lat, 0]),
+          maximumHeights: [t * H + 40, t * H + 40],
+          minimumHeights: [0, 0],
+          material: c.withAlpha(0.82),
+          outline: false,
+        },
+      });
+    }
+  });
+
+  // Corridor nodes as labelled points, positioned on the line by chainage.
+  const nodes = ((geo.corridor || {}).nodes) || [];
+  const ranges = ((geo.corridor || {}).roadRanges) || [];
+  nodes.forEach(n => {
+    const rr = ranges.find(x => n.km <= Math.max(x.fromKm, x.toKm)
+                             && n.km >= Math.min(x.fromKm, x.toKm));
+    const road = geo.roads.find(r => r.road.toUpperCase()
+                                  === (alias[(rr || {}).label] || (rr || {}).label || '').toUpperCase());
+    if (!road) return;
+    let best = null, bd = 1e9;
+    road.points.forEach(p => { const d = Math.abs(p.km - n.km); if (d < bd) { bd = d; best = p; } });
+    if (!best || bd > 1.0) return;
+    _paViewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(best.lng, best.lat, 60),
+      point: {pixelSize: 10, color: Cesium.Color.fromCssColorString(PA_C.warn),
+              outlineColor: Cesium.Color.WHITE, outlineWidth: 2},
+      label: {text: n.label, font: '12px sans-serif',
+              fillColor: Cesium.Color.WHITE,
+              style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+              outlineWidth: 3, outlineColor: Cesium.Color.BLACK,
+              verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+              pixelOffset: new Cesium.Cartesian2(0, -12)},
+    });
+  });
+
+  // Click a ribbon -> the same detail panel the 2D map fills.
+  const handler = new Cesium.ScreenSpaceEventHandler(_paViewer.scene.canvas);
+  handler.setInputAction((click) => {
+    const picked = _paViewer.scene.pick(click.position);
+    const id = picked && picked.id;
+    const key = id && (id.paSeg || id.name);
+    if (key && (_paSegIndex || {})[key]) paMapDetail(_paSegIndex[key]);
+  }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+  // Tilted view over the corridor, which runs roughly north-south.
+  const lats = [], lngs = [];
+  geo.roads.forEach(r => r.points.forEach(p => { lats.push(p.lat); lngs.push(p.lng); }));
+  const midLat = (Math.min(...lats) + Math.max(...lats)) / 2;
+  const midLng = (Math.min(...lngs) + Math.max(...lngs)) / 2;
+  // Low and tilted, looking north up the corridor. A steeper pitch flattens the
+  // ribbons back into the 2D view the toggle exists to escape.
+  _paViewer.camera.setView({
+    destination: Cesium.Cartesian3.fromDegrees(midLng, midLat - 0.34, 26000),
+    orientation: {heading: Cesium.Math.toRadians(0),
+                  pitch: Cesium.Math.toRadians(-28),
+                  roll: 0},
+  });
+
+  const note = document.getElementById('pa-map-note');
+  if (note) {
+    note.innerHTML =
+      '<b>3D view.</b> Ribbon <b>height encodes SPEED, not elevation</b> &mdash; '
+      + 'slower sections stand taller. There is no terrain here on purpose: '
+      + '<code>ELEVATIONS</code> is 100% NULL in this database, so a height that '
+      + 'looked like ground would be invented. Imagery is OpenStreetMap and the '
+      + 'globe is the plain ellipsoid, both of which need no Cesium ion token &mdash; '
+      + 'a token could not be committed to a public mirror in any case. '
+      + `<b>${paNum(drawn)}</b> sections drawn, <b>${paNum(blank)}</b> left flat `
+      + 'and grey for want of a measurement. Drag to orbit, scroll to zoom, click '
+      + 'a ribbon for its figures.';
   }
 }
 

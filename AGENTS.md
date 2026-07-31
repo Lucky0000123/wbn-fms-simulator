@@ -96,15 +96,24 @@ server-side for a `GROUP BY`; its labels must be kept in step by hand.)
 
 `https://wbn-fms-simulator.ngrok-free.app` is served from Rudolf's Mac at
 `/Users/rdinkelmann/simulator-standalone`, not from this checkout. Pushing to
-`origin` does **not** deploy. Until someone runs the pull + `launchctl
-kickstart` there (see README "Git deployment"), the public site keeps serving
-the older build — verify with:
+`origin` does **not** deploy — and `origin` is on hold, so see `DEPLOY.md`
+before assuming a pull will help.
+
+**The old staleness check is itself stale.** This file used to say
+`/api/model-info` returning 404 meant a stale deployment. Measured 2026-07-31 it
+returns **200**, and the site is still four rounds behind. Use markers from the
+work that actually landed since:
 
 ```bash
-curl https://wbn-fms-simulator.ngrok-free.app/api/model-info   # 404 == stale
+S=https://wbn-fms-simulator.ngrok-free.app
+curl -s $S/health                                            # 200 + dataMode
+curl -o /dev/null -w '%{http_code}\n' $S/api/simulator/corridor-geometry   # 404 == stale
+curl -s $S/simulator | grep -c pa-sections-top                             # 0 == stale
 ```
 
-A 404 there means the deployed copy predates the Phase 2 prediction API.
+Or just `scripts/deploy.sh --check`, which asserts exactly that. A deployment can
+be **up, healthy and months out of date**; `/health` cannot tell you, and any
+single-endpoint marker rots the moment that endpoint ships.
 
 ## Phase 3 — what the honest validation found
 
@@ -625,6 +634,46 @@ schema — the load-bearing assertion, because a re-export that quietly added a
 and nothing else would notice. Mutation-tested: adding a `zone` column fails it;
 so does un-ignoring `data/*.csv`, which would have exposed 22 files including
 `trip_features.csv`.
+
+## 3D view (section 9) — CesiumJS, lazy, token-free
+
+`paMapView('3d')` in `plan_assessment.js`. Toggle defaults to **2D** and Cesium
+is **not fetched until 3D is clicked**: it is ~4 MB and this tool is demonstrated
+on site connections.
+
+**No ion token is used or needed.** OpenStreetMap imagery plus
+`EllipsoidTerrainProvider` are both token-free, and a token could not be
+committed to a public mirror anyway.
+
+**Ribbon height encodes SPEED, not elevation, and the UI says so.** `ELEVATIONS`
+is 100% NULL in this database, so there is no terrain to show; an unlabelled
+height axis on a 3D globe would be read as ground. Slower sections stand taller,
+because the planner is hunting the slow ones.
+
+WARNING: `imageryProvider:` as a `Cesium.Viewer` constructor option was removed
+around **1.107** and is **silently ignored** in 1.114 — no error, no warning,
+just a viewer with `imageryLayers.length === 0` and a blue globe. Pass
+`baseLayer: new Cesium.ImageryLayer(provider)` instead. `J56` asserts
+`imageryLayers > 0` for exactly this reason; a check that only counted entities
+passed while the basemap was missing.
+
+## Deploying
+
+`DEPLOY.md` + `scripts/deploy.sh` (`--check`, `--stop`, `--reserved`).
+
+**The documented pull would downgrade the deployment.** README says
+`git pull origin main` on Rudolf's Mac, but `origin` is frozen at `48985b4` and
+every commit since lives only on the mirror. Measured 2026-07-31, the public site
+is up, healthy, serving fixtures — and predates the entire Plan Assessment View
+(`corridor-geometry` 404s, no `pa-sections-top`). Fixing it needs an owner
+decision: lift the hold, or repoint the deployed checkout at the mirror.
+
+`deploy.sh --check` verifies four things, and the fourth is the one that matters:
+that the deployed build actually **contains** `pa-sections-top`. A site can be up,
+healthy and four rounds stale, and `/health` cannot tell you.
+
+The reserved ngrok domain is opt-in (`--reserved` + `NGROK_DOMAIN`) because
+claiming it from another machine takes the public endpoint over.
 
 ## Score
 

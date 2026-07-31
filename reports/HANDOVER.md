@@ -934,9 +934,14 @@ Items 1–3 and 5 of the previous list are **done** (2026-07-30/31):
 
 Still open:
 
-4. **Check whether the public ngrok site is still stale** (§12). Not re-checked
-   in either round; it was up-but-stale on 2026-07-30 and nothing here changes
-   that, because deploying needs Rudolf's Mac.
+4. ~~Check whether the public ngrok site is still stale.~~ **Measured
+   2026-07-31: up, healthy, serving fixtures, and stale by four rounds.**
+   `/api/model-info` now returns 200, so the handover's "404 = stale" marker is
+   itself out of date; the current markers are `corridor-geometry` 404 and no
+   `pa-sections-top` in `/simulator`. **Deploying is BLOCKED on an owner
+   decision**, not on tooling: README's documented `git pull origin main` fetches
+   `48985b4`, and everything since lives only on the mirror. Either lift the hold
+   or repoint the deployed checkout. See `DEPLOY.md`.
 
 Closed since:
 
