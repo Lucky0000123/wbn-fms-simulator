@@ -578,6 +578,13 @@ def api_retrain():
         try:
             import plan_simulator
             plan_simulator.reset_cache()
+            # Drop the capability snapshot too: a retrain means new data,
+            # and a 5-minute TTL would otherwise keep serving the old view.
+            try:
+                import simulator_api
+                simulator_api._cap_reset()
+            except Exception:                     # noqa: BLE001
+                pass
             sim_status = "lookup cache reset"
         except Exception as exc:                           # noqa: BLE001
             sim_status = "cache reset failed (%s)" % str(exc)[:80]

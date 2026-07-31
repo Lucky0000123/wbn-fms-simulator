@@ -63,7 +63,65 @@ def _canonical_fixture(name, data):
     Colliding keys keep the entry fitted on the most history (largest n), since
     these are regression fits and averaging their coefficients is meaningless.
     """
-    if name != "path-response" or not isinstance(data, dict):
+    if not isinstance(data, dict):
+        return data
+
+    if name == "capability":
+        # The capability fixture predates canonicalisation, so it offers
+        # "FENI A", "HUAFEI.C01", "CUU_KM_10" -- names the model has never seen,
+        # which makes a selected route unpredictable. This rewrite used to live
+        # in serve.py while that file answered the endpoint directly. The live
+        # path is now api_simulator_capability(), so it has to happen HERE, on
+        # the fixture fallback, or no-DB mode silently speaks a different
+        # vocabulary from DB mode. check_vocab.py (43 cases) catches that.
+        #
+        # Merging labels creates duplicates (HUAFEI.B01 and HUAFEI.C01 both
+        # become HUAFEI), so rows are re-aggregated: additive columns summed,
+        # rates rebuilt from the sums. Averaging rates would let a 5-trip route
+        # weigh as much as a 500-trip one.
+        _sums = ("t", "trips", "dt", "planDt", "planWmt", "wmt", "nb", "rit",
+                 "sw", "snb", "srit", "dtp", "pw", "ptr", "sc")
+
+        def _merge(rows, keyfields):
+            out = {}
+            for r in rows:
+                k = tuple(_canon(r.get(fld)) for fld in keyfields)
+                if not all(k):
+                    continue
+                tgt = out.get(k)
+                if tgt is None:
+                    tgt = dict(r)
+                    for fld, v in zip(keyfields, k):
+                        tgt[fld] = v
+                    out[k] = tgt
+                    continue
+                for col in _sums:
+                    if isinstance(r.get(col), (int, float)) and isinstance(tgt.get(col), (int, float)):
+                        tgt[col] = tgt[col] + r[col]
+            for row in out.values():
+                t, trips, dt = row.get("t"), row.get("trips"), row.get("dt")
+                if isinstance(trips, (int, float)) and trips and isinstance(t, (int, float)):
+                    row["tf"] = round(t / trips, 3)
+                if isinstance(dt, (int, float)) and dt:
+                    if isinstance(trips, (int, float)):
+                        row["tripsPerDT"] = round(trips / dt, 3)
+                    if isinstance(t, (int, float)):
+                        row["tPerDT"] = round(t / dt, 3)
+            return list(out.values())
+
+        for _key, _fields in (("routes", ("origin", "dest")),
+                              ("paths", ("origin", "dest")),
+                              ("destinations", ("dest",))):
+            if isinstance(data.get(_key), list):
+                data[_key] = _merge(data[_key], _fields)
+        if isinstance(data.get("dailyByPath"), list):
+            for r in data["dailyByPath"]:
+                r["o"] = _canon(r.get("o"))
+                r["dd"] = _canon(r.get("dd"))
+            data["dailyByPath"] = [r for r in data["dailyByPath"] if r["o"] and r["dd"]]
+        return data
+
+    if name != "path-response":
         return data
     paths = data.get("paths")
     if not isinstance(paths, dict):
@@ -167,6 +225,325 @@ _WB_RESULT_CACHE = None
 _WB_HOME_CACHE = None
 
 _OTHER_FENI_TYPICAL = None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Capability — the payload behind the whole "Capability & Scenario" tab.
+#
+# THIS USED TO BE A STATIC FILE. serve.py answered /api/simulator/capability with
+# `jsonify(_canonical_capability(fx("capability")))` -- the committed fixture,
+# every time, database or not, and it never read request.args. The UI sent it six
+# filter parameters (from, to, types, inclIwip, source, dest) and all six were
+# discarded, so every KPI card, the routes and destinations tables, the 3D
+# scatter and the truck list were frozen at whatever was captured on 2026-07-22.
+# The date range shown in the summary line was the FIXTURE's own `from`/`to`,
+# which is why changing the pickers appeared to do nothing: the numbers and the
+# dates both came from the file.
+#
+# Everything below now comes from `DISPATCH RESULTS LITE 2`, which carries both
+# actuals (NB_DT, RIT, WMT, TF) and plan (DT PLAN, TARGET TRIP, PLAN WMT) on the
+# same row, plus COMPANY ('WBN' / 'IWIP') for the exclude toggle and TYPE for the
+# type filter. One query, all six filters, everything else derived.
+#
+# The derivations were reverse-engineered from the fixture and verified against
+# it rather than guessed:
+#     tf = t/trips        tripsPerDT = trips/dt        tPerDT = t/dt
+#     effDT = dt/planDt   effWMT = t/planWmt           effTrip = tripsPerDT/planTripsPerDT
+#     srit = rit/sc       sw = w/sc                    snb = nb
+# ─────────────────────────────────────────────────────────────────────────────
+
+_CAP_TABLE = "[DISPATCH RESULTS LITE 2]"
+
+# ── Why the whole view is snapshotted instead of queried per filter ──────────
+#
+# DISPATCH RESULTS LITE 2 is a VIEW, not a table, and it is expensive to
+# materialise. Measured over the site VPN on 2026-07-31:
+#
+#     SELECT COUNT(*)            (1 row  returned)   15.4 s
+#     13 columns, no WHERE       (25,220 rows)       17.1 s
+#     SELECT *                   (25,220 rows)       31.9 s
+#     date+company filtered      (7,122 rows)        13.4 s
+#     GROUP BY TYPE              (7 rows)             8.9 s
+#
+# A COUNT(*) with no predicate costing 15 s is the whole story: the view is
+# rebuilt from its base tables before any filter is applied, so NO WHERE clause
+# can make it fast and there is no index to add -- indexes belong to the base
+# tables, and an indexed view is a schema change on a database this project does
+# not own. Pushing aggregation into SQL does not help either; the 7-row GROUP BY
+# still cost 8.9 s.
+#
+# Caching per filter combination would leave every FIRST use of a new range at
+# ~20 s, which is the complaint. So the whole view -- 25,220 rows, a few MB -- is
+# pulled ONCE and every filter runs in Python against it. Areas are canonicalised
+# and numbers coerced during the load, so the request path touches only
+# primitives.
+_CAP_TTL = 300.0                      # 5 min; new dispatch rows appear within one
+_CAP_SNAP = {"rows": None, "at": 0.0, "loading": False}
+_CAP_LOCK = __import__("threading").Lock()
+
+
+def _cap_reset():
+    """Drop the snapshot. Called by /api/retrain so fresh data is picked up."""
+    with _CAP_LOCK:
+        _CAP_SNAP["rows"] = None
+        _CAP_SNAP["at"] = 0.0
+
+
+def _cap_load_rows():
+    """Pull the whole view and normalise it once."""
+    conn = _conn("WBN_DATABASE")
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT DATE, ORIGIN, DESTINATION, CONTRACTOR, TYPE, COMPANY, "
+            "NB_SHIFT, NB_DT, RIT, WMT, [DT PLAN], [TARGET TRIP], [PLAN WMT] "
+            "FROM dbo.%s WHERE WMT IS NOT NULL" % _CAP_TABLE)
+        raw = cur.fetchall()
+    finally:
+        conn.close()
+    out = []
+    for (dte, o, dd, contr, typ, comp, nbsh, nbdt, rit, wmt, pdt, ptr, pw) in raw:
+        co, cd = _canon(o), _canon(dd)
+        if not co or not cd:
+            continue
+        out.append({
+            "d": dte.isoformat() if hasattr(dte, "isoformat") else str(dte)[:10],
+            "o": co, "dd": cd,
+            "contractor": str(contr or "").strip().upper(),
+            "type": (typ or "").strip(),
+            "iwip": (comp or "").strip().upper() == "IWIP",
+            "sc": int(_num(nbsh)) or 1,
+            "dt": _num(nbdt), "trips": _num(rit), "t": _num(wmt),
+            "planDt": _num(pdt), "_ptr": _num(ptr), "planWmt": _num(pw),
+        })
+    return out
+
+
+def _cap_snapshot():
+    """Cached, normalised copy of the view. One slow load, then instant filters."""
+    now = time.time()
+    rows = _CAP_SNAP["rows"]
+    if rows is not None and (now - _CAP_SNAP["at"]) < _CAP_TTL:
+        return rows
+    # Serialise concurrent misses so a burst of tab-opens does not fire N
+    # 17-second queries at a view that is slow precisely because it is busy.
+    with _CAP_LOCK:
+        rows = _CAP_SNAP["rows"]
+        if rows is not None and (time.time() - _CAP_SNAP["at"]) < _CAP_TTL:
+            return rows
+        fresh = _cap_load_rows()
+        _CAP_SNAP["rows"] = fresh
+        _CAP_SNAP["at"] = time.time()
+        return fresh
+
+
+def _cap_args():
+    """Read the filter bar. Returns (sql_where, sql_params, python_filters)."""
+    a = request.args
+    frm = (a.get("from") or "").strip()[:10]
+    to = (a.get("to") or "").strip()[:10]
+    types = [t for t in (a.get("types") or "").split(",") if t.strip()]
+    # The checkbox is "Exclude IWIP" and is CHECKED by default, so the UI sends
+    # inclIwip=1 only when the operator unticks it. Absent means exclude.
+    incl_iwip = a.get("inclIwip") in ("1", "true", "yes")
+    src = [_canon(s) for s in (a.get("source") or "").split(",") if s.strip()]
+    dst = [_canon(s) for s in (a.get("dest") or "").split(",") if s.strip()]
+    paths = [p for p in (a.get("paths") or "").split("~") if p.strip()]
+
+    where, params = ["WMT IS NOT NULL"], []
+    if frm:
+        where.append("DATE >= %s"); params.append(frm)
+    if to:
+        where.append("DATE <= %s"); params.append(to)
+    if not incl_iwip:
+        # COMPANY is the discriminator: 18,148 WBN rows vs 7,046 IWIP.
+        where.append("(COMPANY IS NULL OR COMPANY <> 'IWIP')")
+    if types:
+        where.append("TYPE IN (%s)" % ",".join(["%s"] * len(types)))
+        params.extend(types)
+    return (" AND ".join(where), params,
+            {"src": set(src), "dst": set(dst), "paths": set(paths),
+             "from": frm, "to": to, "inclIwip": incl_iwip, "types": types})
+
+
+def _num(v):
+    try:
+        f = float(v)
+        return f if f == f else 0.0            # NaN -> 0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _cap_rates(d):
+    """Rebuild rate columns from the summed quantities. Never average rates."""
+    t, trips, dt = d.get("t", 0.0), d.get("trips", 0.0), d.get("dt", 0.0)
+    pdt, pw, ptr = d.get("planDt", 0.0), d.get("planWmt", 0.0), d.get("_ptr", 0.0)
+    d["tf"] = round(t / trips, 3) if trips else 0.0
+    d["tripsPerDT"] = round(trips / dt, 3) if dt else 0.0
+    d["tPerDT"] = round(t / dt, 3) if dt else 0.0
+    d["planTripsPerDT"] = round(ptr / pdt, 3) if pdt else 0.0
+    d["effDT"] = round(dt / pdt, 4) if pdt else 0.0
+    d["effWMT"] = round(t / pw, 4) if pw else 0.0
+    d["effTrip"] = round(d["tripsPerDT"] / d["planTripsPerDT"], 4) if d["planTripsPerDT"] else 0.0
+    d.pop("_ptr", None)
+    return d
+
+
+def api_simulator_capability():
+    """Per-route / per-day haulage capability for the selected filter window."""
+    _, _, f = _cap_args()
+    snap = _cap_snapshot()
+
+    # Window = date range + IWIP toggle. The Types dropdown is built from the
+    # WINDOW, not from the type-filtered set -- otherwise ticking one type
+    # empties the menu and the operator cannot get back to the others.
+    window = [r for r in snap
+              if (not f["from"] or r["d"] >= f["from"])
+              and (not f["to"] or r["d"] <= f["to"])
+              and (f["inclIwip"] or not r["iwip"])]
+    tsum = {}
+    for r in window:
+        if r["type"]:
+            tsum[r["type"]] = tsum.get(r["type"], 0.0) + r["t"]
+    all_types = [{"type": k, "t": round(v, 2)} for k, v in tsum.items()]
+
+    tsel = set(f["types"])
+    byPath, byDate, agg_path, agg_dest, agg_contr, months = {}, {}, {}, {}, {}, {}
+    for r in window:
+        if tsel and r["type"] not in tsel:
+            continue
+        co, cd = r["o"], r["dd"]
+        # source/dest/path are matched on CANONICAL names ("FENI KM0"), which is
+        # why they are applied here and not in SQL -- the view stores raw ones
+        # ("FENI A"), so a SQL predicate would silently match nothing.
+        if f["src"] and co not in f["src"]:
+            continue
+        if f["dst"] and cd not in f["dst"]:
+            continue
+        if f["paths"] and ("%s>%s" % (co, cd)) not in f["paths"]:
+            continue
+        ds = r["d"]
+        contr = r["contractor"]
+        q = {"dt": r["dt"], "trips": r["trips"], "t": r["t"],
+             "planDt": r["planDt"], "planWmt": r["planWmt"], "_ptr": r["_ptr"]}
+        sc = r["sc"]
+
+        k = (ds, co, cd)
+        b = byPath.get(k)
+        if b is None:
+            b = byPath[k] = {"d": ds, "o": co, "dd": cd, "nb": 0.0, "rit": 0.0,
+                             "w": 0.0, "dtp": 0.0, "ptr": 0.0, "pw": 0.0,
+                             "sc": 0, "sx": True}
+        b["nb"] += q["dt"]; b["rit"] += q["trips"]; b["w"] += q["t"]
+        b["dtp"] += q["planDt"]; b["ptr"] += q["_ptr"]; b["pw"] += q["planWmt"]
+        b["sc"] = max(b["sc"], sc)
+
+        for store, key in ((agg_path, (co, cd)), (agg_dest, (cd,)),
+                           (agg_contr, (str(contr or "").strip().upper(),)),
+                           (byDate, (ds,)), (months, (ds[:7],))):
+            tgt = store.get(key)
+            if tgt is None:
+                tgt = store[key] = {"dt": 0.0, "trips": 0.0, "t": 0.0,
+                                    "planDt": 0.0, "planWmt": 0.0, "_ptr": 0.0,
+                                    "_days": set(), "_sc": 0}
+            for kk in ("dt", "trips", "t", "planDt", "planWmt", "_ptr"):
+                tgt[kk] += q[kk]
+            tgt["_days"].add(ds)
+            tgt["_sc"] = max(tgt["_sc"], sc)
+
+    for b in byPath.values():
+        sc = b["sc"] or 1
+        b["snb"] = round(b["nb"], 3)
+        b["srit"] = round(b["rit"] / sc, 3)
+        b["sw"] = round(b["w"] / sc, 3)
+
+    def pack(store, keyfields):
+        out = []
+        for key, v in store.items():
+            rec = dict(zip(keyfields, key))
+            rec.update({kk: round(v[kk], 3) for kk in ("dt", "trips", "t", "planDt", "planWmt")})
+            rec["_ptr"] = v["_ptr"]
+            out.append(_cap_rates(rec))
+        return out
+
+    paths = sorted(pack(agg_path, ("origin", "dest")), key=lambda r: -r["t"])
+    dests = sorted(pack(agg_dest, ("dest",)), key=lambda r: -r["t"])
+    contrs = sorted(pack(agg_contr, ("contractor",)), key=lambda r: -r["t"])
+
+    daily = []
+    for ds, v in sorted(byDate.items()):
+        sc = v["_sc"] or 1
+        rec = _cap_rates({"date": ds[0] if isinstance(ds, tuple) else ds,
+                          "dt": round(v["dt"], 3), "trips": round(v["trips"], 3),
+                          "t": round(v["t"], 3), "planDt": round(v["planDt"], 3),
+                          "planWmt": round(v["planWmt"], 3), "_ptr": v["_ptr"]})
+        # Assign step by step. Doing this as one dict literal read rec["wmt"]
+        # while the same literal was still being built -- the key did not exist
+        # yet, so it raised KeyError, _register swallowed it, and the endpoint
+        # silently served the fixture again. The symptom was identical to the
+        # bug being fixed, which is exactly how it nearly went unnoticed.
+        wmt = rec.pop("t")
+        dtv = rec["dt"]
+        rec["wmt"] = wmt
+        rec["shiftCount"] = sc
+        rec["shiftDt"] = dtv
+        rec["shiftTrips"] = round(v["trips"] / sc, 3)
+        rec["shiftWmt"] = round(wmt / sc, 3)
+        rec["shiftExplicit"] = True
+        rec["shiftTripsPerDT"] = round((v["trips"] / sc) / dtv, 3) if dtv else 0.0
+        daily.append(rec)
+
+    mrows = []
+    for ym, v in sorted(months.items()):
+        days = len(v["_days"]) or 1
+        mrows.append({"ym": int(str(ym[0] if isinstance(ym, tuple) else ym).replace("-", "")),
+                      "days": days, "t": round(v["t"], 3),
+                      "tPerDay": round(v["t"] / days, 3),
+                      "dtPerDay": round(v["dt"] / days, 3)})
+
+    tot = {"dt": 0.0, "trips": 0.0, "t": 0.0, "planDt": 0.0, "planWmt": 0.0, "_ptr": 0.0}
+    for v in agg_path.values():
+        for kk in tot:
+            tot[kk] += v[kk]
+    ndays = len({r["date"] for r in daily}) or 1
+    maxsc = max([r["shiftCount"] for r in daily] or [1])
+    kpi = _cap_rates(dict(tot))
+    kpi.update({
+        "days": ndays, "maxShiftsPerDay": maxsc, "shiftExplicit": True,
+        "wmtPerDay": round(tot["t"] / ndays, 3),
+        "dtPerDay": round(tot["dt"] / ndays, 3),
+        "planWmtPerDay": round(tot["planWmt"] / ndays, 3),
+        "planDtPerDay": round(tot["planDt"] / ndays, 3),
+        "wmtPerShift": round(tot["t"] / ndays / maxsc, 3),
+        "dtPerShift": round(tot["dt"] / ndays, 3),
+        "tripsPerShift": round(tot["trips"] / ndays / maxsc, 3),
+        "tripsPerDTShift": round((tot["trips"] / maxsc) / tot["dt"], 3) if tot["dt"] else 0.0,
+        "planTPerDT": round(tot["planWmt"] / tot["planDt"], 3) if tot["planDt"] else 0.0,
+    })
+
+    return jsonify({
+        "ok": True,
+        "routes": [{"origin": p["origin"], "dest": p["dest"], "t": p["t"]} for p in paths],
+        "paths": paths, "destinations": dests, "contractorProd": contrs,
+        "daily": daily, "dailyByPath": sorted(byPath.values(), key=lambda r: r["d"]),
+        "months": mrows, "kpi": kpi, "types": sorted(all_types, key=lambda r: -r["t"]),
+        "typesSel": f["types"], "fleet": [],
+        "corridor": _SIM_CORRIDOR,
+        "from": f["from"], "to": f["to"], "inclIwip": f["inclIwip"],
+        "source": ",".join(sorted(f["src"])), "dest": ",".join(sorted(f["dst"])),
+        "type": ",".join(f["types"]) if f["types"] else "ALL",
+        "shiftBasis": {"explicit": True, "hours": 12,
+                       "method": "NB_DT is the average shift fleet; RIT and WMT "
+                                 "are divided by NB_SHIFT for per-shift figures",
+                       "source": "WBN_DATABASE.dbo.DISPATCH RESULTS LITE 2"},
+        "updated": int(time.time() * 1000),
+        # `fleet` needs TRUCK_ID, which this table does not carry. Returned empty
+        # rather than filled from an unfiltered second source, which would show a
+        # fleet that ignored the very filters the rest of the payload honours.
+        "fleetNote": "fleet breakdown needs TRUCK_ID and is not available from "
+                     "the dispatch table; omitted rather than served unfiltered",
+    })
+
 
 def _gf_db_conn():
     import pymssql
@@ -742,6 +1119,8 @@ def api_simulator_weighbridge():
     return jsonify(result)
 
 # ROUTES
+# Capability: real query with all six filters; fixture when there is no DB.
+_register('/api/simulator/capability', api_simulator_capability, 'capability', methods=['GET'])
 _register('/api/simulator/path-response', api_simulator_path_response, 'path-response', methods=['GET'])
 _register('/api/simulator/congestion-model', api_simulator_congestion_model, 'congestion-model', methods=['GET'])
 _register('/api/simulator/weighbridge-positions', api_simulator_weighbridge_positions, 'weighbridge-positions', methods=['GET'])

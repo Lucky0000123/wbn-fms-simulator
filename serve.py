@@ -124,15 +124,29 @@ def health():
                     "prediction": _PREDICTION})
 
 
-# Data-loader endpoints kept as fixtures (not part of the model math):
-@app.route("/api/simulator/capability")
-def _capability():
-    return jsonify(_canonical_capability(fx("capability")))
+# /api/simulator/capability MOVED to simulator_api.py on 2026-07-31 and is now a
+# real, filtered query against DISPATCH RESULTS LITE 2.
+#
+# It used to be answered here with `jsonify(_canonical_capability(fx("capability")))`
+# -- the committed fixture, every time, database or not, with request.args never
+# read. The UI sent six filter parameters and all six were discarded, so the whole
+# Capability & Scenario tab was frozen at the values captured on 2026-07-22 and
+# the summary line showed the FIXTURE's date range rather than the operator's.
+# `_canonical_capability` / `_merge_rows` above are retained: `_register` still
+# serves this fixture when there is no database, and it needs the same
+# label-rewriting on that path.
 
 
 @app.route("/api/simulator/trucks")
 def _trucks():
-    return jsonify(fx("trucks"))
+    # Still a fixture, and now says so. It carries no date, contractor or route
+    # column, so there is nothing here to filter on even if it were queried --
+    # see reports/full_app_audit.md.
+    d = fx("trucks")
+    if isinstance(d, dict):
+        d = dict(d, servedFrom="fixture",
+                 servedFromReason="static truck list; not filterable")
+    return jsonify(d)
 
 
 @app.route("/api/simulator/constraints", methods=["GET", "POST"])
@@ -151,6 +165,25 @@ if __name__ == "__main__":
         print("  prediction model: %s" % (
             ("%s R2=%.3f" % (_m["meta"]["model_type"], _m["meta"]["r2"])) if _m
             else "none trained yet — /api/predict will use the OLS fallback"))
+    # Warm the capability snapshot in the BACKGROUND. The view behind it takes
+    # ~17 s to materialise, so the first operator to open the page would pay for
+    # it otherwise. Backgrounded, not blocking, because the server must answer
+    # /health immediately -- the verify harness treats a slow health check as a
+    # hang.
+    if simulator_api._db_ready():
+        import threading
+        def _warm():
+            try:
+                simulator_api._cap_snapshot()
+                # flush: stdout is block-buffered under nohup while Flask logs
+                # to stderr, so an unflushed print looks like a thread that
+                # never ran.
+                print("  capability snapshot warm (%d rows)"
+                      % len(simulator_api._CAP_SNAP["rows"] or []), flush=True)
+            except Exception as exc:                      # noqa: BLE001
+                print("  capability snapshot warm-up failed: %s" % str(exc)[:120], flush=True)
+        threading.Thread(target=_warm, daemon=True).start()
+
     mode = "REAL DB" if simulator_api._db_ready() else "sample fixtures"
     print("\n  Simulator dev server (%s) -> http://127.0.0.1:5055/simulator\n" % mode)
     # threaded=True because a retrain holds the worker for ~45 s with no DB and

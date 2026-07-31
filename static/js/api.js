@@ -25,11 +25,22 @@ async function saveMatrix(){
     else alert('Save failed: '+((d&&d.error)||'unknown')); }
   catch(e){ alert('Save failed: '+e.message); }
 }
+// Generation counter: a second Apply while the first is still in flight must not
+// let the slower (stale) response overwrite the newer filter window.
+let _loadGen=0;
 async function load(){
-  q('loading').style.display=''; q('content').style.display='none';
+  const gen=++_loadGen;
+  const t0=performance.now();
+  q('loading').style.display=''; q('loading').textContent='Loading capability…';
+  q('content').style.display='none';
   const p=filterParams();
   let d; try{ d=await(await fetch('/api/simulator/capability?'+p,{cache:'no-store'})).json(); }
-  catch(e){ q('loading').textContent='Could not load — try again.'; return; }
+  catch(e){
+    if(gen!==_loadGen) return;
+    q('loading').textContent='Could not load — try again.';
+    return;
+  }
+  if(gen!==_loadGen) return;          // superseded by a newer Apply
   if(!d||!d.ok){ q('loading').textContent=(d&&d.error)||'No data.'; return; }
   _D=d; q('loading').style.display='none'; q('content').style.display='';
   _initDone=true;
@@ -39,6 +50,10 @@ async function load(){
   gsecRender(); gPathRender();
   render();
   loadTrucks();
+  // Surface the round-trip so a regression back to per-request SQL is visible
+  // in the console without opening the network tab.
+  console.info('[capability] %.0f ms  %s..%s  iwip=%s',
+    performance.now()-t0, d.from||'', d.to||'', d.inclIwip?'incl':'excl');
 }
 async function loadTrucks(){
   const p=filterParams();

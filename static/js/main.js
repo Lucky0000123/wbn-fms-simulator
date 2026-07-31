@@ -11,7 +11,21 @@ let _D=null, _initDone=false, _mode='actual', _trucks=null, _combined3D=null, _f
 let _selSrc=new Set(), _selDest=new Set(), _effMetric='trips', _optObj='max_trips', _ec=null;
 
 function q(id){return document.getElementById(id);}
-function apply(){ load(); }
+// Debounce Apply so date-picker chatter / double-clicks do not fire overlapping
+// capability reloads. 500 ms after the last change; in-flight requests are
+// abandoned via the generation counter in load().
+let _applyTimer=null;
+function apply(){
+  if(_applyTimer) clearTimeout(_applyTimer);
+  const btn=document.querySelector('.filters .btn');
+  if(btn){ btn.disabled=true; btn.textContent='Loading…'; }
+  _applyTimer=setTimeout(()=>{
+    _applyTimer=null;
+    Promise.resolve(load()).finally(()=>{
+      if(btn){ btn.disabled=false; btn.textContent='Apply'; }
+    });
+  }, 500);
+}
 function setMode(m){ _mode=m; q('mode-actual').classList.toggle('on',m==='actual'); q('mode-plan').classList.toggle('on',m==='plan'); if(_D) render(); }
 function setEffMetric(m){ _effMetric=m; q('em-trips').classList.toggle('on',m==='trips'); q('em-wmt').classList.toggle('on',m==='wmt'); redrawScatter(); }
 function onOpt(){ _optObj=q('opt-obj').value; q('opt-custom').style.display=_optObj==='custom'?'flex':'none'; redrawScatter(); }

@@ -1,0 +1,122 @@
+{
+  "capability": {
+    "status": 200,
+    "filters": {
+      "date-range": "RESPONDS",
+      "iwip": "RESPONDS",
+      "types": "RESPONDS",
+      "source": "RESPONDS",
+      "dest": "RESPONDS"
+    }
+  },
+  "trucks": {
+    "status": 200,
+    "filters": {
+      "date-range": "IGNORES",
+      "iwip": "IGNORES",
+      "types": "IGNORES",
+      "source": "IGNORES",
+      "dest": "IGNORES"
+    }
+  },
+  "constraints": {
+    "status": 200,
+    "filters": {
+      "date-range": "IGNORES",
+      "iwip": "IGNORES",
+      "types": "IGNORES",
+      "source": "IGNORES",
+      "dest": "IGNORES"
+    }
+  },
+  "path-response": {
+    "status": -1,
+    "filters": {
+      "date-range": "ERROR",
+      "iwip": "ERROR",
+      "types": "ERROR",
+      "source": "ERROR",
+      "dest": "ERROR"
+    }
+  },
+  "congestion-model": {
+    "status": -1,
+    "filters": {
+      "date-range": "ERROR",
+      "iwip": "ERROR",
+      "types": "ERROR",
+      "source": "ERROR",
+      "dest": "ERROR"
+    }
+  },
+  "weighbridge": {
+    "status": -1,
+    "filters": {
+      "date-range": "ERROR",
+      "iwip": "ERROR",
+      "types": "ERROR",
+      "source": "ERROR",
+      "dest": "ERROR"
+    }
+  },
+  "weighbridge-summary": {
+    "status": -1,
+    "filters": {
+      "date-range": "ERROR",
+      "iwip": "ERROR",
+      "types": "ERROR",
+      "source": "ERROR",
+      "dest": "ERROR"
+    }
+  },
+  "weighbridge-positions": {
+    "status": -1,
+    "filters": {
+      "date-range": "ERROR",
+      "iwip": "ERROR",
+      "types": "ERROR",
+      "source": "ERROR",
+      "dest": "ERROR"
+    }
+  },
+  "shift-context": {
+    "status": -1,
+    "filters": {
+      "date-range": "ERROR",
+      "iwip": "ERROR",
+      "types": "ERROR",
+      "source": "ERROR",
+      "dest": "ERROR"
+    }
+  },
+  "simulate/options": {
+    "status": -1,
+    "filters": {
+      "date-range": "ERROR",
+      "iwip": "ERROR",
+      "types": "ERROR",
+      "source": "ERROR",
+      "dest": "ERROR"
+    }
+  },
+  "model-info": {
+    "status": -1,
+    "filters": {
+      "date-range": "ERROR",
+      "iwip": "ERROR",
+      "types": "ERROR",
+      "source": "ERROR",
+      "dest": "ERROR"
+    }
+  },
+  "corridor-geometry": {
+    "status": -1,
+    "filters": {
+      "date-range": "ERROR",
+      "iwip": "ERROR",
+      "types": "ERROR",
+      "source": "ERROR",
+      "dest": "ERROR"
+    }
+  }
+}

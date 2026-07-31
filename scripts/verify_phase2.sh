@@ -467,6 +467,21 @@ fi
 $PY test_map_geometry.py >/dev/null 2>&1
 chk $? "J63  committed road centreline, and only that" "see: python test_map_geometry.py"
 
+# J64 — capability filters are real AND fast. Until 2026-07-31 this endpoint was
+# answered with the committed fixture and request.args were discarded, so every
+# KPI on the Capability tab was frozen at 2026-07-22 capture values. It now
+# queries DISPATCH RESULTS LITE 2 (via a whole-view snapshot) and honours all
+# six filter parameters. The speed assertion is load-bearing: the view costs
+# ~17 s to materialise, so a per-request SQL path would pass every correctness
+# check while making the tab unusable again. Skips cleanly in no-DB mode.
+# Requires a live server on :5055 (same convention as J56 / browser gates).
+if curl -fsS --max-time 5 http://127.0.0.1:5055/health >/dev/null 2>&1; then
+$PY test_capability_filters.py >/dev/null 2>&1
+chk $? "J64  capability filters real + under 3s" "see: python test_capability_filters.py"
+else
+  echo "  SKIP J64  (no server on :5055 — start serve.py to exercise)"
+fi
+
 
 echo
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"
