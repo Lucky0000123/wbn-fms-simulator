@@ -503,11 +503,78 @@ reported a physically impossible result. A residual never fails loudly; it just
 quietly takes up the slack for whatever is inconsistent elsewhere. When you
 change any term of `cycle − load − dump`, check the residual.
 
+## `shift_minutes` — audited, no bug, but a silent extrapolation
+
+`reports/shift_minutes_audit.md`. Gate `J60`. The UI sends 720 and
+`DEFAULT_SHIFT_MIN` is 720, so there is **no** disagreement of the availability
+kind. But `effective_cycle_min = (truck_shifts × 720) / trips` — 720 is hardcoded
+in the derivation — so the denominator is calibrated at a twelve-hour shift while
+trips scale linearly with whatever the caller sends. The model over-states trips
+below 720 and under-states above.
+
+The size of that error is **unknowable here**: 98.48% of 538,586 truck-shifts are
+exactly 12.0 h, so there is no variation from which to separate per-shift
+overhead from per-trip time. So the field is kept and the answer is labelled
+(`summary.shift_minutes_extrapolated`), silent at 720 — a warning that always
+fires is one nobody reads.
+
+## Segment speeds ARE splittable by direction
+
+`FMS_CONGESTION_SEG.DIR` is `{'down','up'}` and the endpoint used to aggregate
+over it. It now returns `loadedSpeed` / `emptySpeed` / `nLoaded` / `nEmpty`.
+
+**The mapping was verified, not assumed.** "down" is a *chainage* direction, not a
+load state. Against the tickets: **100.0% of loaded corridor hauls run
+down-chainage** (298,340 trips, zero counter-examples), because every tip sits
+seaward of every load point. The speeds agree independently — empty is faster on
+**75 of 94** segments, median **+11.5%**, up to **+101%** on the steep TF
+sections. Gate `J61`; its majority-and-sign check is what would catch a silent
+inversion, which would look entirely normal on screen.
+
+## HRM has no measurable effect — and the first answer was spurious
+
+`reports/hrm_impact_analysis.md`. Gate `J62`. Within route and fleet size,
+HRM activity vs trips/DT is **r = ±0.0006, p = 0.99** on 389 route-shift-days.
+Do not add HRM to the model.
+
+The first pass reported **r = −0.4604, p = 8.4e−22**. It was route length:
+`hrm_hours` is summed along a route, so `corr(span_km, hrm_hours) = +0.63`, while
+`corr(span_km, trips_per_dt) = −0.63`. Two correlations through a shared cause
+manufacture ≈ −0.40. Controlling fleet size did nothing because fleet size was
+not the confound — the road was.
+
+> **A dose measure that accumulates along a route encodes route length.** Difference
+> it away (demean within route) before believing it. `hrm_units`, a count rather
+> than a sum, was not confounded and showed nothing at any stage.
+
+## Two traps this codebase has now hit twice each
+
+**Residual fields hide errors.** `implied_travel_time_min` absorbed a one-ended
+dwell penalty and reported rain speeding trucks up. When you change any term of
+`cycle − load − dump`, check the residual.
+
+**Counting elements is not checking rendering.** Gauges: 3 wrappers, 0 canvases.
+The map: 376 `<path>` elements with correct geometry and stroke, drawn into a
+**zero-width** SVG overlay — invisible. Leaflet sizes the SVG renderer from the
+container at init, and this map lives in a tab that starts hidden;
+`invalidateSize` moves the map but does not rescue a stale SVG viewport. Fixed
+with `preferCanvas: true`. Assert the renderer surface covers the container, not
+that shapes exist.
+
+WARNING: `use_reloader=False`, so **restart the server after editing
+`templates/simulator.html`** — twice this round a template change appeared to be
+a code bug because the browser was served the cached old template.
+
 ## Score
 
-**59/59**, measured 2026-07-31 in no-DB mode, with `J55`–`J59` added. `G24` gates
+**62/62**, measured 2026-07-31 in no-DB mode, with `J55`–`J62` added. `G24` gates
 the **mirror only** — see the top of this file and the comment above it in
 `scripts/verify_phase2.sh`.
+
+Site **coordinates are not committed**. `weighbridge-positions` uses `km`/`offM`
+rather than lat/lng and no fixture carries coordinates, so the section-9 map
+reads `data/haul_road_chainage.csv` (gitignored, cached, no VPN needed) and shows
+an honest empty state where it is absent — a fresh clone, or the public demo.
 
 `data/simulator_model_results.json` no longer churns: `simulator_model.
 preserve_stamp()` carries `generated_at` forward when nothing else changed, so

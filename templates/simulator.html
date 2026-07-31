@@ -4,6 +4,11 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Haulage Capability — FMS Simulator</title>
 <link rel="stylesheet" href="/static/css/style.css">
+<!-- Leaflet for the corridor map (section 9). CDN, like ECharts: this repo has
+     no build step. Both are optional at runtime — plan_assessment.js checks for
+     the global and degrades to a visible note, because the tool is demonstrated
+     without VPN and sometimes without internet. -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
 <body>
   <div class="top">
@@ -361,6 +366,33 @@
             <div id="pa-fleet-note" class="lead muted" style="margin-top:10px;font-size:12px"></div>
           </div>
 
+          <div class="card" style="margin-top:14px">
+            <h3 style="margin-bottom:3px">9 &middot; Corridor map &mdash; where the speeds actually are</h3>
+            <div class="sub">The haul road coloured by measured speed, so a figure in section 3 can be traced to a place on the ground. Click any section for its numbers.
+              <select id="pa-map-metric" onchange="paMapMetric(this.value)" style="margin-left:8px">
+                <option value="loadedSpeed">Colour by loaded speed</option>
+                <option value="emptySpeed">Colour by empty speed</option>
+                <option value="avgSpeed">Colour by pooled mean speed</option>
+                <option value="dropPct">Colour by % below free-flow</option>
+              </select></div>
+            <!-- Map beside a panel, not full width. The corridor is ~0.33 deg
+                 tall by 0.14 wide -- a 2.4:1 PORTRAIT shape. In a full-width
+                 landscape box Leaflet fits it correctly and it still renders as
+                 a 9%-wide sliver. A tall narrow map matches the road; the width
+                 that would have been wasted carries the detail panel. -->
+            <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;align-items:stretch">
+              <div id="pa-map" style="flex:0 0 420px;height:560px;border-radius:8px;overflow:hidden;min-width:300px"></div>
+              <div style="flex:1;min-width:280px;display:flex;flex-direction:column;gap:10px">
+                <div id="pa-map-legend"></div>
+                <div id="pa-map-detail" style="font-size:12px"></div>
+                <div class="rain-table" style="flex:1;overflow:auto;max-height:300px"><table>
+                  <thead><tr><th>Slowest sections</th><th class="r">Loaded</th><th class="r">Empty</th><th class="r">Gap</th></tr></thead>
+                  <tbody id="pa-map-rows"></tbody></table></div>
+              </div>
+            </div>
+            <div id="pa-map-note" class="lead muted" style="margin-top:10px;font-size:12px"></div>
+          </div>
+
         </div><!-- /pa-sections-bot -->
       </div><!-- /tab-plansim -->
 
@@ -401,6 +433,7 @@
      every table still work without it, and plan_assessment.js degrades each chart
      to a visible note rather than throwing. -->
 <script defer src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/js/api.js"></script>
 <script src="/static/js/charts.js"></script>
 <script src="/static/js/flow_sim.js"></script>

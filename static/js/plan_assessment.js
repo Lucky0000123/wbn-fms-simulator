@@ -17,13 +17,15 @@
  *      a decomposition nothing measures, so it is drawn as one residual band and
  *      named for everything it contains.
  *
- *   2. Loaded vs empty speed as two lines per section.
- *      FMS_CONGESTION_SEG has a DIR column, but /api/simulator/congestion-model
- *      aggregates over it -- the payload has no direction field. So the two lines
- *      are measured mean speed and the data-anchored free-flow speed (p85 at
- *      bottom-quintile traffic), which are both real, instead of a loaded/empty
- *      split that would have to be invented. Splitting by DIR is a server change,
- *      noted as follow-up.
+ *   2. [RESOLVED 2026-07-31] Loaded vs empty speed as two lines per section.
+ *      This used to read "not available -- the endpoint aggregates over DIR".
+ *      It now is available: the endpoint selects DIR and returns loadedSpeed /
+ *      emptySpeed per segment. DIR is a CHAINAGE direction ('down' / 'up'), and
+ *      that it means loaded / empty was verified against the tickets rather than
+ *      inferred from the word -- 100.0% of loaded corridor hauls run
+ *      down-chainage (298,340 trips, zero counter-examples), because every tip
+ *      sits seaward of every load point. Empty is faster on 75 of 94 segments,
+ *      median +11.5%, up to +101% on the steep TF sections.
  *
  *   3. Per-contractor fleet-sizing breakdown.
  *      /api/simulate returns roster per ROUTE, and availability is measured for
@@ -39,6 +41,11 @@
 
 let _paOptions = null, _paCongestion = null, _paCapability = null;
 let _paLastSim = null, _paCharts = {}, _paRoad = null;
+/* Section 9 map state. _paGeom is the corridor centreline; it is fetched once
+ * and may legitimately be an "unavailable" payload, because site coordinates are
+ * not committed to the public mirror. */
+let _paGeom = null, _paMap = null, _paLayer = null, _paMapMetric = 'loadedSpeed';
+let _paSegIndex = {};
 
 /* ---------- small helpers ---------- */
 
@@ -134,6 +141,12 @@ function paLoadRefs() {
     jobs.push(fetch('/api/simulator/capability').then(r => r.json())
       .then(d => { _paCapability = d; }).catch(() => { _paCapability = {}; }));
   }
+  if (!_paGeom) {
+    jobs.push(fetch('/api/simulator/corridor-geometry').then(r => r.json())
+      .then(d => { _paGeom = d; })
+      .catch(() => { _paGeom = {ok: false, roads: [],
+                                reason: 'corridor geometry request failed'}; }));
+  }
   return Promise.all(jobs);
 }
 
@@ -156,6 +169,7 @@ function paRender(sim) {
     paGauges(sim, rows);
     paHistory(rows);
     paFleet(sim, rows);
+    paMap();
   });
 }
 
@@ -269,8 +283,14 @@ function paSpeed() {
   if (sel) sel.value = _paRoad;
 
   const list = byRoad[_paRoad].slice().sort((a, b) => a.from - b.from);
-  const meas = list.map(s => [s.from, s.avgSpeed]);
-  const free = list.map(s => [s.from, s.freeFlow]);
+  // Nulls are dropped, not zeroed: a segment with no fixes in one direction has
+  // no speed, and plotting 0 would draw a truck standing still.
+  const pt = (s, k) => (s[k] === null || s[k] === undefined) ? null : [s.from, s[k]];
+  const loaded = list.map(s => pt(s, 'loadedSpeed')).filter(Boolean);
+  const empty = list.map(s => pt(s, 'emptySpeed')).filter(Boolean);
+  const free = list.map(s => pt(s, 'freeFlow')).filter(Boolean);
+  const haveDir = loaded.length > 0 || empty.length > 0;
+  const meas = list.map(s => pt(s, 'avgSpeed')).filter(Boolean);
 
   paChart('pa-speed-chart', {
     backgroundColor: 'transparent',
@@ -280,9 +300,15 @@ function paSpeed() {
         if (!ps || !ps.length) return '';
         const km = ps[0].value[0];
         const s = list.find(x => x.from === km) || {};
+        const gap = (s.loadedSpeed && s.emptySpeed)
+          ? `<br>empty vs loaded: <b>${paNum(100 * (s.emptySpeed - s.loadedSpeed) / s.loadedSpeed, 1)}%</b>`
+          : '';
         return `<b>${paEsc(s.seg || '')}</b><br>`
           + ps.map(p => `${p.marker}${p.seriesName}: ${paNum(p.value[1], 1)} km/h`).join('<br>')
-          + `<br>observations: ${paNum(s.n)}<br>peak trucks on segment: ${paNum(s.peakTrucks)}`;
+          + gap
+          + `<br>GPS fixes loaded / empty: ${paNum(s.nLoaded)} / ${paNum(s.nEmpty)}`
+          + `<br>segment-hours: ${paNum(s.n)}`
+          + `<br>peak trucks on segment: ${paNum(s.peakTrucks)}`;
       },
     },
     legend: {textStyle: {color: PA_C.text, fontSize: 11}, top: 0},
@@ -292,13 +318,25 @@ function paSpeed() {
             axisLabel: {color: PA_C.axis}, splitLine: {lineStyle: {color: PA_C.grid}}},
     yAxis: {type: 'value', name: 'km/h', min: 0, nameTextStyle: {color: PA_C.axis},
             axisLabel: {color: PA_C.axis}, splitLine: {lineStyle: {color: PA_C.grid}}},
-    series: [
+    // Loaded vs empty when DIR is present; otherwise fall back to the pooled
+    // mean so an older fixture still renders something true rather than blank.
+    series: haveDir ? [
+      {name: 'Free-flow (p85 at low traffic)', type: 'line', data: free,
+       lineStyle: {color: PA_C.axis, type: 'dotted', width: 1.5, opacity: .75},
+       itemStyle: {color: PA_C.axis}, symbolSize: 0, z: 1},
+      {name: 'Loaded (down-chainage, toward the tip)', type: 'line', data: loaded,
+       lineStyle: {color: PA_C.meas, width: 2.5}, itemStyle: {color: PA_C.meas},
+       symbolSize: 6, z: 3},
+      {name: 'Empty (up-chainage, returning)', type: 'line', data: empty,
+       lineStyle: {color: PA_C.free, type: 'dashed', width: 2.5},
+       itemStyle: {color: PA_C.free}, symbolSize: 6, z: 2},
+    ] : [
       {name: 'Free-flow (p85 at low traffic)', type: 'line', data: free,
        lineStyle: {color: PA_C.free, type: 'dashed', width: 2},
        itemStyle: {color: PA_C.free}, symbolSize: 5, z: 2},
-      {name: 'Measured mean speed', type: 'line', data: meas,
-       lineStyle: {color: PA_C.meas, width: 2.5}, itemStyle: {color: PA_C.meas},
-       symbolSize: 6, z: 3},
+      {name: 'Measured mean speed (no direction split available)', type: 'line',
+       data: meas, lineStyle: {color: PA_C.meas, width: 2.5},
+       itemStyle: {color: PA_C.meas}, symbolSize: 6, z: 3},
     ],
   });
 
@@ -325,11 +363,20 @@ function paSpeed() {
     cachedBanner
     + `Road <b>${paEsc(_paRoad)}</b>: ${list.length} segments, ${paNum(totalObs)} `
     + `segment-hours over ${paNum((_paCongestion || {}).days)} days of retention. `
-    + 'The two lines are <b>measured mean speed</b> and the <b>free-flow</b> speed '
-    + 'anchored in the data (p85 of speeds in the bottom traffic quintile). '
-    + '<b>They are not loaded vs empty.</b> FMS_CONGESTION_SEG carries a direction '
-    + 'column but this endpoint aggregates over it, so a loaded/empty split is not '
-    + 'available without a server change &mdash; drawing one would be invention.'
+    + (haveDir
+        ? '<b>Loaded</b> is measured down-chainage (toward the tip), <b>empty</b> '
+          + 'up-chainage (returning). That mapping is verified against the '
+          + 'weighbridge tickets, not inferred from the words: <b>100.0% of '
+          + 'loaded corridor hauls run down-chainage</b> (298,340 trips, zero '
+          + 'counter-examples), because every tip sits seaward of every load '
+          + 'point. Across the corridor empty is faster on <b>75 of 94 '
+          + 'segments</b>, median <b>+11.5%</b>, and up to +101% on the steep TF '
+          + 'sections. On the ~20% where loaded reads faster the two are usually '
+          + 'within noise &mdash; check the fix counts in the tooltip before '
+          + 'reading anything into a single segment. The dotted line is free-flow '
+          + '(p85 of speeds in the bottom traffic quintile), pooled over both '
+          + 'directions.'
+        : 'Showing the pooled mean: this response carries no direction split.')
     + (unparsed.length ? ` ${unparsed.length} segment id(s) did not match the `
         + '"ROAD KMa-b" pattern and are excluded.' : '');
 }
@@ -630,6 +677,254 @@ function paFleet(sim, rows) {
     + '<b>Not broken down by contractor:</b> the roster is computed per route and '
     + 'there is no contractor dimension on it, so a per-contractor table would be '
     + 'apportionment presented as measurement.';
+}
+
+/* ---------- Section 9 · corridor map ---------- */
+
+/* Colour a speed. Anchored on the MEASURED distribution rather than a pretty
+ * gradient: median loaded speed on this corridor is 16.6 km/h and median empty
+ * 18.3, so the mid-point sits at 17 and the scale saturates at 8 and 30. A
+ * generic 0-100 scale would paint the whole road the same shade. */
+function paSpeedColour(v) {
+  if (v === null || v === undefined || !isFinite(v)) return '#4a5568';
+  const t = Math.max(0, Math.min(1, (v - 8) / (30 - 8)));
+  // red -> amber -> green
+  const stops = [[0, 229, 83, 75], [0.5, 210, 153, 34], [1, 63, 185, 80]];
+  let a = stops[0], b = stops[stops.length - 1];
+  for (let i = 0; i < stops.length - 1; i++) {
+    if (t >= stops[i][0] && t <= stops[i + 1][0]) { a = stops[i]; b = stops[i + 1]; }
+  }
+  const f = (b[0] - a[0]) ? (t - a[0]) / (b[0] - a[0]) : 0;
+  const ch = (i) => Math.round(a[i] + (b[i] - a[i]) * f);
+  return `rgb(${ch(1)},${ch(2)},${ch(3)})`;
+}
+
+/* Percentage-below-free-flow uses the opposite polarity: bigger is worse. */
+function paDropColour(p) {
+  if (p === null || p === undefined || !isFinite(p)) return '#4a5568';
+  const t = Math.max(0, Math.min(1, p / 60));
+  return `rgb(${Math.round(63 + (229 - 63) * t)},${Math.round(185 + (83 - 185) * t)},${Math.round(80 + (75 - 80) * t)})`;
+}
+
+function paMapMetric(v) { _paMapMetric = v; paMap(); }
+
+/* Fill the side panel for one segment. Kept separate from the popup so the
+ * figures stay on screen after the popup closes. */
+function paMapDetail(s) {
+  const el = document.getElementById('pa-map-detail');
+  if (!el || !s) return;
+  const gap = (s.loadedSpeed && s.emptySpeed)
+    ? 100 * (s.emptySpeed - s.loadedSpeed) / s.loadedSpeed : null;
+  const row = (k, v) => `<tr><td class="muted" style="padding-right:10px">${k}</td><td><b>${v}</b></td></tr>`;
+  el.innerHTML = `<div style="border:1px solid var(--line,#30363d);border-radius:8px;padding:10px">
+    <b style="font-size:13px">${paEsc(s.seg)}</b>
+    <div class="muted" style="font-size:11px;margin-bottom:6px">KM ${paNum(s.from, 1)}&ndash;${paNum(s.to, 1)}</div>
+    <table style="font-size:12px">
+    ${row('Loaded (down)', s.loadedSpeed == null ? '—' : paNum(s.loadedSpeed, 1) + ' km/h')}
+    ${row('Empty (up)', s.emptySpeed == null ? '—' : paNum(s.emptySpeed, 1) + ' km/h')}
+    ${row('Empty vs loaded', gap == null ? '—' : paNum(gap, 1) + '%')}
+    ${row('Free-flow', paNum(s.freeFlow, 1) + ' km/h')}
+    ${row('Peak trucks', paNum(s.peakTrucks))}
+    ${row('GPS fixes L/E', paNum(s.nLoaded) + ' / ' + paNum(s.nEmpty))}
+    ${row('Segment-hours', paNum(s.n))}
+    </table></div>`;
+}
+
+/* Clicking a row in the side table centres the map on that section. */
+function paMapFocus(seg) {
+  const s = (_paSegIndex || {})[seg];
+  if (!s || !_paMap || !_paGeom) return;
+  const alias = _paGeom.roadAlias || {};
+  const road = (_paGeom.roads || []).find(r =>
+    r.road.toUpperCase() === (alias[s.road] || s.road).toUpperCase());
+  if (!road) return;
+  const pts = road.points.filter(p => p.km >= s.from && p.km <= s.to);
+  if (!pts.length) return;
+  const b = L.latLngBounds(pts.map(p => [p.lat, p.lng]));
+  _paMap.fitBounds(b, {padding: [60, 60], maxZoom: 15});
+  paMapDetail(s);
+}
+
+function paMap() {
+  const el = document.getElementById('pa-map');
+  const note = document.getElementById('pa-map-note');
+  if (!el) return;
+
+  if (typeof L === 'undefined') {
+    el.innerHTML = '<div class="muted" style="padding:20px;font-size:12px">'
+      + 'Map library unavailable (Leaflet loads from a CDN and this machine '
+      + 'appears to be offline). Every speed on this map is also in section 3 '
+      + 'and its table.</div>';
+    return;
+  }
+  const geo = _paGeom || {};
+  if (!geo.ok || !(geo.roads || []).length) {
+    el.innerHTML = '<div class="muted" style="padding:20px;font-size:12px">'
+      + paEsc(geo.reason || 'corridor geometry unavailable') + '</div>';
+    if (note) note.innerHTML = '';
+    return;
+  }
+
+  // Index measured segments by road + km span so a polyline slice can find its
+  // speeds. Segment ids name the Tofu road "TF"; chainage calls it "TOFU".
+  const alias = geo.roadAlias || {};
+  const segs = ((_paCongestion || {}).segments) || [];
+  const byRoad = {};
+  segs.forEach(s => {
+    const p = paParseSeg(s.seg);
+    if (!p) return;
+    const road = (alias[p.road] || p.road).toUpperCase();
+    (byRoad[road] = byRoad[road] || []).push(Object.assign({}, s, p));
+  });
+
+  if (!_paMap) {
+    // preferCanvas, and not only for speed with ~370 polylines. The SVG
+    // renderer sizes its overlay from the container at init; this map lives in
+    // a tab that starts hidden, so the overlay was created 0px wide and every
+    // polyline was drawn correctly into a zero-width viewport -- 376 <path>
+    // elements present, correct stroke and geometry, nothing visible.
+    // invalidateSize moves the map but does not rescue a stale SVG viewport.
+    // The canvas renderer is resized from the map's current pixel bounds on
+    // every redraw, so it cannot get stuck that way.
+    _paMap = L.map(el, {scrollWheelZoom: false, attributionControl: true,
+                        preferCanvas: true});
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18, attribution: '&copy; OpenStreetMap',
+    }).addTo(_paMap);
+    _paLayer = L.layerGroup().addTo(_paMap);
+  }
+  _paLayer.clearLayers();
+
+  const metric = _paMapMetric || 'loadedSpeed';
+  const bounds = [];
+  let coloured = 0, uncoloured = 0;
+
+  geo.roads.forEach(r => {
+    const pts = r.points;
+    const measured = byRoad[r.road.toUpperCase()] || [];
+    // Draw the road in slices between consecutive chainage points, so colour
+    // changes at the segment boundary rather than the whole road taking one
+    // shade. A slice with no measured segment is drawn grey, not guessed.
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], mid = (a.km + b.km) / 2;
+      const seg = measured.find(s => mid >= s.from && mid <= s.to);
+      let val = null, colour = '#4a5568';
+      if (seg) {
+        if (metric === 'dropPct') {
+          val = seg.freeFlow ? 100 * (seg.freeFlow - seg.avgSpeed) / seg.freeFlow : null;
+          colour = paDropColour(val);
+        } else {
+          val = seg[metric];
+          colour = paSpeedColour(val);
+        }
+      }
+      if (val === null || val === undefined) uncoloured++; else coloured++;
+      const line = L.polyline([[a.lat, a.lng], [b.lat, b.lng]], {
+        color: colour, weight: seg ? 6 : 3, opacity: seg ? 0.95 : 0.45,
+      });
+      if (seg) {
+        // Clicking a section fills the side panel too, so the numbers stay
+        // readable after the popup is dismissed.
+        line.on('click', () => paMapDetail(seg));
+        line.bindPopup(
+          `<b>${paEsc(seg.seg)}</b><br>`
+          + `KM ${paNum(seg.from, 1)}&ndash;${paNum(seg.to, 1)}<br>`
+          + `loaded (down): <b>${seg.loadedSpeed == null ? '—' : paNum(seg.loadedSpeed, 1) + ' km/h'}</b><br>`
+          + `empty (up): <b>${seg.emptySpeed == null ? '—' : paNum(seg.emptySpeed, 1) + ' km/h'}</b><br>`
+          + `free-flow: ${paNum(seg.freeFlow, 1)} km/h<br>`
+          + `pooled mean: ${paNum(seg.avgSpeed, 1)} km/h<br>`
+          + `peak trucks: ${paNum(seg.peakTrucks)}<br>`
+          + `GPS fixes loaded/empty: ${paNum(seg.nLoaded)} / ${paNum(seg.nEmpty)}<br>`
+          + `segment-hours: ${paNum(seg.n)}`);
+      }
+      line.addTo(_paLayer);
+      bounds.push([a.lat, a.lng], [b.lat, b.lng]);
+    }
+  });
+
+  // Corridor nodes, positioned by looking their chainage up on the road that
+  // carries that km -- so the marker sits on the line, not at a guessed point.
+  const nodes = ((geo.corridor || {}).nodes) || [];
+  const ranges = ((geo.corridor || {}).roadRanges) || [];
+  nodes.forEach(n => {
+    const rr = ranges.find(x => n.km <= Math.max(x.fromKm, x.toKm)
+                             && n.km >= Math.min(x.fromKm, x.toKm));
+    const road = geo.roads.find(r => r.road.toUpperCase()
+                                  === (alias[(rr || {}).label] || (rr || {}).label || '').toUpperCase());
+    if (!road) return;
+    let best = null, bd = 1e9;
+    road.points.forEach(p => { const d = Math.abs(p.km - n.km); if (d < bd) { bd = d; best = p; } });
+    if (!best || bd > 1.0) return;
+    L.circleMarker([best.lat, best.lng], {
+      radius: 6, color: '#fff', weight: 2, fillColor: PA_C.warn, fillOpacity: 1,
+    }).bindPopup(`<b>${paEsc(n.label)}</b><br>chainage KM ${paNum(n.km, 1)}`)
+      .addTo(_paLayer);
+  });
+
+  // invalidateSize BEFORE fitBounds, and fit again after the container has
+  // settled. Leaflet computes the zoom from the container's CURRENT pixel size;
+  // this section is inside a tab that starts hidden, so the first fit ran
+  // against a stale (smaller) viewport and left the corridor as a hairline on a
+  // map of the whole island. Fitting twice is cheap and removes the race.
+  const fit = () => {
+    try {
+      _paMap.invalidateSize(false);
+      if (bounds.length) _paMap.fitBounds(bounds, {padding: [24, 24]});
+    } catch (e) { /* container not laid out yet */ }
+  };
+  fit();
+  setTimeout(fit, 120);
+  setTimeout(fit, 400);
+
+  // --- side panel: legend, and the sections worth looking at ---
+  const legend = document.getElementById('pa-map-legend');
+  if (legend) {
+    const swatch = (c, t) => `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:10px">`
+      + `<span style="width:16px;height:8px;border-radius:2px;background:${c};display:inline-block"></span>`
+      + `<span class="muted" style="font-size:11px">${t}</span></span>`;
+    legend.innerHTML = (metric === 'dropPct'
+      ? swatch(paDropColour(0), '0%') + swatch(paDropColour(30), '30%') + swatch(paDropColour(60), '60%+')
+      : swatch(paSpeedColour(8), '8 km/h') + swatch(paSpeedColour(17), '17') + swatch(paSpeedColour(30), '30+'))
+      + swatch('#4a5568', 'no measurement');
+  }
+
+  const ranked = [].concat(...Object.values(byRoad))
+    .filter(s => s.loadedSpeed != null && s.emptySpeed != null)
+    .sort((a, b) => a.loadedSpeed - b.loadedSpeed).slice(0, 12);
+  const rowsEl = document.getElementById('pa-map-rows');
+  if (rowsEl) {
+    rowsEl.innerHTML = ranked.map(s => {
+      const gap = 100 * (s.emptySpeed - s.loadedSpeed) / s.loadedSpeed;
+      return `<tr style="cursor:pointer" onclick="paMapFocus('${paEsc(s.seg).replace(/'/g, "")}')">
+        <td>${paEsc(s.seg)}</td>
+        <td class="r" style="color:${paSpeedColour(s.loadedSpeed)}">${paNum(s.loadedSpeed, 1)}</td>
+        <td class="r" style="color:${paSpeedColour(s.emptySpeed)}">${paNum(s.emptySpeed, 1)}</td>
+        <td class="r">${paNum(gap, 0)}%</td></tr>`;
+    }).join('') || '<tr><td colspan="4" class="muted">no measured sections</td></tr>';
+  }
+  _paSegIndex = {};
+  [].concat(...Object.values(byRoad)).forEach(s => { _paSegIndex[s.seg] = s; });
+  if (!document.getElementById('pa-map-detail').innerHTML && ranked.length) {
+    paMapDetail(ranked[0]);
+  }
+
+  const label = {loadedSpeed: 'loaded speed', emptySpeed: 'empty speed',
+                 avgSpeed: 'pooled mean speed',
+                 dropPct: '% below free-flow'}[metric] || metric;
+  if (note) {
+    note.innerHTML =
+      `Centreline from <b>HAUL_ROAD_STA</b> (${paNum(geo.roads.reduce((a, r) => a + r.nRaw, 0))} `
+      + `chainage markers, downsampled to ~0.25 km), coloured by <b>${label}</b>. `
+      + `<b>${paNum(coloured)}</b> slices carry a measured segment; `
+      + `<b>${paNum(uncoloured)}</b> are drawn thin and grey because no segment `
+      + 'covers them &mdash; absence of measurement, not a slow road. '
+      + (((_paCongestion || {}).servedFrom === 'fixture')
+          ? '<b style="color:' + PA_C.warn + '">Speeds are cached, not live.</b> '
+          : '')
+      + 'Scale is anchored on the measured distribution (median loaded 16.6 km/h, '
+      + 'empty 18.3), so it saturates at 8 and 30 km/h rather than 0 and 100 &mdash; '
+      + 'a generic scale would paint the whole corridor one shade.';
+  }
 }
 
 /* Road selector for Section 3. */

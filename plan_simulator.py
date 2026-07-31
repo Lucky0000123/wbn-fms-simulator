@@ -51,6 +51,11 @@ DATA = os.path.join(BASE, "data")
 
 # A 12-hour shift is the site's roster. Overridable per request.
 DEFAULT_SHIFT_MIN = 720
+# The shift length the effective cycle was MEASURED at. simulator_model derives
+# effective_cycle_min as (truck_shifts x 720) / trips, so 720 is not merely a
+# default -- it is the calibration point, and any other value extrapolates.
+# Keep the two in step: if the derivation's shift changes, this must change too.
+CALIBRATION_SHIFT_MIN = 720.0
 # Fraction of the shift to divide by when the caller supplies no override.
 #
 # This is 1.0, not 0.85, and the reason matters. Trips per truck are predicted by
@@ -214,6 +219,48 @@ def simulate(payload: dict) -> dict:
         return {"error": "no plans supplied", "results": [], "summary": {}}
 
     shift_min = float(payload.get("shift_minutes", DEFAULT_SHIFT_MIN))
+
+    # SHIFT LENGTH IS AN EXTRAPOLATION AWAY FROM 720, AND SAYS SO.
+    #
+    # Audited 2026-07-31 as the last caller-supplied field that scales tonnage.
+    # There is NO UI/engine disagreement of the availability kind: the UI sends
+    # 720 and DEFAULT_SHIFT_MIN is 720. But trips scale exactly linearly with
+    # this field, and the denominator they divide does not:
+    #
+    #   effective_cycle_min = (truck_shifts x 720) / trips     <- 720 hardcoded
+    #                                                             in simulator_model
+    #
+    # So the effective cycle is "minutes of a TWELVE-HOUR shift per completed
+    # trip". It bundles per-trip time with per-shift overhead that does not
+    # scale -- one meal break, one refuel, one pre-start, one handover. Writing
+    # 720 = n.V + F for n trips of variable cost V and fixed overhead F, the
+    # model predicts n' = S.n/720 while the truth is n' = (S - F)/V, so it
+    # OVERPREDICTS by F(1 - S/720)/V: too many trips for a short shift, too few
+    # for a long one.
+    #
+    # F and V cannot be separated from this data, and that is measured, not
+    # assumed: 98.48% of 538,586 truck-shifts in availability_per_truck.csv are
+    # exactly 12.0 hours, so shift length is a constant and no regression can
+    # identify the split. Fabricating an F would be inventing the number.
+    #
+    # The honest move is therefore to keep the field -- planners do run other
+    # shift lengths -- and label the answer as an extrapolation with its
+    # direction, rather than to silently return a linear guess.
+    shift_note = None
+    if abs(shift_min - CALIBRATION_SHIFT_MIN) > 1.0:
+        longer = shift_min > CALIBRATION_SHIFT_MIN
+        shift_note = (
+            "shift_minutes=%.0f is an EXTRAPOLATION. The effective cycle that "
+            "trips divide by was measured as (truck-shifts x %.0f) / trips, so "
+            "it is calibrated at a %.0f-minute shift; 98.5%% of 538,586 measured "
+            "truck-shifts are exactly 12.0 h, leaving no variation from which to "
+            "separate per-shift overhead (break, refuel, pre-start, handover) "
+            "from per-trip time. Trips here scale linearly, which %s the fixed "
+            "overhead and so likely %s trips for this shift length. Treat the "
+            "tonnage as indicative, not measured."
+            % (shift_min, CALIBRATION_SHIFT_MIN, CALIBRATION_SHIFT_MIN,
+               "under-weights" if longer else "over-weights",
+               "UNDER-states" if longer else "OVER-states"))
 
     # A caller-supplied `availability` is ACCEPTED and then DELIBERATELY IGNORED
     # for tonnage. It used to be honoured:
@@ -487,6 +534,9 @@ def simulate(payload: dict) -> dict:
                                       if len(dst_plans.get(k, [])) > 1],
             "capacity_warnings": warnings,
             "shift_minutes": shift_min,
+            "shift_calibration_min": CALIBRATION_SHIFT_MIN,
+            # Present only when the caller moved off the calibration point.
+            "shift_minutes_extrapolated": shift_note,
             "availability_factor_applied": avail,
             # Present only when a caller tried to scale tonnage by availability.
             # Surfacing it is the point: a silently-dropped parameter is how the

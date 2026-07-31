@@ -150,6 +150,15 @@ function psRender(d) {
       + '⚠ ' + ig.replace(/</g, '&lt;') + '</div>' + q('ps-warnings').innerHTML;
   }
 
+  // Shift length off the 720-minute calibration point is an extrapolation, not
+  // a measurement. Say so where the planner is looking, not only in the payload.
+  const sx = (d.summary || {}).shift_minutes_extrapolated;
+  if (sx) {
+    q('ps-warnings').innerHTML =
+      '<div style="font-size:12px;color:var(--warn,#d29922);margin-bottom:6px">'
+      + '⚠ ' + sx.replace(/</g, '&lt;') + '</div>' + q('ps-warnings').innerHTML;
+  }
+
   // Sections 2-8 render from THIS response, so a chart can never disagree with
   // the table above it.
   if (typeof paRender === 'function') paRender(d);

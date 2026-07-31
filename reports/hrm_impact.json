@@ -1,0 +1,114 @@
+{
+  "panel_rows": 389,
+  "days": 57,
+  "routes": 6,
+  "min_rows_required": 30,
+  "fleet_tolerance": 2,
+  "uncontrolled": {
+    "r": -0.0626,
+    "p": 0.21808,
+    "n": 389
+  },
+  "confound_trucks_vs_hrm": {
+    "r": 0.11,
+    "p": 0.03002
+  },
+  "fleet_matched_bins": [
+    {
+      "trucks_min": 1,
+      "trucks_max": 4,
+      "n": 31,
+      "r": -0.1032,
+      "p": 0.58063
+    },
+    {
+      "trucks_min": 5,
+      "trucks_max": 9,
+      "n": 56,
+      "r": -0.0533,
+      "p": 0.69629
+    },
+    {
+      "trucks_min": 10,
+      "trucks_max": 14,
+      "n": 76,
+      "r": -0.0272,
+      "p": 0.81548
+    },
+    {
+      "trucks_min": 15,
+      "trucks_max": 19,
+      "n": 51,
+      "r": -0.1188,
+      "p": 0.40654
+    },
+    {
+      "trucks_min": 20,
+      "trucks_max": 24,
+      "n": 48,
+      "r": -0.0152,
+      "p": 0.9181
+    },
+    {
+      "trucks_min": 25,
+      "trucks_max": 29,
+      "n": 47,
+      "r": -0.1721,
+      "p": 0.24739
+    },
+    {
+      "trucks_min": 30,
+      "trucks_max": 34,
+      "n": 33,
+      "r": 0.0794,
+      "p": 0.66066
+    }
+  ],
+  "fleet_matched_pooled": {
+    "r": -0.0603,
+    "p": 0.27918,
+    "bins": 7,
+    "n": 342
+  },
+  "partial_controlling_trucks": {
+    "r": -0.0502,
+    "p": 0.32376,
+    "n": 389
+  },
+  "partial_hours_ROUTE_CONFOUNDED": {
+    "r": -0.4604,
+    "p": 0.0,
+    "n": 389,
+    "warning": "SPURIOUS -- see route_length_confound; reported only to document why it must not be believed"
+  },
+  "route_length_confound": {
+    "span_km~hrm_hours": {
+      "r": 0.6313,
+      "p": 0.0
+    },
+    "span_km~trips_per_dt": {
+      "r": -0.6286,
+      "p": 0.0
+    },
+    "span_km~hrm_units": {
+      "r": -0.036,
+      "p": 0.478776
+    }
+  },
+  "within_route_controlling_trucks": {
+    "hrm_units": {
+      "r": -0.0006,
+      "p": 0.99042,
+      "n": 389
+    },
+    "hrm_hours": {
+      "r": 0.0006,
+      "p": 0.99107,
+      "n": 389
+    }
+  },
+  "significant_tests": 0,
+  "tests_considered": 4,
+  "verdict": "NO MEASURABLE IMPACT",
+  "note": "partial_hours_ROUTE_CONFOUNDED is excluded from the verdict: it is route length, not HRM activity."
+}

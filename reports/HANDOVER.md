@@ -1,6 +1,6 @@
 # HANDOVER — WBN Production Simulator
 
-*Written 2026-07-30; revised 2026-07-31. Harness **59/59** (`J55`–`J59` added).
+*Written 2026-07-30; revised 2026-07-31. Harness **62/62** (`J55`–`J62` added).
 Since the first draft: the GPS accumulator has run against the live server and is
 scheduled, the Plan Assessment View is built, a 15% tonnage under-quote in the UI
 was found and fixed, the weather path was audited (a flag I raised turned out to
@@ -806,6 +806,9 @@ simulator).
 | J57 | **weather moves dwell, never tonnage or travel** — and still moves dwell, because an invariance-only gate is passed by deleting the feature |
 | J58 | **an unreachable DB still serves a tagged fixture** — the third dual-mode state, plus a structural check that no endpoint re-grows a self-catch |
 | J59 | **identical results keep their `generated_at`** — so `git status` stays a signal |
+| J60 | **`shift_minutes` labels its extrapolation** — no UI/engine disagreement, but the effective cycle is calibrated at 720 min and 98.5% of truck-shifts are exactly 12.0 h, so the fixed/per-trip split is unidentifiable |
+| J61 | **segment speeds split loaded vs empty** — `DIR` verified against tickets (100% of loaded corridor hauls run down-chainage); the majority-and-sign check catches a silent inversion |
+| J62 | **the HRM analysis controls the route-length confound** — protects the METHOD, since the first answer (r=−0.46, p≈1e−21) was route length, not HRM |
 
 Gate order in the file is A→J with J50/J51 last (they depend on optional
 extracts); numbering is not strictly sequential in the output.
@@ -949,7 +952,17 @@ Closed since:
    labels cached speeds. Gate `J58`.
 9. `data/simulator_model_results.json` no longer churns. Gate `J59`.
 
-Next most likely place to find this class of bug: `shift_minutes`, the last
-caller-supplied field that scales tonnage. It is a legitimate planner input and
-the UI currently sends `720`, matching `DEFAULT_SHIFT_MIN`, so there is no live
-discrepancy — but it has not been audited for a UI/engine disagreement.
+10. **`shift_minutes` audited** — no disagreement (UI and engine both 720), but
+   any other shift length was a silent extrapolation and is now labelled.
+   `reports/shift_minutes_audit.md`, gate `J60`.
+11. **Segment speeds now split loaded vs empty.** `DIR` always existed; the
+   endpoint aggregated over it. `J61`.
+12. **HRM tested and excluded** — r = ±0.0006 within route and fleet.
+   `reports/hrm_impact_analysis.md`, gate `J62`.
+13. **Section 9 corridor map** (Leaflet, CDN) — the haul road coloured by
+   measured speed, beside a detail panel.
+
+The audit of caller-supplied fields that scale tonnage is now COMPLETE:
+`availability` (defect, fixed), `weather` (different defect, fixed),
+`shift_minutes` (no defect, extrapolation labelled). No unaudited field remains
+on `/api/simulate`.

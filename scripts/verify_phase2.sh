@@ -430,6 +430,34 @@ chk $? "J58  unreachable DB still serves a tagged fixture" "see: python test_dua
 $PY test_stamp_stability.py >/dev/null 2>&1
 chk $? "J59  identical results keep their generated_at" "see: python test_stamp_stability.py"
 
+# J60 — shift_minutes, the last caller-supplied field that scales tonnage. No
+# UI/engine disagreement here (both use 720), but the effective cycle it divides
+# was MEASURED at 720, and 98.5% of truck-shifts are exactly 12.0 h so the fixed
+# vs per-trip split cannot be estimated. Any other shift length is therefore an
+# extrapolation, and this asserts it is labelled as one -- and silent at 720.
+if [ -f data/route_lookup.csv ]; then
+$PY test_shift_minutes.py >/dev/null 2>&1
+chk $? "J60  shift_minutes labels its extrapolation" "see: python test_shift_minutes.py"
+fi
+
+# J61 — segment speeds split by direction. The plumbing is easy; the MAPPING is
+# what needed proving, since 'down' is a chainage direction and reading it as
+# 'loaded' is an inference (verified: 100% of loaded corridor hauls run
+# down-chainage). The majority-and-sign check is what catches a silent inversion,
+# which would look entirely normal on screen.
+$PY test_direction_split.py >/dev/null 2>&1
+chk $? "J61  segment speeds split loaded vs empty" "see: python test_direction_split.py"
+
+# J62 — the HRM correlation, and specifically its METHOD. The first pass found
+# r=-0.46 at p~1e-21 with an obvious causal story, and it was route length:
+# hrm_hours is summed along a route, and long routes also do fewer trips/truck.
+# This asserts the confound stays measured, the within-route test stays the one
+# that decides, and the spurious statistic stays labelled rather than deleted.
+if [ -f reports/hrm_impact.json ]; then
+$PY test_hrm_impact.py >/dev/null 2>&1
+chk $? "J62  HRM analysis controls the route-length confound" "see: python test_hrm_impact.py"
+fi
+
 
 echo
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"

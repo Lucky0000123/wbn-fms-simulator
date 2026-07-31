@@ -396,17 +396,35 @@ def api_simulator_congestion_model():
     # of the time, while a complete 94-segment fixture sat unused. Letting the
     # exception propagate is the whole mechanism: _register serves the fixture
     # and tags it `servedFrom: "fixture"` so the UI can label it as cached.
+    # DIR is now selected, so loaded and empty speeds can be reported separately
+    # instead of averaged into one number. Verified against the ticket data
+    # rather than assumed from the word: 100.0% of loaded corridor hauls run
+    # DOWN-chainage (298,340 trips, zero counter-examples), because every tip is
+    # seaward of every load point. So DIR='down' is the LOADED direction and
+    # 'up' the empty return. The measured speeds agree -- loaded is slower on 75
+    # of 94 segments, median +11.5% empty, up to +101% on the steep TF sections.
+    # DIR is char-padded ('up  '), hence the trim.
     conn = _gf_db_conn(); cur = conn.cursor()
-    cur.execute("SELECT SEG_ID, TRUCK_N, CASE WHEN FIX_N>0 THEN SUM_SPD/FIX_N END, "
+    cur.execute("SELECT SEG_ID, LTRIM(RTRIM(DIR)), TRUCK_N, "
+                "CASE WHEN FIX_N>0 THEN SUM_SPD/FIX_N END, FIX_N, "
                 "MIN(HOUR_TS) OVER(), MAX(HOUR_TS) OVER() FROM dbo.FMS_CONGESTION_SEG "
                 "WHERE TRUCK_N>0 AND FIX_N>0")
     rows = cur.fetchall(); conn.close()
     from collections import defaultdict
     obs = defaultdict(list); span = [None, None]
-    for seg, tn, spd, mn, mx in rows:
+    # Per-direction sums, weighted by FIX_N so a busy hour counts more than a
+    # quiet one -- a plain mean of hourly means would weight a 4-fix hour the
+    # same as a 140-fix hour.
+    dirsum = defaultdict(lambda: {"down": [0.0, 0], "up": [0.0, 0]})
+    for seg, dr, tn, spd, fixn, mn, mx in rows:
         if spd is None:
             continue
         obs[seg].append([int(tn or 0), round(float(spd), 1)])
+        d = (dr or "").strip().lower()
+        if d in ("down", "up"):
+            acc = dirsum[seg][d]
+            acc[0] += float(spd) * int(fixn or 0)
+            acc[1] += int(fixn or 0)
         span = [mn, mx]
     segs = []
     for seg, pts in obs.items():
@@ -416,8 +434,18 @@ def api_simulator_congestion_model():
         lowcut = max(3, trucks[len(trucks) // 5])                     # bottom-quintile traffic threshold
         low = sorted(p[1] for p in pts if p[0] <= lowcut)
         free_flow = round(low[int(len(low) * 0.85)] if low else max(spds), 1)   # p85 speed at low traffic
+        # Direction split. Reported as null rather than 0 where a direction has
+        # no fixes, so the UI drops the point instead of drawing a truck
+        # standing still. 1 of 95 segments has only one direction.
+        dn, up = dirsum[seg]["down"], dirsum[seg]["up"]
+        loaded = round(dn[0] / dn[1], 1) if dn[1] else None
+        empty = round(up[0] / up[1], 1) if up[1] else None
         segs.append({"seg": seg, "n": len(pts), "obs": pts, "freeFlow": free_flow,
-                     "peakTrucks": max(trucks), "avgSpeed": round(sum(spds) / len(spds), 1)})
+                     "peakTrucks": max(trucks), "avgSpeed": round(sum(spds) / len(spds), 1),
+                     # DIR='down' == loaded (every tip is seaward of every load
+                     # point; 100% of 298,340 corridor hauls run down-chainage).
+                     "loadedSpeed": loaded, "emptySpeed": empty,
+                     "nLoaded": dn[1], "nEmpty": up[1]})
     segs.sort(key=lambda s: -s["n"])
     days = 0
     try:
@@ -732,6 +760,85 @@ _register('/api/simulator/weighbridge', api_simulator_weighbridge, 'weighbridge'
 # That is the dual-mode requirement satisfied by construction instead of by a
 # fixture standing in for the real thing.
 # ---------------------------------------------------------------------------
+# Segment ids name the Tofu road "TF"; the chainage table calls it "TOFU".
+# One alias, kept here rather than renaming either source.
+_ROAD_ALIAS = {"TF": "TOFU"}
+_GEOM_CACHE = None
+
+
+@bp.route('/api/simulator/corridor-geometry', methods=['GET'])
+def api_simulator_corridor_geometry():
+    """Haul-road centreline polylines, for the map in the assessment view.
+
+    NO FIXTURE, AND NO COMMITTED COORDINATES -- deliberately. Every other
+    fixture in this repo is free of lat/lng, and `weighbridge-positions` encodes
+    chainage offsets (`km`, `offM`) rather than coordinates even though the live
+    endpoint has the geofences. AGENTS.md warns against committing geofence data
+    to the mirror, which is public. So site geometry is read from the local
+    `data/haul_road_chainage.csv` extract (cached, needs no VPN) and this returns
+    an honest empty state where that file is absent -- a fresh clone, or the
+    public demo. The map then says so instead of drawing an empty ocean.
+
+    Downsampled to ~1 point per 0.25 km: the raw table is 3,122 markers, which
+    is more resolution than a 1366px screen can show and a needlessly large
+    payload for a polyline.
+    """
+    global _GEOM_CACHE
+    if _GEOM_CACHE is not None:
+        return jsonify(_GEOM_CACHE)
+
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "data", "haul_road_chainage.csv")
+    if not os.path.exists(path):
+        return jsonify({
+            "ok": False, "roads": [],
+            "reason": ("no corridor geometry on this machine: "
+                       "data/haul_road_chainage.csv is gitignored, because site "
+                       "coordinates are not committed to a public mirror. "
+                       "Rebuild it from HAUL_ROAD_STA with the VPN up."),
+        })
+    try:
+        import csv as _csv
+        rows = []
+        with open(path, newline="") as fh:
+            for r in _csv.DictReader(fh):
+                try:
+                    rows.append((r["road"].strip().upper(), float(r["km"]),
+                                 float(r["lat"]), float(r["lng"])))
+                except (TypeError, ValueError):
+                    continue
+    except Exception as exc:                          # noqa: BLE001
+        return jsonify({"ok": False, "roads": [],
+                        "reason": "could not read chainage: %s" % str(exc)[:120]})
+
+    by_road = defaultdict(list)
+    for road, km, lat, lng in rows:
+        by_road[road].append((km, lat, lng))
+
+    roads = []
+    for road, pts in by_road.items():
+        pts.sort(key=lambda x: x[0])
+        keep, last = [], None
+        for km, lat, lng in pts:
+            if last is None or abs(km - last) >= 0.25:
+                keep.append({"km": round(km, 3), "lat": round(lat, 6),
+                             "lng": round(lng, 6)})
+                last = km
+        if len(keep) >= 2:
+            roads.append({"road": road, "points": keep,
+                          "kmMin": keep[0]["km"], "kmMax": keep[-1]["km"],
+                          "nRaw": len(pts)})
+    roads.sort(key=lambda r: -len(r["points"]))
+    _GEOM_CACHE = {
+        "ok": True, "roads": roads,
+        "roadAlias": _ROAD_ALIAS,
+        "corridor": _SIM_CORRIDOR,
+        "note": ("centreline from HAUL_ROAD_STA, downsampled to ~0.25 km. "
+                 "Segment ids use TF for the road the chainage table calls TOFU."),
+    }
+    return jsonify(_GEOM_CACHE)
+
+
 @bp.route('/api/simulate', methods=['POST'])
 def api_simulate():
     """Predict trip time, dwell and production for a multi-route truck plan."""

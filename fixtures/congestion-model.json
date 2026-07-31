@@ -577,7 +577,11 @@
     ]
    ],
    "peakTrucks": 55,
-   "seg": "CBB KM10-11"
+   "seg": "CBB KM10-11",
+   "loadedSpeed": 16.8,
+   "emptySpeed": 14.5,
+   "nLoaded": 13860,
+   "nEmpty": 21174
   },
   {
    "avgSpeed": 15.9,
@@ -1150,7 +1154,11 @@
     ]
    ],
    "peakTrucks": 31,
-   "seg": "CBB KM11-12"
+   "seg": "CBB KM11-12",
+   "loadedSpeed": 15.0,
+   "emptySpeed": 16.8,
+   "nLoaded": 21339,
+   "nEmpty": 23591
   },
   {
    "avgSpeed": 12.9,
@@ -1723,7 +1731,11 @@
     ]
    ],
    "peakTrucks": 38,
-   "seg": "CBB KM14-15"
+   "seg": "CBB KM14-15",
+   "loadedSpeed": 13.3,
+   "emptySpeed": 13.7,
+   "nLoaded": 14548,
+   "nEmpty": 14836
   },
   {
    "avgSpeed": 18.1,
@@ -2296,7 +2308,11 @@
     ]
    ],
    "peakTrucks": 31,
-   "seg": "CBB KM16-17"
+   "seg": "CBB KM16-17",
+   "loadedSpeed": 16.7,
+   "emptySpeed": 18.5,
+   "nLoaded": 8568,
+   "nEmpty": 10349
   },
   {
    "avgSpeed": 15.1,
@@ -2865,7 +2881,11 @@
     ]
    ],
    "peakTrucks": 29,
-   "seg": "BLB KM17-18"
+   "seg": "BLB KM17-18",
+   "loadedSpeed": 13.9,
+   "emptySpeed": 16.9,
+   "nLoaded": 12004,
+   "nEmpty": 11796
   },
   {
    "avgSpeed": 12.2,
@@ -3426,7 +3446,11 @@
     ]
    ],
    "peakTrucks": 56,
-   "seg": "KR KM17-18"
+   "seg": "KR KM17-18",
+   "loadedSpeed": 12.6,
+   "emptySpeed": 10.5,
+   "nLoaded": 21054,
+   "nEmpty": 24945
   },
   {
    "avgSpeed": 16.9,
@@ -3987,7 +4011,11 @@
     ]
    ],
    "peakTrucks": 58,
-   "seg": "KR KM35-36"
+   "seg": "KR KM35-36",
+   "loadedSpeed": 12.9,
+   "emptySpeed": 20.6,
+   "nLoaded": 28948,
+   "nEmpty": 27470
   },
   {
    "avgSpeed": 17.1,
@@ -4548,7 +4576,11 @@
     ]
    ],
    "peakTrucks": 65,
-   "seg": "KR KM36-37"
+   "seg": "KR KM36-37",
+   "loadedSpeed": 15.9,
+   "emptySpeed": 16.8,
+   "nLoaded": 21475,
+   "nEmpty": 18869
   },
   {
    "avgSpeed": 13.3,
@@ -5105,7 +5137,11 @@
     ]
    ],
    "peakTrucks": 27,
-   "seg": "CBB KM13-14"
+   "seg": "CBB KM13-14",
+   "loadedSpeed": 13.5,
+   "emptySpeed": 14.0,
+   "nLoaded": 7738,
+   "nEmpty": 9616
   },
   {
    "avgSpeed": 13.0,
@@ -5662,7 +5698,11 @@
     ]
    ],
    "peakTrucks": 57,
-   "seg": "KR KM38-39"
+   "seg": "KR KM38-39",
+   "loadedSpeed": 12.0,
+   "emptySpeed": 14.0,
+   "nLoaded": 23249,
+   "nEmpty": 23637
   },
   {
    "avgSpeed": 14.5,
@@ -6215,7 +6255,11 @@
     ]
    ],
    "peakTrucks": 36,
-   "seg": "CBB KM9-10"
+   "seg": "CBB KM9-10",
+   "loadedSpeed": 14.7,
+   "emptySpeed": 14.8,
+   "nLoaded": 10704,
+   "nEmpty": 11889
   },
   {
    "avgSpeed": 17.4,
@@ -6768,7 +6812,11 @@
     ]
    ],
    "peakTrucks": 58,
-   "seg": "KR KM34-35"
+   "seg": "KR KM34-35",
+   "loadedSpeed": 13.9,
+   "emptySpeed": 20.6,
+   "nLoaded": 24369,
+   "nEmpty": 23006
   },
   {
    "avgSpeed": 16.6,
@@ -7317,7 +7365,11 @@
     ]
    ],
    "peakTrucks": 29,
-   "seg": "CBB KM15-16"
+   "seg": "CBB KM15-16",
+   "loadedSpeed": 16.0,
+   "emptySpeed": 18.3,
+   "nLoaded": 10198,
+   "nEmpty": 12381
   },
   {
    "avgSpeed": 18.4,
@@ -7866,7 +7918,11 @@
     ]
    ],
    "peakTrucks": 49,
-   "seg": "KR KM27-28"
+   "seg": "KR KM27-28",
+   "loadedSpeed": 15.8,
+   "emptySpeed": 16.2,
+   "nLoaded": 11150,
+   "nEmpty": 11148
   },
   {
    "avgSpeed": 18.7,
@@ -8415,7 +8471,11 @@
     ]
    ],
    "peakTrucks": 54,
-   "seg": "KR KM28-29"
+   "seg": "KR KM28-29",
+   "loadedSpeed": 15.4,
+   "emptySpeed": 19.0,
+   "nLoaded": 11171,
+   "nEmpty": 7369
   },
   {
    "avgSpeed": 18.4,
@@ -8964,7 +9024,11 @@
     ]
    ],
    "peakTrucks": 49,
-   "seg": "KR KM37-38"
+   "seg": "KR KM37-38",
+   "loadedSpeed": 16.7,
+   "emptySpeed": 20.0,
+   "nLoaded": 22180,
+   "nEmpty": 17908
   },
   {
    "avgSpeed": 18.1,
@@ -9513,7 +9577,11 @@
     ]
    ],
    "peakTrucks": 54,
-   "seg": "TF KM42-43"
+   "seg": "TF KM42-43",
+   "loadedSpeed": 14.3,
+   "emptySpeed": 19.3,
+   "nLoaded": 20176,
+   "nEmpty": 19720
   },
   {
    "avgSpeed": 21.5,
@@ -10062,7 +10130,11 @@
     ]
    ],
    "peakTrucks": 53,
-   "seg": "TF KM43-44"
+   "seg": "TF KM43-44",
+   "loadedSpeed": 21.3,
+   "emptySpeed": 22.6,
+   "nLoaded": 26222,
+   "nEmpty": 23230
   },
   {
    "avgSpeed": 19.5,
@@ -10611,7 +10683,11 @@
     ]
    ],
    "peakTrucks": 51,
-   "seg": "TF KM49-50"
+   "seg": "TF KM49-50",
+   "loadedSpeed": 19.3,
+   "emptySpeed": 19.1,
+   "nLoaded": 17721,
+   "nEmpty": 17122
   },
   {
    "avgSpeed": 18.9,
@@ -11156,7 +11232,11 @@
     ]
    ],
    "peakTrucks": 22,
-   "seg": "CBB KM12-13"
+   "seg": "CBB KM12-13",
+   "loadedSpeed": 18.2,
+   "emptySpeed": 19.3,
+   "nLoaded": 4784,
+   "nEmpty": 6591
   },
   {
    "avgSpeed": 14.2,
@@ -11701,7 +11781,11 @@
     ]
    ],
    "peakTrucks": 48,
-   "seg": "KR KM7-8"
+   "seg": "KR KM7-8",
+   "loadedSpeed": 12.9,
+   "emptySpeed": 14.6,
+   "nLoaded": 4160,
+   "nEmpty": 4344
   },
   {
    "avgSpeed": 21.6,
@@ -12246,7 +12330,11 @@
     ]
    ],
    "peakTrucks": 59,
-   "seg": "TF KM40-41"
+   "seg": "TF KM40-41",
+   "loadedSpeed": 16.5,
+   "emptySpeed": 24.7,
+   "nLoaded": 22790,
+   "nEmpty": 22657
   },
   {
    "avgSpeed": 16.8,
@@ -12787,7 +12875,11 @@
     ]
    ],
    "peakTrucks": 46,
-   "seg": "CRD KM4-5"
+   "seg": "CRD KM4-5",
+   "loadedSpeed": 17.6,
+   "emptySpeed": 15.5,
+   "nLoaded": 11206,
+   "nEmpty": 14232
   },
   {
    "avgSpeed": 16.2,
@@ -13328,7 +13420,11 @@
     ]
    ],
    "peakTrucks": 41,
-   "seg": "KR KM15-16"
+   "seg": "KR KM15-16",
+   "loadedSpeed": 15.4,
+   "emptySpeed": 17.5,
+   "nLoaded": 7103,
+   "nEmpty": 8258
   },
   {
    "avgSpeed": 17.9,
@@ -13869,7 +13965,11 @@
     ]
    ],
    "peakTrucks": 51,
-   "seg": "KR KM9-10"
+   "seg": "KR KM9-10",
+   "loadedSpeed": 19.0,
+   "emptySpeed": 17.9,
+   "nLoaded": 19285,
+   "nEmpty": 24885
   },
   {
    "avgSpeed": 17.0,
@@ -14406,7 +14506,11 @@
     ]
    ],
    "peakTrucks": 15,
-   "seg": "CBB KM7-8"
+   "seg": "CBB KM7-8",
+   "loadedSpeed": 16.8,
+   "emptySpeed": 17.6,
+   "nLoaded": 6809,
+   "nEmpty": 5072
   },
   {
    "avgSpeed": 19.3,
@@ -14943,7 +15047,11 @@
     ]
    ],
    "peakTrucks": 43,
-   "seg": "KR KM16-17"
+   "seg": "KR KM16-17",
+   "loadedSpeed": 17.3,
+   "emptySpeed": 18.2,
+   "nLoaded": 15275,
+   "nEmpty": 14577
   },
   {
    "avgSpeed": 17.8,
@@ -15480,7 +15588,11 @@
     ]
    ],
    "peakTrucks": 54,
-   "seg": "TF KM41-42"
+   "seg": "TF KM41-42",
+   "loadedSpeed": 13.4,
+   "emptySpeed": 18.5,
+   "nLoaded": 24955,
+   "nEmpty": 23915
   },
   {
    "avgSpeed": 23.4,
@@ -16017,7 +16129,11 @@
     ]
    ],
    "peakTrucks": 41,
-   "seg": "TF KM51-52"
+   "seg": "TF KM51-52",
+   "loadedSpeed": 20.7,
+   "emptySpeed": 24.9,
+   "nLoaded": 20324,
+   "nEmpty": 18710
   },
   {
    "avgSpeed": 15.8,
@@ -16550,7 +16666,11 @@
     ]
    ],
    "peakTrucks": 42,
-   "seg": "CRD KM3-4"
+   "seg": "CRD KM3-4",
+   "loadedSpeed": 15.3,
+   "emptySpeed": 15.3,
+   "nLoaded": 9464,
+   "nEmpty": 13067
   },
   {
    "avgSpeed": 15.4,
@@ -17083,7 +17203,11 @@
     ]
    ],
    "peakTrucks": 47,
-   "seg": "CRD KM5-6"
+   "seg": "CRD KM5-6",
+   "loadedSpeed": 13.9,
+   "emptySpeed": 15.7,
+   "nLoaded": 7780,
+   "nEmpty": 7352
   },
   {
    "avgSpeed": 14.8,
@@ -17616,7 +17740,11 @@
     ]
    ],
    "peakTrucks": 46,
-   "seg": "KR KM11-12"
+   "seg": "KR KM11-12",
+   "loadedSpeed": 12.4,
+   "emptySpeed": 17.1,
+   "nLoaded": 14158,
+   "nEmpty": 14600
   },
   {
    "avgSpeed": 24.6,
@@ -18149,7 +18277,11 @@
     ]
    ],
    "peakTrucks": 36,
-   "seg": "KR KM13-14"
+   "seg": "KR KM13-14",
+   "loadedSpeed": 22.0,
+   "emptySpeed": 24.4,
+   "nLoaded": 7063,
+   "nEmpty": 7036
   },
   {
    "avgSpeed": 22.1,
@@ -18682,7 +18814,11 @@
     ]
    ],
    "peakTrucks": 45,
-   "seg": "KR KM26-27"
+   "seg": "KR KM26-27",
+   "loadedSpeed": 19.8,
+   "emptySpeed": 22.5,
+   "nLoaded": 7648,
+   "nEmpty": 5597
   },
   {
    "avgSpeed": 17.8,
@@ -19215,7 +19351,11 @@
     ]
    ],
    "peakTrucks": 53,
-   "seg": "KR KM8-9"
+   "seg": "KR KM8-9",
+   "loadedSpeed": 18.5,
+   "emptySpeed": 17.5,
+   "nLoaded": 16212,
+   "nEmpty": 19191
   },
   {
    "avgSpeed": 16.3,
@@ -19748,7 +19888,11 @@
     ]
    ],
    "peakTrucks": 51,
-   "seg": "TF KM48-49"
+   "seg": "TF KM48-49",
+   "loadedSpeed": 13.0,
+   "emptySpeed": 16.7,
+   "nLoaded": 18088,
+   "nEmpty": 17545
   },
   {
    "avgSpeed": 25.5,
@@ -20277,7 +20421,11 @@
     ]
    ],
    "peakTrucks": 45,
-   "seg": "KR KM29-30"
+   "seg": "KR KM29-30",
+   "loadedSpeed": 23.1,
+   "emptySpeed": 24.4,
+   "nLoaded": 5699,
+   "nEmpty": 3804
   },
   {
    "avgSpeed": 22.7,
@@ -20806,7 +20954,11 @@
     ]
    ],
    "peakTrucks": 44,
-   "seg": "TF KM52-53"
+   "seg": "TF KM52-53",
+   "loadedSpeed": 20.2,
+   "emptySpeed": 26.2,
+   "nLoaded": 21962,
+   "nEmpty": 21727
   },
   {
    "avgSpeed": 15.0,
@@ -21331,7 +21483,11 @@
     ]
    ],
    "peakTrucks": 19,
-   "seg": "BLB KM18-19"
+   "seg": "BLB KM18-19",
+   "loadedSpeed": 14.0,
+   "emptySpeed": 16.0,
+   "nLoaded": 14229,
+   "nEmpty": 14083
   },
   {
    "avgSpeed": 19.6,
@@ -21856,7 +22012,11 @@
     ]
    ],
    "peakTrucks": 33,
-   "seg": "CRD KM2-3"
+   "seg": "CRD KM2-3",
+   "loadedSpeed": 18.2,
+   "emptySpeed": 18.7,
+   "nLoaded": 3457,
+   "nEmpty": 3149
   },
   {
    "avgSpeed": 18.6,
@@ -22381,7 +22541,11 @@
     ]
    ],
    "peakTrucks": 46,
-   "seg": "CRD KM6-7"
+   "seg": "CRD KM6-7",
+   "loadedSpeed": 18.0,
+   "emptySpeed": 18.6,
+   "nLoaded": 12550,
+   "nEmpty": 14902
   },
   {
    "avgSpeed": 20.6,
@@ -22906,7 +23070,11 @@
     ]
    ],
    "peakTrucks": 30,
-   "seg": "KR KM14-15"
+   "seg": "KR KM14-15",
+   "loadedSpeed": 19.4,
+   "emptySpeed": 21.9,
+   "nLoaded": 7297,
+   "nEmpty": 9072
   },
   {
    "avgSpeed": 21.1,
@@ -23431,7 +23599,11 @@
     ]
    ],
    "peakTrucks": 43,
-   "seg": "KR KM25-26"
+   "seg": "KR KM25-26",
+   "loadedSpeed": 17.9,
+   "emptySpeed": 21.6,
+   "nLoaded": 10123,
+   "nEmpty": 7999
   },
   {
    "avgSpeed": 18.4,
@@ -23952,7 +24124,11 @@
     ]
    ],
    "peakTrucks": 9,
-   "seg": "BLB KM19-20"
+   "seg": "BLB KM19-20",
+   "loadedSpeed": 16.8,
+   "emptySpeed": 21.5,
+   "nLoaded": 4383,
+   "nEmpty": 4633
   },
   {
    "avgSpeed": 18.8,
@@ -24473,7 +24649,11 @@
     ]
    ],
    "peakTrucks": 39,
-   "seg": "CRD KM1-2"
+   "seg": "CRD KM1-2",
+   "loadedSpeed": 18.5,
+   "emptySpeed": 18.5,
+   "nLoaded": 9126,
+   "nEmpty": 10774
   },
   {
    "avgSpeed": 19.0,
@@ -24994,7 +25174,11 @@
     ]
    ],
    "peakTrucks": 50,
-   "seg": "KR KM32-33"
+   "seg": "KR KM32-33",
+   "loadedSpeed": 17.0,
+   "emptySpeed": 17.3,
+   "nLoaded": 8627,
+   "nEmpty": 8170
   },
   {
    "avgSpeed": 22.9,
@@ -25515,7 +25699,11 @@
     ]
    ],
    "peakTrucks": 36,
-   "seg": "KR KM20-21"
+   "seg": "KR KM20-21",
+   "loadedSpeed": 19.7,
+   "emptySpeed": 21.7,
+   "nLoaded": 13324,
+   "nEmpty": 12502
   },
   {
    "avgSpeed": 16.4,
@@ -26036,7 +26224,11 @@
     ]
    ],
    "peakTrucks": 48,
-   "seg": "TF KM53-54"
+   "seg": "TF KM53-54",
+   "loadedSpeed": 12.3,
+   "emptySpeed": 20.3,
+   "nLoaded": 15273,
+   "nEmpty": 13558
   },
   {
    "avgSpeed": 23.7,
@@ -26553,7 +26745,11 @@
     ]
    ],
    "peakTrucks": 34,
-   "seg": "KR KM12-13"
+   "seg": "KR KM12-13",
+   "loadedSpeed": 19.7,
+   "emptySpeed": 25.9,
+   "nLoaded": 9367,
+   "nEmpty": 9810
   },
   {
    "avgSpeed": 18.7,
@@ -27070,7 +27266,11 @@
     ]
    ],
    "peakTrucks": 39,
-   "seg": "KR KM18-19"
+   "seg": "KR KM18-19",
+   "loadedSpeed": 15.8,
+   "emptySpeed": 20.9,
+   "nLoaded": 12595,
+   "nEmpty": 12450
   },
   {
    "avgSpeed": 22.9,
@@ -27587,7 +27787,11 @@
     ]
    ],
    "peakTrucks": 41,
-   "seg": "KR KM23-24"
+   "seg": "KR KM23-24",
+   "loadedSpeed": 17.8,
+   "emptySpeed": 27.0,
+   "nLoaded": 11912,
+   "nEmpty": 9173
   },
   {
    "avgSpeed": 23.9,
@@ -28104,7 +28308,11 @@
     ]
    ],
    "peakTrucks": 47,
-   "seg": "KR KM31-32"
+   "seg": "KR KM31-32",
+   "loadedSpeed": 24.0,
+   "emptySpeed": 24.3,
+   "nLoaded": 6463,
+   "nEmpty": 3713
   },
   {
    "avgSpeed": 23.6,
@@ -28617,7 +28825,11 @@
     ]
    ],
    "peakTrucks": 37,
-   "seg": "KR KM33-34"
+   "seg": "KR KM33-34",
+   "loadedSpeed": 22.1,
+   "emptySpeed": 24.0,
+   "nLoaded": 4360,
+   "nEmpty": 4094
   },
   {
    "avgSpeed": 15.6,
@@ -29126,7 +29338,11 @@
     ]
    ],
    "peakTrucks": 43,
-   "seg": "KR KM10-11"
+   "seg": "KR KM10-11",
+   "loadedSpeed": 15.5,
+   "emptySpeed": 16.0,
+   "nLoaded": 13631,
+   "nEmpty": 15457
   },
   {
    "avgSpeed": 21.3,
@@ -29635,7 +29851,11 @@
     ]
    ],
    "peakTrucks": 38,
-   "seg": "KR KM22-23"
+   "seg": "KR KM22-23",
+   "loadedSpeed": 18.1,
+   "emptySpeed": 23.6,
+   "nLoaded": 18557,
+   "nEmpty": 16988
   },
   {
    "avgSpeed": 22.5,
@@ -30144,7 +30364,11 @@
     ]
    ],
    "peakTrucks": 41,
-   "seg": "KR KM24-25"
+   "seg": "KR KM24-25",
+   "loadedSpeed": 18.7,
+   "emptySpeed": 25.3,
+   "nLoaded": 8675,
+   "nEmpty": 8932
   },
   {
    "avgSpeed": 25.2,
@@ -30653,7 +30877,11 @@
     ]
    ],
    "peakTrucks": 36,
-   "seg": "KR KM19-20"
+   "seg": "KR KM19-20",
+   "loadedSpeed": 22.4,
+   "emptySpeed": 24.7,
+   "nLoaded": 10362,
+   "nEmpty": 9793
   },
   {
    "avgSpeed": 14.7,
@@ -31158,7 +31386,11 @@
     ]
    ],
    "peakTrucks": 38,
-   "seg": "CRD KM0-1"
+   "seg": "CRD KM0-1",
+   "loadedSpeed": 13.4,
+   "emptySpeed": 15.5,
+   "nLoaded": 10559,
+   "nEmpty": 15291
   },
   {
    "avgSpeed": 25.2,
@@ -31663,7 +31895,11 @@
     ]
    ],
    "peakTrucks": 34,
-   "seg": "KR KM30-31"
+   "seg": "KR KM30-31",
+   "loadedSpeed": 24.7,
+   "emptySpeed": 26.0,
+   "nLoaded": 4537,
+   "nEmpty": 3200
   },
   {
    "avgSpeed": 19.8,
@@ -32168,7 +32404,11 @@
     ]
    ],
    "peakTrucks": 41,
-   "seg": "TF KM39-40"
+   "seg": "TF KM39-40",
+   "loadedSpeed": 18.8,
+   "emptySpeed": 21.6,
+   "nLoaded": 27452,
+   "nEmpty": 27744
   },
   {
    "avgSpeed": 19.7,
@@ -32673,7 +32913,11 @@
     ]
    ],
    "peakTrucks": 36,
-   "seg": "KR KM21-22"
+   "seg": "KR KM21-22",
+   "loadedSpeed": 16.5,
+   "emptySpeed": 21.0,
+   "nLoaded": 8675,
+   "nEmpty": 8984
   },
   {
    "avgSpeed": 12.5,
@@ -33166,7 +33410,11 @@
     ]
    ],
    "peakTrucks": 38,
-   "seg": "TF KM58-59"
+   "seg": "TF KM58-59",
+   "loadedSpeed": 10.8,
+   "emptySpeed": 13.1,
+   "nLoaded": 14508,
+   "nEmpty": 17333
   },
   {
    "avgSpeed": 19.3,
@@ -33655,7 +33903,11 @@
     ]
    ],
    "peakTrucks": 32,
-   "seg": "TF KM45-46"
+   "seg": "TF KM45-46",
+   "loadedSpeed": 16.3,
+   "emptySpeed": 20.1,
+   "nLoaded": 16285,
+   "nEmpty": 15179
   },
   {
    "avgSpeed": 22.0,
@@ -34128,7 +34380,11 @@
     ]
    ],
    "peakTrucks": 32,
-   "seg": "TF KM44-45"
+   "seg": "TF KM44-45",
+   "loadedSpeed": 21.3,
+   "emptySpeed": 23.1,
+   "nLoaded": 18444,
+   "nEmpty": 16758
   },
   {
    "avgSpeed": 19.5,
@@ -34593,7 +34849,11 @@
     ]
    ],
    "peakTrucks": 12,
-   "seg": "CBB KM8-9"
+   "seg": "CBB KM8-9",
+   "loadedSpeed": 19.9,
+   "emptySpeed": 19.5,
+   "nLoaded": 4918,
+   "nEmpty": 3183
   },
   {
    "avgSpeed": 22.3,
@@ -35058,7 +35318,11 @@
     ]
    ],
    "peakTrucks": 34,
-   "seg": "TF KM50-51"
+   "seg": "TF KM50-51",
+   "loadedSpeed": 21.3,
+   "emptySpeed": 24.6,
+   "nLoaded": 19149,
+   "nEmpty": 18226
   },
   {
    "avgSpeed": 11.5,
@@ -35515,7 +35779,11 @@
     ]
    ],
    "peakTrucks": 24,
-   "seg": "TF KM59-60"
+   "seg": "TF KM59-60",
+   "loadedSpeed": 12.1,
+   "emptySpeed": 9.1,
+   "nLoaded": 3155,
+   "nEmpty": 4687
   },
   {
    "avgSpeed": 17.4,
@@ -35964,7 +36232,11 @@
     ]
    ],
    "peakTrucks": 31,
-   "seg": "TF KM46-47"
+   "seg": "TF KM46-47",
+   "loadedSpeed": 14.4,
+   "emptySpeed": 18.4,
+   "nLoaded": 13147,
+   "nEmpty": 12437
   },
   {
    "avgSpeed": 16.4,
@@ -36413,7 +36685,11 @@
     ]
    ],
    "peakTrucks": 34,
-   "seg": "TF KM47-48"
+   "seg": "TF KM47-48",
+   "loadedSpeed": 12.8,
+   "emptySpeed": 16.6,
+   "nLoaded": 10449,
+   "nEmpty": 10117
   },
   {
    "avgSpeed": 12.9,
@@ -36850,7 +37126,11 @@
     ]
    ],
    "peakTrucks": 26,
-   "seg": "TF KM54-55"
+   "seg": "TF KM54-55",
+   "loadedSpeed": 9.5,
+   "emptySpeed": 15.8,
+   "nLoaded": 18005,
+   "nEmpty": 16245
   },
   {
    "avgSpeed": 10.2,
@@ -37283,7 +37563,11 @@
     ]
    ],
    "peakTrucks": 31,
-   "seg": "CBBB KM15-16"
+   "seg": "CBBB KM15-16",
+   "loadedSpeed": 12.7,
+   "emptySpeed": 9.3,
+   "nLoaded": 4330,
+   "nEmpty": 6060
   },
   {
    "avgSpeed": 12.1,
@@ -37712,7 +37996,11 @@
     ]
    ],
    "peakTrucks": 19,
-   "seg": "CSW KM4-5"
+   "seg": "CSW KM4-5",
+   "loadedSpeed": 10.7,
+   "emptySpeed": 12.4,
+   "nLoaded": 4877,
+   "nEmpty": 2222
   },
   {
    "avgSpeed": 10.8,
@@ -38133,7 +38421,11 @@
     ]
    ],
    "peakTrucks": 24,
-   "seg": "TF KM55-56"
+   "seg": "TF KM55-56",
+   "loadedSpeed": 7.2,
+   "emptySpeed": 14.5,
+   "nLoaded": 11049,
+   "nEmpty": 11118
   },
   {
    "avgSpeed": 15.0,
@@ -38546,7 +38838,11 @@
     ]
    ],
    "peakTrucks": 19,
-   "seg": "BLB KM5-6"
+   "seg": "BLB KM5-6",
+   "loadedSpeed": 15.1,
+   "emptySpeed": 17.1,
+   "nLoaded": 1819,
+   "nEmpty": 1809
   },
   {
    "avgSpeed": 13.4,
@@ -38955,7 +39251,11 @@
     ]
    ],
    "peakTrucks": 21,
-   "seg": "BLB KM7-8"
+   "seg": "BLB KM7-8",
+   "loadedSpeed": 11.2,
+   "emptySpeed": 15.0,
+   "nLoaded": 5920,
+   "nEmpty": 1809
   },
   {
    "avgSpeed": 11.5,
@@ -39360,7 +39660,11 @@
     ]
    ],
    "peakTrucks": 23,
-   "seg": "TF KM56-57"
+   "seg": "TF KM56-57",
+   "loadedSpeed": 8.5,
+   "emptySpeed": 16.0,
+   "nLoaded": 9962,
+   "nEmpty": 9940
   },
   {
    "avgSpeed": 13.0,
@@ -39757,7 +40061,11 @@
     ]
    ],
    "peakTrucks": 24,
-   "seg": "TF KM57-58"
+   "seg": "TF KM57-58",
+   "loadedSpeed": 10.7,
+   "emptySpeed": 16.0,
+   "nLoaded": 8700,
+   "nEmpty": 9891
   },
   {
    "avgSpeed": 15.0,
@@ -40142,7 +40450,11 @@
     ]
    ],
    "peakTrucks": 19,
-   "seg": "BLB KM6-7"
+   "seg": "BLB KM6-7",
+   "loadedSpeed": 14.3,
+   "emptySpeed": 16.0,
+   "nLoaded": 3663,
+   "nEmpty": 2323
   },
   {
    "avgSpeed": 10.4,
@@ -40515,7 +40827,11 @@
     ]
    ],
    "peakTrucks": 8,
-   "seg": "BLB KM3-4"
+   "seg": "BLB KM3-4",
+   "loadedSpeed": 10.7,
+   "emptySpeed": 9.5,
+   "nLoaded": 1876,
+   "nEmpty": 1862
   },
   {
    "avgSpeed": 18.7,
@@ -40864,7 +41180,11 @@
     ]
    ],
    "peakTrucks": 10,
-   "seg": "BLB KM4-5"
+   "seg": "BLB KM4-5",
+   "loadedSpeed": 20.1,
+   "emptySpeed": 19.9,
+   "nLoaded": 693,
+   "nEmpty": 2037
   },
   {
    "avgSpeed": 20.2,
@@ -41193,7 +41513,11 @@
     ]
    ],
    "peakTrucks": 14,
-   "seg": "TF KM67-68"
+   "seg": "TF KM67-68",
+   "loadedSpeed": 19.9,
+   "emptySpeed": 20.8,
+   "nLoaded": 2970,
+   "nEmpty": 2549
   },
   {
    "avgSpeed": 13.0,
@@ -41522,7 +41846,11 @@
     ]
    ],
    "peakTrucks": 4,
-   "seg": "BLB KM2-3"
+   "seg": "BLB KM2-3",
+   "loadedSpeed": 11.5,
+   "emptySpeed": 16.3,
+   "nLoaded": 1642,
+   "nEmpty": 1300
   },
   {
    "avgSpeed": 16.1,
@@ -41843,7 +42171,11 @@
     ]
    ],
    "peakTrucks": 23,
-   "seg": "BLB KM9-10"
+   "seg": "BLB KM9-10",
+   "loadedSpeed": 16.5,
+   "emptySpeed": 17.9,
+   "nLoaded": 5865,
+   "nEmpty": 2966
   },
   {
    "avgSpeed": 17.6,
@@ -42148,7 +42480,11 @@
     ]
    ],
    "peakTrucks": 23,
-   "seg": "BLB KM8-9"
+   "seg": "BLB KM8-9",
+   "loadedSpeed": 16.7,
+   "emptySpeed": 18.0,
+   "nLoaded": 3543,
+   "nEmpty": 1801
   },
   {
    "avgSpeed": 18.6,
@@ -42453,7 +42789,11 @@
     ]
    ],
    "peakTrucks": 12,
-   "seg": "TF KM65-66"
+   "seg": "TF KM65-66",
+   "loadedSpeed": 20.7,
+   "emptySpeed": 21.4,
+   "nLoaded": 2013,
+   "nEmpty": 1616
   },
   {
    "avgSpeed": 12.8,
@@ -42746,7 +43086,11 @@
     ]
    ],
    "peakTrucks": 17,
-   "seg": "CSW KM5-6"
+   "seg": "CSW KM5-6",
+   "loadedSpeed": 11.8,
+   "emptySpeed": 13.3,
+   "nLoaded": 3062,
+   "nEmpty": 584
   },
   {
    "avgSpeed": 21.9,
@@ -43027,7 +43371,11 @@
     ]
    ],
    "peakTrucks": 12,
-   "seg": "TF KM62-63"
+   "seg": "TF KM62-63",
+   "loadedSpeed": 23.1,
+   "emptySpeed": 21.1,
+   "nLoaded": 2069,
+   "nEmpty": 1608
   },
   {
    "avgSpeed": 22.3,
@@ -43288,7 +43636,11 @@
     ]
    ],
    "peakTrucks": 10,
-   "seg": "TF KM60-61"
+   "seg": "TF KM60-61",
+   "loadedSpeed": 23.4,
+   "emptySpeed": 17.5,
+   "nLoaded": 2260,
+   "nEmpty": 2059
   },
   {
    "avgSpeed": 19.8,
@@ -43537,7 +43889,11 @@
     ]
    ],
    "peakTrucks": 12,
-   "seg": "TF KM66-67"
+   "seg": "TF KM66-67",
+   "loadedSpeed": 20.1,
+   "emptySpeed": 17.9,
+   "nLoaded": 1803,
+   "nEmpty": 1554
   },
   {
    "avgSpeed": 17.4,
@@ -43770,7 +44126,11 @@
     ]
    ],
    "peakTrucks": 26,
-   "seg": "HFC KM5-6"
+   "seg": "HFC KM5-6",
+   "loadedSpeed": 17.7,
+   "emptySpeed": 4.1,
+   "nLoaded": 382,
+   "nEmpty": 15
   },
   {
    "avgSpeed": 23.5,
@@ -43951,7 +44311,11 @@
     ]
    ],
    "peakTrucks": 9,
-   "seg": "TF KM64-65"
+   "seg": "TF KM64-65",
+   "loadedSpeed": 24.3,
+   "emptySpeed": 22.2,
+   "nLoaded": 1727,
+   "nEmpty": 1306
   },
   {
    "avgSpeed": 23.2,
@@ -44124,7 +44488,11 @@
     ]
    ],
    "peakTrucks": 9,
-   "seg": "TF KM61-62"
+   "seg": "TF KM61-62",
+   "loadedSpeed": 24.2,
+   "emptySpeed": 21.2,
+   "nLoaded": 2190,
+   "nEmpty": 1850
   },
   {
    "avgSpeed": 23.0,
@@ -44297,7 +44665,11 @@
     ]
    ],
    "peakTrucks": 9,
-   "seg": "TF KM63-64"
+   "seg": "TF KM63-64",
+   "loadedSpeed": 23.4,
+   "emptySpeed": 21.4,
+   "nLoaded": 1639,
+   "nEmpty": 1170
   },
   {
    "avgSpeed": 12.2,
@@ -44378,7 +44750,11 @@
     ]
    ],
    "peakTrucks": 2,
-   "seg": "CBBB KM16-17"
+   "seg": "CBBB KM16-17",
+   "loadedSpeed": 13.2,
+   "emptySpeed": 15.8,
+   "nLoaded": 214,
+   "nEmpty": 106
   }
  ],
  "densityFit": {

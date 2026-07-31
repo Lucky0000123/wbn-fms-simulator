@@ -141,8 +141,18 @@ def main():
         note3 = text("#pa-speed-note").lower()
         if n_seg > 0:
             check("S3 road selector populated (%d segments available)" % n_seg, roads >= 1, roads)
-            check("S3 note refuses the loaded/empty claim",
-                  "not loaded vs empty" in note3, note3[:90])
+            # This used to assert the note REFUSED a loaded/empty split, which
+            # was correct while the endpoint aggregated over DIR. The endpoint
+            # now splits, so the assertion is inverted rather than deleted: the
+            # section must show both directions and say how the mapping was
+            # verified, not merely stop disclaiming.
+            check("S3 shows the loaded/empty split",
+                  "loaded" in note3 and "empty" in note3, note3[:90])
+            check("S3 states the down-chainage evidence, not just the claim",
+                  "down-chainage" in note3, note3[:90])
+            series = pg.eval_on_selector_all(
+                "#pa-speed-chart canvas", "e => e.length")
+            check("S3 speed chart drew", series >= 1, series)
         else:
             print("  INFO congestion feed returned %d segments — VPN down or retention "
                   "window empty; asserting the honest-unavailable path instead" % n_seg)
@@ -172,6 +182,41 @@ def main():
         check("S8 note states availability never scales tonnage",
               "never scale" in text("#pa-fleet-note").lower(),
               text("#pa-fleet-note")[:90])
+
+        # --- section 9, the corridor map ---
+        geom_ok = pg.evaluate(
+            """async () => { try { const r = await fetch('/api/simulator/corridor-geometry');
+                 const d = await r.json(); return (d.roads || []).length; }
+                 catch (e) { return -1; } }""")
+        if geom_ok > 0:
+            check("S9 map drew its renderer surface",
+                  pg.eval_on_selector_all("#pa-map canvas, #pa-map svg", "e => e.length") >= 1)
+            # The bug this catches: 376 polylines rendered CORRECTLY into a
+            # zero-width SVG overlay. Counting paths passed; nothing was
+            # visible. Assert the renderer surface actually covers the map box.
+            surf = pg.evaluate(
+                """() => {const m=document.getElementById('pa-map');
+                     const s=m.querySelector('canvas')||m.querySelector('svg');
+                     if(!s) return null;
+                     const a=s.getBoundingClientRect(), b=m.getBoundingClientRect();
+                     return {sw:a.width, sh:a.height, mw:b.width, mh:b.height};}""")
+            check("S9 renderer surface covers the map container",
+                  surf and surf["sw"] >= 0.9 * surf["mw"] and surf["sh"] >= 0.9 * surf["mh"],
+                  surf)
+            check("S9 side table lists sections",
+                  rows("#pa-map-rows") >= 1, rows("#pa-map-rows"))
+            check("S9 detail panel is populated",
+                  len(text("#pa-map-detail")) > 20, text("#pa-map-detail")[:60])
+            check("S9 note states the colour scale is anchored on measurement",
+                  "measured distribution" in text("#pa-map-note").lower(),
+                  text("#pa-map-note")[:90])
+        else:
+            print("  INFO corridor geometry unavailable (data/haul_road_chainage.csv "
+                  "is gitignored) — asserting the honest empty state instead")
+            check("S9 explains the absence rather than showing a blank box",
+                  "geometry" in text("#pa-map").lower()
+                  or "coordinates" in text("#pa-map").lower(),
+                  text("#pa-map")[:110])
 
         # The whole point of the fix: the UI must not be quoting a scaled tonnage.
         applied = pg.evaluate(
