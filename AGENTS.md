@@ -8,30 +8,42 @@
 
 Applies to every agent and contributor working in this checkout.
 
-## Push to BOTH remotes, always
+## Push to `mirror` ONLY — `origin` is on hold
 
-This repo has two remotes and **every commit must reach both**:
+**This rule reversed on 2026-07-30.** It previously read "push to BOTH remotes,
+always". The owner has instructed that `origin` (Rudolf's repo) must **not**
+receive commits until they explicitly lift the hold. Earlier commits already
+reached `origin` under the old rule, so it sits at `48985b4`; everything after
+that is mirror-only until told otherwise.
 
-| Remote   | URL                                                | Notes                  |
-|----------|----------------------------------------------------|------------------------|
-| `origin` | `github.com/rdinkelmann/wbn-fms-simulator`         | upstream, private      |
-| `mirror` | `github.com/Lucky0000123/wbn-fms-simulator`        | user's copy, public    |
-
-A convenience remote `all` is configured to push to both in one command:
+| Remote   | URL                                          | Push?                    |
+|----------|----------------------------------------------|--------------------------|
+| `mirror` | `github.com/Lucky0000123/wbn-fms-simulator`  | **YES — the only target** |
+| `origin` | `github.com/rdinkelmann/wbn-fms-simulator`   | **NO — on hold**          |
+| `all`    | both URLs attached                           | **NO — reaches origin**   |
 
 ```bash
-git push all <branch>          # → origin AND mirror
+git push mirror main      # CORRECT
+git push all main         # WRONG — also pushes to origin
+git push                  # works today (main tracks mirror/main) but is
+                          # fragile: it silently follows whatever the branch
+                          # tracks. Name the remote.
 ```
 
-Verify both landed on the same SHA before reporting success:
+WARNING: the `all` remote still has **both** URLs attached, so `git push all`
+reaches Rudolf. It was deliberately left configured rather than rewritten, so
+that lifting the hold is a decision rather than a discovery. Do not use it.
+
+Verify the push landed:
 
 ```bash
-for r in origin mirror; do echo "$r: $(git ls-remote --heads $r <branch>)"; done
 git rev-parse HEAD
+git ls-remote --heads mirror main | cut -f1     # must match
 ```
 
-Never push to only one remote. If a push to either fails, say so explicitly
-rather than reporting partial success as done.
+Gate `G24` asserts mirror parity and merely *reports* origin's position, for
+exactly this reason — see the comment above it in `scripts/verify_phase2.sh`.
+When the owner lifts the hold, re-widen G24 and revert this section together.
 
 > `mirror` is **public**. Do not commit credentials, `geofences.json`, or any
 > new operational data. The existing `fixtures/` already contain real
@@ -173,6 +185,30 @@ WMT→DT round-trip returns 60.
 No DB credentials are committed. With no `FMS_DB_*` env vars set, every
 endpoint falls back to `fixtures/*.json` via the `_register()` wrapper in
 `simulator_api.py`. Never break that path.
+
+### There is a THIRD mode, and it does not fall back — found 2026-07-31
+
+`_register()` serves the fixture when `_db_ready()` is false **or the real logic
+throws**. But an endpoint that catches its own exception and returns an error
+*payload* satisfies neither condition, because a `200` looks like success. So:
+
+| State | Behaviour |
+|---|---|
+| No `FMS_DB_*` at all | fixture served ✔ |
+| DB configured **and reachable** | live data ✔ |
+| DB configured, **connection fails** | `{"ok": false, "error": ...}` + HTTP 200, **fixture NOT served** |
+
+The third row is the *normal* state here — the VPN drops every few minutes.
+`api_simulator_congestion_model` does exactly this, so section 3 of the
+assessment view renders empty (correctly explaining itself) whenever the link
+blips, while a complete 94-segment fixture sits unused.
+
+This was **not** changed, deliberately: returning an explicit error may be more
+honest than serving two-week-old segment speeds as if they were live, and that is
+a product decision. But know the mode exists before concluding an endpoint is
+broken, and check any endpoint you add for the same shape. Gate `J56` asserts the
+correct behaviour for whichever data is actually present rather than assuming the
+feed is up.
 
 ## Weather now comes from an API, not the site gauges
 
@@ -349,4 +385,79 @@ against 2,650 in tickets and its `plateNumber` ("SS074") does not join to ticket
 `HAULAGE_IWIP_CLEAN` with `ORIGIN_AREA` / `DESTINATION_AREA` / `TICKET_NO`;
 there is no `SOURCE`, `DESTINATION`, `CORRIDOR_KM`, `ID` or `DRIVER_ID` column,
 no `DRIVERS` table in `WBN_DATABASE`, and `EQUIPMENTS` keys on `ID_EQ`.
+
+---
+
+## Plan Assessment View (BUILT 2026-07-31) — sections 2-8
+
+`static/js/plan_assessment.js` + the `pa-sections-top` / `pa-sections-bot`
+blocks in `templates/simulator.html`. Charts are **ECharts from a CDN**; there is
+no npm dependency and no build step, because the deployed copy is a git pull on
+someone else's Mac.
+
+It renders from the **same `/api/simulate` response** the results table uses, so
+a chart can never disagree with the table above it. Reference data
+(`/api/simulate/options`, `/api/simulator/congestion-model`,
+`/api/simulator/capability`) is fetched once and cached per session.
+
+**Three things the brief asked for that the data cannot support.** Each is
+labelled in the UI, not just here. Do not "fix" them by inventing the number:
+
+| Asked for | Why not | Drawn instead |
+|---|---|---|
+| "travel empty" as its own band | weigh-to-weigh spans load→haul→dump; the empty return sits in the gap up to the effective cycle **together with** queue, refuelling, breaks and downtime (277 of 355 min on BLB>FENI KM0). Nothing separates them. | one residual band named for everything it contains |
+| loaded vs empty speed per section | `FMS_CONGESTION_SEG` has a `DIR` column but `/api/simulator/congestion-model` aggregates over it — the payload has no direction field | measured mean speed vs data-anchored free-flow (p85 at low traffic), both real. Splitting by `DIR` is a server change and is the obvious follow-up. |
+| per-contractor fleet sizing | roster is computed per **route**; there is no contractor dimension on it, and availability is measured for trucks carrying only 30.3% of tonnage | per-route rows with each row's `measured` / `fleet_prior` basis |
+
+`/api/simulator/capacity` **does not exist** — the brief cited it for the queue
+gauges. Capacity comes from `/api/simulate/options`
+(`capacity_trips_shift`, `observed_hours`) against `total_trips` from
+`/api/simulate`. No new endpoint was needed.
+
+`/api/simulator/congestion-model` now also returns **`densityFit`**, read from
+the committed `reports/speed_density_fit.json` by `_density_fit()`, so the
+congestion caption cites the real coefficients instead of a hardcoded copy that
+goes stale. It is served on the error path too, and mirrored into
+`fixtures/congestion-model.json`; keep the two in step.
+
+**ECharts may be absent.** This tool is demoed without VPN and sometimes without
+internet. Every chart goes through `paChart()`, which degrades to a visible note;
+the tables carry the numbers and are plain DOM. Do not add a chart that bypasses
+`paChart()`.
+
+**The trap that cost the most here:** `paGauges()` rebuilds its container with
+`innerHTML`, which **detaches** the previous chart divs. A detached ECharts
+instance is *not* disposed, so `isDisposed()` stays `false` and the cached
+instance happily renders into orphaned DOM. Every gauge shipped blank from the
+second render onward (2 canvases → 1 → 0) while a check counting wrapper `<div>`s
+passed. `paChart()` now also verifies `getDom() === el && getDom().isConnected`.
+**Count drawn canvases, not elements.**
+
+## The availability override — the UI defeated the engine
+
+Full write-up: `reports/CRITICAL_availability_override_defect.md`. Gate `J55`.
+
+`plan_simulator.js` sent `availability: 0.85` on every request and
+`plan_simulator.py` honoured it, so the shipped UI quoted **2,586 t** where the
+measured basis gives **3,042 t** (30 trucks, BLB>FENI KM0) — reintroducing
+through the front door the exact assumption this project removed from the
+engine, and moving delivered bias from +5.5% to −10.3%.
+
+**`J52` passed the whole time**, because it builds its own payload with no
+`availability` key and so only ever exercised the default path. Reintroduce the
+defect and `J55` fails naming the tonnages while `J52` still passes — that pair
+is the demonstration, and the general rule it teaches is:
+
+> A gate that constructs its own input cannot catch a bug in what the real
+> caller sends.
+
+The engine now accepts and ignores the key, echoing
+`summary.availability_override_ignored`. Do not re-add the parameter, the UI
+control, or the multiplier.
+
+## Score
+
+**56/56**, measured 2026-07-31 in both no-DB and DB modes, with `J55` and `J56`
+added. `G24` was narrowed to gate the **mirror only** — see the top of this file
+and the comment above it in `scripts/verify_phase2.sh`.
 

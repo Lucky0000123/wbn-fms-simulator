@@ -56,11 +56,16 @@ function psRun() {
   body.innerHTML = '<tr><td colspan="12" class="muted">Simulating…</td></tr>';
   fetch('/api/simulate', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
+    // NO `availability` key. This used to send 0.85, which the engine honoured,
+    // so the UI quoted 15% less tonnage than the measured basis supports (2,586
+    // vs 3,042 t for 30 trucks BLB>FENI KM0). Availability does not scale
+    // tonnage here -- the effective cycle already contains downtime -- it sizes
+    // the roster, which the engine computes itself from measured per-route
+    // availability. Do not add the key back; gate J55 fails if it returns.
     body: JSON.stringify({
       plans: _psPlans,
       weather: q('ps-weather').value,
       shift_minutes: parseFloat(q('ps-shift').value) || 720,
-      availability: parseFloat(q('ps-avail').value) || 0.85,
     }),
   }).then(r => r.json()).then(psRender)
     .catch(e => { body.innerHTML = '<tr><td colspan="12" class="muted">simulation failed: ' + e + '</td></tr>'; });
@@ -134,4 +139,18 @@ function psRender(d) {
   const lim = d.model_limits || {};
   q('ps-limits').innerHTML = '<b>What this simulator does not claim.</b> '
     + Object.values(lim).map(v => '· ' + v).join('<br>');
+
+  // A caller-supplied availability is ignored by the engine now. If anything
+  // ever sends one again, say so loudly here rather than letting the UI and the
+  // engine disagree in silence -- that silence is how the 0.85 override survived.
+  const ig = (d.summary || {}).availability_override_ignored;
+  if (ig) {
+    q('ps-warnings').innerHTML =
+      '<div style="font-size:12px;color:var(--warn,#d29922);margin-bottom:6px">'
+      + '⚠ ' + ig.replace(/</g, '&lt;') + '</div>' + q('ps-warnings').innerHTML;
+  }
+
+  // Sections 2-8 render from THIS response, so a chart can never disagree with
+  // the table above it.
+  if (typeof paRender === 'function') paRender(d);
 }

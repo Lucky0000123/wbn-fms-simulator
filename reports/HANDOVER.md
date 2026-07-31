@@ -1,6 +1,10 @@
 # HANDOVER — WBN Production Simulator
 
-*Written 2026-07-30. Harness 54/54 in both DB and no-DB modes.*
+*Written 2026-07-30; revised 2026-07-31. Harness **56/56** in both DB and no-DB
+modes (`J55` and `J56` added). Since the first draft: the GPS accumulator has run
+against the live server and is scheduled, the Plan Assessment View is built, a
+15% tonnage under-quote in the UI was found and fixed, and the push rule reversed
+to **mirror only**.*
 
 *Commit note: the work described here landed at `0ff987f`; this document itself is
 `5b0e21b`, the commit immediately after. Run `git log --oneline -5` for the current
@@ -54,16 +58,28 @@ live at tag `fms-modules-v1`. Do not resurrect them into this repo.
 | **HEAD when this was written** | `0ff987f` — "bank the GPS feed forward, since this is the one blocker that decays"; this doc is `5b0e21b` |
 | **Branches** | `main` only. No feature branches. |
 
-### Pushing — WARNING
+### Pushing — WARNING, THIS RULE REVERSED ON 2026-07-30
 
 ```bash
-git push all main      # correct: reaches BOTH remotes
-git push               # WRONG: reaches only one, and they silently diverge
+git push mirror main   # CORRECT — the only remote this project pushes to
+git push all main      # WRONG — `all` has two push URLs and reaches Rudolf
 ```
 
-`git remote -v` shows `all` with two push URLs. **Always `git push all main`.**
-Gate G24 checks that origin and mirror both match local HEAD, so a one-remote
-push shows up as a harness failure.
+The owner has put **`origin` (Rudolf's repo) on hold**: it must not receive
+commits until they explicitly lift it. It sits at `48985b4`, the last commit
+made under the old "push to both" rule.
+
+`G24` was narrowed to match: it asserts **mirror** parity and merely *reports*
+origin's position on an `INFO` line. The old gate required both, which made it
+unsatisfiable — honouring the instruction failed the harness, and satisfying the
+harness leaked work to a ringfenced repo. A gate that can only be passed by
+violating an instruction is worse than no gate, because the pressure is to "fix"
+it by pushing. When the hold is lifted, re-widen `G24` and revert the push
+section of `AGENTS.md` together.
+
+`git push` with no remote happens to work today because `main` tracks
+`mirror/main`, but name the remote anyway — tracking is invisible at the call
+site.
 
 ### Tags
 
@@ -234,11 +250,12 @@ Full scan of all 669 objects: `reports/database_schema_analysis.md` (5,079 lines
 ### Tests (root) — every one is wired into the harness
 
 `test_accumulator.py`, `test_availability_usage.py`,
-`test_congestion_audit_mutation.py`, `test_deliverable_schema.py`,
-`test_holdout_robustness.py`, `test_holdout_tonnage.py`,
-`test_plan_simulator.py`, `test_retrain_preserves_fix.py`,
-`test_segment_cross_validation.py`, `test_speed_density.py`,
-`test_trips_mutation.py`, `test_trips_per_shift.py`, plus `tests/test_cycle.py`.
+`test_availability_override.py`, `test_congestion_audit_mutation.py`,
+`test_deliverable_schema.py`, `test_holdout_robustness.py`,
+`test_holdout_tonnage.py`, `test_plan_simulator.py`,
+`test_retrain_preserves_fix.py`, `test_segment_cross_validation.py`,
+`test_speed_density.py`, `test_trips_mutation.py`, `test_trips_per_shift.py`,
+plus `tests/test_cycle.py` and `scripts/check_assessment_view.py` (browser).
 
 WARNING: eight of these were once **orphaned** — they existed, passed 42/42
 standalone, and the harness never invoked them. A test the harness does not run
@@ -669,7 +686,21 @@ Truck, contractor PPP, 40 t), not a namespace prefix. An earlier claim of an
 
 ### Next planned work
 
-**Plan Assessment View** — not started, no design committed.
+**Plan Assessment View** — **BUILT 2026-07-31.** Sections 2–8 on the Production
+Simulator tab, ECharts from CDN, gated by `J56`. See the AGENTS.md section for
+the three things the brief asked for that the data cannot support, and the
+detached-DOM trap that blanked every gauge. Follow-ups it surfaced, none started:
+
+- Split `/api/simulator/congestion-model` by the `DIR` column so loaded and
+  empty speeds can be drawn separately. The column exists; the endpoint
+  aggregates over it.
+- Re-verify the `weather` input the same way `availability` was. It is still
+  caller-supplied and still moves the answer, and a wet cycle uplift reduces
+  tonnes — while `availability_analysis.md` records that rain must **not** carry
+  a tonnage penalty. That interaction is unexamined.
+- `dailyByPath` is per-day, not per-shift, and carries no rainfall, so the
+  historical box in section 7 cannot be shift- or weather-matched as the brief
+  asked. A per-shift, rain-joined history endpoint would fix it.
 
 ---
 
@@ -768,6 +799,8 @@ simulator).
 | J52 | **availability sizes the fleet and never scales tonnage** (19 checks) |
 | J53 | **congestion measured, negligible, kept out of the model** (15 checks) |
 | J54 | **the GPS accumulator is idempotent and loses no history** |
+| J55 | **a caller-supplied availability never scales tonnage** — tests the payload path `J52` cannot see, and greps the front end so the key cannot come back |
+| J56 | **the plan assessment view renders sections 2–8** — counts drawn canvases after repeated renders, and asserts the honesty labels |
 
 Gate order in the file is A→J with J50/J51 last (they depend on optional
 extracts); numbering is not strictly sequential in the output.
@@ -872,13 +905,31 @@ decoration.
 
 ## Immediate next steps
 
-1. **Ask the user: keep the cycle fix or revert it?** It was made outside a brief
-   that said not to modify the app. `git revert 9c06865` if they want it gone.
-2. **Run `python scripts/accumulate_gps.py` once with the VPN up.** Its SQL has
-   not executed against the live server — the credentials volume unmounted
-   mid-session. The queries are the ones verified in `fit_speed_density.py` and
-   `extract_multiday_gps.py`, and the append logic is fully covered offline by
-   J54, but the live path is unconfirmed.
-3. **Add the crontab line** from §8 on the VPN machine.
-4. **Check whether the public ngrok site is still stale** (§12).
-5. Then: Plan Assessment View.
+Items 1–3 and 5 of the previous list are **done** (2026-07-30/31):
+
+1. ~~Keep the cycle fix or revert?~~ **KEEP** — confirmed by the owner. Tag
+   `pre-cycle-fix` remains if it is ever needed.
+2. ~~Run the accumulator once against the live server.~~ **Done, and the live
+   path is now confirmed.** First run banked **+329** segment rows (36,046 →
+   36,375) and **+2,905** `(day, truck)` GPS rows (0 → 2,905; 7 days, 858
+   trucks). Live idempotency proven by an immediate second run: +0 / +0.
+3. ~~Add the crontab.~~ **Installed**, twice daily at 07:00 and 19:00, pointing at
+   `scripts/accumulate_gps_cron.sh` — **not** at the bare python call. The line in
+   §8 would have failed silently every night: cron has no environment, so
+   `FMS_DB_*` would be unset. The wrapper reads them from the SSD `.env` at
+   runtime (mapping `FMS_DB_PWD` → `FMS_DB_PASS`), and logs a `SKIP` line with a
+   reason when the SSD is unmounted or the VPN is down rather than exiting
+   silently. Note the `.env` cannot be `source`d — `FMS_DB_DRIVER` holds an
+   unquoted value with spaces that a shell tries to execute.
+5. ~~Plan Assessment View.~~ **Built.** See §9.
+
+Still open:
+
+4. **Check whether the public ngrok site is still stale** (§12). Not re-checked
+   this round; it was up-but-stale on 2026-07-30 and nothing in this round
+   changes that, because deploying needs Rudolf's Mac.
+6. **A defect was found and fixed this round that nobody was looking for:** the
+   UI applied a 0.85 availability the engine did not, under-quoting tonnage by
+   15%. `reports/CRITICAL_availability_override_defect.md`, gate `J55`. Its
+   residual risk — the `weather` input, which is still caller-supplied and
+   unexamined — is the first place to look next.

@@ -144,11 +144,27 @@ done
 # stalling the harness instead of failing it.
 [ "$(curl -s -o /dev/null --max-time 900 -w '%{http_code}' -X POST "$BASE/api/retrain?cycle=0")" = "200" ]
 chk $? "F23  /api/retrain returns 200" "retrain endpoint down or >900s"
+# G24 gates the MIRROR only, and this is a deliberate narrowing (2026-07-30).
+#
+# It used to require origin AND mirror to both match local HEAD. That encoded
+# "push to both, always", which was the rule at the time. The owner has since
+# instructed that `origin` (rdinkelmann) must NOT receive commits until they say
+# so, which made the old gate unsatisfiable: honouring the instruction failed
+# the harness, and satisfying the harness leaked work to a repo the owner had
+# ringfenced. A gate that can only be passed by violating an instruction is
+# worse than no gate, because the pressure is to "fix" it by pushing.
+#
+# So: mirror parity is ASSERTED (it is the remote this project publishes to and
+# the invariant that must hold), and origin's position is REPORTED without
+# failing. The divergence stays visible in the harness output, so nobody has to
+# remember it, and re-widening the gate is a one-line change when the owner
+# lifts the hold.
 LOCAL=$(git rev-parse HEAD 2>/dev/null)
-O=$(git ls-remote --heads origin main 2>/dev/null | cut -f1)
 M=$(git ls-remote --heads mirror main 2>/dev/null | cut -f1)
-[ -n "$LOCAL" ] && [ "$LOCAL" = "$O" ] && [ "$LOCAL" = "$M" ]
-chk $? "G24  origin + mirror match local HEAD" "not pushed to both"
+O=$(git ls-remote --heads origin main 2>/dev/null | cut -f1)
+[ -n "$LOCAL" ] && [ "$LOCAL" = "$M" ]
+chk $? "G24  mirror matches local HEAD" "not pushed to mirror"
+[ "$LOCAL" = "$O" ] || echo "     INFO origin held at ${O:0:7} vs local ${LOCAL:0:7} (intentional, owner's instruction)"
 
 echo "── H · Phase 3 · OLS, validation, leakage ────────────────────────"
 [ -f data/model_ols.pkl ]; chk $? "H25  model_ols.pkl written" "missing"
@@ -366,6 +382,27 @@ fi
 if [ -f data/day_x_trip_gps_features.csv ]; then
 $PY test_deliverable_schema.py >/dev/null 2>&1
 chk $? "J51  deliverables match the requested schema" "see: python test_deliverable_schema.py"
+fi
+
+# J55 — the OTHER availability path. J52 passed for the entire time the shipped
+# UI was under-quoting tonnage by 15%, because it builds its own payload with no
+# `availability` key and so only ever exercised the default. The real caller was
+# the one supplying it. This gate tests a caller-supplied override AND asserts
+# the front end does not send one, because the defect needed both halves.
+if [ -f data/route_lookup.csv ]; then
+$PY test_availability_override.py >/dev/null 2>&1
+chk $? "J55  a supplied availability never scales tonnage" "see: python test_availability_override.py"
+fi
+
+# J56 — the assessment view actually draws. Counts rendered canvases and asserts
+# the honesty labels, after repeated renders: a chart cached against a detached
+# DOM node blanks only from the SECOND render on, which is how every gauge shipped
+# empty while a element-counting check passed. Needs playwright and a live server;
+# skipped rather than failed where either is absent, like the other optional gates.
+if $PY -c "import playwright" >/dev/null 2>&1 \
+   && [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 $BASE/health)" = "200" ]; then
+$PY scripts/check_assessment_view.py >/dev/null 2>&1
+chk $? "J56  plan assessment view renders sections 2-8" "see: python scripts/check_assessment_view.py"
 fi
 
 

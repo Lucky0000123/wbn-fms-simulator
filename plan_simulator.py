@@ -10,7 +10,10 @@ every field, because they do not deserve equal trust:
     measured    from observed history — route cycle times, dwell times, payload,
                 and each point's demonstrated hourly throughput ceiling
     derived     arithmetic on measured values — trips per shift, tonnes
-    assumed     the shift length and availability a planner supplies
+    assumed     the shift length a planner supplies. NOT availability: a
+                caller-supplied availability is accepted and ignored for
+                tonnage (see the note in simulate()), because the effective
+                cycle already contains downtime. Availability sizes the roster.
 
 THE ONE THING IT DELIBERATELY WILL NOT DO
 It will not scale cycle time with truck count. The brief asked for that, and
@@ -211,7 +214,42 @@ def simulate(payload: dict) -> dict:
         return {"error": "no plans supplied", "results": [], "summary": {}}
 
     shift_min = float(payload.get("shift_minutes", DEFAULT_SHIFT_MIN))
-    avail = float(payload.get("availability", DEFAULT_AVAILABILITY))
+
+    # A caller-supplied `availability` is ACCEPTED and then DELIBERATELY IGNORED
+    # for tonnage. It used to be honoured:
+    #
+    #     avail = float(payload.get("availability", DEFAULT_AVAILABILITY))
+    #
+    # and static/js/plan_simulator.js sent 0.85 on every request, so the shipped
+    # UI quoted 2,586 t where the engine's own measured basis gives 3,042 t for
+    # 30 trucks on BLB>FENI KM0 -- 15% low, reintroducing through the front door
+    # exactly the 0.85 assumption this project measured as wrong (bias +5.5%
+    # with no factor, -10.3% at x0.85). Gate J52 did not catch it because it
+    # builds its own payload without the key and so only ever exercised the
+    # default path; the real caller was the one supplying it.
+    #
+    # The key is not rejected, because failing a request is worse than ignoring
+    # a parameter that must not exist. It is echoed back as ignored, with the
+    # reason, so a caller learns rather than silently disagreeing with the API.
+    avail = DEFAULT_AVAILABILITY
+    _avail_req = payload.get("availability")
+    avail_ignored = None
+    if _avail_req is not None:
+        try:
+            _r = float(_avail_req)
+        except (TypeError, ValueError):
+            _r = None
+        if _r is not None and abs(_r - DEFAULT_AVAILABILITY) > 1e-9:
+            avail_ignored = (
+                "caller supplied availability=%.3f; IGNORED for tonnage. The "
+                "effective cycle is shift-minutes per completed trip and "
+                "already contains downtime, queueing, empty running and "
+                "breaks, so an availability allowance double-counts it. "
+                "Measured: no factor gives bias +5.5%%, x0.85 gives -10.3%%. "
+                "Availability sizes the ROSTER instead -- see "
+                "fleet_sizing.trucks_to_roster." % _r
+            )
+
     wet = str(payload.get("weather", "dry")).lower() in ("wet", "rain", "rainy")
 
     # Combined demand at every point, summed ACROSS plans. This is where two
@@ -426,6 +464,10 @@ def simulate(payload: dict) -> dict:
             "capacity_warnings": warnings,
             "shift_minutes": shift_min,
             "availability_factor_applied": avail,
+            # Present only when a caller tried to scale tonnage by availability.
+            # Surfacing it is the point: a silently-dropped parameter is how the
+            # UI and the engine disagreed for as long as they did.
+            "availability_override_ignored": avail_ignored,
             "fleet_sizing": {
                 "trucks_hauling": int(sum(x["n_trucks"] for x in ok)),
                 "trucks_to_roster": int(sum(

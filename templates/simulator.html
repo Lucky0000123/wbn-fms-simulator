@@ -241,16 +241,22 @@
                 <div class="muted" style="font-size:11px;margin-bottom:3px">Shift length (min)</div>
                 <input id="ps-shift" type="number" min="60" max="1440" value="720" style="width:100%" onchange="psRun()">
               </label>
-              <label style="width:170px">
-                <div class="muted" style="font-size:11px;margin-bottom:3px">Availability (assumed)</div>
-                <input id="ps-avail" type="number" min="0.1" max="1" step="0.05" value="0.85" style="width:100%" onchange="psRun()">
-              </label>
+              <!-- The "Availability (assumed)" input that stood here is REMOVED.
+                   It defaulted to 0.85 and was sent to /api/simulate, which
+                   honoured it, so the UI under-quoted tonnage by 15% using the
+                   exact assumption this project measured as wrong. Availability
+                   is not an input: it is measured per route and it sizes the
+                   roster, shown in "Fleet sizing" below. -->
+              <div style="width:210px;font-size:11px" class="muted">
+                <div style="margin-bottom:3px">Availability</div>
+                <div id="ps-avail-note" style="line-height:1.35">measured per route &mdash; sizes the <b>roster</b>, not the tonnage</div>
+              </div>
               <button class="mode-btn" onclick="psClear()" style="height:32px">Clear all</button>
             </div>
           </div>
 
           <div class="card" style="flex:1;min-width:260px">
-            <h3 style="margin-bottom:3px">2 &middot; Shift total</h3>
+            <h3 style="margin-bottom:3px">Shift total</h3>
             <div class="sub">Planned is what the fleet would do unconstrained. Achievable applies measured capacity.</div>
             <div class="c3-flow-kpis" style="margin-top:10px">
               <div class="c3-flow-kpi"><b id="ps-kpi-trucks">&mdash;</b><span>Trucks</span></div>
@@ -261,8 +267,60 @@
           </div>
         </div>
 
+        <div style="margin-top:14px">
+          <button class="btn" onclick="paRun()" style="cursor:pointer">▶ Run assessment</button>
+          <span class="muted" style="font-size:11.5px;margin-left:10px">Sections 2&ndash;8 below assess the plan in the table: where the time goes, how fast each road section runs, where plans collide, and how it compares with the days this haul actually ran.</span>
+        </div>
+
+        <!-- Sections 2-5. Hidden until a plan exists, so an empty page never
+             shows axes with no data on them. -->
+        <div id="pa-sections-top" style="display:none">
+
+          <div class="card" style="margin-top:14px">
+            <h3 style="margin-bottom:3px">2 &middot; Trip time breakdown</h3>
+            <div class="sub">Where the time goes on each haul. The first three bands are the weigh-to-weigh trip a planner recognises; the fourth is everything between one trip and the next.</div>
+            <div id="pa-breakdown-chart" style="height:250px;margin-top:8px"></div>
+            <div class="rain-table" style="margin-top:8px"><table>
+              <thead><tr><th>Haul</th><th class="r">Load</th><th class="r">Travel loaded</th>
+                <th class="r">Dump</th><th class="r">Weigh-to-weigh</th><th class="r">Residual</th>
+                <th class="r">Effective cycle</th><th class="r">Residual %</th></tr></thead>
+              <tbody id="pa-breakdown-rows"></tbody></table></div>
+            <div id="pa-breakdown-note" class="lead muted" style="margin-top:10px;font-size:12px"></div>
+          </div>
+
+          <div class="card" style="margin-top:14px">
+            <h3 style="margin-bottom:3px">3 &middot; Speed per section</h3>
+            <div class="sub">Measured segment speed along the haul road by KM chainage.
+              <select id="pa-road" onchange="paSetRoad(this.value)" style="margin-left:8px"></select></div>
+            <div id="pa-speed-chart" style="height:250px;margin-top:8px"></div>
+            <div id="pa-speed-note" class="lead muted" style="margin-top:10px;font-size:12px"></div>
+          </div>
+
+          <div class="card" style="margin-top:14px">
+            <h3 style="margin-bottom:3px">4 &middot; Congestion and shared points</h3>
+            <div class="sub">Two different things, kept apart on purpose: which points these plans <b>share</b> (modelled, as capacity) and how much slower busy road sections actually run (measured, and deliberately not modelled).</div>
+            <div class="rain-table" style="margin-top:8px"><table>
+              <thead><tr><th style="width:110px">Point type</th><th>Shared between plans</th></tr></thead>
+              <tbody id="pa-shared-rows"></tbody></table></div>
+            <div id="pa-drop-chart" style="height:230px;margin-top:12px"></div>
+            <div class="rain-table" style="margin-top:8px"><table>
+              <thead><tr><th>Segment</th><th class="r">Free-flow km/h</th><th class="r">Mean km/h</th>
+                <th class="r">Below free-flow</th><th class="r">Peak trucks</th><th class="r">Obs</th></tr></thead>
+              <tbody id="pa-drop-rows"></tbody></table></div>
+            <div id="pa-cong-note" class="lead muted" style="margin-top:10px;font-size:12px"></div>
+          </div>
+
+          <div class="card" style="margin-top:14px">
+            <h3 style="margin-bottom:3px">5 &middot; Queue risk at loading and dumping points</h3>
+            <div class="sub">Trips this plan asks of each point, against the throughput that point has demonstrated. Demand is summed across plans, because two plans on one loader are one queue.</div>
+            <div id="pa-gauges" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px"></div>
+            <div id="pa-gauge-note" class="lead muted" style="margin-top:10px;font-size:12px"></div>
+          </div>
+
+        </div><!-- /pa-sections-top -->
+
         <div class="card" style="margin-top:14px">
-          <h3 style="margin-bottom:3px">3 &middot; Predicted result per haul</h3>
+          <h3 style="margin-bottom:3px">6 &middot; Production estimate per haul</h3>
           <div class="sub"><b>Trip time</b> is the weigh-to-weigh interval a planner recognises. <b>Effective cycle</b> is shift-minutes per completed trip &mdash; measured per route, and what trips/shift divides by, because it also covers the empty return, the shovel queue and breaks. <b>Roster</b> is how many trucks to have on shift to keep that many hauling, from measured availability; a starred figure means no availability is measured for that route's trucks, so the site-wide prior is used. Hover any row for the evidence behind each number.</div>
           <div class="rain-table" style="margin-top:8px"><table>
             <thead><tr>
@@ -277,6 +335,33 @@
           </table></div>
           <div id="ps-limits" class="lead muted" style="margin-top:12px;font-size:12px"></div>
         </div>
+
+        <!-- Sections 7-8. -->
+        <div id="pa-sections-bot" style="display:none">
+
+          <div class="card" style="margin-top:14px">
+            <h3 style="margin-bottom:3px">7 &middot; Historical reference</h3>
+            <div class="sub">How this prediction sits against the days this exact haul actually ran. A sanity check on the number, not an input to it.</div>
+            <div id="pa-history-chart" style="height:260px;margin-top:8px"></div>
+            <div class="rain-table" style="margin-top:8px"><table>
+              <thead><tr><th>Haul</th><th class="r">Days observed</th><th class="r">Min</th>
+                <th class="r">Median</th><th class="r">Max</th><th class="r">This plan</th>
+                <th>Verdict</th></tr></thead>
+              <tbody id="pa-history-rows"></tbody></table></div>
+            <div id="pa-history-note" class="lead muted" style="margin-top:10px;font-size:12px"></div>
+          </div>
+
+          <div class="card" style="margin-top:14px">
+            <h3 style="margin-bottom:3px">8 &middot; Fleet sizing</h3>
+            <div class="sub">To keep N trucks hauling you must roster more than N, because some will not run. This is the only place availability is applied.</div>
+            <div class="rain-table" style="margin-top:8px"><table>
+              <thead><tr><th>Haul</th><th class="r">Trucks hauling</th><th class="r">Roster</th>
+                <th class="r">Extra</th><th class="r">Availability</th><th>Basis</th></tr></thead>
+              <tbody id="pa-fleet-rows"></tbody><tfoot id="pa-fleet-foot"></tfoot></table></div>
+            <div id="pa-fleet-note" class="lead muted" style="margin-top:10px;font-size:12px"></div>
+          </div>
+
+        </div><!-- /pa-sections-bot -->
       </div><!-- /tab-plansim -->
 
     </div>
@@ -310,6 +395,12 @@
 <!-- Application JS — split out of this template (Phase 1 refactor).
      Load order matters: main.js is LAST because it declares every shared
      top-level variable and performs all start-up execution. -->
+<!-- ECharts from CDN, deliberately not an npm dependency: this repo has no build
+     step and the deployed copy is a git pull on someone else's Mac. `defer` so a
+     slow or unreachable CDN cannot block the app scripts below it — the page and
+     every table still work without it, and plan_assessment.js degrades each chart
+     to a visible note rather than throwing. -->
+<script defer src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <script src="/static/js/api.js"></script>
 <script src="/static/js/charts.js"></script>
 <script src="/static/js/flow_sim.js"></script>
@@ -317,6 +408,7 @@
 <script src="/static/js/regression.js"></script>
 <script src="/static/js/plan.js"></script>
 <script src="/static/js/plan_simulator.js"></script>
+<script src="/static/js/plan_assessment.js"></script>
 <script src="/static/js/main.js"></script>
 </body>
 </html>

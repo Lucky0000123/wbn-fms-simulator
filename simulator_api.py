@@ -338,6 +338,26 @@ def api_simulator_path_response():
         out["%s>%s" % (o, de)] = rec
     return jsonify({"ok": True, "paths": out})
 
+def _density_fit():
+    """The site-wide within-segment speed-density fit, read from its report file.
+
+    Served so the assessment UI can caption the congestion section with the real
+    coefficients instead of a hardcoded copy that goes stale the next time the
+    fit is re-run. reports/speed_density_fit.json is committed (it holds
+    coefficients, not tonnages), so this resolves on a fresh clone with no DB
+    and is identical on the fixture path -- there is one source of truth.
+
+    Returns None rather than a guess when the file is absent; the UI then hides
+    the claim instead of rendering a placeholder coefficient as if measured.
+    """
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "reports", "speed_density_fit.json")) as fh:
+            return json.load(fh)
+    except Exception:
+        return None
+
+
 def api_simulator_congestion_model():
     """PREVIEW: measured speed-vs-traffic per haul-road segment (from FMS_CONGESTION_SEG) — the raw data
     for a future speed-density (fundamental-diagram) congestion model. Returns per-segment observations
@@ -349,7 +369,10 @@ def api_simulator_congestion_model():
                     "WHERE TRUCK_N>0 AND FIX_N>0")
         rows = cur.fetchall(); conn.close()
     except Exception as exc:
-        return jsonify({"ok": False, "error": "congestion data unavailable — %s" % str(exc)[:120]}), 200
+        # densityFit still ships: it comes from a committed report, not this
+        # query, so the UI can caption the finding even with the DB down.
+        return jsonify({"ok": False, "densityFit": _density_fit(),
+                        "error": "congestion data unavailable — %s" % str(exc)[:120]}), 200
     from collections import defaultdict
     obs = defaultdict(list); span = [None, None]
     for seg, tn, spd, mn, mx in rows:
@@ -373,7 +396,8 @@ def api_simulator_congestion_model():
         days = round((span[1] - span[0]) / 86400000) if span[0] else 0
     except Exception:
         days = 0
-    return jsonify({"ok": True, "segments": segs[:120], "days": days})
+    return jsonify({"ok": True, "segments": segs[:120], "days": days,
+                    "densityFit": _density_fit()})
 
 def api_simulator_weighbridge_positions():
     """Weighbridge geofences snapped to corridor chainage, with optional selected-shift usage."""
