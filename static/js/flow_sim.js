@@ -42,7 +42,51 @@ function updateFlowSimulator(){
 function flowFrame(ts){const s=_flowSim;if(!s||!s.running)return;if(!s.last)s.last=ts;const dt=Math.min(.1,(ts-s.last)/1000);s.last=ts;s.hour=Math.min(FLOW_SHIFT_HOURS,s.hour+dt*FLOW_SHIFT_HOURS/24);updateFlowSimulator();if(s.hour>=FLOW_SHIFT_HOURS){stopFlowSimulator();return;}s.raf=requestAnimationFrame(flowFrame);}
 function flowToggle(){const s=_flowSim;if(!s)return;if(s.running){stopFlowSimulator();return;}if(s.hour>=FLOW_SHIFT_HOURS){s.hour=0;s.liveCongestion=0;s.liveDensity=0;s.vehicleStates={};s.laneOrders={loaded:[],empty:[]};}if(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches){s.hour=FLOW_SHIFT_HOURS;updateFlowSimulator();return;}s.running=true;s.last=0;q('c3-flow-play').textContent='Ⅱ Pause';s.raf=requestAnimationFrame(flowFrame);}
 function flowReset(){stopFlowSimulator();if(_flowSim){_flowSim.hour=0;_flowSim.liveCongestion=0;_flowSim.liveDensity=0;_flowSim.vehicleStates={};_flowSim.laneOrders={loaded:[],empty:[]};updateFlowSimulator();}}
-function flowInputs(){const n=(id,d)=>{const e=q(id),v=e&&parseFloat(e.value);return Number.isFinite(v)?v:d;};return {start:(q('flow-start')||{}).value||'split',loaded:n('flow-loaded-speed',25),empty:n('flow-empty-speed',35),stagger:n('flow-stagger',0),headway:n('flow-headway',90),dwell:n('flow-dwell',12),hours:FLOW_SHIFT_HOURS,fleet:1,elements:Math.round(n('flow-elements',500)),elementsTouched:Math.round(n('flow-elements',500))!==500};}
+// When false (default), motion uses corridor.measuredSpeeds (GPS). Advanced km/h
+// inputs are display/override only — touching them sets _flowSpeedOverride.
+let _flowSpeedOverride=false;
+function flowInputs(){
+  const n=(id,d)=>{const e=q(id),v=e&&parseFloat(e.value);return Number.isFinite(v)?v:d;};
+  return {start:(q('flow-start')||{}).value||'split',
+    loaded:n('flow-loaded-speed',25),empty:n('flow-empty-speed',35),
+    stagger:n('flow-stagger',0),headway:n('flow-headway',90),dwell:n('flow-dwell',12),
+    hours:FLOW_SHIFT_HOURS,fleet:1,
+    elements:Math.round(n('flow-elements',500)),
+    elementsTouched:Math.round(n('flow-elements',500))!==500,
+    speedOverride:_flowSpeedOverride};
+}
+function flowMeasuredBands(){return (((_D&&_D.corridor)||{}).measuredSpeeds)||[];}
+function flowPostedLimits(){return ((((_D&&_D.corridor)||{}).speedLimits)||[]).filter(x=>x.limit>0);}
+function gpsSpeedAt(km, loaded, fallback){
+  const bands=flowMeasuredBands();
+  let nearest=null, best=1e9;
+  for(let i=0;i<bands.length;i++){
+    const b=bands[i], lo=Math.min(b.fromKm,b.toKm), hi=Math.max(b.fromKm,b.toKm);
+    const v=loaded?b.loadedKmh:b.emptyKmh;
+    if(km<=hi+1e-6&&km>=lo-1e-6&&Number.isFinite(v)) return Math.max(1, v);
+    const mid=(lo+hi)/2, d=Math.abs(km-mid);
+    if(d<best&&Number.isFinite(v)){best=d; nearest=v;}
+  }
+  if(nearest!=null) return Math.max(1, nearest);
+  const vals=bands.map(b=>loaded?b.loadedKmh:b.emptyKmh).filter(Number.isFinite).sort((a,b)=>a-b);
+  if(vals.length) return Math.max(1, vals[Math.floor(vals.length/2)]);
+  return fallback;
+}
+function flowSeedGpsInputs(){
+  // Reflect measured medians in the Advanced fields without enabling override.
+  const bands=flowMeasuredBands();
+  if(!bands.length) return;
+  const L=bands.map(b=>b.loadedKmh).filter(Number.isFinite).sort((a,b)=>a-b);
+  const E=bands.map(b=>b.emptyKmh).filter(Number.isFinite).sort((a,b)=>a-b);
+  const med=a=>a[Math.floor(a.length/2)];
+  if(L.length&&q('flow-loaded-speed')) q('flow-loaded-speed').value=med(L).toFixed(1);
+  if(E.length&&q('flow-empty-speed')) q('flow-empty-speed').value=med(E).toFixed(1);
+}
+function flowUseMeasuredGps(){
+  _flowSpeedOverride=false; _flowSpeedsInitialised=true;
+  flowSeedGpsInputs();
+  if(_flowSim&&_flowSource){stopFlowSimulator();renderFlowSimulator(_flowSource.P,_flowSource.colours,true);}
+}
 function otherPathMult(p){const d=_otherDraft&&_otherDraft[p.label];return p.trucks?((Number.isFinite(d)?d:p.trucks)/p.trucks):1;}
 // non-WBN trips on a corridor section, from the (edited) per-path counts — 0 when the toggle is off
 function otherSectionTrips(label){if(!_otherInModel||!_otherCtx||!_otherCtx.paths)return 0;const sec=OTHER_SECS.find(s=>s[0]===label);if(!sec)return 0;let t=0;_otherCtx.paths.forEach(p=>{const lo=Math.min(p.oKm,p.dKm),hi=Math.max(p.oKm,p.dKm);if(hi>sec[1]&&lo<sec[2])t+=p.trips*otherPathMult(p);});return t;}
@@ -70,17 +114,56 @@ function flowRouteTarget(r){
 function flowRainPct(r){const m=_pathResp&&_pathResp[r.key];if(!m||!Number.isFinite(m.cRain)||!m.avgTr)return null;return 100*m.cRain*10/m.avgTr;}
 function flowMotionPhase(r,t){const m=r.motion||[{t:0,g:0},{t:1,g:1}];for(let i=1;i<m.length;i++)if(t<=m[i].t){const a=m[i-1],b=m[i],u=(t-a.t)/(b.t-a.t||1);return a.g+u*(b.g-a.g);}return 1;}
 function buildFlowMotion(r,p,vc){
-  const ranges={1:[67.8,39],2:[39,27],3:[27,17]},selected=[..._gSelSec].map(id=>ranges[+id]).filter(Boolean),limits=(((_D&&_D.corridor)||{}).speedLimits||[]).filter(x=>x.limit>0),maxDbLimit=limits.length?Math.max(...limits.map(x=>x.limit)):80,inside=km=>selected.some(z=>km<=z[0]&&km>=z[1]),limitAt=km=>{const matches=limits.filter(x=>km<=x.fromKm&&km>=x.toKm);return matches.length?Math.min(...matches.map(x=>x.limit)):maxDbLimit;},dist=Math.abs(r.fromKm-r.toKm),cuts=[r.fromKm,r.toKm];selected.forEach(z=>{[z[0],z[1]].forEach(k=>{if(k<r.fromKm&&k>r.toKm)cuts.push(k);});});limits.forEach(z=>{[z.fromKm,z.toKm].forEach(k=>{if(k<r.fromKm&&k>r.toKm)cuts.push(k);});});cuts.sort((a,b)=>b-a);
-  let congested=0;for(let i=1;i<cuts.length;i++){const d=cuts[i-1]-cuts[i],mid=(cuts[i-1]+cuts[i])/2;if(inside(mid))congested+=d;}const slow=Math.max(.3,Math.min(1,1-.7*Math.max(0,vc))),openFactor=p.sharedOpenFactor||1;
-  r.congestedFactor=slow;r.openFactor=openFactor;r.congestedKm=congested;const roadPx=Math.max(1,r.destX-r.sourceX),loopPx=2*roadPx+60,gLoaded=roadPx/loopPx,gDump=(roadPx+30)/loopPx,gEmpty=(2*roadPx+30)/loopPx,segments=[];
-  // Inputs set the truck's speed at the highest-limit road standard. Each lower DB zone scales that
-  // speed proportionally, so the replay visibly accelerates and decelerates at chainage boundaries.
-  const addTravel=(from,to,loaded)=>{const descending=from>to,pts=cuts.filter(k=>k<=Math.max(from,to)&&k>=Math.min(from,to)).sort((a,b)=>descending?b-a:a-b);if(pts[0]!==from)pts.unshift(from);if(pts[pts.length-1]!==to)pts.push(to);for(let i=1;i<pts.length;i++){const d=Math.abs(pts[i]-pts[i-1]),mid=(pts[i]+pts[i-1])/2,limit=limitAt(mid),requested=loaded?p.loaded:p.empty,profileSpeed=Math.min(limit,requested*openFactor*(limit/maxDbLimit)),speed=Math.max(1,profileSpeed*(inside(mid)?slow:1));segments.push({hours:d/speed,km:d,loaded,speed,limit,congested:inside(mid)});}};
-  addTravel(r.fromKm,r.toKm,true);segments.push({hours:p.dwell/120,cross:'dump'});addTravel(r.toKm,r.fromKm,false);segments.push({hours:p.dwell/120,cross:'load'});const travel=segments.filter(x=>x.speed),loadedTravel=travel.filter(x=>x.loaded),emptyTravel=travel.filter(x=>!x.loaded),cL=loadedTravel.filter(x=>x.congested),cE=emptyTravel.filter(x=>x.congested);r.loadedSpeedRange=loadedTravel.length?[Math.min(...loadedTravel.map(x=>x.speed)),Math.max(...loadedTravel.map(x=>x.speed))]:[0,0];r.emptySpeedRange=emptyTravel.length?[Math.min(...emptyTravel.map(x=>x.speed)),Math.max(...emptyTravel.map(x=>x.speed))]:[0,0];r.congestedLoaded=cL.length?Math.min(...cL.map(x=>x.speed)):null;r.congestedEmpty=cE.length?Math.min(...cE.map(x=>x.speed)):null;r.maxOpen=travel.filter(x=>!x.congested).reduce((m,x)=>Math.max(m,x.speed),0);const total=segments.reduce((s,x)=>s+x.hours,0)||1;let time=0,g=0,travelledLoaded=0,travelledEmpty=0;r.motion=[{t:0,g:0}];segments.forEach(x=>{time+=x.hours/total;if(x.cross==='dump')g=gDump;else if(x.cross==='load')g=1;else if(x.loaded){travelledLoaded+=x.km;g=gLoaded*travelledLoaded/dist;}else{travelledEmpty+=x.km;g=gDump+(gEmpty-gDump)*travelledEmpty/dist;}r.motion.push({t:time,g});});r.destTimeFraction=segments.filter(x=>x.loaded).reduce((s,x)=>s+x.hours,0)/total;r.startTimes=r.startTimes.map((_,j)=>p.start==='destination'?r.destTimeFraction:p.start==='split'&&j%2?r.destTimeFraction:0);return total;
+  const ranges={1:[67.8,39],2:[39,27],3:[27,17]},selected=[..._gSelSec].map(id=>ranges[+id]).filter(Boolean);
+  const limits=flowPostedLimits(), maxDbLimit=limits.length?Math.max(...limits.map(x=>x.limit)):80;
+  const inside=km=>selected.some(z=>km<=z[0]&&km>=z[1]);
+  const limitAt=km=>{const matches=limits.filter(x=>km<=x.fromKm&&km>=x.toKm);return matches.length?Math.min(...matches.map(x=>x.limit)):maxDbLimit;};
+  const dist=Math.abs(r.fromKm-r.toKm),cuts=[r.fromKm,r.toKm];
+  selected.forEach(z=>{[z[0],z[1]].forEach(k=>{if(k<r.fromKm&&k>r.toKm)cuts.push(k);});});
+  limits.forEach(z=>{[z.fromKm,z.toKm].forEach(k=>{if(k<r.fromKm&&k>r.toKm)cuts.push(k);});});
+  flowMeasuredBands().forEach(z=>{[z.fromKm,z.toKm].forEach(k=>{if(k<r.fromKm&&k>r.toKm)cuts.push(k);});});
+  cuts.sort((a,b)=>b-a);
+  let congested=0;for(let i=1;i<cuts.length;i++){const d=cuts[i-1]-cuts[i],mid=(cuts[i-1]+cuts[i])/2;if(inside(mid))congested+=d;}
+  const slow=Math.max(.3,Math.min(1,1-.7*Math.max(0,vc)));
+  // GPS-first: never stretch speeds to match trip rate (sharedOpenFactor stays 1).
+  const openFactor=1;
+  const useGps=!p.speedOverride&&flowMeasuredBands().length>0;
+  r.congestedFactor=slow;r.openFactor=openFactor;r.congestedKm=congested;r.speedSource=useGps?'gps':(p.speedOverride?'override':'fallback');
+  const roadPx=Math.max(1,r.destX-r.sourceX),loopPx=2*roadPx+60,gLoaded=roadPx/loopPx,gDump=(roadPx+30)/loopPx,gEmpty=(2*roadPx+30)/loopPx,segments=[];
+  const addTravel=(from,to,loaded)=>{
+    const descending=from>to;
+    const pts=cuts.filter(k=>k<=Math.max(from,to)&&k>=Math.min(from,to)).sort((a,b)=>descending?b-a:a-b);
+    if(pts[0]!==from)pts.unshift(from);if(pts[pts.length-1]!==to)pts.push(to);
+    for(let i=1;i<pts.length;i++){
+      const d=Math.abs(pts[i]-pts[i-1]), mid=(pts[i]+pts[i-1])/2, limit=limitAt(mid);
+      const requested=loaded?p.loaded:p.empty;
+      const base=useGps?gpsSpeedAt(mid,loaded,requested):Math.max(1,requested);
+      const speed=Math.max(1, base*(inside(mid)?slow:1));
+      segments.push({hours:d/speed,km:d,loaded,speed,limit,overLimit:base>limit+0.5,congested:inside(mid),gps:useGps});
+    }
+  };
+  addTravel(r.fromKm,r.toKm,true);segments.push({hours:p.dwell/120,cross:'dump'});
+  addTravel(r.toKm,r.fromKm,false);segments.push({hours:p.dwell/120,cross:'load'});
+  const travel=segments.filter(x=>x.speed),loadedTravel=travel.filter(x=>x.loaded),emptyTravel=travel.filter(x=>!x.loaded);
+  const cL=loadedTravel.filter(x=>x.congested),cE=emptyTravel.filter(x=>x.congested);
+  r.loadedSpeedRange=loadedTravel.length?[Math.min(...loadedTravel.map(x=>x.speed)),Math.max(...loadedTravel.map(x=>x.speed))]:[0,0];
+  r.emptySpeedRange=emptyTravel.length?[Math.min(...emptyTravel.map(x=>x.speed)),Math.max(...emptyTravel.map(x=>x.speed))]:[0,0];
+  r.congestedLoaded=cL.length?Math.min(...cL.map(x=>x.speed)):null;
+  r.congestedEmpty=cE.length?Math.min(...cE.map(x=>x.speed)):null;
+  r.maxOpen=travel.filter(x=>!x.congested).reduce((m,x)=>Math.max(m,x.speed),0);
+  const overKm=travel.filter(x=>x.overLimit).reduce((s,x)=>s+x.km,0);
+  r.overLimitPct=dist?100*overKm/dist:0;
+  const total=segments.reduce((s,x)=>s+x.hours,0)||1;let time=0,g=0,travelledLoaded=0,travelledEmpty=0;r.motion=[{t:0,g:0}];
+  segments.forEach(x=>{time+=x.hours/total;if(x.cross==='dump')g=gDump;else if(x.cross==='load')g=1;else if(x.loaded){travelledLoaded+=x.km;g=gLoaded*travelledLoaded/dist;}else{travelledEmpty+=x.km;g=gDump+(gEmpty-gDump)*travelledEmpty/dist;}r.motion.push({t:time,g});});
+  r.destTimeFraction=segments.filter(x=>x.loaded).reduce((s,x)=>s+x.hours,0)/total;
+  r.startTimes=r.startTimes.map((_,j)=>p.start==='destination'?r.destTimeFraction:p.start==='split'&&j%2?r.destTimeFraction:0);
+  return total;
 }
 function evaluateFlowScenario(){
   const s=_flowSim;if(!s)return;const p=flowInputs(),laneCapacity=3600/p.headway,demand=s.routes.reduce((n,r)=>n+r.dt*p.fleet*flowRouteTarget(r)/p.hours,0),vc=demand/laneCapacity,congestion=vc>1?1/vc:1;
-  const totalDt=s.routes.reduce((n,r)=>n+r.dt,0),targetAvg=totalDt?s.routes.reduce((n,r)=>n+r.dt*flowRouteTarget(r),0)/totalDt:0,baseAvg=totalDt?s.routes.reduce((n,r)=>{const d=Math.abs(r.fromKm-r.toKm),cycle=d/p.loaded+d/p.empty+p.dwell/60;return n+r.dt*(p.hours/cycle);},0)/totalDt:0;p.sharedOpenFactor=Math.max(1,Math.min(2.5,targetAvg/Math.max(.01,baseAvg)));
+  // Trip KPIs stay from DB / path-response. Motion uses GPS — do NOT inflate speeds
+  // so kinematics invent the trip rate (old sharedOpenFactor behaviour).
+  p.sharedOpenFactor=1;
   let target=0,achieved=0,dbTrips=0,fleetTotal=0;s.routes.forEach(r=>{const trucks=r.dt*p.fleet;r.targetTr=flowRouteTarget(r);buildFlowMotion(r,p,Math.max(0,vc-.7));r.achievedTr=r.targetTr;r.targetTrips=trucks*r.targetTr;r.achievedTrips=r.targetTrips;dbTrips+=r.dbTrips;target+=r.targetTrips;achieved+=r.achievedTrips;fleetTotal+=trucks;});
   s.dbTrips=dbTrips;s.targetTrips=target;s.achievedTrips=achieved;s.vc=vc;s.queue=Math.max(0,Math.ceil((demand-laneCapacity)*p.hours));s.inputs=p;
   q('flow-attain').textContent=fmt(_flowMode==='plan'?achieved:dbTrips);q('flow-attain-label').textContent=_flowMode==='plan'?'Estimated trips / 12h shift':'Average DB trips / shift';q('flow-vc').textContent=fmt(vc,2);q('flow-queue').textContent=fmt(s.queue);
@@ -98,11 +181,31 @@ function evaluateFlowScenario(){
   q('flow-routes').innerHTML=s.routes.map(r=>{const effChg=_flowMode==='plan'&&r.predEff&&Math.abs(r.targetTr-r.tr)>0.01,extrap=r.predEff&&r.dt>r.dtMax;
     const effTxt=effChg?`<b style="color:#fcd34d">${fmt(r.targetTr,2)} predicted Trips/DT</b> <span class="muted">(actual ${fmt(r.tr,2)}${extrap?', ⚠ beyond observed '+fmt(r.dtMax,0)+' DT':''})</span>`:`<b>${fmt(r.tr,2)} DB Trips/DT/shift</b>`;
     const rp=flowRainPct(r),rainTxt=(rp!==null&&rp<-3)?` · <span style="color:#60a5fa" title="Historically rain-sensitive: measured efficiency runs ~${fmt(-rp,0)}% lower on a wet (10 mm) day, fleet held constant. Daily rainfall is a rough proxy for road/mud state, so treat as context, not a precise predictor.">☔ rain-sensitive</span>`:'';
-    return `<div><span style="color:${r.col}">■</span> <b>${escH(r.label)}</b> · ${effTxt}${rainTxt} · ${_flowMode==='plan'?`${fmt(r.dbDt,0)} actual → <b>${fmt(r.dt,0)} scenario DT</b> · ${fmt(r.achievedTrips,0)} predicted trips/shift`:`${fmt(r.dbDt,1)} DB DT/shift · ${fmt(r.dbTrips)} DB trips/shift${r.shiftExplicit?'':' · shift count unavailable'}`} · ${r.particles} visual elements · loaded ${fmt(r.loadedSpeedRange[0],1)}–${fmt(r.loadedSpeedRange[1],1)} km/h · empty ${fmt(r.emptySpeedRange[0],1)}–${fmt(r.emptySpeedRange[1],1)} km/h</div>`;}).join('');
+    const src=r.speedSource==='gps'?'GPS':(r.speedSource==='override'?'override':'est');
+    const over=r.overLimitPct>1?` · <span style="color:#f87171" title="Share of route km where measured/override speed exceeds posted FMS limit">${fmt(r.overLimitPct,0)}% over posted limit</span>`:'';
+    return `<div><span style="color:${r.col}">■</span> <b>${escH(r.label)}</b> · ${effTxt}${rainTxt} · ${_flowMode==='plan'?`${fmt(r.dbDt,0)} actual → <b>${fmt(r.dt,0)} scenario DT</b> · ${fmt(r.achievedTrips,0)} predicted trips/shift`:`${fmt(r.dbDt,1)} DB DT/shift · ${fmt(r.dbTrips)} DB trips/shift${r.shiftExplicit?'':' · shift count unavailable'}`} · ${r.particles} visual elements · ${src} loaded ${fmt(r.loadedSpeedRange[0],1)}–${fmt(r.loadedSpeedRange[1],1)} km/h · empty ${fmt(r.emptySpeedRange[0],1)}–${fmt(r.emptySpeedRange[1],1)} km/h${over}</div>`;}).join('');
+  // Honesty caption under the stick.
+  const win=((_D&&_D.corridor)||{}).measuredWindow||{};
+  const note=q('flow-note');
+  if(note){
+    const gpsN=flowMeasuredBands().length, limN=flowPostedLimits().length;
+    const winTxt=(win.from&&win.to)?`${win.from} → ${win.to}`:'(no GPS window)';
+    note.textContent=`Schematic chainage stick · motion = measured GPS (${gpsN} bands, ${winTxt}) · top bar = posted FMS limits (${limN} zones) · trip counts from dispatch, not from road physics · headway for V/C is assumed (not GPS).`;
+  }
   if(_combined3D){const rr=_combined3D.ranges,path=fleetTotal?_avg(s.routes,r=>r.dt*p.fleet):0,section=s.avgSection*p.fleet,tr=fleetTotal?achieved/fleetTotal:0,clamp=(v,r)=>Math.max(-1,Math.min(1,-1+2*(v-r.lo)/r.d)),selected=_flowPointScenario&&_combined3D.points[_flowPointScenario.pointIndex];_combined3D.scenario=selected?{...selected}: {path,section,tr,nx:clamp(path,rr.path),ny:clamp(section,rr.section),nz:clamp(tr,rr.tr)};renderCombined3D();}
   updateFlowSimulator();
 }
-function flowEstimateSpeeds(){if(!_flowSim)return;const p=flowInputs(),vals=[];_flowSim.routes.forEach(r=>{const cycle=p.hours/flowRouteTarget(r)-p.dwell/60,dist=Math.abs(r.fromKm-r.toKm);if(cycle>0&&dist>0)vals.push({v:dist*(1/.9+1/1.1)/cycle,w:r.dt});});if(!vals.length)return;const base=vals.reduce((s,x)=>s+x.v*x.w,0)/vals.reduce((s,x)=>s+x.w,0),clamp=v=>Math.max(5,Math.min(80,v));q('flow-loaded-speed').value=clamp(.9*base).toFixed(1);q('flow-empty-speed').value=clamp(1.1*base).toFixed(1);_flowSpeedsInitialised=true;flowScenarioChanged(true);}
+function flowEstimateSpeeds(){
+  // Optional override: back-solve corridor-average from trip rate (NOT GPS).
+  if(!_flowSim)return;
+  const p=flowInputs(),vals=[];
+  _flowSim.routes.forEach(r=>{const cycle=p.hours/flowRouteTarget(r)-p.dwell/60,dist=Math.abs(r.fromKm-r.toKm);if(cycle>0&&dist>0)vals.push({v:dist*(1/.9+1/1.1)/cycle,w:r.dt});});
+  if(!vals.length)return;
+  const base=vals.reduce((s,x)=>s+x.v*x.w,0)/vals.reduce((s,x)=>s+x.w,0),clamp=v=>Math.max(5,Math.min(80,v));
+  q('flow-loaded-speed').value=clamp(.9*base).toFixed(1);
+  q('flow-empty-speed').value=clamp(1.1*base).toFixed(1);
+  _flowSpeedOverride=true;_flowSpeedsInitialised=true;flowScenarioChanged(true);
+}
 // Mode is DERIVED, never toggled: any route whose planned DT differs from its actual → simulated scenario.
 function flowDeriveMode(){
   if(!_flowSim)return;
@@ -137,7 +240,7 @@ function flowPlanSet(key,value){_flowPlanDraft[key]=Math.max(0,Math.round(+value
 function flowPlanStep(key,delta){_flowPlanDraft[key]=Math.max(0,Math.round((_flowPlanDraft[key]||0)+delta));flowApplyPlanLight();}
 function flowPlanReset(){if(!_flowSim)return;_flowSim.routes.forEach(r=>_flowPlanDraft[r.key]=Math.round(r.dbDt));_flowFleetAvailable=Math.round(_flowSim.routes.reduce((n,r)=>n+r.dbDt,0));renderFlowSimulator(_flowSource.P,_flowSource.colours,true);}
 function runFlowPlan(){if(!_flowSource)return;stopFlowSimulator();renderFlowSimulator(_flowSource.P,_flowSource.colours,true);flowToggle();}
-function flowScenarioChanged(speedTouched){if(!_flowSim||!_flowSource)return;if(speedTouched)_flowSpeedsInitialised=true;stopFlowSimulator();renderFlowSimulator(_flowSource.P,_flowSource.colours,true);}
+function flowScenarioChanged(speedTouched){if(!_flowSim||!_flowSource)return;if(speedTouched){_flowSpeedsInitialised=true;_flowSpeedOverride=true;}stopFlowSimulator();renderFlowSimulator(_flowSource.P,_flowSource.colours,true);}
 // Editing a fleet input updates the CONGESTION ANALYSIS live (V/C, trips, production, queue) without the
 // heavy particle rebuild — so as you add trucks you immediately see the predicted congestion respond.
 function flowApplyPlanLight(){
@@ -170,9 +273,18 @@ function renderFlowSimulator(P,colours){
   let releaseOrder=[],maxParticles=Math.max(...routes.map(r=>r.particles));for(let j=0;j<maxParticles;j++)routes.forEach(r=>{if(j<r.particles)releaseOrder.push({r,j});});let releaseSeconds=0;const shiftStep=FLOW_SHIFT_HOURS*3600/releaseOrder.length;releaseOrder.forEach(x=>{x.r.departures[x.j]=releaseSeconds/3600;releaseSeconds+=Math.max(shiftStep,Math.max(fp.headway,fp.stagger*60)*x.r.particleWeight);});
   const avgSection=_avg(scenarioP,p=>p.section),groups=c3LoadGroups(P),band=(groups.find(g=>avgSection>=g.min&&avgSection<=g.max)||groups.reduce((a,b)=>Math.abs(b.section-avgSection)<Math.abs(a.section-avgSection)?b:a,groups[0])).label,pipeCol=band==='Congested'?'#ef4444':'#22c55e',left=55,right=945,length=corridor.lengthKm||Math.max(...corridor.nodes.map(n=>n.km)),X=km=>left+(length-km)/length*(right-left);
   let out='<title>07:00 to 19:00 finite-truck road simulation</title><desc>Every particle represents one average selected DT for a 12-hour shift. Loaded and empty trucks share one no-overtaking left-hand-traffic road.</desc>';
-  for(let km=0;km<=60;km+=10){const x=X(km);out+=`<line x1="${x.toFixed(1)}" y1="224" x2="${x.toFixed(1)}" y2="238" stroke="#334155"/><text x="${x.toFixed(1)}" y="251" fill="#64748b" font-size="9" text-anchor="middle">km ${km}</text>`;}
-  out+=`<text x="20" y="24" fill="#64748b" font-size="9">DB road chainage · ${escH(corridor.source||'haul-road source')}</text><rect x="${left}" y="164" width="${right-left}" height="62" rx="14" fill="#17263e"/><rect x="${left}" y="172" width="${right-left}" height="46" rx="9" fill="#334155"/><line x1="${left}" y1="195" x2="${right}" y2="195" stroke="#94a3b8" stroke-width="1" stroke-dasharray="8 8" opacity=".45"/><text x="${left}" y="150" fill="#94a3b8" font-size="9">LOADED →</text><text x="${right}" y="238" fill="#94a3b8" font-size="9" text-anchor="end">← EMPTY RETURN</text>`;
-  (corridor.speedLimits||[]).forEach(z=>{const x1=X(z.fromKm),x2=X(z.toKm),col=z.limit<=20?'#ef4444':z.limit<=30?'#f59e0b':'#22c55e';out+=`<rect x="${x1.toFixed(1)}" y="218" width="${Math.max(1,x2-x1).toFixed(1)}" height="7" fill="${col}" opacity=".8"><title>${escH(z.chainage||z.segment)} · ${fmt(z.limit)} km/h maximum</title></rect><text x="${((x1+x2)/2).toFixed(1)}" y="224" fill="#0b1220" font-size="6.5" font-weight="700" text-anchor="middle">${fmt(z.limit)}</text>`;});
+  for(let km=0;km<=60;km+=10){const x=X(km);out+=`<line x1="${x.toFixed(1)}" y1="236" x2="${x.toFixed(1)}" y2="248" stroke="#334155"/><text x="${x.toFixed(1)}" y="260" fill="#64748b" font-size="9" text-anchor="middle">km ${km}</text>`;}
+  const win=((corridor.measuredWindow)||{});
+  const winLbl=(win.from&&win.to)?` · GPS ${win.from}→${win.to}`:'';
+  out+=`<text x="20" y="24" fill="#64748b" font-size="9">DB road chainage · ${escH(corridor.source||'haul-road source')}${escH(winLbl)}</text><rect x="${left}" y="164" width="${right-left}" height="62" rx="14" fill="#17263e"/><rect x="${left}" y="172" width="${right-left}" height="46" rx="9" fill="#334155"/><line x1="${left}" y1="195" x2="${right}" y2="195" stroke="#94a3b8" stroke-width="1" stroke-dasharray="8 8" opacity=".45"/><text x="${left}" y="150" fill="#94a3b8" font-size="9">LOADED →</text><text x="${right}" y="248" fill="#94a3b8" font-size="9" text-anchor="end">← EMPTY RETURN</text>`;
+  // Dual ribbon: posted FMS limits (top) vs measured GPS loaded speed (bottom).
+  out+=`<text x="${left-4}" y="223" fill="#94a3b8" font-size="7" text-anchor="end">Posted</text>`;
+  (corridor.speedLimits||[]).forEach(z=>{const x1=X(z.fromKm),x2=X(z.toKm),col=z.limit<=20?'#ef4444':z.limit<=30?'#f59e0b':'#22c55e';out+=`<rect x="${x1.toFixed(1)}" y="218" width="${Math.max(1,x2-x1).toFixed(1)}" height="6" fill="${col}" opacity=".85"><title>Posted ${escH(z.chainage||z.segment)} · ${fmt(z.limit)} km/h</title></rect><text x="${((x1+x2)/2).toFixed(1)}" y="223" fill="#0b1220" font-size="6" font-weight="700" text-anchor="middle">${fmt(z.limit)}</text>`;});
+  out+=`<text x="${left-4}" y="233" fill="#94a3b8" font-size="7" text-anchor="end">GPS</text>`;
+  const meas=corridor.measuredSpeeds||[];
+  const gpsCol=v=>{if(!(v>0))return'#475569';if(v<12)return'#ef4444';if(v<18)return'#f59e0b';if(v<25)return'#38bdf8';return'#22c55e';};
+  meas.forEach(z=>{const v=z.loadedKmh,x1=X(z.fromKm),x2=X(z.toKm);if(!Number.isFinite(v))return;
+    out+=`<rect x="${x1.toFixed(1)}" y="227" width="${Math.max(1,x2-x1).toFixed(1)}" height="6" fill="${gpsCol(v)}" opacity=".9"><title>GPS loaded ${escH(z.seg)} · ${fmt(v,1)} km/h (empty ${fmt(z.emptyKmh,1)})</title></rect>`;});
   // Each named road section receives an independent risk overlay; selected constraints get an outline.
   const secRange={1:[67.8,39],2:[39,27],3:[27,17],4:[17,0]};Object.entries(secRange).forEach(([id,z])=>{const x1=X(z[0]),x2=X(z[1]);out+=`<rect id="flow-risk-zone-${id}" x="${x1.toFixed(1)}" y="164" width="${(x2-x1).toFixed(1)}" height="62" fill="#22c55e" opacity=".10"/>`;});[..._gSelSec].forEach(id=>{const z=secRange[+id];if(!z)return;const x1=X(z[0]),x2=X(z[1]);out+=`<rect x="${x1.toFixed(1)}" y="164" width="${(x2-x1).toFixed(1)}" height="62" fill="none" stroke="${pipeCol}" stroke-width="2" opacity=".9"/>`;});
   // Every logical path shares these same two travel lanes; colour belongs only to its trucks and
@@ -208,5 +320,9 @@ function renderFlowSimulator(P,colours){
     order.forEach(o=>{const w=o.w,col=wbCol(o.i),x=o.x,ly=166-o.lvl*9;
       out+=`<line x1="${x.toFixed(1)}" y1="173" x2="${x.toFixed(1)}" y2="${(ly+2).toFixed(1)}" stroke="${col}" stroke-width=".7" opacity=".45"/><circle cx="${x.toFixed(1)}" cy="176" r="3.4" fill="${col}" stroke="#0b1220" stroke-width="1"><title>${escH(wbNm(w))} (${escH(w.name)}) · ~${fmt(w.km,1)}km · ${fmt(w.trucks)} weigh events${o.i===0?' · busiest / likely congestion point':''}</title></circle><text x="${x.toFixed(1)}" y="${ly.toFixed(1)}" fill="${col}" font-size="8" font-weight="700" text-anchor="middle">${escH(wbNm(w))}</text>`;});}
   out+=`<text x="980" y="24" fill="${pipeCol}" font-size="9" text-anchor="end">selected constraint · ${escH(band)} load</text>`;svg.innerHTML=out;
-  _flowSim={routes,otherRoutes,hour:0,running:false,raf:null,last:0,avgSection,band,dbTrips:0,targetTrips:0,achievedTrips:0,corridorKm:length,roadLeft:left,roadRight:right,liveCongestion:0,liveDensity:0,shiftExplicit:routes.every(r=>r.shiftExplicit)};flowDeriveMode();renderFlowPlanner();if(!_flowSpeedsInitialised)flowEstimateSpeeds();else evaluateFlowScenario();
+  _flowSim={routes,otherRoutes,hour:0,running:false,raf:null,last:0,avgSection,band,dbTrips:0,targetTrips:0,achievedTrips:0,corridorKm:length,roadLeft:left,roadRight:right,liveCongestion:0,liveDensity:0,shiftExplicit:routes.every(r=>r.shiftExplicit)};flowDeriveMode();renderFlowPlanner();
+  // Default: GPS motion. Do not auto-call flowEstimateSpeeds (that overrides GPS).
+  if(!_flowSpeedOverride) flowSeedGpsInputs();
+  _flowSpeedsInitialised=true;
+  evaluateFlowScenario();
 }

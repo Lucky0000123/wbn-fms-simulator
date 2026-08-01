@@ -515,6 +515,10 @@ fi
 $PY test_disk_snapshot.py >/dev/null 2>&1
 chk $? "J68  disk snapshots write/load/stale-refresh" "see: python test_disk_snapshot.py"
 
+# J69 — Tab 1 flow motion from measured GPS; posted Excel limits as overlay.
+$PY test_flow_gps_speeds.py >/dev/null 2>&1
+chk $? "J69  GPS-first flow + posted-limit ribbon" "see: python test_flow_gps_speeds.py"
+
 
 echo
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"

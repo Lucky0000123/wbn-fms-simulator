@@ -37,6 +37,8 @@ data/*.parquet
 # the section-9 map work on a fresh clone and on the public demo, which
 # otherwise showed an empty state. Geofence and zone data stay OUT.
 !data/haul_road_chainage_public.csv
+# Posted FMS speed-limit zones (chainage + km/h only — no tonnages / GPS tracks).
+!data/speed_limit_zones_public.csv
 
 !data/training_metadata.sample.json
 reports/database_schema_raw.json

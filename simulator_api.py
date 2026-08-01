@@ -219,6 +219,141 @@ _SIM_CORRIDOR = {
     ],
 }
 
+# Posted limits (Excel → CSV) + GPS measured speeds for Tab 1 flow. Cached once.
+_SPEED_LIMIT_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "data", "speed_limit_zones_public.csv")
+_CONG_BY_DIR_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "data", "congestion_seg_by_dir.csv")
+_CORRIDOR_LAYERS = None  # {speedLimits, speedLimitsAll, measuredSpeeds, measuredWindow}
+
+
+def _parse_seg_id(seg):
+    """'TF KM54-55' / 'KR KM 17-18' → (road, lo, hi) or None."""
+    m = re.match(
+        r"^(.+?)\s*KM\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$",
+        str(seg or "").strip(), re.I)
+    if not m:
+        return None
+    a, b = float(m.group(2)), float(m.group(3))
+    return m.group(1).strip().upper(), min(a, b), max(a, b)
+
+
+def _load_posted_speed_limits():
+    """CSV rows. Stick zones (onStick=1) vs spur (BLB/BB, onStick=0)."""
+    import csv as _csv
+    stick, all_zones = [], []
+    try:
+        with open(_SPEED_LIMIT_CSV, encoding="utf-8") as f:
+            for row in _csv.DictReader(f):
+                try:
+                    rec = {
+                        "segment": row["segment"],
+                        "region": row.get("region") or "",
+                        "road": row.get("road") or "",
+                        "fromKm": float(row["fromKm"]),
+                        "toKm": float(row["toKm"]),
+                        "limit": float(row["limit"]),
+                        "chainage": row.get("chainage") or "",
+                        "operatingArea": row.get("operatingArea") or "",
+                        "onStick": str(row.get("onStick", "0")).strip() in ("1", "true", "True"),
+                    }
+                except (KeyError, ValueError):
+                    continue
+                all_zones.append(rec)
+                if rec["onStick"]:
+                    stick.append(rec)
+    except OSError:
+        return [], []
+    return stick, all_zones
+
+
+def _load_measured_speeds_from_csv():
+    """Build stick measuredSpeeds from congestion_seg_by_dir.csv (DIR down=loaded)."""
+    import csv as _csv
+    from collections import defaultdict
+    by_seg = defaultdict(dict)
+    t_lo = t_hi = None
+    try:
+        with open(_CONG_BY_DIR_CSV, encoding="utf-8") as f:
+            for row in _csv.DictReader(f):
+                seg = row.get("SEG_ID") or row.get("seg")
+                parsed = _parse_seg_id(seg)
+                if not parsed:
+                    continue
+                road, lo, hi = parsed
+                # Stick uses TF/KR/CRD chainage vocabulary (TOFU→TF).
+                road = {"TOFU": "TF", "KRENE": "KR"}.get(road, road)
+                if road not in ("TF", "KR", "CRD"):
+                    continue
+                d = (row.get("DIR") or "").strip().lower()
+                try:
+                    spd = float(row.get("speed_kmh") or 0)
+                    n = int(float(row.get("fix_n") or row.get("hours") or 0))
+                except ValueError:
+                    continue
+                if spd <= 0:
+                    continue
+                key = (road, lo, hi, seg)
+                if d in ("down", "up"):
+                    by_seg[key][d] = {"kmh": spd, "n": n}
+                for col in ("ts_min", "ts_max"):
+                    try:
+                        ts = int(float(row.get(col) or 0))
+                    except ValueError:
+                        continue
+                    if ts <= 0:
+                        continue
+                    if t_lo is None or ts < t_lo:
+                        t_lo = ts
+                    if t_hi is None or ts > t_hi:
+                        t_hi = ts
+    except OSError:
+        return [], None
+    out = []
+    for (road, lo, hi, seg), dirs in by_seg.items():
+        loaded = dirs.get("down")
+        empty = dirs.get("up")
+        out.append({
+            "seg": seg,
+            "road": road,
+            "fromKm": hi,   # higher chainage (toward TF)
+            "toKm": lo,
+            "loadedKmh": loaded["kmh"] if loaded else None,
+            "emptyKmh": empty["kmh"] if empty else None,
+            "n": (loaded or {}).get("n", 0) + (empty or {}).get("n", 0),
+        })
+    out.sort(key=lambda r: -r["fromKm"])
+    window = None
+    if t_lo and t_hi:
+        from datetime import datetime, timezone
+        def _iso(ms):
+            return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).date().isoformat()
+        window = {"from": _iso(t_lo), "to": _iso(t_hi),
+                  "source": "data/congestion_seg_by_dir.csv"}
+    return out, window
+
+
+def _corridor_payload():
+    """_SIM_CORRIDOR + posted speedLimits (stick) + GPS measuredSpeeds."""
+    global _CORRIDOR_LAYERS
+    if _CORRIDOR_LAYERS is None:
+        stick, all_zones = _load_posted_speed_limits()
+        measured, window = _load_measured_speeds_from_csv()
+        _CORRIDOR_LAYERS = {
+            "speedLimits": stick,
+            "speedLimitsAll": all_zones,
+            "measuredSpeeds": measured,
+            "measuredWindow": window,
+        }
+    base = dict(_SIM_CORRIDOR)
+    base["speedLimits"] = _CORRIDOR_LAYERS["speedLimits"]
+    base["measuredSpeeds"] = _CORRIDOR_LAYERS["measuredSpeeds"]
+    base["measuredWindow"] = _CORRIDOR_LAYERS["measuredWindow"]
+    # Spur zones kept off the stick paint list but available for later views.
+    base["speedLimitsSpur"] = [z for z in _CORRIDOR_LAYERS["speedLimitsAll"]
+                               if not z.get("onStick")]
+    return base
+
 _WB_POS_CACHE = None
 
 _WB_RESULT_CACHE = None
@@ -655,7 +790,7 @@ def api_simulator_capability():
         "daily": daily, "dailyByPath": sorted(byPath.values(), key=lambda r: r["d"]),
         "months": mrows, "kpi": kpi, "types": sorted(all_types, key=lambda r: -r["t"]),
         "typesSel": f["types"], "fleet": [],
-        "corridor": _SIM_CORRIDOR,
+        "corridor": _corridor_payload(),
         "from": f["from"], "to": f["to"], "inclIwip": f["inclIwip"],
         "source": ",".join(sorted(f["src"])), "dest": ",".join(sorted(f["dst"])),
         "type": ",".join(f["types"]) if f["types"] else "ALL",
@@ -1517,7 +1652,7 @@ def api_simulator_corridor_geometry():
     _GEOM_CACHE = {
         "ok": True, "roads": roads,
         "roadAlias": _ROAD_ALIAS,
-        "corridor": _SIM_CORRIDOR,
+        "corridor": _corridor_payload(),
         "geometrySource": source,          # "extract" (local) or "committed"
         "note": ("centreline from HAUL_ROAD_STA, downsampled to ~0.25 km. "
                  "Segment ids use TF for the road the chainage table calls TOFU."),
