@@ -482,6 +482,14 @@ else
   echo "  SKIP J64  (no server on :5055 — start serve.py to exercise)"
 fi
 
+# J65 — TARGET TRIP is a RATE (planned trips/DT). Storing the raw rate and
+# dividing SUM(rate)/SUM(DT PLAN) produced planTripsPerDT≈0.15 and Trip-eff
+# KPIs of 1700–2600% on Tab 1 (QC 2026-07-31). _ptr must hold trip-COUNTS
+# (rate × DT PLAN) so the weighted average lands near ~4.4 and effTrip ~0.9.
+# Offline unit checks always run; live HTTP asserts run when :5055 is up.
+$PY test_plan_trip_rate.py >/dev/null 2>&1
+chk $? "J65  planTripsPerDT is weighted TARGET TRIP rate" "see: python test_plan_trip_rate.py"
+
 
 echo
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"

@@ -57,9 +57,10 @@ async function load(){
 }
 async function loadTrucks(){
   const p=filterParams();
-  q('trucks').innerHTML='<tr><td colspan="6" class="empty">Loading truck list…</td></tr>'; _trucks=null;
+  q('trucks').innerHTML='<tr><td colspan="6" class="empty">Loading truck list…</td></tr>'; _trucks=null; _trucksServedFrom=null;
   try{ const d=await(await fetch('/api/simulator/trucks?'+p,{cache:'no-store'})).json();
-    _trucks=(d&&d.ok)?d.trucks:[]; if(!d||!d.ok){ q('trucks').innerHTML='<tr><td colspan="6" class="empty">'+((d&&d.error)||'Unavailable')+'</td></tr>'; return; }
+    _trucks=(d&&d.ok)?d.trucks:[]; _trucksServedFrom=(d&&d.servedFrom)||null;
+    if(!d||!d.ok){ q('trucks').innerHTML='<tr><td colspan="6" class="empty">'+((d&&d.error)||'Unavailable')+'</td></tr>'; return; }
   }catch(e){ q('trucks').innerHTML='<tr><td colspan="6" class="empty">Could not load trucks.</td></tr>'; return; }
   renderTrucks();
 }

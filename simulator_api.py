@@ -250,6 +250,13 @@ _OTHER_FENI_TYPICAL = None
 #     tf = t/trips        tripsPerDT = trips/dt        tPerDT = t/dt
 #     effDT = dt/planDt   effWMT = t/planWmt           effTrip = tripsPerDT/planTripsPerDT
 #     srit = rit/sc       sw = w/sc                    snb = nb
+#
+# TARGET TRIP is already a RATE (planned trips per DT), e.g. 8.0 / 4.8 / 6.0 —
+# it matches RIT/NB_DT on the same row. It is NOT a trip count. Storing the raw
+# rate in _ptr and then doing planTripsPerDT = SUM(rate)/SUM(DT PLAN) produced
+# planTripsPerDT ≈ 0.15 and Trip-eff KPIs of 1700–2600% (Tab 1 QC, 2026-07-31).
+# _ptr therefore holds planned trip-COUNTS = TARGET_TRIP × DT_PLAN so that
+# SUM(_ptr)/SUM(DT PLAN) recovers the DT-PLAN-weighted average rate (~4.4).
 # ─────────────────────────────────────────────────────────────────────────────
 
 _CAP_TABLE = "[DISPATCH RESULTS LITE 2]"
@@ -306,6 +313,7 @@ def _cap_load_rows():
         co, cd = _canon(o), _canon(dd)
         if not co or not cd:
             continue
+        pdt_n = _num(pdt)
         out.append({
             "d": dte.isoformat() if hasattr(dte, "isoformat") else str(dte)[:10],
             "o": co, "dd": cd,
@@ -314,7 +322,9 @@ def _cap_load_rows():
             "iwip": (comp or "").strip().upper() == "IWIP",
             "sc": int(_num(nbsh)) or 1,
             "dt": _num(nbdt), "trips": _num(rit), "t": _num(wmt),
-            "planDt": _num(pdt), "_ptr": _num(ptr), "planWmt": _num(pw),
+            "planDt": pdt_n,
+            "_ptr": _planned_trip_counts(ptr, pdt_n),
+            "planWmt": _num(pw),
         })
     return out
 
@@ -374,8 +384,27 @@ def _num(v):
         return 0.0
 
 
+def _planned_trip_counts(target_rate, plan_dt):
+    """Convert TARGET TRIP (trips/DT rate) to trip-counts for SUM/SUM aggregation.
+
+    TARGET TRIP is NOT a count. Multiplying by DT PLAN yields planned trips so
+    that planTripsPerDT = SUM(counts)/SUM(DT PLAN) is the weighted average rate.
+    Exposed for J65 offline mutation tests (no VPN required).
+    """
+    r, p = _num(target_rate), _num(plan_dt)
+    return (r * p) if (r and p) else 0.0
+
+
 def _cap_rates(d):
-    """Rebuild rate columns from the summed quantities. Never average rates."""
+    """Rebuild rate columns from the summed quantities.
+
+    Additive columns (t, trips, dt, planDt, planWmt, _ptr) are summed upstream.
+    Rates are always rebuilt from those sums — never averaged.
+
+    _ptr is planned trip-COUNTS (TARGET_TRIP × DT_PLAN per source row), so
+    planTripsPerDT = _ptr / planDt is the DT-PLAN-weighted average of the
+    TARGET TRIP rate. See the capability block comment above.
+    """
     t, trips, dt = d.get("t", 0.0), d.get("trips", 0.0), d.get("dt", 0.0)
     pdt, pw, ptr = d.get("planDt", 0.0), d.get("planWmt", 0.0), d.get("_ptr", 0.0)
     d["tf"] = round(t / trips, 3) if trips else 0.0

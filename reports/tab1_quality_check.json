@@ -1,0 +1,663 @@
+{
+  "meta": {
+    "when": "2026-07-31 16:14:35",
+    "base": "http://127.0.0.1:5055"
+  },
+  "checks": [
+    {
+      "section": "infra",
+      "name": "server up",
+      "ok": true,
+      "detail": "database",
+      "severity": "ok"
+    },
+    {
+      "section": "infra",
+      "name": "database mode",
+      "ok": true,
+      "detail": "database",
+      "severity": "ok"
+    },
+    {
+      "section": "filters",
+      "name": "capability 200",
+      "ok": true,
+      "detail": "19.80s",
+      "severity": "ok"
+    },
+    {
+      "section": "filters",
+      "name": "not fixture",
+      "ok": true,
+      "detail": null,
+      "severity": "ok"
+    },
+    {
+      "section": "filters",
+      "name": "warm latency < 3s",
+      "ok": false,
+      "detail": "19.80s",
+      "severity": "fail"
+    },
+    {
+      "section": "filters",
+      "name": "echoes from/to",
+      "ok": true,
+      "detail": "2025-09-01..2026-07-31",
+      "severity": "ok"
+    },
+    {
+      "section": "filters",
+      "name": "default excl IWIP",
+      "ok": true,
+      "detail": "",
+      "severity": "ok"
+    },
+    {
+      "section": "filters",
+      "name": "date shrinks days",
+      "ok": true,
+      "detail": "20 vs 323",
+      "severity": "ok"
+    },
+    {
+      "section": "filters",
+      "name": "date changes wmt/day",
+      "ok": true,
+      "detail": "",
+      "severity": "ok"
+    },
+    {
+      "section": "filters",
+      "name": "narrow echoes window",
+      "ok": true,
+      "detail": "",
+      "severity": "ok"
+    },
+    {
+      "section": "filters",
+      "name": "incl IWIP raises tonnage",
+      "ok": true,
+      "detail": "excl=121084 incl=165746",
+      "severity": "ok"
+    },
+    {
+      "section": "filters",
+      "name": "inclIwip echoed true",
+      "ok": true,
+      "detail": "",
+      "severity": "ok"
+    },
+    {
+      "section": "filters",
+      "name": "type reduces tonnage",
+      "ok": true,
+      "detail": "",
+      "severity": "ok"
+    },
+    {
+      "section": "filters",
+      "name": "types menu not emptied",
+      "ok": true,
+      "detail": "7",
+      "severity": "ok"
+    },
+    {
+      "section": "filters",
+      "name": "source=TF keeps only TF",
+      "ok": true,
+      "detail": [
+        "TF"
+      ],
+      "severity": "ok"
+    },
+    {
+      "section": "filters",
+      "name": "source reduces routes",
+      "ok": true,
+      "detail": "",
+      "severity": "ok"
+    },
+    {
+      "section": "filters",
+      "name": "dest=FENI KM0 only",
+      "ok": true,
+      "detail": [
+        "FENI KM0"
+      ],
+      "severity": "ok"
+    },
+    {
+      "section": "kpi",
+      "name": "days > 30",
+      "ok": true,
+      "detail": 323,
+      "severity": "ok"
+    },
+    {
+      "section": "kpi",
+      "name": "wmtPerDay > 0",
+      "ok": true,
+      "detail": 121083.586,
+      "severity": "ok"
+    },
+    {
+      "section": "kpi",
+      "name": "dtPerDay > 0",
+      "ok": true,
+      "detail": 670.325,
+      "severity": "ok"
+    },
+    {
+      "section": "kpi",
+      "name": "tripsPerDT > 0",
+      "ok": true,
+      "detail": 4.001,
+      "severity": "ok"
+    },
+    {
+      "section": "kpi",
+      "name": "tPerDT > 0",
+      "ok": true,
+      "detail": 180.634,
+      "severity": "ok"
+    },
+    {
+      "section": "kpi",
+      "name": "wmtPerDay \u2248 sum(paths.t)/days",
+      "ok": true,
+      "detail": "121083.586*323 vs 39109998.3",
+      "severity": "ok"
+    },
+    {
+      "section": "kpi",
+      "name": "top path tf == t/trips",
+      "ok": true,
+      "detail": "tf=45.518 t/trips=45.51759176278453",
+      "severity": "ok"
+    },
+    {
+      "section": "kpi",
+      "name": "top path tripsPerDT == trips/dt",
+      "ok": true,
+      "detail": "",
+      "severity": "ok"
+    },
+    {
+      "section": "kpi",
+      "name": "top path names canonical (no FENI A)",
+      "ok": false,
+      "detail": "TF\u2192POS 12",
+      "severity": "fail"
+    },
+    {
+      "section": "kpi",
+      "name": "no stale route labels in paths",
+      "ok": true,
+      "detail": [],
+      "severity": "ok"
+    },
+    {
+      "section": "tables",
+      "name": "paths non-empty",
+      "ok": true,
+      "detail": 67,
+      "severity": "ok"
+    },
+    {
+      "section": "tables",
+      "name": "destinations non-empty",
+      "ok": true,
+      "detail": 15,
+      "severity": "ok"
+    },
+    {
+      "section": "tables",
+      "name": "contractors non-empty",
+      "ok": true,
+      "detail": 10,
+      "severity": "ok"
+    },
+    {
+      "section": "tables",
+      "name": "daily non-empty",
+      "ok": true,
+      "detail": 323,
+      "severity": "ok"
+    },
+    {
+      "section": "tables",
+      "name": "months non-empty",
+      "ok": true,
+      "detail": 11,
+      "severity": "ok"
+    },
+    {
+      "section": "tables",
+      "name": "dailyByPath for scatter",
+      "ok": true,
+      "detail": 3903,
+      "severity": "ok"
+    },
+    {
+      "section": "tables",
+      "name": "fleet empty with note (honest)",
+      "ok": true,
+      "detail": "fleet breakdown needs TRUCK_ID and is not available from the dispatch table; omi",
+      "severity": "ok"
+    },
+    {
+      "section": "tables",
+      "name": "corridor nodes present",
+      "ok": true,
+      "detail": "keys=['basis', 'lengthKm', 'nodes', 'roadRanges', 'source']",
+      "severity": "ok"
+    },
+    {
+      "section": "trucks",
+      "name": "returns 200",
+      "ok": true,
+      "detail": null,
+      "severity": "ok"
+    },
+    {
+      "section": "trucks",
+      "name": "tagged as fixture",
+      "ok": true,
+      "detail": "fixture",
+      "severity": "ok"
+    },
+    {
+      "section": "trucks",
+      "name": "has rows",
+      "ok": true,
+      "detail": 2000,
+      "severity": "ok"
+    },
+    {
+      "section": "trucks",
+      "name": "IGNORES date filter (known gap)",
+      "ok": true,
+      "detail": "identical under two date ranges",
+      "severity": "ok"
+    },
+    {
+      "section": "rain",
+      "name": "path-response 200",
+      "ok": true,
+      "detail": "18.07s",
+      "severity": "ok"
+    },
+    {
+      "section": "rain",
+      "name": "has paths",
+      "ok": true,
+      "detail": 53,
+      "severity": "ok"
+    },
+    {
+      "section": "rain",
+      "name": "cold latency note",
+      "ok": true,
+      "detail": "18.07s",
+      "severity": "ok"
+    },
+    {
+      "section": "rain",
+      "name": "paths carry mDry/mWet",
+      "ok": false,
+      "detail": "sample keys=['a', 'avgDt', 'avgTr', 'b', 'dtMax', 'dtMin', 'n', 'r2', 'tf']",
+      "severity": "warn"
+    },
+    {
+      "section": "rain",
+      "name": "path-response responds to date args",
+      "ok": true,
+      "detail": "RESPONDS",
+      "severity": "ok"
+    },
+    {
+      "section": "weighbridge",
+      "name": "summary 200",
+      "ok": true,
+      "detail": "2.22s",
+      "severity": "ok"
+    },
+    {
+      "section": "weighbridge",
+      "name": "has bridges/trucks fields",
+      "ok": true,
+      "detail": {
+        "bridges": 6,
+        "trucks": 185,
+        "busiest": "11",
+        "date": "2026-07-09",
+        "servedFrom": null,
+        "stale": null
+      },
+      "severity": "ok"
+    },
+    {
+      "section": "weighbridge",
+      "name": "servedFrom disclosure",
+      "ok": true,
+      "detail": "servedFrom=None stale=None",
+      "severity": "ok"
+    },
+    {
+      "section": "weighbridge",
+      "name": "summary is NOT byte-identical to fixture",
+      "ok": false,
+      "detail": "STATIC FIXTURE twin",
+      "severity": "warn"
+    },
+    {
+      "section": "shift",
+      "name": "shift-context 200",
+      "ok": true,
+      "detail": "4.28s",
+      "severity": "ok"
+    },
+    {
+      "section": "shift",
+      "name": "has date",
+      "ok": true,
+      "detail": "2026-07-01",
+      "severity": "ok"
+    },
+    {
+      "section": "shift",
+      "name": "has rain or bridges or otherFleet",
+      "ok": true,
+      "detail": [
+        "bridges",
+        "busiest",
+        "date",
+        "ok",
+        "otherBySection",
+        "otherFeniTrips",
+        "otherFeniTypical",
+        "otherFleet",
+        "otherPaths",
+        "otherTrips",
+        "rain",
+        "rainAssess",
+        "rainMax",
+        "shift",
+        "wbAvailable",
+        "wbNote"
+      ],
+      "severity": "ok"
+    },
+    {
+      "section": "matrix",
+      "name": "constraints 200",
+      "ok": true,
+      "detail": null,
+      "severity": "ok"
+    },
+    {
+      "section": "matrix",
+      "name": "has sections+paths",
+      "ok": true,
+      "detail": "sec=3 paths=8",
+      "severity": "ok"
+    },
+    {
+      "section": "flow",
+      "name": "wb-positions 200",
+      "ok": true,
+      "detail": "0.99s",
+      "severity": "ok"
+    },
+    {
+      "section": "flow",
+      "name": "positions list",
+      "ok": true,
+      "detail": 0,
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "content visible after load",
+      "ok": true,
+      "detail": "1.2s",
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "Exclude IWIP checked by default",
+      "ok": true,
+      "detail": "checked=True attr=True",
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "scope line non-empty",
+      "ok": true,
+      "detail": "2025-09-01 \u2192 2026-07-31 \u00b7 323 operating days \u00b7 excl IWIP",
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "scope says excl IWIP when checked",
+      "ok": true,
+      "detail": "2025-09-01 \u2192 2026-07-31 \u00b7 323 operating days \u00b7 excl IWIP",
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "scope shows date range from inputs",
+      "ok": true,
+      "detail": "from=2025-09-01 scope=2025-09-01 \u2192 2026-07-31 \u00b7 323 operating days \u00b7 excl IWIP",
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "KPI cards rendered",
+      "ok": true,
+      "detail": "len=770",
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "KPI shows t/day",
+      "ok": true,
+      "detail": "",
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "fleet calculator has productivity",
+      "ok": true,
+      "detail": "181",
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "fleet calculator output",
+      "ok": true,
+      "detail": "671",
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "scatter SVG has elements",
+      "ok": true,
+      "detail": 1331,
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "monthly chart SVG has elements",
+      "ok": true,
+      "detail": 98,
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "contractor table has rows",
+      "ok": true,
+      "detail": 10,
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "routes table has rows",
+      "ok": true,
+      "detail": 67,
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "destinations table has rows",
+      "ok": true,
+      "detail": 15,
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "trucks table has rows",
+      "ok": true,
+      "detail": 2000,
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "rain table not stuck on Loading",
+      "ok": true,
+      "detail": "Loading rainfall-matched route history\u2026",
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "weighbridge status not empty Loading forever",
+      "ok": true,
+      "detail": "\ud83d\udd34 Load concentrated \u00b7 30.8 trucks/bridge \u00b7 busiest 11 \u00b7 2026-07-09",
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "wb open count filled",
+      "ok": true,
+      "detail": "6",
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "flow planner section present",
+      "ok": true,
+      "detail": "07:00\u201319:00 HAUL-ROAD SCENARIO PLANNER\n\u25cf ACTUAL AVERAGE SHIFT \u00b7 853 DT\n\u25b6 Run\nRes",
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "Apply updates scope to new dates",
+      "ok": true,
+      "detail": "2026-07-01 \u2192 2026-07-31 \u00b7 20 operating days \u00b7 excl IWIP",
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "Apply completes under 3s (excl debounce)",
+      "ok": true,
+      "detail": "0.94s including 500ms debounce",
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "uncheck Exclude IWIP \u2192 scope says incl IWIP",
+      "ok": true,
+      "detail": "2026-07-01 \u2192 2026-07-31 \u00b7 30 operating days \u00b7 incl IWIP",
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "Plan mode toggles KPI labels",
+      "ok": true,
+      "detail": "7k t/day\nPLANNED WMT / DAY\nactual 15k\n30 DT/day\nPLANNED DT / DAY\nactual 77\n0.23 trips/DT\nTRIPS PER T",
+      "severity": "ok"
+    },
+    {
+      "section": "browser",
+      "name": "screenshots saved",
+      "ok": true,
+      "detail": "reports/tab1_qc_*.png",
+      "severity": "ok"
+    }
+  ],
+  "sections": {
+    "capability_kpi": {
+      "days": 323,
+      "wmtPerDay": 121083.586,
+      "dtPerDay": 670.325,
+      "tripsPerDT": 4.001,
+      "tPerDT": 180.634,
+      "effWMT": 0.9402,
+      "effTrip": 26.4967,
+      "n_paths": 67,
+      "n_dests": 15,
+      "n_contractors": 10,
+      "n_daily": 323,
+      "n_months": 11,
+      "n_dailyByPath": 3903,
+      "latency_s": 19.8
+    },
+    "path_response": {
+      "seconds": 18.074,
+      "n_paths": 53,
+      "servedFrom": null
+    },
+    "weighbridge_summary": {
+      "bridges": 6,
+      "trucks": 185,
+      "busiestShare": 51.4,
+      "otherShare": 100.0,
+      "date": "2026-07-09",
+      "stale": null,
+      "servedFrom": null,
+      "status": "Load concentrated",
+      "seconds": 2.222
+    },
+    "shift_context": {
+      "seconds": 4.284,
+      "keys": [
+        "bridges",
+        "busiest",
+        "date",
+        "ok",
+        "otherBySection",
+        "otherFeniTrips",
+        "otherFeniTypical",
+        "otherFleet",
+        "otherPaths",
+        "otherTrips",
+        "rain",
+        "rainAssess",
+        "rainMax",
+        "shift",
+        "wbAvailable",
+        "wbNote"
+      ],
+      "date": "2026-07-01",
+      "wbAvailable": true,
+      "otherFleet": 339,
+      "otherFeniTrips": 0
+    },
+    "constraints": {
+      "seconds": 0.002,
+      "n_sec": 3,
+      "n_paths": 8
+    }
+  },
+  "summary": {
+    "pass": 75,
+    "fail": 2,
+    "warn": 2,
+    "total": 79,
+    "fail_list": [
+      "filters: warm latency < 3s",
+      "kpi: top path names canonical (no FENI A)"
+    ]
+  }
+}

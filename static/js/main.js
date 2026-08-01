@@ -5,9 +5,17 @@
 const fmt=(n,d=0)=>Number(n||0).toLocaleString('en-GB',{maximumFractionDigits:d});
 const fmtM=n=>(n>=1e6?(n/1e6).toFixed(2)+'M':n>=1e3?(n/1e3).toFixed(0)+'k':fmt(n));
 function ymLbl(ym){const y=(''+ym).slice(2,4),m=+(''+ym).slice(4);return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1]+"'"+y;}
-function eff(pct){ if(pct==null) return '<span class="muted">—</span>'; const c=pct>=0.95?'eg':(pct>=0.85?'ea':'er'); return `<span class="eff ${c}">${Math.round(pct*100)}%</span>`; }
+// Trip/WMT eff vs plan. Values above ~200% mean the plan rate was mis-aggregated
+// (TARGET TRIP is already trips/DT — see simulator_api._cap_load_rows). Refuse to
+// paint a 1700% badge that looks like a win.
+function eff(pct){
+  if(pct==null||!Number.isFinite(pct)) return '<span class="muted">—</span>';
+  if(pct>2||pct<0) return '<span class="muted" title="Plan target rate missing or invalid">—</span>';
+  const c=pct>=0.95?'eg':(pct>=0.85?'ea':'er');
+  return `<span class="eff ${c}">${Math.round(pct*100)}%</span>`;
+}
 const FLOW_SHIFT_HOURS=12,FLOW_SHIFT_START=7;
-let _D=null, _initDone=false, _mode='actual', _trucks=null, _combined3D=null, _flowSim=null, _flowSource=null, _flowSpeedsInitialised=false, _flowPointScenario=null, _c3Tool='rotate', _flowMode='plan', _flowPlanDraft={}, _flowFleetAvailable=null, _otherCtx=null, _otherDraft={}, _otherInModel=true;
+let _D=null, _initDone=false, _mode='actual', _trucks=null, _trucksServedFrom=null, _combined3D=null, _flowSim=null, _flowSource=null, _flowSpeedsInitialised=false, _flowPointScenario=null, _c3Tool='rotate', _flowMode='plan', _flowPlanDraft={}, _flowFleetAvailable=null, _otherCtx=null, _otherDraft={}, _otherInModel=true;
 let _selSrc=new Set(), _selDest=new Set(), _effMetric='trips', _optObj='max_trips', _ec=null;
 
 function q(id){return document.getElementById(id);}
@@ -124,13 +132,19 @@ function render(){
   const wmt=plan?k.planWmtPerDay:k.wmtPerDay, dt=plan?k.planDtPerDay:k.dtPerDay,
         tpd=plan?k.planTripsPerDT:k.tripsPerDT, prod=plan?k.planTPerDT:k.tPerDT;
   const other=plan?'actual':'plan';
+  // Clamp the KPI trip-eff badge the same way table cells use eff() — a 1700%
+  // card is how the TARGET TRIP aggregation bug presented in the Tab 1 QC.
+  const tripEffLabel=(k.effTrip!=null&&Number.isFinite(k.effTrip)&&k.effTrip>=0&&k.effTrip<=2)
+    ? (Math.round(k.effTrip*100)+'%') : '—';
+  const wmtEffLabel=(k.effWMT!=null&&Number.isFinite(k.effWMT)&&k.effWMT>=0&&k.effWMT<=2)
+    ? (Math.round(k.effWMT*100)+'%') : '—';
   const kpis=[
     [wmt!=null?fmtM(wmt):'—','t/day',(plan?'Planned':'Actual')+' WMT / day', (plan?k.wmtPerDay:k.planWmtPerDay)!=null?(other+' '+fmtM(plan?k.wmtPerDay:k.planWmtPerDay)):''],
     [dt!=null?fmt(dt):'—','DT/day',(plan?'Planned':'Actual')+' DT / day', (plan?k.dtPerDay:k.planDtPerDay)!=null?(other+' '+fmt(plan?k.dtPerDay:k.planDtPerDay)):''],
     [tpd!=null?fmt(tpd,2):'—','trips/DT','Trips per truck', k.tf?('TF '+fmt(k.tf,1)+' t'):''],
     [prod!=null?fmt(prod):'—','t/DT','Productivity / truck / day',''],
-    [k.effWMT!=null?Math.round(k.effWMT*100)+'%':'—','','WMT vs plan',''],
-    [k.effTrip!=null?Math.round(k.effTrip*100)+'%':'—','','Trip eff vs plan',''],
+    [wmtEffLabel,'','WMT vs plan',''],
+    [tripEffLabel,'','Trip eff vs plan',''],
   ];
   q('kpis').innerHTML=kpis.map(x=>`<div class="kpi"><div class="v">${x[0]} <span class="u">${x[1]}</span></div><div class="l">${x[2]}</div>${x[3]?`<div class="sub">${x[3]}</div>`:''}</div>`).join('');
 
@@ -151,7 +165,10 @@ function render(){
 function renderTrucks(){
   if(!_trucks) return; const qs=(q('trucksearch').value||'').trim().toLowerCase();
   const rows=_trucks.filter(t=>!qs||(t.truck+' '+t.contractor).toLowerCase().includes(qs));
-  q('truckcnt').textContent=rows.length+(qs?(' of '+_trucks.length):'')+' trucks';
+  // Fixture / unfiltered — the dispatch capability view has no TRUCK_ID, so this
+  // list cannot honour the date/IWIP/source bar. Say so; do not look measured.
+  const note=_trucksServedFrom==='fixture'?' · sample list (not filtered by bar above)':'';
+  q('truckcnt').textContent=rows.length+(qs?(' of '+_trucks.length):'')+' trucks'+note;
   q('trucks').innerHTML=rows.map(t=>`<tr><td><b>${t.truck}</b></td><td class="muted">${t.contractor}</td><td class="r">${fmt(t.trips)}</td><td class="r">${fmt(t.tripsPerDay,1)}</td><td class="r">${fmtM(t.wmt)}</td><td class="r muted">${fmt(t.tf,1)}</td></tr>`).join('')||'<tr><td colspan="6" class="empty">No matching trucks.</td></tr>';
 }
 function row7(name,x){ return `<tr><td><b>${name}</b></td><td class="r">${fmtM(x.t)}</td><td class="r">${fmt(x.tripsPerDT,2)}</td><td class="r muted">${fmt(x.tf,1)}</td><td class="r muted">${x.planTripsPerDT!=null?fmt(x.planTripsPerDT,2):'—'}</td><td class="r">${eff(x.effTrip)}</td><td class="r">${eff(x.effWMT)}</td></tr>`; }
@@ -186,8 +203,9 @@ function setWbShift(s){_wbShift=s;document.querySelectorAll('#wb-shift-toggle .w
 const _shParam=()=>(_wbShift&&_wbShift!=='all'?'&shift='+_wbShift:'');
 function renderIwipImpact(d){
   const hdr=q('cap-iwip-shift'),body=q('cap-iwip');if(!body)return;
+  if(!d){if(hdr)hdr.innerHTML='';body.innerHTML='<tr><td colspan="4" class="muted">Select a scenario point on the chart to estimate IWIP impact for that shift.</td></tr>';return;}
   const feni=d&&d.otherFeniTrips,typ=d&&d.otherFeniTypical;
-  if(!Number.isFinite(feni)||!Number.isFinite(typ)||!typ){if(hdr)hdr.innerHTML='';body.innerHTML='<tr><td colspan="4" class="muted">No IWIP traffic data for this shift (pre-Dec 2025).</td></tr>';return;}
+  if(!Number.isFinite(feni)||!Number.isFinite(typ)||!typ){if(hdr)hdr.innerHTML='';body.innerHTML='<tr><td colspan="4" class="muted">No IWIP traffic data for this shift (pre-Dec 2025), or select a scenario on the chart.</td></tr>';return;}
   const impact=OTHER_TRAFFIC_COEF*(feni-typ),heavier=feni>typ,cls0=impact<=-0.03?'er':impact<0?'ea':'eg';
   if(hdr)hdr.innerHTML=`<div style="font-size:11.5px;padding:6px 8px;background:rgba(148,163,184,.08);border-radius:6px"><b>This shift (${escH(d.date)}):</b> <b>${fmt(feni)}</b> FENI-corridor IWIP trips vs typical <b>${fmt(typ)}</b> — <span class="${cls0}">${heavier?'heavier':'lighter'} than usual, est. <b>${(impact>=0?'+':'')+fmt(impact,2)} trips/DT</b> on shared routes</span></div>`;
   const routes=Object.entries(_pathResp||{}).filter(([k,m])=>/FENI/i.test((k.split('>')[1]||''))&&Number.isFinite(m.avgTr)).map(([k,m])=>({key:k.replace('>',' → '),base:m.avgTr,pct:m.avgTr?100*impact/m.avgTr:0})).sort((a,b)=>a.pct-b.pct);
