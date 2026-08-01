@@ -38,6 +38,11 @@ function updateFlowSimulator(){
   const loadedNow=moving.filter(p=>Math.abs(p.y-180)<.8&&p.el.getAttribute('visibility')!=='hidden').length,emptyNow=moving.filter(p=>Math.abs(p.y-210)<.8&&p.el.getAttribute('visibility')!=='hidden').length,crossoverNow=moving.filter(p=>Math.abs(p.y-180)>=.8&&Math.abs(p.y-210)>=.8&&p.el.getAttribute('visibility')!=='hidden').length;
   q('c3-flow-meta').innerHTML=`<b>${escH(s.band)} observed load</b> · live constrained density ${fmt(s.liveDensity||0,2)} DT/km · ${fmt(s.corridorKm,1)} km corridor<br>${_flowMode==='plan'?'simulating':'replaying'} ${fmt(completed)} / ${fmt(shiftTrips)} trips per 12h shift · loaded ${loadedNow} · empty return ${emptyNow} · crossover ${crossoverNow}`;
   const ranges={1:[67.8,39],2:[39,27],3:[27,17],4:[17,0]},activeRanges=[..._gSelSec].map(id=>ranges[+id]).filter(Boolean),kmAt=x=>s.corridorKm-(x-s.roadLeft)/(s.roadRight-s.roadLeft)*s.corridorKm,densities=activeRanges.map(z=>{const weight=moving.reduce((n,p)=>{const km=kmAt(p.x),onLane=Math.abs(p.y-180)<.8||Math.abs(p.y-210)<.8;return n+(onLane&&km<=z[0]&&km>=z[1]?p.weight:0);},0);return weight/Math.max(.1,z[0]-z[1]);}),density=Math.max(0,...densities),pressure=Math.max(0,Math.min(1,(density-2)/4));s.liveCongestion=(s.liveCongestion||0)+.08*(pressure-(s.liveCongestion||0));s.liveDensity=density;
+  // Project visible particles onto the GPS polyline map (chainage → lat/lng).
+  flowMapSync(moving.filter(p=>p.el.getAttribute('visibility')!=='hidden').map(p=>{
+    const c=p.el._c||p.el.querySelector('circle');
+    return {id:p.id,km:kmAt(p.x),loaded:Math.abs(p.y-180)<.8,col:(c&&c.getAttribute('fill'))||'#38bdf8'};
+  }));
 }
 function flowFrame(ts){const s=_flowSim;if(!s||!s.running)return;if(!s.last)s.last=ts;const dt=Math.min(.1,(ts-s.last)/1000);s.last=ts;s.hour=Math.min(FLOW_SHIFT_HOURS,s.hour+dt*FLOW_SHIFT_HOURS/24);updateFlowSimulator();if(s.hour>=FLOW_SHIFT_HOURS){stopFlowSimulator();return;}s.raf=requestAnimationFrame(flowFrame);}
 function flowToggle(){const s=_flowSim;if(!s)return;if(s.running){stopFlowSimulator();return;}if(s.hour>=FLOW_SHIFT_HOURS){s.hour=0;s.liveCongestion=0;s.liveDensity=0;s.vehicleStates={};s.laneOrders={loaded:[],empty:[]};}if(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches){s.hour=FLOW_SHIFT_HOURS;updateFlowSimulator();return;}s.running=true;s.last=0;q('c3-flow-play').textContent='Ⅱ Pause';s.raf=requestAnimationFrame(flowFrame);}
@@ -159,14 +164,35 @@ function buildFlowMotion(r,p,vc){
   r.startTimes=r.startTimes.map((_,j)=>p.start==='destination'?r.destTimeFraction:p.start==='split'&&j%2?r.destTimeFraction:0);
   return total;
 }
+function flowLaneCapacity(p){
+  // Prefer measured peak segment-hour trucks (GPS congestion extract). Fall
+  // back to assumed headway only when that extract is missing.
+  const mc=((_D&&_D.corridor)||{}).measuredCapacity||{};
+  const measured=Number(mc.trucksPerHour);
+  if(Number.isFinite(measured)&&measured>5){
+    return {laneCapacity:measured,capSource:'measured',
+      equivHeadway:mc.equivHeadwaySec||Math.round(3600/measured),
+      method:mc.method||'measured GPS peak trucks/h'};
+  }
+  const assumed=3600/Math.max(1,p.headway||90);
+  return {laneCapacity:assumed,capSource:'assumed-headway',
+    equivHeadway:p.headway||90,method:'assumed min headway'};
+}
 function evaluateFlowScenario(){
-  const s=_flowSim;if(!s)return;const p=flowInputs(),laneCapacity=3600/p.headway,demand=s.routes.reduce((n,r)=>n+r.dt*p.fleet*flowRouteTarget(r)/p.hours,0),vc=demand/laneCapacity,congestion=vc>1?1/vc:1;
+  const s=_flowSim;if(!s)return;const p=flowInputs(),cap=flowLaneCapacity(p),laneCapacity=cap.laneCapacity,demand=s.routes.reduce((n,r)=>n+r.dt*p.fleet*flowRouteTarget(r)/p.hours,0),vc=demand/laneCapacity,congestion=vc>1?1/vc:1;
+  s.capSource=cap.capSource;s.laneCapacity=laneCapacity;
   // Trip KPIs stay from DB / path-response. Motion uses GPS — do NOT inflate speeds
   // so kinematics invent the trip rate (old sharedOpenFactor behaviour).
   p.sharedOpenFactor=1;
   let target=0,achieved=0,dbTrips=0,fleetTotal=0;s.routes.forEach(r=>{const trucks=r.dt*p.fleet;r.targetTr=flowRouteTarget(r);buildFlowMotion(r,p,Math.max(0,vc-.7));r.achievedTr=r.targetTr;r.targetTrips=trucks*r.targetTr;r.achievedTrips=r.targetTrips;dbTrips+=r.dbTrips;target+=r.targetTrips;achieved+=r.achievedTrips;fleetTotal+=trucks;});
   s.dbTrips=dbTrips;s.targetTrips=target;s.achievedTrips=achieved;s.vc=vc;s.queue=Math.max(0,Math.ceil((demand-laneCapacity)*p.hours));s.inputs=p;
   q('flow-attain').textContent=fmt(_flowMode==='plan'?achieved:dbTrips);q('flow-attain-label').textContent=_flowMode==='plan'?'Estimated trips / 12h shift':'Average DB trips / shift';q('flow-vc').textContent=fmt(vc,2);q('flow-queue').textContent=fmt(s.queue);
+  const vcHint=q('flow-vc-hint');
+  if(vcHint){
+    vcHint.textContent=cap.capSource==='measured'
+      ?(`measured · ~${fmt(laneCapacity,0)} tph · ≡${fmt(cap.equivHeadway)}s`)
+      :(`assumed headway ${fmt(cap.equivHeadway)}s`);
+  }
   // Est. production = trips × avg tonnes/trip (TF from the capability selection). Reflects the fleet plan.
   const _tf=(_D&&_D.kpi&&_D.kpi.tf)||0,_trips=(_flowMode==='plan'?achieved:dbTrips),_prod=_tf?_trips*_tf:0;
   const _prodBase=_tf?dbTrips*_tf:0,_dWMT=_prod-_prodBase;   // WMT vs the actual shift
@@ -184,13 +210,16 @@ function evaluateFlowScenario(){
     const src=r.speedSource==='gps'?'GPS':(r.speedSource==='override'?'override':'est');
     const over=r.overLimitPct>1?` · <span style="color:#f87171" title="Share of route km where measured/override speed exceeds posted FMS limit">${fmt(r.overLimitPct,0)}% over posted limit</span>`:'';
     return `<div><span style="color:${r.col}">■</span> <b>${escH(r.label)}</b> · ${effTxt}${rainTxt} · ${_flowMode==='plan'?`${fmt(r.dbDt,0)} actual → <b>${fmt(r.dt,0)} scenario DT</b> · ${fmt(r.achievedTrips,0)} predicted trips/shift`:`${fmt(r.dbDt,1)} DB DT/shift · ${fmt(r.dbTrips)} DB trips/shift${r.shiftExplicit?'':' · shift count unavailable'}`} · ${r.particles} visual elements · ${src} loaded ${fmt(r.loadedSpeedRange[0],1)}–${fmt(r.loadedSpeedRange[1],1)} km/h · empty ${fmt(r.emptySpeedRange[0],1)}–${fmt(r.emptySpeedRange[1],1)} km/h${over}</div>`;}).join('');
-  // Honesty caption under the stick.
+  // Honesty caption under the map / stick.
   const win=((_D&&_D.corridor)||{}).measuredWindow||{};
   const note=q('flow-note');
   if(note){
     const gpsN=flowMeasuredBands().length, limN=flowPostedLimits().length;
     const winTxt=(win.from&&win.to)?`${win.from} → ${win.to}`:'(no GPS window)';
-    note.textContent=`Schematic chainage stick · motion = measured GPS (${gpsN} bands, ${winTxt}) · top bar = posted FMS limits (${limN} zones) · trip counts from dispatch, not from road physics · headway for V/C is assumed (not GPS).`;
+    const capTxt=cap.capSource==='measured'
+      ?`V/C capacity = measured ${fmt(laneCapacity,0)} trucks/h (${cap.method})`
+      :`V/C capacity = assumed ${fmt(cap.equivHeadway)}s headway (no measured peaks)`;
+    note.textContent=`GPS corridor map · motion = measured GPS (${gpsN} bands, ${winTxt}) · posted FMS limits as overlay (${limN} zones) · trip counts from dispatch, not from road physics · ${capTxt}.`;
   }
   if(_combined3D){const rr=_combined3D.ranges,path=fleetTotal?_avg(s.routes,r=>r.dt*p.fleet):0,section=s.avgSection*p.fleet,tr=fleetTotal?achieved/fleetTotal:0,clamp=(v,r)=>Math.max(-1,Math.min(1,-1+2*(v-r.lo)/r.d)),selected=_flowPointScenario&&_combined3D.points[_flowPointScenario.pointIndex];_combined3D.scenario=selected?{...selected}: {path,section,tr,nx:clamp(path,rr.path),ny:clamp(section,rr.section),nz:clamp(tr,rr.tr)};renderCombined3D();}
   updateFlowSimulator();
@@ -325,4 +354,153 @@ function renderFlowSimulator(P,colours){
   if(!_flowSpeedOverride) flowSeedGpsInputs();
   _flowSpeedsInitialised=true;
   evaluateFlowScenario();
+  flowMapEnsure();
+}
+
+/* ── GPS polyline map (Leaflet) — primary visual for Tab 1 flow ─────────── */
+let _flowMap=null,_flowMapRoad=null,_flowMapTrucks=null,_flowGeom=null,_flowChain=null,_flowMapMarkers={};
+
+function flowMapGpsColour(v){
+  if(!(v>0))return'#475569';
+  if(v<12)return'#ef4444';
+  if(v<18)return'#f59e0b';
+  if(v<25)return'#38bdf8';
+  return'#22c55e';
+}
+function flowMapBuildChain(geo){
+  // Unified TF→FENI chainage index from TOFU / KR / CRD centreline points.
+  const alias=(geo.roadAlias)||{TF:'TOFU'};
+  const want=new Set(['TOFU','KR','CRD','KRENE']);
+  const pts=[];
+  (geo.roads||[]).forEach(r=>{
+    const road=(r.road||'').toUpperCase();
+    if(!want.has(road)&&!want.has(alias[road]||''))return;
+    (r.points||[]).forEach(p=>pts.push({km:p.km,lat:p.lat,lng:p.lng,road}));
+  });
+  pts.sort((a,b)=>b.km-a.km); // TF (high km) → FENI (0)
+  // Deduplicate near-identical km markers across road joins.
+  const out=[];
+  pts.forEach(p=>{
+    if(!out.length||Math.abs(out[out.length-1].km-p.km)>0.05)out.push(p);
+  });
+  return out;
+}
+function flowMapLatLngAt(km){
+  const chain=_flowChain||[];
+  if(!chain.length||!Number.isFinite(km))return null;
+  if(km>=chain[0].km)return[chain[0].lat,chain[0].lng];
+  if(km<=chain[chain.length-1].km){
+    const last=chain[chain.length-1];return[last.lat,last.lng];
+  }
+  for(let i=1;i<chain.length;i++){
+    const a=chain[i-1],b=chain[i];
+    if(km<=a.km&&km>=b.km){
+      const t=(a.km===b.km)?0:(a.km-km)/(a.km-b.km);
+      return[a.lat+(b.lat-a.lat)*t,a.lng+(b.lng-a.lng)*t];
+    }
+  }
+  return[chain[0].lat,chain[0].lng];
+}
+async function flowMapEnsure(){
+  const el=q('c3-flow-map');
+  if(!el)return;
+  if(typeof L==='undefined'){
+    el.innerHTML='<div class="muted" style="padding:16px;font-size:12px">Map library unavailable (Leaflet CDN). Open the schematic stick below for the chainage view.</div>';
+    return;
+  }
+  try{
+    if(!_flowGeom){
+      const d=await(await fetch('/api/simulator/corridor-geometry',{cache:'no-store'})).json();
+      _flowGeom=d;
+    }
+  }catch(e){
+    el.innerHTML='<div class="muted" style="padding:16px;font-size:12px">Corridor geometry unavailable.</div>';
+    return;
+  }
+  if(!_flowGeom||!_flowGeom.ok||!(_flowGeom.roads||[]).length){
+    el.innerHTML='<div class="muted" style="padding:16px;font-size:12px">'
+      +escH((_flowGeom&&_flowGeom.reason)||'corridor geometry unavailable')+'</div>';
+    return;
+  }
+  _flowChain=flowMapBuildChain(_flowGeom);
+  if(!_flowMap){
+    _flowMap=L.map(el,{scrollWheelZoom:false,attributionControl:true,preferCanvas:true});
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+      maxZoom:18,attribution:'&copy; OpenStreetMap',
+    }).addTo(_flowMap);
+    _flowMapRoad=L.layerGroup().addTo(_flowMap);
+    _flowMapTrucks=L.layerGroup().addTo(_flowMap);
+  }
+  _flowMapRoad.clearLayers();
+  _flowMapMarkers={};
+  _flowMapTrucks.clearLayers();
+  const corridor=(_D&&_D.corridor)||(_flowGeom.corridor)||{};
+  const measured=corridor.measuredSpeeds||[];
+  const posted=corridor.speedLimits||[];
+  const bounds=[];
+  // Paint GPS-coloured segments along the centreline.
+  for(let i=1;i<_flowChain.length;i++){
+    const a=_flowChain[i-1],b=_flowChain[i],mid=(a.km+b.km)/2;
+    const seg=measured.find(s=>mid<=s.fromKm&&mid>=s.toKm);
+    const lim=posted.find(z=>mid<=z.fromKm&&mid>=z.toKm);
+    const v=seg&&seg.loadedKmh;
+    const colour=flowMapGpsColour(v);
+    const line=L.polyline([[a.lat,a.lng],[b.lat,b.lng]],{
+      color:colour,weight:seg?6:3,opacity:seg?0.95:0.45,
+    });
+    const tip=['KM '+mid.toFixed(1)];
+    if(seg)tip.push('GPS loaded '+(v==null?'—':fmt(v,1)+' km/h'),
+      'empty '+(seg.emptyKmh==null?'—':fmt(seg.emptyKmh,1)+' km/h'));
+    if(lim)tip.push('posted '+fmt(lim.limit)+' km/h');
+    line.bindPopup(tip.map(escH).join('<br>'));
+    line.addTo(_flowMapRoad);
+    bounds.push([a.lat,a.lng],[b.lat,b.lng]);
+  }
+  (corridor.nodes||[]).forEach(n=>{
+    const ll=flowMapLatLngAt(n.km);if(!ll)return;
+    L.circleMarker(ll,{radius:5,color:'#e2e8f0',weight:1.5,fillColor:'#0b1220',fillOpacity:1})
+      .bindTooltip(escH(n.label)+' · '+fmt(n.km,1)+' km',{permanent:false})
+      .addTo(_flowMapRoad);
+    bounds.push(ll);
+  });
+  if(bounds.length){
+    _flowMap.fitBounds(bounds,{padding:[18,18]});
+    setTimeout(()=>{try{_flowMap.invalidateSize();}catch(e){}},80);
+  }
+}
+function flowMapSync(particles){
+  if(!_flowMap||!_flowMapTrucks||!_flowChain||!_flowChain.length)return;
+  // Cap markers for canvas performance; sample evenly when dense.
+  const maxShow=100;
+  let list=particles||[];
+  if(list.length>maxShow){
+    const step=list.length/maxShow;
+    const sampled=[];
+    for(let i=0;i<maxShow;i++)sampled.push(list[Math.floor(i*step)]);
+    list=sampled;
+  }
+  const seen=new Set();
+  list.forEach(p=>{
+    const ll=flowMapLatLngAt(p.km);if(!ll)return;
+    seen.add(p.id);
+    let m=_flowMapMarkers[p.id];
+    if(!m){
+      m=L.circleMarker(ll,{
+        radius:p.loaded?3.2:2.6,
+        color:p.loaded?'#0b1220':'#94a3b8',
+        weight:1,
+        fillColor:p.col||'#38bdf8',
+        fillOpacity:0.9,
+      }).addTo(_flowMapTrucks);
+      _flowMapMarkers[p.id]=m;
+    }else{
+      m.setLatLng(ll);
+      m.setStyle({fillColor:p.col||'#38bdf8',radius:p.loaded?3.2:2.6});
+    }
+  });
+  Object.keys(_flowMapMarkers).forEach(id=>{
+    if(seen.has(id))return;
+    try{_flowMapTrucks.removeLayer(_flowMapMarkers[id]);}catch(e){}
+    delete _flowMapMarkers[id];
+  });
 }

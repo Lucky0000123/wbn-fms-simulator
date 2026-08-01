@@ -268,10 +268,16 @@ def _load_posted_speed_limits():
 
 
 def _load_measured_speeds_from_csv():
-    """Build stick measuredSpeeds from congestion_seg_by_dir.csv (DIR down=loaded)."""
+    """Build stick measuredSpeeds + lane capacity from congestion_seg_by_dir.csv.
+
+    DIR down = loaded. Capacity uses median peak TRUCK_N on stick loaded
+    segments (observed trucks in the busiest segment-hour) — not the old
+    assumed 90 s headway.
+    """
     import csv as _csv
     from collections import defaultdict
     by_seg = defaultdict(dict)
+    peak_loaded = []
     t_lo = t_hi = None
     try:
         with open(_CONG_BY_DIR_CSV, encoding="utf-8") as f:
@@ -296,6 +302,13 @@ def _load_measured_speeds_from_csv():
                 key = (road, lo, hi, seg)
                 if d in ("down", "up"):
                     by_seg[key][d] = {"kmh": spd, "n": n}
+                if d == "down":
+                    try:
+                        pk = float(row.get("peak_trucks") or 0)
+                    except ValueError:
+                        pk = 0
+                    if pk > 0:
+                        peak_loaded.append(pk)
                 for col in ("ts_min", "ts_max"):
                     try:
                         ts = int(float(row.get(col) or 0))
@@ -308,7 +321,7 @@ def _load_measured_speeds_from_csv():
                     if t_hi is None or ts > t_hi:
                         t_hi = ts
     except OSError:
-        return [], None
+        return [], None, None
     out = []
     for (road, lo, hi, seg), dirs in by_seg.items():
         loaded = dirs.get("down")
@@ -330,7 +343,21 @@ def _load_measured_speeds_from_csv():
             return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).date().isoformat()
         window = {"from": _iso(t_lo), "to": _iso(t_hi),
                   "source": "data/congestion_seg_by_dir.csv"}
-    return out, window
+    capacity = None
+    if peak_loaded:
+        peak_loaded.sort()
+        n = len(peak_loaded)
+        p50 = peak_loaded[n // 2]
+        p25 = peak_loaded[max(0, n // 4)]
+        capacity = {
+            "trucksPerHour": round(p50, 2),
+            "bottleneckTph": round(p25, 2),
+            "equivHeadwaySec": round(3600.0 / p50) if p50 > 0 else None,
+            "source": "data/congestion_seg_by_dir.csv",
+            "method": "median peak TRUCK_N / segment-hour (stick, DIR=down)",
+            "nSegments": n,
+        }
+    return out, window, capacity
 
 
 def _corridor_payload():
@@ -338,17 +365,19 @@ def _corridor_payload():
     global _CORRIDOR_LAYERS
     if _CORRIDOR_LAYERS is None:
         stick, all_zones = _load_posted_speed_limits()
-        measured, window = _load_measured_speeds_from_csv()
+        measured, window, capacity = _load_measured_speeds_from_csv()
         _CORRIDOR_LAYERS = {
             "speedLimits": stick,
             "speedLimitsAll": all_zones,
             "measuredSpeeds": measured,
             "measuredWindow": window,
+            "measuredCapacity": capacity,
         }
     base = dict(_SIM_CORRIDOR)
     base["speedLimits"] = _CORRIDOR_LAYERS["speedLimits"]
     base["measuredSpeeds"] = _CORRIDOR_LAYERS["measuredSpeeds"]
     base["measuredWindow"] = _CORRIDOR_LAYERS["measuredWindow"]
+    base["measuredCapacity"] = _CORRIDOR_LAYERS["measuredCapacity"]
     # Spur zones kept off the stick paint list but available for later views.
     base["speedLimitsSpur"] = [z for z in _CORRIDOR_LAYERS["speedLimitsAll"]
                                if not z.get("onStick")]
@@ -1546,6 +1575,125 @@ def api_simulator_weighbridge():
         _WB_RESULT_CACHE = (_time.time(), result)
     return jsonify(result)
 
+def api_simulator_trucks():
+    """Per-truck rollup from HAULAGE_IWIP_CLEAN (has TRUCK_ID).
+
+    Dispatch capability has no truck column; this is the live fleet list the
+    Trucks table needs. Honours from/to + IWIP toggle. Source/dest path filters
+    are applied when present via ORIGIN/DESTINATION area matching.
+    """
+    a = request.args
+    frm = (a.get("from") or "").strip()[:10]
+    to = (a.get("to") or "").strip()[:10]
+    incl_iwip = a.get("inclIwip") in ("1", "true", "yes")
+    src = [_canon(s) for s in (a.get("source") or "").split(",") if s.strip()]
+    dst = [_canon(s) for s in (a.get("dest") or "").split(",") if s.strip()]
+    # Same WBN hauler set as shift-context / weighbridge.
+    wbn = ("RIM", "PPP", "SSS", "SMA", "STM", "HJS", "GMG", "CKB", "HFNC")
+    where = [
+        "TRUCK_ID IS NOT NULL",
+        "LTRIM(RTRIM(CAST(TRUCK_ID AS varchar(64)))) <> ''",
+        "WMT IS NOT NULL",
+    ]
+    params = []
+    if frm:
+        where.append("CONVERT(date,[DATE]) >= %s")
+        params.append(frm)
+    if to:
+        where.append("CONVERT(date,[DATE]) <= %s")
+        params.append(to)
+    if not incl_iwip:
+        where.append("UPPER(LTRIM(RTRIM(CONTRACTOR))) IN (%s)"
+                     % ",".join("'%s'" % c for c in wbn))
+    # Optional origin/dest soft filters (canonical labels → LIKE patterns).
+    area_like = {
+        "TF": ("ORIGIN_AREA LIKE %s OR ORIGIN_AREA LIKE %s OR ORIGIN_AREA LIKE %s",
+               ("%TOFU%", "TF%", "TOS_TF%")),
+        "TOFU": ("ORIGIN_AREA LIKE %s OR ORIGIN_AREA LIKE %s", ("%TOFU%", "TF%")),
+        "KR": ("ORIGIN_AREA LIKE %s OR ORIGIN_AREA LIKE %s", ("%KRENE%", "KR%")),
+        "KRENE": ("ORIGIN_AREA LIKE %s OR ORIGIN_AREA LIKE %s", ("%KRENE%", "KR%")),
+    }
+    dest_like = {
+        "FENI KM0": ("DESTINATION_AREA LIKE %s", ("%FENI%",)),
+        "FENI KM15": ("DESTINATION_AREA LIKE %s OR DESTINATION_AREA LIKE %s",
+                      ("%FENI KM15%", "%FENI 15%")),
+        "HUAFEI": ("DESTINATION_AREA LIKE %s", ("%HUAFEI%",)),
+        "BSE": ("DESTINATION_AREA LIKE %s", ("%BSE%",)),
+        "CRUSHER": ("DESTINATION_AREA LIKE %s", ("%CRUSHER%",)),
+        "POS 12": ("DESTINATION_AREA LIKE %s OR DESTINATION_AREA LIKE %s",
+                   ("%POS 12%", "%POS12%")),
+        "POS 10": ("DESTINATION_AREA LIKE %s OR DESTINATION_AREA LIKE %s",
+                   ("%POS 10%", "%POS10%")),
+    }
+    if src:
+        clauses, sp = [], []
+        for s in src:
+            spec = area_like.get(s) or area_like.get(s.replace(" ", ""))
+            if not spec:
+                clauses.append("UPPER(ORIGIN_AREA) LIKE %s")
+                sp.append("%" + s + "%")
+            else:
+                clauses.append("(" + spec[0] + ")")
+                sp.extend(spec[1])
+        if clauses:
+            where.append("(" + " OR ".join(clauses) + ")")
+            params.extend(sp)
+    if dst:
+        clauses, sp = [], []
+        for d in dst:
+            spec = dest_like.get(d)
+            if not spec:
+                clauses.append("UPPER(DESTINATION_AREA) LIKE %s")
+                sp.append("%" + d + "%")
+            else:
+                clauses.append("(" + spec[0] + ")")
+                sp.extend(spec[1])
+        if clauses:
+            where.append("(" + " OR ".join(clauses) + ")")
+            params.extend(sp)
+    sql = (
+        "SELECT LTRIM(RTRIM(CAST(TRUCK_ID AS varchar(64)))) AS truck, "
+        "LTRIM(RTRIM(CONTRACTOR)) AS contractor, "
+        "COUNT(*) AS trips, COUNT(DISTINCT CONVERT(date,[DATE])) AS days, "
+        "SUM(WMT) AS wmt "
+        "FROM HAULAGE_IWIP_CLEAN WHERE " + " AND ".join(where) + " "
+        "GROUP BY LTRIM(RTRIM(CAST(TRUCK_ID AS varchar(64)))), "
+        "LTRIM(RTRIM(CONTRACTOR)) "
+        "ORDER BY COUNT(*) DESC"
+    )
+    conn = _conn("WBN_DATABASE")
+    try:
+        cur = conn.cursor()
+        cur.execute(sql, tuple(params))
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+    trucks = []
+    for truck, contractor, trips, days, wmt in rows[:5000]:
+        trips = float(trips or 0)
+        days = int(days or 0) or 1
+        wmt = float(wmt or 0)
+        trucks.append({
+            "truck": str(truck or "").strip(),
+            "contractor": str(contractor or "").strip(),
+            "trips": trips,
+            "days": days,
+            "tripsPerDay": round(trips / days, 4) if days else 0.0,
+            "wmt": wmt,
+            "tf": round(wmt / trips, 4) if trips else 0.0,
+        })
+    return jsonify({
+        "ok": True,
+        "trucks": trucks,
+        "n": len(trucks),
+        "from": frm or None,
+        "to": to or None,
+        "inclIwip": incl_iwip,
+        "servedFrom": "db",
+        "source": "WBN_DATABASE.dbo.HAULAGE_IWIP_CLEAN",
+    })
+
+
 # ROUTES
 # Capability: real query with all six filters; fixture when there is no DB.
 _register('/api/simulator/capability', api_simulator_capability, 'capability', methods=['GET'])
@@ -1555,6 +1703,8 @@ _register('/api/simulator/weighbridge-positions', api_simulator_weighbridge_posi
 _register('/api/simulator/shift-context', api_simulator_shift_context, 'shift-context', methods=['GET'])
 _register('/api/weighbridge-summary', api_weighbridge_summary, 'weighbridge-summary', methods=['GET'])
 _register('/api/simulator/weighbridge', api_simulator_weighbridge, 'weighbridge', methods=['GET'])
+# Trucks: live via serve.py → api_simulator_trucks(); fixture fallback there.
+# Not _register'd here because serve.py owns the URL for dual-mode honesty.
 
 
 # ---------------------------------------------------------------------------

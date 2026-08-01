@@ -16,6 +16,8 @@ data/cap_snapshot.json
 data/pr_snapshot.json
 data/cap_snapshot.json.tmp
 data/pr_snapshot.json.tmp
+# Operator-edited constraint matrix (local persistence; not production tonnages).
+data/constraints_local.json
 # Phase 3 artifacts — derived from real production tonnages, and the mirror is
 # public. Regenerate with `python train_model.py`.
 data/validation_results.json

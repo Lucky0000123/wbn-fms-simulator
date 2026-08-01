@@ -238,6 +238,10 @@ tbody tr:hover{background:var(--panel-hover)}
 .flow-plan-current{font-size:9.5px;color:var(--txt-muted);margin-top:6px}
 .flow-advanced{margin:8px 0}.flow-advanced summary{cursor:pointer;color:var(--txt-secondary);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em}.flow-advanced summary:hover{color:var(--txt)}
 #c3-flow-svg{height:480px;overflow:visible}
+.c3-flow-map{height:320px;margin:8px 0 4px;border-radius:8px;overflow:hidden;background:#0b1220;border:1px solid var(--line)}
+.flow-stick-details{margin:6px 0 0}
+.flow-stick-details>summary{cursor:pointer;font-size:11px;color:var(--txt-muted);user-select:none;padding:4px 0}
+.flow-stick-details[open]>summary{margin-bottom:6px;color:var(--txt-secondary)}
 /* Faint technical-drawing grid behind the corridor simulation */
 #c3-flow-svg,#scatter{background-image:radial-gradient(circle,rgba(139,148,158,.10) 1px,transparent 1px);background-size:22px 22px}
 #c3-flow-svg [id^="flow-p-"] circle{filter:drop-shadow(0 0 2.5px currentColor)}

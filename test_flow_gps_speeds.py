@@ -63,6 +63,9 @@ if os.path.isfile(by_dir):
     check("measured bands have loadedKmh",
           any(m.get("loadedKmh") is not None for m in meas),
           meas[:1])
+    mc = c.get("measuredCapacity") or {}
+    check("measuredCapacity trucksPerHour > 5",
+          (mc.get("trucksPerHour") or 0) > 5, mc)
 else:
     print("  SKIP measuredSpeeds file asserts (no congestion_seg_by_dir.csv)")
 
@@ -84,7 +87,8 @@ check("replay sets sharedOpenFactor=1", "p.sharedOpenFactor=1" in js)
 check("does not reintroduce openFactor stretch clamp",
       "Math.min(2.5,targetAvg" not in js.replace(" ", ""))
 check("Use measured GPS control in HTML", "flowUseMeasuredGps()" in html)
-check("assumed headway labelled", "assumed" in html.lower() and "flow-headway" in html)
+check("headway control present", "flow-headway" in html)
+check("GPS map container present", 'id="c3-flow-map"' in html)
 
 # Live HTTP
 try:

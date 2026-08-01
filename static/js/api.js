@@ -21,7 +21,9 @@ async function saveMatrix(){
     if(d&&d.ok){ _matrix={sections:d.sections||[],paths:d.paths||[]};
       const validSec=new Set(_matrix.sections.map(s=>s.id));
       [..._gSelSec].forEach(id=>{if(!validSec.has(id))_gSelSec.delete(id);});
-      pathRender(); gsecRender(); gPathRender(); redrawScatter(); closeMatrix(); }
+      pathRender(); gsecRender(); gPathRender(); redrawScatter(); closeMatrix();
+      if(d.persisted) console.info('[constraints] saved →', d.persistPath||'data/constraints_local.json');
+    }
     else alert('Save failed: '+((d&&d.error)||'unknown')); }
   catch(e){ alert('Save failed: '+e.message); }
 }

@@ -519,6 +519,11 @@ chk $? "J68  disk snapshots write/load/stale-refresh" "see: python test_disk_sna
 $PY test_flow_gps_speeds.py >/dev/null 2>&1
 chk $? "J69  GPS-first flow + posted-limit ribbon" "see: python test_flow_gps_speeds.py"
 
+# J70 — Tab 1 leftovers: GPS map, constraints persist, live trucks, measured V/C,
+# refreshed GPS window.
+$PY test_tab1_leftovers.py >/dev/null 2>&1
+chk $? "J70  Tab1 map/constraints/trucks/V/C/GPS-window" "see: python test_tab1_leftovers.py"
+
 
 echo
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"

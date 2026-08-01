@@ -5,15 +5,15 @@ Dev server for the WBN FMS Simulator.
 - The model endpoints (trips/DT regression, weighbridge aggregation, rainfall + IWIP math) are the REAL
   extracted logic in simulator_api.py — editable, runs on the DB if env-var creds are set, else on the
   sample fixtures.
-- A few data-loader endpoints that weren't extracted (capability / trucks / constraints) are still
-  served from fixtures.
+- Constraints persist to data/constraints_local.json (GET/POST/reset).
+- Trucks live via simulator_api.api_simulator_trucks() (HAULAGE_IWIP_CLEAN); fixture on DB miss.
 
 No backend platform code, no database credentials committed.
 
 Run:  pip install flask  &&  python serve.py     then open  http://127.0.0.1:5055/simulator
 Optional real data:  FMS_DB_HOST=... FMS_DB_USER=... FMS_DB_PASS=... python serve.py
 """
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 import json
 import os
 import time
@@ -22,6 +22,7 @@ import simulator_api
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 FX = os.path.join(BASE, "fixtures")
+CONSTRAINTS_LOCAL = os.path.join(BASE, "data", "constraints_local.json")
 app = Flask(__name__, template_folder=os.path.join(BASE, "templates"))
 app.register_blueprint(simulator_api.bp)      # the real, editable model endpoints
 
@@ -140,24 +141,98 @@ def health():
 
 @app.route("/api/simulator/trucks")
 def _trucks():
-    # Still a fixture, and now says so. It carries no date, contractor or route
-    # column, so there is nothing here to filter on even if it were queried --
-    # see reports/full_app_audit.md.
-    d = fx("trucks")
+    """Live trucks from HAULAGE_IWIP_CLEAN (has TRUCK_ID). Fixture if no DB."""
+    try:
+        return simulator_api.api_simulator_trucks()
+    except Exception as exc:  # noqa: BLE001
+        print("[serve] trucks live failed (%s) -> fixture" % str(exc)[:100])
+        d = fx("trucks")
+        if isinstance(d, dict):
+            d = dict(d, servedFrom="fixture",
+                     servedFromReason="live truck query failed: %s" % str(exc)[:80])
+        return jsonify(d)
+
+
+def _constraints_default():
+    return fx("constraints")
+
+
+def _constraints_load():
+    """Prefer operator-saved local file; else committed fixture."""
+    try:
+        with open(CONSTRAINTS_LOCAL, encoding="utf-8") as f:
+            d = json.load(f)
+        if isinstance(d, dict) and d.get("ok") and (d.get("sections") or []):
+            d = dict(d)
+            d["persisted"] = True
+            d["persistPath"] = "data/constraints_local.json"
+            return d
+    except (OSError, ValueError, json.JSONDecodeError):
+        pass
+    d = _constraints_default()
     if isinstance(d, dict):
-        d = dict(d, servedFrom="fixture",
-                 servedFromReason="static truck list; not filterable")
-    return jsonify(d)
+        d = dict(d, persisted=False, persistPath=None)
+    return d
+
+
+def _constraints_write(payload):
+    os.makedirs(os.path.dirname(CONSTRAINTS_LOCAL), exist_ok=True)
+    tmp = CONSTRAINTS_LOCAL + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+    os.replace(tmp, CONSTRAINTS_LOCAL)
 
 
 @app.route("/api/simulator/constraints", methods=["GET", "POST"])
 def _constraints():
-    return jsonify(fx("constraints"))
+    if request.method == "GET":
+        return jsonify(_constraints_load())
+    body = request.get_json(force=True, silent=True) or {}
+    sections = body.get("sections") or []
+    paths = body.get("paths") or []
+    if not sections:
+        return jsonify({"ok": False, "error": "sections required"}), 400
+    # Normalise ids to ints; keep path section lists as ints.
+    out_secs = []
+    for s in sections:
+        try:
+            out_secs.append({
+                "id": int(s["id"]),
+                "name": (str(s.get("name") or "").strip() or ("Section %s" % s["id"])),
+            })
+        except (KeyError, TypeError, ValueError):
+            continue
+    out_paths = []
+    for p in paths:
+        try:
+            secs = [int(x) for x in (p.get("sections") or [])]
+            out_paths.append({
+                "origin": str(p.get("origin") or "").strip(),
+                "dest": str(p.get("dest") or "").strip(),
+                "sections": secs,
+            })
+        except (TypeError, ValueError):
+            continue
+    payload = {"ok": True, "sections": out_secs, "paths": out_paths,
+               "persisted": True, "persistPath": "data/constraints_local.json"}
+    try:
+        _constraints_write(payload)
+    except OSError as exc:
+        return jsonify({"ok": False, "error": "could not write constraints: %s" % exc}), 500
+    return jsonify(payload)
 
 
 @app.route("/api/simulator/constraints/reset", methods=["POST"])
 def _constraints_reset():
-    return jsonify(fx("constraints"))
+    try:
+        if os.path.isfile(CONSTRAINTS_LOCAL):
+            os.remove(CONSTRAINTS_LOCAL)
+    except OSError:
+        pass
+    d = _constraints_default()
+    if isinstance(d, dict):
+        d = dict(d, persisted=False, persistPath=None, reset=True)
+    return jsonify(d)
 
 
 if __name__ == "__main__":

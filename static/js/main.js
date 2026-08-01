@@ -165,9 +165,9 @@ function render(){
 function renderTrucks(){
   if(!_trucks) return; const qs=(q('trucksearch').value||'').trim().toLowerCase();
   const rows=_trucks.filter(t=>!qs||(t.truck+' '+t.contractor).toLowerCase().includes(qs));
-  // Fixture / unfiltered — the dispatch capability view has no TRUCK_ID, so this
-  // list cannot honour the date/IWIP/source bar. Say so; do not look measured.
-  const note=_trucksServedFrom==='fixture'?' · sample list (not filtered by bar above)':'';
+  // Live = HAULAGE_IWIP_CLEAN (TRUCK_ID). Fixture when DB/VPN is down.
+  const note=_trucksServedFrom==='fixture'?' · sample list (DB unavailable)'
+    :(_trucksServedFrom==='db'?' · live TRUCK_ID':'');
   q('truckcnt').textContent=rows.length+(qs?(' of '+_trucks.length):'')+' trucks'+note;
   q('trucks').innerHTML=rows.map(t=>`<tr><td><b>${t.truck}</b></td><td class="muted">${t.contractor}</td><td class="r">${fmt(t.trips)}</td><td class="r">${fmt(t.tripsPerDay,1)}</td><td class="r">${fmtM(t.wmt)}</td><td class="r muted">${fmt(t.tf,1)}</td></tr>`).join('')||'<tr><td colspan="6" class="empty">No matching trucks.</td></tr>';
 }
