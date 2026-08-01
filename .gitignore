@@ -11,6 +11,11 @@ data/gps_archive/
 data/*.pkl
 data/model_metadata.json
 data/training_metadata.json
+# P3 disk-backed snapshots — real dispatch tonnages; regenerate on next warm.
+data/cap_snapshot.json
+data/pr_snapshot.json
+data/cap_snapshot.json.tmp
+data/pr_snapshot.json.tmp
 # Phase 3 artifacts — derived from real production tonnages, and the mirror is
 # public. Regenerate with `python train_model.py`.
 data/validation_results.json

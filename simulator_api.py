@@ -15,6 +15,7 @@ import os
 import json
 import math
 import re
+import threading
 import time
 from collections import defaultdict, Counter
 
@@ -285,16 +286,53 @@ _CAP_TABLE = "[DISPATCH RESULTS LITE 2]"
 # and numbers coerced during the load, so the request path touches only
 # primitives.
 _CAP_TTL = 300.0                      # 5 min; new dispatch rows appear within one
-_CAP_SNAP = {"rows": None, "at": 0.0, "loading": False}
-_CAP_LOCK = __import__("threading").Lock()
+_CAP_SNAP = {"rows": None, "at": 0.0, "source": None, "refreshing": False}
+_CAP_LOCK = threading.Lock()
+# Disk tier (P3): memory > disk > fixture. Files hold production tonnages — gitignored.
+_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+_CAP_DISK = os.path.join(_DATA_DIR, "cap_snapshot.json")
+_PATH_DISK = os.path.join(_DATA_DIR, "pr_snapshot.json")
 
 
 def _cap_reset():
-    """Drop capability + path-response snapshots. Called by /api/retrain."""
+    """Drop in-memory capability + path-response snapshots. Disk files kept
+    so the next process can warm from them (P3). Called by /api/retrain."""
     with _CAP_LOCK:
         _CAP_SNAP["rows"] = None
         _CAP_SNAP["at"] = 0.0
+        _CAP_SNAP["source"] = None
+        _CAP_SNAP["refreshing"] = False
     _path_reset()
+
+
+def _atomic_json_write(path, payload):
+    """Write JSON via tmp+rename so a crash mid-write cannot leave a half file."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, separators=(",", ":"))
+    os.replace(tmp, path)
+
+
+def _cap_disk_write(rows, at):
+    try:
+        _atomic_json_write(_CAP_DISK, {"at": at, "rows": rows})
+    except Exception as exc:  # noqa: BLE001 — disk is an accelerator, not required
+        print("  cap disk write failed: %s" % str(exc)[:120], flush=True)
+
+
+def _cap_disk_read():
+    """Return {at, rows} or None. Corrupt/missing → None (fall through to DB)."""
+    try:
+        with open(_CAP_DISK, encoding="utf-8") as f:
+            data = json.load(f)
+        rows = data.get("rows")
+        at = float(data.get("at") or 0)
+        if not isinstance(rows, list) or not rows or at <= 0:
+            return None
+        return {"at": at, "rows": rows}
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _cap_load_rows():
@@ -330,8 +368,47 @@ def _cap_load_rows():
     return out
 
 
+def _cap_bg_refresh():
+    """Reload from DB in the background; overwrite memory + disk when done."""
+    try:
+        fresh = _cap_load_rows()
+        at = time.time()
+        with _CAP_LOCK:
+            _CAP_SNAP["rows"] = fresh
+            _CAP_SNAP["at"] = at
+            _CAP_SNAP["source"] = "db"
+            _CAP_SNAP["refreshing"] = False
+        _cap_disk_write(fresh, at)
+        print("  capability snapshot refreshed (%d rows)" % len(fresh), flush=True)
+    except Exception as exc:  # noqa: BLE001
+        with _CAP_LOCK:
+            _CAP_SNAP["refreshing"] = False
+        print("  capability snapshot refresh failed: %s" % str(exc)[:120], flush=True)
+
+
+def _cap_schedule_refresh():
+    """Start at most one background DB reload. Caller may hold _CAP_LOCK."""
+    if _CAP_SNAP.get("refreshing"):
+        return False
+    _CAP_SNAP["refreshing"] = True
+    threading.Thread(target=_cap_bg_refresh, daemon=True).start()
+    return True
+
+
+def _snapshot_disk_tag(snap):
+    """Fields to merge into an API payload when serving from the disk tier."""
+    if snap.get("source") != "disk" or snap.get("rows") is None:
+        return {}
+    age = max(0.0, time.time() - float(snap.get("at") or 0))
+    return {"servedFrom": "disk-snapshot", "snapshotAgeSec": round(age, 1)}
+
+
 def _cap_snapshot():
-    """Cached, normalised copy of the view. One slow load, then instant filters."""
+    """Cached view. Priority: fresh memory > disk (stale OK + bg refresh) > DB.
+
+    A fresh DB load also writes data/cap_snapshot.json so the next process
+    restart can answer in milliseconds instead of 14–20 s.
+    """
     now = time.time()
     rows = _CAP_SNAP["rows"]
     if rows is not None and (now - _CAP_SNAP["at"]) < _CAP_TTL:
@@ -340,12 +417,32 @@ def _cap_snapshot():
     # 17-second queries at a view that is slow precisely because it is busy.
     with _CAP_LOCK:
         rows = _CAP_SNAP["rows"]
-        if rows is not None and (time.time() - _CAP_SNAP["at"]) < _CAP_TTL:
+        age = (time.time() - _CAP_SNAP["at"]) if rows is not None else None
+        if rows is not None and age is not None and age < _CAP_TTL:
             return rows
+        # Stale memory: serve immediately, refresh in background (same idea as
+        # stale disk). Avoids blocking the operator on a 17 s SQL hit.
+        if rows is not None:
+            _cap_schedule_refresh()
+            return rows
+        # Empty memory — try disk before hitting the DB.
+        disk = _cap_disk_read()
+        if disk is not None:
+            _CAP_SNAP["rows"] = disk["rows"]
+            _CAP_SNAP["at"] = disk["at"]
+            _CAP_SNAP["source"] = "disk"
+            if (time.time() - disk["at"]) >= _CAP_TTL:
+                _cap_schedule_refresh()
+            return disk["rows"]
+        # No disk: blocking DB load, then persist (write outside the lock —
+        # a multi-MB JSON dump must not stall other requests).
         fresh = _cap_load_rows()
+        at = time.time()
         _CAP_SNAP["rows"] = fresh
-        _CAP_SNAP["at"] = time.time()
-        return fresh
+        _CAP_SNAP["at"] = at
+        _CAP_SNAP["source"] = "db"
+    _cap_disk_write(fresh, at)
+    return fresh
 
 
 def _cap_args():
@@ -551,7 +648,7 @@ def api_simulator_capability():
         "planTPerDT": round(tot["planWmt"] / tot["planDt"], 3) if tot["planDt"] else 0.0,
     })
 
-    return jsonify({
+    out = {
         "ok": True,
         "routes": [{"origin": p["origin"], "dest": p["dest"], "t": p["t"]} for p in paths],
         "paths": paths, "destinations": dests, "contractorProd": contrs,
@@ -572,7 +669,9 @@ def api_simulator_capability():
         # fleet that ignored the very filters the rest of the payload honours.
         "fleetNote": "fleet breakdown needs TRUCK_ID and is not available from "
                      "the dispatch table; omitted rather than served unfiltered",
-    })
+    }
+    out.update(_snapshot_disk_tag(_CAP_SNAP))
+    return jsonify(out)
 
 
 def _gf_db_conn():
@@ -658,8 +757,8 @@ def _other_feni_typical():
 # "Loading…" for 15–18 s and Apply never re-fetched it. Snapshot the ~13k rows
 # once; OLS + optional date filter run in Python in well under a second.
 _PATH_TTL = 300.0
-_PATH_SNAP = {"rows": None, "rain": None, "at": 0.0}
-_PATH_LOCK = __import__("threading").Lock()
+_PATH_SNAP = {"rows": None, "rain": None, "at": 0.0, "source": None, "refreshing": False}
+_PATH_LOCK = threading.Lock()
 
 
 def _path_reset():
@@ -667,6 +766,36 @@ def _path_reset():
         _PATH_SNAP["rows"] = None
         _PATH_SNAP["rain"] = None
         _PATH_SNAP["at"] = 0.0
+        _PATH_SNAP["source"] = None
+        _PATH_SNAP["refreshing"] = False
+
+
+def _path_disk_write(rows, rain, at):
+    """Persist path rows + rain. Rain keys are (date, area) tuples → list."""
+    try:
+        rain_list = [{"d": d, "a": a, "h": h} for (d, a), h in (rain or {}).items()]
+        _atomic_json_write(_PATH_DISK, {"at": at, "rows": rows, "rain": rain_list})
+    except Exception as exc:  # noqa: BLE001
+        print("  path disk write failed: %s" % str(exc)[:120], flush=True)
+
+
+def _path_disk_read():
+    try:
+        with open(_PATH_DISK, encoding="utf-8") as f:
+            data = json.load(f)
+        rows = data.get("rows")
+        at = float(data.get("at") or 0)
+        if not isinstance(rows, list) or not rows or at <= 0:
+            return None
+        rain = {}
+        for item in (data.get("rain") or []):
+            try:
+                rain[(str(item["d"]), str(item["a"]))] = float(item["h"])
+            except (KeyError, TypeError, ValueError):
+                continue
+        return {"at": at, "rows": rows, "rain": rain}
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _path_load():
@@ -710,7 +839,34 @@ def _path_load():
     return rows, rain
 
 
+def _path_bg_refresh():
+    try:
+        rows, rain = _path_load()
+        at = time.time()
+        with _PATH_LOCK:
+            _PATH_SNAP["rows"] = rows
+            _PATH_SNAP["rain"] = rain
+            _PATH_SNAP["at"] = at
+            _PATH_SNAP["source"] = "db"
+            _PATH_SNAP["refreshing"] = False
+        _path_disk_write(rows, rain, at)
+        print("  path-response snapshot refreshed (%d rows)" % len(rows), flush=True)
+    except Exception as exc:  # noqa: BLE001
+        with _PATH_LOCK:
+            _PATH_SNAP["refreshing"] = False
+        print("  path-response snapshot refresh failed: %s" % str(exc)[:120], flush=True)
+
+
+def _path_schedule_refresh():
+    if _PATH_SNAP.get("refreshing"):
+        return False
+    _PATH_SNAP["refreshing"] = True
+    threading.Thread(target=_path_bg_refresh, daemon=True).start()
+    return True
+
+
 def _path_snapshot():
+    """Cached LITE 3 + rain. Priority: fresh memory > disk > DB (+ disk write)."""
     now = time.time()
     if (_PATH_SNAP["rows"] is not None
             and (now - _PATH_SNAP["at"]) < _PATH_TTL):
@@ -719,11 +875,26 @@ def _path_snapshot():
         if (_PATH_SNAP["rows"] is not None
                 and (time.time() - _PATH_SNAP["at"]) < _PATH_TTL):
             return _PATH_SNAP["rows"], _PATH_SNAP["rain"]
+        if _PATH_SNAP["rows"] is not None:
+            _path_schedule_refresh()
+            return _PATH_SNAP["rows"], _PATH_SNAP["rain"]
+        disk = _path_disk_read()
+        if disk is not None:
+            _PATH_SNAP["rows"] = disk["rows"]
+            _PATH_SNAP["rain"] = disk["rain"]
+            _PATH_SNAP["at"] = disk["at"]
+            _PATH_SNAP["source"] = "disk"
+            if (time.time() - disk["at"]) >= _PATH_TTL:
+                _path_schedule_refresh()
+            return disk["rows"], disk["rain"]
         rows, rain = _path_load()
+        at = time.time()
         _PATH_SNAP["rows"] = rows
         _PATH_SNAP["rain"] = rain
-        _PATH_SNAP["at"] = time.time()
-        return rows, rain
+        _PATH_SNAP["at"] = at
+        _PATH_SNAP["source"] = "db"
+    _path_disk_write(rows, rain, at)
+    return rows, rain
 
 
 def api_simulator_path_response():
@@ -830,12 +1001,14 @@ def api_simulator_path_response():
                     rec["mWet"] = round(sum(wv) / len(wv), 3)
                     rec["mN"] = len(wv)
         out["%s>%s" % (o, de)] = rec
-    return jsonify({
+    payload = {
         "ok": True, "paths": out,
         "from": frm or None, "to": to or None,
         "nRows": len(rows),
         "source": "WBN_DATABASE.dbo.DISPATCH RESULTS LITE 3",
-    })
+    }
+    payload.update(_snapshot_disk_tag(_PATH_SNAP))
+    return jsonify(payload)
 
 def _density_fit():
     """The site-wide within-segment speed-density fit, read from its report file.

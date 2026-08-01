@@ -508,6 +508,13 @@ else
   echo "  SKIP J67  (no server on :5055 — start serve.py to exercise)"
 fi
 
+# J68 — disk-backed snapshots (P3). After restart, empty memory used to force a
+# 14–20 s SQL hit. data/cap_snapshot.json + pr_snapshot.json warm the process;
+# stale disk serves immediately and refreshes in the background.
+# Offline unit always runs; live file asserts when :5055 is in database mode.
+$PY test_disk_snapshot.py >/dev/null 2>&1
+chk $? "J68  disk snapshots write/load/stale-refresh" "see: python test_disk_snapshot.py"
+
 
 echo
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"

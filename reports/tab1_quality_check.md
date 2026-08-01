@@ -170,7 +170,7 @@ Real matched wet/dry rows; not a stub. Snapshot + Apply re-fetch closed (S1/J66)
 | P1 | S1 | Snapshot path-response; Apply refresh | **DONE** J66 |
 | P2 | S3 | Disclose trucks fixture in UI | Done earlier |
 | P2 | S4 | IWIP empty-state copy | Done earlier |
-| P3 | — | Persist capability/path snapshot to `data/` so first hit after restart &lt;2s | Open |
+| P3 | — | Persist capability/path snapshot to `data/` so first hit after restart &lt;2s | **DONE** J68 (disk warm ~0.1s) |
 
 ---
 

@@ -57,7 +57,10 @@ d3, t3 = get({"from": "2026-07-01", "to": "2026-07-31"})
 print("     timings: first=%.2fs  second=%.2fs  third=%.2fs" % (t1, t2, t3))
 print("     nRows:   wide=%s  apr=%s  july=%s" % (
     d1.get("nRows"), d2.get("nRows"), d3.get("nRows")))
-check("live (not fixture)", d1.get("servedFrom") is None, d1.get("servedFrom"))
+# disk-snapshot is still live data (P3 tier); only fixture is the offline stand-in.
+check("live (not fixture)",
+      d1.get("servedFrom") != "fixture",
+      d1.get("servedFrom"))
 check("has paths", len(d1.get("paths") or {}) >= 10, len(d1.get("paths") or {}))
 check("second+third under 3s (snapshot filter path)",
       t2 < 3.0 and t3 < 3.0, "t2=%.2f t3=%.2f" % (t2, t3))

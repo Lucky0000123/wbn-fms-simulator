@@ -16,6 +16,7 @@ Optional real data:  FMS_DB_HOST=... FMS_DB_USER=... FMS_DB_PASS=... python serv
 from flask import Flask, render_template, jsonify
 import json
 import os
+import time
 
 import simulator_api
 
@@ -174,18 +175,23 @@ if __name__ == "__main__":
         import threading
         def _warm():
             try:
+                t0 = time.time()
                 simulator_api._cap_snapshot()
                 # flush: stdout is block-buffered under nohup while Flask logs
                 # to stderr, so an unflushed print looks like a thread that
                 # never ran.
-                print("  capability snapshot warm (%d rows)"
-                      % len(simulator_api._CAP_SNAP["rows"] or []), flush=True)
+                src = simulator_api._CAP_SNAP.get("source") or "?"
+                print("  capability snapshot warm (%d rows, %s, %.1fs)"
+                      % (len(simulator_api._CAP_SNAP["rows"] or []), src,
+                         time.time() - t0), flush=True)
             except Exception as exc:                      # noqa: BLE001
                 print("  capability snapshot warm-up failed: %s" % str(exc)[:120], flush=True)
             try:
+                t0 = time.time()
                 rows, _rain = simulator_api._path_snapshot()
-                print("  path-response snapshot warm (%d rows)" % len(rows or []),
-                      flush=True)
+                src = simulator_api._PATH_SNAP.get("source") or "?"
+                print("  path-response snapshot warm (%d rows, %s, %.1fs)"
+                      % (len(rows or []), src, time.time() - t0), flush=True)
             except Exception as exc:                      # noqa: BLE001
                 print("  path-response warm-up failed: %s" % str(exc)[:120],
                       flush=True)

@@ -91,7 +91,8 @@ elif mode == "database":
     print("\n=== live DB: planTripsPerDT must look like a rate ===")
     wide = cap(**{"from": "2025-09-01", "to": "2026-07-31"})
     k = wide.get("kpi") or {}
-    check("live capability (not fixture)", wide.get("servedFrom") is None, wide.get("servedFrom"))
+    check("live capability (not fixture)",
+          wide.get("servedFrom") != "fixture", wide.get("servedFrom"))
     ptp = float(k.get("planTripsPerDT") or 0)
     tpd = float(k.get("tripsPerDT") or 0)
     eff = float(k.get("effTrip") or 0)

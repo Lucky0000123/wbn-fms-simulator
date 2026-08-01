@@ -80,7 +80,8 @@ WIDE = {"from": "2025-09-01", "to": "2026-07-31"}
 base, t_base = cap(**WIDE)
 check("baseline returns data", base.get("ok") and (base.get("kpi") or {}).get("days", 0) > 30,
       (base.get("kpi") or {}).get("days"))
-check("it is NOT a fixture fallback", base.get("servedFrom") is None, base.get("servedFrom"))
+check("it is NOT a fixture fallback",
+      base.get("servedFrom") != "fixture", base.get("servedFrom"))
 
 narrow, _ = cap(**{"from": "2026-07-01", "to": "2026-07-31"})
 check("date range changes the day count",
