@@ -1,7 +1,7 @@
 # Tab 1 quality check — Capability & Scenario
 
-**Date:** 2026-07-31  
-**HEAD:** `4a42330`  
+**Date:** 2026-07-31 (closure live-verify 2026-08-01)  
+**HEAD:** post-`2f7dc3d` (path snapshot + WB honesty)  
 **Mode:** live DB (`dataMode=database`)  
 **Method:** API probes + Playwright browser + SQL spot-checks against `DISPATCH RESULTS LITE 2`  
 **Machine evidence:** `reports/tab1_quality_check.json`, screenshots `reports/tab1_qc_*.png`
@@ -13,12 +13,12 @@
 | | Count |
 |---|---|
 | Working | Most of the tab — filters, KPIs (tonnage/fleet), tables, 3D scatter, flow planner, monthly chart |
-| **Must fix** | ~~Trip eff vs plan~~ → **FIXED 2026-08-01** (`_planned_trip_counts`, gate J65) |
-| Should fix | 2 remaining — rain cold load (~15s), weighbridge-summary frozen twin (looks live) |
-| Done this pass | Trucks fixture disclosed in UI; IWIP empty-state copy; KPI clamp &gt;200% |
-| Acceptable / known | Cold snapshot ~17–20s once per process; warm Apply &lt;1s |
+| **Must fix** | ~~Trip eff vs plan~~ → **FIXED + LIVE-VERIFIED 2026-08-01** (J65; July effTrip ~0.92) |
+| Should fix | ~~S1 rain cold / Apply~~ → **FIXED** (J66); ~~S2 WB honesty~~ → **FIXED** (J67) |
+| Done this pass | Trucks fixture disclosed; IWIP empty-state copy; KPI clamp &gt;200%; path snapshot; WB stale tag |
+| Acceptable / known | Cold capability ~17–20s / path ~14s once per process; warm Apply &lt;1s |
 
-**Bottom line:** Filters and tonnage KPIs work. Trip-eff / Plan-tr/DT aggregation is fixed in code (offline J65 mutation-tested). Re-verify live HTTP asserts when SSD/VPN is back (`dataMode=database`).
+**Bottom line:** P0/P1 Tab 1 items closed. Live: July KPI `planTripsPerDT≈4.7`, `effTrip≈0.92`. Path-response warm 0.00–0.02s; nRows 6332→698→44 under date filter. WB summary reports `ageDays`/`stale` (table ends 2026-07-09; `otherShare=100%` that day is real IWIP workshop mix).
 
 ---
 
@@ -33,8 +33,8 @@
 | 4 | Efficiency / 3D scatter + scenario | capability `daily` / `dailyByPath` | Yes (client re-agg) |
 | 5 | Haul-road flow planner | capability + constraints + wb-positions | Partial |
 | 6 | Shift Performance / zones / findings | client from scatter selection | Client |
-| 7 | Weighbridge Load strip | `/api/weighbridge-summary` (+ shift-context on scenario) | **No** |
-| 8 | Rainfall Impact by Route | `/api/simulator/path-response` | **No** (once at init) |
+| 7 | Weighbridge Load strip | `/api/weighbridge-summary` (+ shift-context on scenario) | No (site-wide latest; now tagged stale) |
+| 8 | Rainfall Impact by Route | `/api/simulator/path-response` | **Yes** (Apply → loadPathResp) |
 | 9 | IWIP Traffic Impact | shift-context after scenario select | **No** (date bar) |
 | 10 | Monthly trend | capability `months` | Yes |
 | 11 | Contractor / Routes / Dest tables | capability | Yes |
@@ -65,37 +65,25 @@ SQL proof (rows with both TARGET TRIP and DT PLAN present):
 | July (with plan) | 4.27 | **0.225** | **4.67** | **0.91 (91%)** | 0.85 |
 | Fixture capture (old) | 4.06 | — | 4.61 | 0.88 | 0.91 |
 
-Live API today still serves the bug path → KPI **1770–2649%**.
+**Fix (shipped + live-verified 2026-08-01):** `_planned_trip_counts(rate, plan_dt)` stores `TARGET × DT_PLAN` in `_ptr`. Gate **J65** — offline always; live July `effTrip` in [0.3, 2.0] (measured ~0.92; was 17.7). Mutation: helper returns raw rate → planTripsPerDT=0.24, effTrip=26.7 → FAIL.
 
-So every **Plan tr/DT**, **Trip eff**, and the red/green trip-eff cells in contractor/route tables are polluted.
-
-**Fix (shipped 2026-08-01):** `_planned_trip_counts(rate, plan_dt)` stores `TARGET × DT_PLAN` in `_ptr`. Gate **J65** (`test_plan_trip_rate.py`) — offline unit always runs; live asserts when DB up. Mutation: helper returns raw rate → planTripsPerDT=0.24, effTrip=26.7 → FAIL.
-
-**UI clamp:** KPI cards and `eff()` table cells show “—” if eff &gt; 200% or &lt; 0%.
-
-**Live re-check needed** when VPN is up: July+IWIP `effTrip` should be ~0.9 (was 17.7).
+**UI clamp:** KPI cards and `eff()` table cells show “—” if eff &gt; 200% or &lt; 0%. Per-path can honestly sit near 2× (e.g. POS 12→POS 12); J65 path check uses &gt;3 to catch the aggregation bug without flaking.
 
 ---
 
 ## SHOULD FIX
 
-### S1 — Rainfall table takes ~15–18s to appear
+### S1 — Rainfall table takes ~15–18s to appear — **FIXED 2026-08-01**
 
-- `/api/simulator/path-response` cold ~14–18s; UI stays on “Loading rainfall-matched route history…”.
-- Data is real when it lands (mDry/mWet present; e.g. TF→POS 11 −20.2% rain-sensitive).
-- Endpoint **does** respond to date args, but **Apply does not re-fetch** it — date bar changes KPIs while rain table stays on the init window.
-- **Fix:** same whole-view snapshot pattern as capability; optionally re-call on Apply.
+- `_path_snapshot()` (TTL 300s) + background warm in `serve.py`; warm Apply **0.00–0.02s** (cold `_path_load` still ~14s once).
+- `load()` → `loadPathResp()` with `filterParams()` so Apply refreshes the rain panel.
+- Gate **J66** (`test_path_response_perf.py`): warm &lt;3s; nRows shrinks 6332→698→44; overlapping path `n` shrinks.
 
-### S2 — Weighbridge summary is a frozen twin of the fixture
+### S2 — Weighbridge summary honesty — **FIXED 2026-08-01**
 
-| Field | Live response | Committed fixture |
-|---|---|---|
-| bridges / trucks / busiest / share / date | 6 / 185 / 11 / 51.4% / **2026-07-09** | **identical** |
-| `servedFrom` | `null` (looks live) | — |
+Live query was always real; table ends **2026-07-09**. `otherShare: 100%` that day is correct (all Chinese IWIP workshop contractors, none in `{RIM,PPP,…}`). Dishonesty was missing age/source.
 
-Operator sees “latest” bridge activity; it is the capture frozen at 2026-07-09 with **no disclosure**. `otherShare: 100%` is also suspicious.
-
-**Fix:** either query fresh data and tag date, or set `servedFrom: "fixture"` / `stale: true` when serving the twin.
+**Shipped:** `source`, `ageDays`, `stale` (age&gt;3), `staleReason`; UI status shows “as of … (stale — table ends …)”. Gate **J67**.
 
 ### S3 — Trucks table ignores filters and does not say so in the UI
 
@@ -137,7 +125,7 @@ Operator sees “latest” bridge activity; it is the capture frozen at 2026-07-
 | Trips/DT | OK | 4.00 |
 | t/DT productivity | OK | 181 |
 | WMT vs plan (effWMT) | OK | ~94% wide |
-| Trip eff vs plan | **BROKEN** | see C1 |
+| Trip eff vs plan | **OK** (~91%) | see C1 (fixed) |
 | Actual ↔ Planned toggle | OK | labels swap; numbers move |
 
 Arithmetic checks: `wmtPerDay ≈ Σ path.t / days`, `tf = t/trips`, `tripsPerDT = trips/dt` — pass.
@@ -169,39 +157,38 @@ Canonical names: no stale `FENI A` / `HUAFEI.C01` in live paths (POS 12 etc. are
 
 ### Rain (once loaded)
 
-Real matched wet/dry rows; not a stub. Timing and Apply re-scope are the gaps (S1).
+Real matched wet/dry rows; not a stub. Snapshot + Apply re-fetch closed (S1/J66).
 
 ---
 
 ## Priority fix list
 
-| Pri | ID | Issue | Effort |
+| Pri | ID | Issue | Status |
 |---|---|---|---|
-| P0 | C1 | Fix `TARGET TRIP` aggregation → sane Plan tr/DT & Trip eff | S (one accumulator change + gate) |
-| P1 | S2 | Tag or refresh weighbridge-summary | S |
-| P1 | S1 | Snapshot/cache path-response; optional Apply refresh | M |
-| P2 | S3 | Disclose trucks fixture in UI | XS |
-| P2 | S4 | IWIP empty-state copy | XS |
-| P3 | — | Persist capability snapshot to `data/` so first hit after restart &lt;2s | M |
+| P0 | C1 | Fix `TARGET TRIP` aggregation → sane Plan tr/DT & Trip eff | **DONE** J65 |
+| P1 | S2 | Tag weighbridge-summary source/age/stale | **DONE** J67 |
+| P1 | S1 | Snapshot path-response; Apply refresh | **DONE** J66 |
+| P2 | S3 | Disclose trucks fixture in UI | Done earlier |
+| P2 | S4 | IWIP empty-state copy | Done earlier |
+| P3 | — | Persist capability/path snapshot to `data/` so first hit after restart &lt;2s | Open |
 
 ---
 
 ## What not to “fix”
 
 - Congestion tab / plan tabs — out of scope for this Page 1 pass.
-- Trucks not filterable — honest omission until a TRUCK_ID source exists; only disclosure is missing.
-- Rain/WB not moving on Apply — document until S1/S2 done; do not claim they follow the date bar.
+- Trucks not filterable — honest omission until a TRUCK_ID source exists; disclosure is enough.
+- `otherShare=100%` on 2026-07-09 — real contractor mix that day, not a fixture twin.
 - Availability / congestion in tonnage — still correctly out (J52/J53); Tab 1 does not reintroduce them.
 
 ---
 
-## Suggested gate (when fixing C1)
+## Gates (closed 2026-08-01)
 
 ```text
-J65  planTripsPerDT is a weighted TARGET TRIP rate, not SUM(rate)/SUM(DT)
-     — wide excl-IWIP: 0.5 <= planTripsPerDT <= 10
-     — effTrip in [0.3, 2.0] when planWmt > 0
-     — mutation: restore SUM(TARGET)/SUM(DT PLAN) → fail
+J65  planTripsPerDT is weighted TARGET TRIP rate; July effTrip ~0.9 (was 17.7)
+J66  path-response snapshotted; warm <3s; date filter shrinks nRows / path n
+J67  weighbridge-summary discloses source, ageDays, stale when age>3
 ```
 
 ---

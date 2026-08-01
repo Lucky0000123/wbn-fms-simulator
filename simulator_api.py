@@ -290,10 +290,11 @@ _CAP_LOCK = __import__("threading").Lock()
 
 
 def _cap_reset():
-    """Drop the snapshot. Called by /api/retrain so fresh data is picked up."""
+    """Drop capability + path-response snapshots. Called by /api/retrain."""
     with _CAP_LOCK:
         _CAP_SNAP["rows"] = None
         _CAP_SNAP["at"] = 0.0
+    _path_reset()
 
 
 def _cap_load_rows():
@@ -651,43 +652,103 @@ def _other_feni_typical():
         return None
     return _OTHER_FENI_TYPICAL
 
+# ── path-response snapshot ───────────────────────────────────────────────────
+# DISPATCH RESULTS LITE 3 + rain is the same class of expensive view as capability
+# (~15 s cold over the site VPN). Tab 1 QC (2026-07-31): rain panel sat on
+# "Loading…" for 15–18 s and Apply never re-fetched it. Snapshot the ~13k rows
+# once; OLS + optional date filter run in Python in well under a second.
+_PATH_TTL = 300.0
+_PATH_SNAP = {"rows": None, "rain": None, "at": 0.0}
+_PATH_LOCK = __import__("threading").Lock()
+
+
+def _path_reset():
+    with _PATH_LOCK:
+        _PATH_SNAP["rows"] = None
+        _PATH_SNAP["rain"] = None
+        _PATH_SNAP["at"] = 0.0
+
+
+def _path_load():
+    """Pull LITE 3 haul rows + rain gauges. Normalise once at load."""
+    conn = _conn("WBN_DATABASE")
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT ORIGIN, DESTINATION, NB_DT, RIT, WMT, [DATE] "
+            "FROM [DISPATCH RESULTS LITE 3] "
+            "WHERE (CONTRACTOR IS NULL OR CONTRACTOR<>'IWIP') "
+            "AND DATE>=DATEADD(month,-20,GETDATE()) AND NB_DT>0 AND RIT>0 "
+            # ~200 rows carry a NULL DESTINATION. They produced an
+            # unselectable blank entry in the Plan tab's route list.
+            "AND ORIGIN IS NOT NULL AND LTRIM(RTRIM(ORIGIN))<>'' "
+            "AND DESTINATION IS NOT NULL AND LTRIM(RTRIM(DESTINATION))<>''")
+        raw = cur.fetchall()
+        rain = {}
+        try:
+            cur.execute(
+                "SELECT [DATE], Area, H2O FROM AVG_RAIN_BY_DATE_AREA "
+                "WHERE Area IN ('TOFU','KAO RAHAI') AND H2O IS NOT NULL "
+                "AND [DATE]>=DATEADD(month,-20,GETDATE())")
+            for d, area, h2o in cur.fetchall():
+                ds = d.isoformat() if hasattr(d, "isoformat") else str(d)[:10]
+                rain[(ds, str(area))] = float(h2o)
+        except Exception:  # noqa: BLE001
+            rain = {}
+    finally:
+        conn.close()
+    rows = []
+    for o, de, nb, rit, wmt, dat in raw:
+        co, cd = _canon(o), _canon(de)
+        if not co or not cd:
+            continue
+        ds = dat.isoformat() if hasattr(dat, "isoformat") else str(dat)[:10]
+        rows.append({
+            "o": co, "dd": cd, "d": ds,
+            "dt": float(nb), "trips": float(rit), "t": float(wmt or 0),
+        })
+    return rows, rain
+
+
+def _path_snapshot():
+    now = time.time()
+    if (_PATH_SNAP["rows"] is not None
+            and (now - _PATH_SNAP["at"]) < _PATH_TTL):
+        return _PATH_SNAP["rows"], _PATH_SNAP["rain"]
+    with _PATH_LOCK:
+        if (_PATH_SNAP["rows"] is not None
+                and (time.time() - _PATH_SNAP["at"]) < _PATH_TTL):
+            return _PATH_SNAP["rows"], _PATH_SNAP["rain"]
+        rows, rain = _path_load()
+        _PATH_SNAP["rows"] = rows
+        _PATH_SNAP["rain"] = rain
+        _PATH_SNAP["at"] = time.time()
+        return rows, rain
+
+
 def api_simulator_path_response():
     """Per-path fleet→efficiency response from the historical DB (LITE 3): fits trips/DT = a + b·DT for
     each route so the scenario planner can predict how efficiency (and thus WMT) shifts as you add/remove
-    trucks. Only a MEASURED decline (b<0) is later applied — confounded/flat paths stay flat."""
-    try:
-        conn = _conn('WBN_DATABASE')
-        cur = conn.cursor()
-        cur.execute("SELECT ORIGIN, DESTINATION, NB_DT, RIT, WMT, [DATE] FROM [DISPATCH RESULTS LITE 3] "
-                    "WHERE (CONTRACTOR IS NULL OR CONTRACTOR<>'IWIP') "
-                    "AND DATE>=DATEADD(month,-20,GETDATE()) AND NB_DT>0 AND RIT>0 "
-                    # ~200 rows carry a NULL DESTINATION. They produced an
-                    # unselectable blank entry in the Plan tab's route list.
-                    "AND ORIGIN IS NOT NULL AND LTRIM(RTRIM(ORIGIN))<>'' "
-                    "AND DESTINATION IS NOT NULL AND LTRIM(RTRIM(DESTINATION))<>''")
-        rows = cur.fetchall()
-        # per-day rainfall by mine area — TOFU serves TF routes, KAO RAHAI serves KR routes
-        rain = {}
-        try:
-            cur.execute("SELECT [DATE], Area, H2O FROM AVG_RAIN_BY_DATE_AREA "
-                        "WHERE Area IN ('TOFU','KAO RAHAI') AND H2O IS NOT NULL "
-                        "AND [DATE]>=DATEADD(month,-20,GETDATE())")
-            for d, area, h2o in cur.fetchall():
-                rain[(d, area)] = float(h2o)
-        except Exception:
-            rain = {}
-        conn.close()
-    except Exception:
-        # Re-raise so _register serves the fixture. Returning an error payload
-        # with HTTP 200 looks like success to the wrapper, so the fallback never
-        # fired and this endpoint went blank whenever the VPN dropped.
-        raise
+    trucks. Only a MEASURED decline (b<0) is later applied — confounded/flat paths stay flat.
+
+    Honours optional from/to (and uses the capability snapshot pattern) so Tab 1
+    Apply can refresh the rain panel without a 15 s SQL hit every time.
+    """
+    # Re-raise on DB failure so _register serves the fixture — returning
+    # {"ok": false} with HTTP 200 used to skip the fallback entirely.
+    rows, rain = _path_snapshot()
+    a = request.args
+    frm = (a.get("from") or "").strip()[:10]
+    to = (a.get("to") or "").strip()[:10]
+    if frm or to:
+        rows = [r for r in rows
+                if (not frm or r["d"] >= frm) and (not to or r["d"] <= to)]
+
     from collections import defaultdict
     # Route labels come from the shared canonicaliser so path keys match the
     # model's vocabulary exactly. The rain gauge is then chosen from that
     # canonical node rather than from a raw-string prefix.
-    _kr = _canon
-    _area = lambda o: {"TF": "TOFU", "KR": "KAO RAHAI"}.get(_canon(o))
+    _area = lambda o: {"TF": "TOFU", "KR": "KAO RAHAI"}.get(o)
 
     def _ols2(pts):
         """Multivariate OLS  eff = a + b·DT + c·rain  over rows that have a rain match.
@@ -717,9 +778,9 @@ def api_simulator_path_response():
         return (rhs[1] / M[1][1], rhs[2] / M[2][2], n, rhs[0] / M[0][0], Sd / n)
 
     byp = defaultdict(list)
-    for o, de, nb, rit, wmt, dat in rows:
-        rn = rain.get((dat, _area(o)))
-        byp[(_kr(o), _kr(de))].append((float(nb), float(rit), float(wmt or 0), rn))
+    for r in rows:
+        rn = rain.get((r["d"], _area(r["o"])))
+        byp[(r["o"], r["dd"])].append((r["dt"], r["trips"], r["t"], rn))
     out = {}
     for (o, de), v in byp.items():
         if len(v) < 25:
@@ -769,7 +830,12 @@ def api_simulator_path_response():
                     rec["mWet"] = round(sum(wv) / len(wv), 3)
                     rec["mN"] = len(wv)
         out["%s>%s" % (o, de)] = rec
-    return jsonify({"ok": True, "paths": out})
+    return jsonify({
+        "ok": True, "paths": out,
+        "from": frm or None, "to": to or None,
+        "nRows": len(rows),
+        "source": "WBN_DATABASE.dbo.DISPATCH RESULTS LITE 3",
+    })
 
 def _density_fit():
     """The site-wide within-segment speed-density fit, read from its report file.
@@ -1007,8 +1073,17 @@ def api_simulator_shift_context():
                     "wbNote": None if bridges else "No weighbridge weigh data before Dec 2025 for this shift."})
 
 def api_weighbridge_summary():
-    """Small home-page status payload. Deliberately avoids the simulator's 90-day wait-curve query."""
+    """Small home-page status payload. Deliberately avoids the simulator's 90-day wait-curve query.
+
+    HAULAGE_IWIP_CLEAN currently ends 2026-07-09. When that day is all IWIP
+    workshop contractors (Chinese workshop names, not RIM/PPP/…), otherShare is
+    genuinely 100% — that is not a bug. What WAS dishonest: returning that
+    payload with no source/age and looking identical to the committed fixture
+    so the UI read as "latest live". Always tag source + ageDays; mark stale
+    when the newest day is more than 3 calendar days behind today.
+    """
     import time as _time
+    from datetime import date as _date
     global _WB_HOME_CACHE
     if _WB_HOME_CACHE and _time.time() - _WB_HOME_CACHE[0] < 600:
         return jsonify(_WB_HOME_CACHE[1])
@@ -1019,6 +1094,7 @@ def api_weighbridge_summary():
                     "AND [DATE]<='2100-01-01'")
         row = cur.fetchone(); latest = row[0] if row else None
         counts = []
+        raw = []
         if latest:
             cur.execute("SELECT WB_ID, CONTRACTOR, COUNT(*) FROM HAULAGE_IWIP_CLEAN "
                         "WHERE [DATE]=%s AND WB_ID<>'' AND WB_ID IS NOT NULL GROUP BY WB_ID,CONTRACTOR", (latest,))
@@ -1033,15 +1109,30 @@ def api_weighbridge_summary():
         status = "Balanced" if share <= 25 else "Monitor concentration" if share <= 40 else "Load concentrated"
         wbn_haulers = {"RIM", "PPP", "SSS", "SMA", "STM", "HJS", "GMG", "CKB", "HFNC"}
         other = sum(n for _wb, cont, n in raw if cont not in wbn_haulers) if latest else 0
-        result = {"ok": True, "date": latest.isoformat() if latest else None, "bridges": len(counts),
+        latest_d = latest.isoformat() if latest and hasattr(latest, "isoformat") else (str(latest)[:10] if latest else None)
+        age = None
+        if latest_d:
+            try:
+                age = (_date.today() - _date.fromisoformat(latest_d)).days
+            except ValueError:
+                age = None
+        result = {"ok": True, "date": latest_d, "bridges": len(counts),
                   "trucks": total, "perBridge": round(total / len(counts), 1) if counts else 0,
                   "busiest": busiest[0], "busiestShare": share,
-                  "otherShare": round(100 * other / total, 1) if total else 0, "status": status}
+                  "otherShare": round(100 * other / total, 1) if total else 0, "status": status,
+                  "source": "WBN_DATABASE.dbo.HAULAGE_IWIP_CLEAN",
+                  "ageDays": age,
+                  "stale": bool(age is not None and age > 3),
+                  "staleReason": (
+                      "newest weighbridge day in HAULAGE_IWIP_CLEAN is %d days old "
+                      "(table ends %s; not a live feed)" % (age, latest_d)
+                  ) if (age is not None and age > 3) else None}
         _WB_HOME_CACHE = (_time.time(), result)
         return jsonify(result)
     except Exception:
         if _WB_HOME_CACHE:
             stale = dict(_WB_HOME_CACHE[1]); stale["stale"] = True
+            stale["staleReason"] = stale.get("staleReason") or "served from process cache after DB error"
             return jsonify(stale)
         # The stale-cache branch above is PREFERRED over the fixture: it is real
         # data from minutes ago rather than a shipped sample, and it already

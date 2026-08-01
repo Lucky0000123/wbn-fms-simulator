@@ -111,9 +111,12 @@ elif mode == "database":
           0.3 <= float(jk.get("effTrip") or 0) <= 2.0,
           jk.get("effTrip"))
 
+    # Per-path can honestly sit near 2× (e.g. POS 12→POS 12 at 2.0001). The
+    # aggregation bug produced ~17× at KPI and path level — threshold 3 catches
+    # that without flaking on real over-plan performers.
     crazy = [p for p in (wide.get("paths") or [])
-             if (p.get("planTripsPerDT") or 0) > 0.5 and (p.get("effTrip") or 0) > 2]
-    check("no path with planTripsPerDT>0.5 has effTrip>2",
+             if (p.get("planTripsPerDT") or 0) > 0.5 and (p.get("effTrip") or 0) > 3]
+    check("no path with planTripsPerDT>0.5 has effTrip>3",
           not crazy,
           [(p.get("origin"), p.get("dest"), p.get("effTrip"), p.get("planTripsPerDT"))
            for p in crazy[:5]])

@@ -182,6 +182,13 @@ if __name__ == "__main__":
                       % len(simulator_api._CAP_SNAP["rows"] or []), flush=True)
             except Exception as exc:                      # noqa: BLE001
                 print("  capability snapshot warm-up failed: %s" % str(exc)[:120], flush=True)
+            try:
+                rows, _rain = simulator_api._path_snapshot()
+                print("  path-response snapshot warm (%d rows)" % len(rows or []),
+                      flush=True)
+            except Exception as exc:                      # noqa: BLE001
+                print("  path-response warm-up failed: %s" % str(exc)[:120],
+                      flush=True)
         threading.Thread(target=_warm, daemon=True).start()
 
     mode = "REAL DB" if simulator_api._db_ready() else "sample fixtures"

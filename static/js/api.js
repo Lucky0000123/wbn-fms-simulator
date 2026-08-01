@@ -50,6 +50,9 @@ async function load(){
   gsecRender(); gPathRender();
   render();
   loadTrucks();
+  // Rain / path-response used to load once at init and ignore Apply. Re-fetch
+  // with the same filter bar so the rainfall table tracks the date window.
+  loadPathResp();
   // Surface the round-trip so a regression back to per-request SQL is visible
   // in the console without opening the network tab.
   console.info('[capability] %.0f ms  %s..%s  iwip=%s',
@@ -64,8 +67,42 @@ async function loadTrucks(){
   }catch(e){ q('trucks').innerHTML='<tr><td colspan="6" class="empty">Could not load trucks.</td></tr>'; return; }
   renderTrucks();
 }
-async function loadPathResp(){try{const d=await(await fetch('/api/simulator/path-response',{cache:'no-store'})).json();if(d&&d.ok){_pathResp=d.paths||{};renderRainContext();if(_flowSim)evaluateFlowScenario();if(q('tabbtn-plan')&&q('tabbtn-plan').classList.contains('on'))renderPlanBuilder();}else renderRainContext(d&&d.error);}catch(e){renderRainContext('Rainfall history unavailable');}}
-async function loadCapabilityWeighbridge(){const status=q('cap-wb-status');try{const d=await(await fetch('/api/weighbridge-summary',{cache:'no-store'})).json();if(!d||!d.ok)throw new Error(d&&d.error||'Weighbridge activity unavailable');q('cap-wb-open').textContent=fmt(d.bridges);q('cap-wb-trucks').textContent=fmt(d.trucks);q('cap-wb-share').textContent=fmt(d.busiestShare,1)+'%';q('cap-wb-other').textContent=fmt(d.otherShare,1)+'%';const critical=d.busiestShare>40,watch=d.busiestShare>25;status.style.borderLeftColor=critical?'#ef4444':watch?'#f59e0b':'#22c55e';status.textContent=`${critical?'🔴':watch?'🟡':'🟢'} ${d.status} · ${d.perBridge} trucks/bridge · busiest ${d.busiest||'—'} · ${d.date||'latest'}${d.stale?' (cached)':''}`;}catch(e){status.style.borderLeftColor='#64748b';status.textContent=e.message;}}
+async function loadPathResp(){
+  const body=q('cap-rain');
+  if(body) body.innerHTML='<tr><td colspan="5" class="muted">Loading rainfall-matched route history…</td></tr>';
+  const p=filterParams();
+  try{
+    const t0=performance.now();
+    const d=await(await fetch('/api/simulator/path-response?'+p,{cache:'no-store'})).json();
+    if(d&&d.ok){
+      _pathResp=d.paths||{};
+      renderRainContext();
+      if(_flowSim)evaluateFlowScenario();
+      if(q('tabbtn-plan')&&q('tabbtn-plan').classList.contains('on'))renderPlanBuilder();
+      console.info('[path-response] %.0f ms  paths=%d  %s..%s',
+        performance.now()-t0, Object.keys(_pathResp).length, d.from||'', d.to||'');
+    }else renderRainContext(d&&d.error);
+  }catch(e){renderRainContext('Rainfall history unavailable');}
+}
+async function loadCapabilityWeighbridge(){
+  const status=q('cap-wb-status');
+  try{
+    const d=await(await fetch('/api/weighbridge-summary',{cache:'no-store'})).json();
+    if(!d||!d.ok) throw new Error(d&&d.error||'Weighbridge activity unavailable');
+    q('cap-wb-open').textContent=fmt(d.bridges);
+    q('cap-wb-trucks').textContent=fmt(d.trucks);
+    q('cap-wb-share').textContent=fmt(d.busiestShare,1)+'%';
+    q('cap-wb-other').textContent=fmt(d.otherShare,1)+'%';
+    const critical=d.busiestShare>40, watch=d.busiestShare>25;
+    status.style.borderLeftColor=critical?'#ef4444':watch?'#f59e0b':'#22c55e';
+    // Honesty: HAULAGE_IWIP_CLEAN ends mid-July 2026. Say the as-of date and
+    // when the table is stale — do not imply a live feed.
+    const age=(d.ageDays!=null)?(` · ${d.ageDays}d old`):'';
+    const tag=d.servedFrom==='fixture'?' (fixture)'
+      :(d.stale?` (stale — table ends ${d.date||'?'}${age})`:'');
+    status.textContent=`${critical?'🔴':watch?'🟡':'🟢'} ${d.status} · ${d.perBridge} trucks/bridge · busiest ${d.busiest||'—'} · as of ${d.date||'latest'}${tag}`;
+  }catch(e){status.style.borderLeftColor='#64748b';status.textContent=e.message;}
+}
 async function loadShiftContext(date){date=(date||'').slice(0,10);if(!date||date===_shiftCtxDate)return;_shiftCtxDate=date;
   try{const d=await(await fetch('/api/simulator/shift-context?date='+encodeURIComponent(date)+_shParam(),{cache:'no-store'})).json();if(d&&d.ok)renderShiftContext(d);}catch(e){}}
 async function loadWbPositions(tries,date){tries=tries||0;date=(date||(_flowPointScenario&&_flowPointScenario.date)||'').slice(0,10);try{const d=await(await fetch('/api/simulator/weighbridge-positions'+(date?'?date='+encodeURIComponent(date)+_shParam():''),{cache:'no-store'})).json();

@@ -490,6 +490,24 @@ fi
 $PY test_plan_trip_rate.py >/dev/null 2>&1
 chk $? "J65  planTripsPerDT is weighted TARGET TRIP rate" "see: python test_plan_trip_rate.py"
 
+# J66 — path-response snapshot (rain panel). Was 15–18 s per call and ignored
+# Apply. Same whole-view snapshot as capability; date from/to filter in Python.
+if curl -fsS --max-time 5 http://127.0.0.1:5055/health >/dev/null 2>&1; then
+$PY test_path_response_perf.py >/dev/null 2>&1
+chk $? "J66  path-response snapshotted + under 3s" "see: python test_path_response_perf.py"
+else
+  echo "  SKIP J66  (no server on :5055 — start serve.py to exercise)"
+fi
+
+# J67 — weighbridge-summary must not look live when HAULAGE_IWIP_CLEAN is weeks
+# old. Tags source + ageDays + stale.
+if curl -fsS --max-time 5 http://127.0.0.1:5055/health >/dev/null 2>&1; then
+$PY test_weighbridge_honesty.py >/dev/null 2>&1
+chk $? "J67  weighbridge-summary discloses age/stale" "see: python test_weighbridge_honesty.py"
+else
+  echo "  SKIP J67  (no server on :5055 — start serve.py to exercise)"
+fi
+
 
 echo
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"
