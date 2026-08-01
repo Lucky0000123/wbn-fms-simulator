@@ -239,6 +239,31 @@ let _wbPos=null,_wbPosDate=null;
 const OTHER_TRAFFIC_COEF=-0.00035;
 const OTHER_SECS=[['TOFU–KR',39,67.8],['KR–POS 12',27,39],['POS 12–POS 10',17,27],['POS 10–FENI',0,17]];
 // default date range then load
+// ── Collapsible sections on the Capability tab ──────────────────────────────
+// The three long tables (Trucks alone is ~2,000 rows) start collapsed via the
+// markup; whatever the operator chooses is remembered, so an Apply or a reload
+// does not silently re-expand everything they just tidied away.
+//
+// No redraw is needed when a section expands: the monthly chart is an SVG with a
+// viewBox, so it is resolution-independent. Anything measuring PIXELS would need
+// one -- both Leaflet and ECharts had to be fixed in this codebase for drawing
+// correctly into a zero-sized container.
+function secToggle(el){
+  if(!el||!el.id) return;
+  try{ localStorage.setItem('wbn.sec.'+el.id, el.open?'1':'0'); }catch(e){}
+}
+function secRestore(){
+  document.querySelectorAll('details.sec').forEach(el=>{
+    if(!el.id) return;
+    try{ const v=localStorage.getItem('wbn.sec.'+el.id); if(v!==null) el.open=(v==='1'); }catch(e){}
+    // Listener attached here rather than as an inline ontoggle= attribute. A
+    // <details open> fires toggle during PARSING, before this file -- which must
+    // load last because it declares the shared globals -- has defined the
+    // handler, so the inline form threw "secToggle is not defined" on every load.
+    el.addEventListener('toggle', ()=>secToggle(el));
+  });
+}
+secRestore();
 q('f-from').value='2025-09-01'; q('f-to').value=new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10);
 // ── Congestion-model preview tab (measured speed-vs-traffic + tunable speed-density model) ──
 let _congData=null,_congLoaded=false;

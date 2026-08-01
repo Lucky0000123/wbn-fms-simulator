@@ -151,33 +151,54 @@
         <div class="card"><h3>IWIP Traffic Impact by Route</h3><div class="sub">Estimated effect of that day's non-WBN traffic on the shared FENI routes vs a typical day · measured, not a forecast</div><div id="cap-iwip-shift" style="margin:2px 0 10px"></div><div class="rain-table"><table><thead><tr><th>Route (FENI-bound)</th><th class="r">Base Trips/DT</th><th class="r">Est. Impact</th><th>Assessment</th></tr></thead><tbody id="cap-iwip"><tr><td colspan="4" class="muted">Select a scenario point on the chart to estimate IWIP impact for that shift.</td></tr></tbody></table></div></div>
       </section>
 
-      <h2>Monthly trend</h2>
-      <div class="card"><svg id="chart" viewBox="0 0 1000 280"></svg>
-        <div class="lead muted" style="display:flex;gap:16px;margin-top:8px;flex-wrap:wrap"><span style="color:#3b82f6">■ Tonnes / day</span><span style="color:#eab308">— DT / day</span><span style="color:#22c55e">– – Tonnes per DT (fleet productivity)</span></div>
-      </div>
+      <!-- Collapsible from here down. Listeners are attached in JS (secRestore),
+           NOT via an inline ontoggle= attribute: a <details open> fires its
+           toggle event during PARSING, before main.js at the bottom of <body>
+           has defined the handler, so an inline attribute threw
+           "secToggle is not defined" on every load.
+           Collapsible from here down. The chart and the contractor table are
+           short and open by default; the three long searchable tables start
+           collapsed, because they are what made this page several screens deep.
+           secToggle() remembers each choice in localStorage, so a reload or an
+           Apply does not undo it. Row counts stay in the summary: a collapsed
+           section must still say how much it is hiding. -->
+      <details class="sec" id="sec-monthly" open>
+        <summary><h2>Monthly trend</h2></summary>
+        <div class="card"><svg id="chart" viewBox="0 0 1000 280"></svg>
+          <div class="lead muted" style="display:flex;gap:16px;margin-top:8px;flex-wrap:wrap"><span style="color:#3b82f6">■ Tonnes / day</span><span style="color:#eab308">— DT / day</span><span style="color:#22c55e">– – Tonnes per DT (fleet productivity)</span></div>
+        </div>
+      </details>
 
-      <h2>Productivity by contractor</h2>
-      <div class="card pad0"><div class="scroll"><table>
-        <thead><tr><th>Contractor</th><th class="r">WMT</th><th class="r">Trips/DT</th><th class="r">TF</th><th class="r">Plan tr/DT</th><th class="r">Trip eff</th><th class="r">WMT eff</th></tr></thead>
-        <tbody id="prod"></tbody></table></div></div>
+      <details class="sec" id="sec-prod" open>
+        <summary><h2>Productivity by contractor</h2></summary>
+        <div class="card pad0"><div class="scroll"><table>
+          <thead><tr><th>Contractor</th><th class="r">WMT</th><th class="r">Trips/DT</th><th class="r">TF</th><th class="r">Plan tr/DT</th><th class="r">Trip eff</th><th class="r">WMT eff</th></tr></thead>
+          <tbody id="prod"></tbody></table></div></div>
+      </details>
 
-      <h2>Routes <span class="cnt" id="pathwin"></span></h2>
-      <input class="search" id="pathsearch" placeholder="🔍 search…" oninput="renderPaths()">
-      <div class="card pad0"><div class="scroll"><table>
-        <thead><tr><th>Loader → Dump</th><th class="r">WMT</th><th class="r">Trips/DT</th><th class="r">TF</th><th class="r">Plan tr/DT</th><th class="r">Trip eff</th><th class="r">WMT eff</th></tr></thead>
-        <tbody id="paths"></tbody></table></div></div>
+      <details class="sec" id="sec-routes">
+        <summary><h2>Routes <span class="cnt" id="pathwin"></span></h2></summary>
+        <input class="search" id="pathsearch" placeholder="🔍 search…" oninput="renderPaths()">
+        <div class="card pad0"><div class="scroll"><table>
+          <thead><tr><th>Loader → Dump</th><th class="r">WMT</th><th class="r">Trips/DT</th><th class="r">TF</th><th class="r">Plan tr/DT</th><th class="r">Trip eff</th><th class="r">WMT eff</th></tr></thead>
+          <tbody id="paths"></tbody></table></div></div>
+      </details>
 
-      <h2>Destinations <span class="cnt" id="destcnt"></span></h2>
-      <input class="search" id="destsearch" placeholder="🔍 search…" oninput="renderDests()">
-      <div class="card pad0"><div class="scroll"><table>
-        <thead><tr><th>Destination</th><th class="r">WMT</th><th class="r">Trips/DT</th><th class="r">TF</th><th class="r">Trip eff</th></tr></thead>
-        <tbody id="dests"></tbody></table></div></div>
+      <details class="sec" id="sec-dests">
+        <summary><h2>Destinations <span class="cnt" id="destcnt"></span></h2></summary>
+        <input class="search" id="destsearch" placeholder="🔍 search…" oninput="renderDests()">
+        <div class="card pad0"><div class="scroll"><table>
+          <thead><tr><th>Destination</th><th class="r">WMT</th><th class="r">Trips/DT</th><th class="r">TF</th><th class="r">Trip eff</th></tr></thead>
+          <tbody id="dests"></tbody></table></div></div>
+      </details>
 
-      <h2>Trucks used <span class="cnt" id="truckcnt"></span></h2>
-      <input class="search" id="trucksearch" placeholder="🔍 search truck / contractor…" oninput="renderTrucks()">
-      <div class="card pad0"><div class="scroll" style="max-height:420px"><table>
-        <thead><tr><th>Truck</th><th>Contractor</th><th class="r">Trips</th><th class="r">Trips/day</th><th class="r">WMT</th><th class="r">TF</th></tr></thead>
-        <tbody id="trucks"></tbody></table></div></div>
+      <details class="sec" id="sec-trucks">
+        <summary><h2>Trucks used <span class="cnt" id="truckcnt"></span></h2></summary>
+        <input class="search" id="trucksearch" placeholder="🔍 search truck / contractor…" oninput="renderTrucks()">
+        <div class="card pad0"><div class="scroll" style="max-height:420px"><table>
+          <thead><tr><th>Truck</th><th>Contractor</th><th class="r">Trips</th><th class="r">Trips/day</th><th class="r">WMT</th><th class="r">TF</th></tr></thead>
+          <tbody id="trucks"></tbody></table></div></div>
+      </details>
       </div><!-- /tab-sim -->
 
       <div id="tab-cong" style="display:none">

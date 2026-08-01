@@ -108,6 +108,29 @@ input[type=checkbox]:checked::after{content:'';position:absolute;left:4px;top:1p
 .wrap{padding:22px 26px 60px;max-width:1180px;margin:0 auto}
 h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-muted);margin:28px 0 12px;font-weight:600}
 
+/* ── Collapsible sections ───────────────────────────────────────────────────
+   The Capability tab stacks a chart and four long tables (Trucks alone runs to
+   ~2,000 rows), so the page ran several screens deep before the operator got to
+   anything. Each block is now a <details>, matching the <details> already used
+   for "Advanced simulation settings" rather than inventing a second toggle.
+
+   The <h2> keeps its own styling and sits INSIDE the <summary>, so collapsed and
+   expanded headings look identical -- only the chevron moves. Row counts stay in
+   the summary on purpose: a collapsed section still has to say how much it is
+   hiding, or it reads as empty rather than closed. */
+details.sec{margin:0}
+details.sec>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px}
+details.sec>summary::-webkit-details-marker{display:none}
+details.sec>summary>h2{margin:28px 0 12px}
+details.sec>summary:hover>h2{color:var(--txt)}
+/* Chevron is drawn on the summary, not the h2, so it aligns with the baseline
+   of the heading whatever the heading contains. */
+details.sec>summary::before{content:"";width:0;height:0;margin-top:16px;
+  border-left:5px solid currentColor;border-top:4px solid transparent;
+  border-bottom:4px solid transparent;color:var(--txt-muted);
+  transition:transform .15s ease;flex:0 0 auto}
+details.sec[open]>summary::before{transform:rotate(90deg)}
+
 /* ── KPI cards ──────────────────────────────────────────────────────────── */
 .kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:12px}
 .kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px 14px;position:relative;overflow:hidden;box-shadow:var(--shadow);transition:transform .15s ease,box-shadow .15s ease}
