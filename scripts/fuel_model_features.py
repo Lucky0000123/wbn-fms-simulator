@@ -76,6 +76,7 @@ def build_days():
         v["lag1_litres"] = d[i - 1][1]["litres"] if i else v["litres"]
         v["lag1_units"] = d[i - 1][1]["units"] if i else v["units"]
         v["lag7_litres"] = d[i - 7][1]["litres"] if i >= 7 else v["litres"]
+        v["lag1_fills"] = d[i - 1][1]["fills"] if i else v["fills"]
     return d
 
 
@@ -90,7 +91,11 @@ FEATURES = {
     "units + stby + bd":          ["units", "stby_hrs", "bd_hrs"],
     "units + tonnes":             ["units", "tonnes"],
     "units + tickets":            ["units", "tickets"],
-    "units + fills":              ["units", "fills"],
+    # NOTE: "units + fills" is deliberately absent. fills is the refuel-event
+    # count and litres = fills * 199.2 L fleet-wide (corr +0.9924), so it is
+    # the target decomposed, not a predictor, and is unknowable in advance.
+    # It scores 2.38% MAPE purely by leakage. See report section 12.1.
+    "units + lag1_fills":         ["units", "lag1_fills"],
     "kitchen sink":               ["units", "work_hrs", "stby_hrs", "bd_hrs",
                                    "tonnes", "tickets", "lag1_litres", "t"],
 }
@@ -140,11 +145,13 @@ def main():
     print(f"  vs 'units only' {uo[0]:.2f}%  ->  "
           f"gain {uo[0]-best[0]:+.2f} pp")
     if uo[0] - best[0] < 0.25:
-        print("  => no material gain; 'units only' stands. Feature space IS "
-              "exhausted at this grain.")
+        print(f"  => gain is immaterial (<0.25 pp). 'units only' stands; "
+              f"prefer the simplest form.")
     else:
-        print("  => MATERIAL GAIN. Section 11 was premature; adopt the better "
-              "feature set.")
+        print("  => MATERIAL GAIN. Adopt the better feature set.")
+    print("\n  Reminder: 'fills' is excluded as leakage (corr +0.9924 with "
+          "the target).\n  Robustness across CV settings is in report "
+          "section 12.2.")
 
 
 if __name__ == "__main__":
