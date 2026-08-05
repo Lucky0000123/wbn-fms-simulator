@@ -5363,3 +5363,64 @@ python -m pytest scripts/test_fuel_forecast.py -q
    roster was supplied, and the band widens from ±1,800 L to ±7,100 L
    accordingly. The two figures are not interchangeable (section 13).
 
+---
+
+## 15. Final checks (VPN session, 2026-08-05)
+
+Three loose ends closed against the live database.
+
+### 15.1 `TOTAL_FUEL 2` is negligible — the model loses nothing
+
+Section 1 found four fuel columns but the model uses only `TOTAL_FUEL`. The
+second-fill column was never quantified. It is now:
+
+| Column | Non-empty rows | Litres |
+|---|---|---|
+| `TOTAL_FUEL` | 39,366 | 7,834,145 |
+| `TOTAL_FUEL 2` | **28** | 4,366 |
+| `TOTAL_FUEL 2` where fill 1 is empty | **4** | — |
+
+28 rows out of 878,240, and only 4 add a unit-day the model would otherwise
+miss. **Ignoring it is safe** (0.06% of litres).
+
+### 15.2 Fuel covers 735 of RIM's 2,571 units — 29%, not "all of RIM"
+
+Section 11.4 said all data is contractor RIM. Sharper: fuel is captured for
+**735 of RIM's 2,571 active units (28.6%)**, and **zero** units of every other
+contractor.
+
+| Contractor | Active units | Units with fuel |
+|---|---|---|
+| RIM | 2,571 | **735 (28.6%)** |
+| SMA | 369 | 0 |
+| PPP | 312 | 0 |
+| STM | 229 | 0 |
+| CKB | 103 | 0 |
+| GMG | 99 | 0 |
+| SSS | 82 | 0 |
+
+Site-wide fleet is 3,765 units, so **the model sees 19.5% of it**. Scaling its
+output to a site total would understate diesel roughly 5-fold. It forecasts
+*the fuelled subset of RIM*, nothing more.
+
+### 15.3 The fuel feed stopped 14 days ago
+
+`WAITING_TIME` has **no rows at all** after **2026-07-22**, while the tables
+around it are current:
+
+| Table | Last row | Stale |
+|---|---|---|
+| `EQUIPMENTS_HOURLY_STATUS` | 2026-08-04 | 1 day |
+| `DAY_WORKS` | 2026-08-01 | 4 days |
+| **`WAITING_TIME`** (fuel) | **2026-07-22** | **14 days** |
+| `HAULAGE_IWIP_EXT` | 2026-07-08 | 28 days |
+
+Fuel logging was healthy right up to the cutoff (219-373 fuel rows/day in the
+final fortnight), so this is a **stopped or stalled feed, not a wind-down**.
+
+**Action required before relying on the forecast:** find out whether
+`WAITING_TIME` ingestion is broken or merely delayed. The model will keep
+returning confident numbers from a training set that ages by a day every day.
+The same applies to `HAULAGE_IWIP_EXT` at 28 days, which supplies the payload
+denominator.
+

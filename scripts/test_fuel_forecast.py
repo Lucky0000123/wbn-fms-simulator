@@ -88,3 +88,19 @@ def test_beats_naive_baseline(fc):
         for _, v in te)
     assert model < naive / 2, f"model {model:.3f} vs naive {naive:.3f}"
     assert model < 0.06, f"expected ~3.5% MAPE, got {100*model:.1f}%"
+
+
+def test_reports_training_data_age(fc):
+    """A forecast from stale data must say so, not look fresh (report §15.3)."""
+    r = fc.predict(230)
+    assert isinstance(r["training_data_age_days"], int)
+    assert r["training_data_age_days"] >= 14  # feed stopped 2026-07-22
+
+
+def test_stale_warning_fires_and_degrades():
+    from fuel_forecast import DieselForecaster
+    f = DieselForecaster.fit()
+    f.meta["date_range"] = ["2026-02-22", "2026-01-01"]
+    assert "verify the WAITING_TIME feed" in f.predict(230)["stale_warning"]
+    f.meta.pop("date_range")
+    assert f.predict(230)["stale_warning"] is None  # missing meta must not crash

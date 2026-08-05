@@ -34,6 +34,9 @@ MODEL = DATA / "diesel_model.json"
 
 # Guard rails from the observed data (report §11.4, §13).
 MIN_UNITS, MAX_UNITS = 50, 400
+# The WAITING_TIME feed stopped 2026-07-22 (report §15.3). Warn once the
+# training data is old enough that the forecast may not reflect operations.
+STALE_WARN_DAYS = 30
 
 
 class DieselForecaster:
@@ -62,7 +65,13 @@ class DieselForecaster:
                 "on 133-281 units; extrapolating is not supported.")
         litres = self.intercept + self.slope * u
         band = 7100 if assumed else 1800
+        stale = self.staleness_days()
         return {
+            "training_data_age_days": stale,
+            "stale_warning": (
+                f"training data ends {self.meta.get('date_range',[None,None])[1]}"
+                f" ({stale} days old); verify the WAITING_TIME feed is live"
+                if stale is not None and stale > STALE_WARN_DAYS else None),
             "litres": round(litres, 1),
             "active_units": u,
             "units_assumed": assumed,
@@ -72,6 +81,15 @@ class DieselForecaster:
             "basis": ("persistence (no roster supplied)" if assumed
                       else "roster-supplied active-unit count"),
         }
+
+    def staleness_days(self):
+        """Age in days of the newest training day. See report §15.3."""
+        rng = self.meta.get("date_range")
+        if not rng or not rng[1]:
+            return None
+        import datetime
+        y, m, d = (int(x) for x in str(rng[1])[:10].split("-"))
+        return (datetime.date.today() - datetime.date(y, m, d)).days
 
     # ---------- persistence ----------
     def save(self, path=MODEL):
@@ -163,6 +181,8 @@ def main():
           f"{'  (assumed, no roster)' if r['units_assumed'] else ''}")
     print(f"  basis        : {r['basis']}")
     print(f"  expected MAPE: {r['expected_mape_pct']}%")
+    if r.get("stale_warning"):
+        print(f"  WARNING      : {r['stale_warning']}")
 
 
 if __name__ == "__main__":
