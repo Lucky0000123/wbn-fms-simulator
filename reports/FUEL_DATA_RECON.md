@@ -35,8 +35,18 @@ hours, haulage distance, fleet, contractor — is present and large.
 | Fuel units reachable for GPS km | 643 (87.4%) |
 | `DAY_WORKS` hour meters since 2026-02 | **63,913 populated** |
 
-**Forecast at fleet-day grain from the active-unit count — validated at 3.3%
-MAPE on 28 unseen days (section 11).** Join
+**Forecast at fleet-day grain from the active-unit count.** Two honest
+accuracy figures, depending on what you can supply (section 13):
+
+| Situation | MAPE | Error |
+|---|---|---|
+| Plan supplies tomorrow's active-unit count | **~3.5%** | ±1,800 L/day |
+| Fully autonomous, history only | **~13%** | ±7,100 L/day |
+| No model (predict the mean) | 19.3% | — |
+
+`litres_per_day = -3928 + 270.4 × active_units`. **The bottleneck is not the
+fuel model — it is knowing how many units will run.** Forecasting the unit
+count costs +9.5 pp and dominates all remaining error. Join
 `WAITING_TIME.EQUIPMENT_ID = EQUIPMENTS_HOURLY_STATUS.ID_EQ` on the same date,
 then aggregate. **251.9 L per active unit-day**, a 5× improvement on the
 no-model baseline of 16.5%.
@@ -5209,4 +5219,58 @@ It is not worth a dependency on its own.
 data. It is more data: other contractors beyond RIM, a full monsoon cycle, and
 fuel capture for excavators and dozers rather than the current
 SUPPORT-dominated truck mix. Those are collection changes, not modelling ones.
+
+---
+
+## 13. End-to-end forecast error — the number to actually quote
+
+Sections 11-12 report **3.3% MAPE**, but that figure assumes you already know
+tomorrow's active-unit count. **In a real forecast you do not.** The unit count
+must itself be predicted, and the errors compound. `scripts/fuel_forecast_e2e.py`
+measures the honest end-to-end figure with no oracle inputs, rolling-origin
+throughout.
+
+### 13.1 Results, 59 forecast days, 7-day horizon
+
+| Method | units MAPE | litres MAPE | litres MAE |
+|---|---|---|---|
+| no model (train mean) | — | 19.3% | — |
+| **ORACLE units** (§11-12 figure) | 0.00% | **3.5%** | 1,819 L |
+| **last value** | 12.21% | **13.0%** | 7,145 L |
+| 7-day MA | 13.65% | 13.7% | 7,234 L |
+| 28-day MA | 19.53% | 21.6% | 11,046 L |
+| day-of-week MA | 20.56% | 22.7% | 11,594 L |
+
+**Quote two numbers, not one:**
+
+- **~3.5%** (±1,800 L/day) if the mine plan supplies tomorrow's active-unit
+  count. This is the realistic operating case — the count is a planning
+  input, not a mystery.
+- **~13%** (±7,100 L/day) fully autonomous, with nothing but history.
+  Forecasting the unit count costs **+9.5 pp**, which dominates all remaining
+  model error. Still beats the 19.3% no-model baseline.
+
+**The bottleneck is not the fuel model. It is knowing how many units will run.**
+Active-unit count has sd 48 on a mean of 222 (p05 133, p95 281): the fleet size
+swings hard day to day, and no history-only predictor tracks it well. The best
+is naive persistence at 12.2%; longer averages are worse, so the variation is
+not weekly seasonality.
+
+### 13.2 Dead end: the mine plan cannot supply the unit count
+
+`MINING_PLAN_WEEKLY` looked like the obvious source of forward-looking demand.
+It is not usable here:
+
+- **Coverage stops 2026-05-01.** The fuel holdout begins 2026-05-19, so the
+  plan cannot be tested on it at all. Only 64 of 139 fuel days overlap.
+- **No signal on the overlap.** `corr(plan_bcm, litres) = **+0.006**` and
+  `corr(plan_bcm, active_units) = **-0.096**`. Planned volume does not predict
+  fuel burn or fleet size.
+
+`dbo.RAINFALL` fails the same way: it ends 2026-04-11, covering 63 of 139 days.
+
+**Recommendation.** Feed the model the active-unit count from whatever
+scheduling system actually holds tomorrow's roster, and you get ~3.5%. If that
+number is unavailable, use persistence and quote ~13%. Do not attempt to derive
+the unit count from `MINING_PLAN_WEEKLY`.
 
