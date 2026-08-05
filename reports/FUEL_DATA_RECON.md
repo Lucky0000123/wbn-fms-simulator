@@ -24,18 +24,31 @@ all 681 tables+views and all column names (including synonyms `BBM`, `SOLAR`,
 so it must be parsed, not cast. Everything else the model needs — operating
 hours, haulage distance, fleet, contractor — is present and large.
 
-**Two further findings that change the plan — see section 9 for the evidence:**
+**The model is viable. Measured against the live database (section 10):**
 
-1. **The fuel data does not join to the operating-hours data.**
-   `WAITING_TIME.EQUIPMENT_ID` uses the fleet namespace (`L961`) while
-   `EQUIPMENTS_HOURLY_STATUS.ID_EQ` uses an asset namespace (`ATCT0450027`).
-   There are five such namespaces in play. A naive join returns 0 rows and
-   looks like "no data" rather than a mapping failure. A bridge table must be
-   resolved before litres can be normalised per hour.
-2. **`DAY_WORKS` holds real hour meters** (`UNIT_START_HOUR_METER`,
-   `UNIT_END_HOUR_METER`) and shares the asset namespace with the hours table,
-   making it the prime bridge. The requested Step-2 pattern list could not
-   find these columns; the widened scan in section 7b did.
+| Check | Result |
+|---|---|
+| Fuel units joining to operating hours | **735 of 736 (99.9%)** |
+| Fuel unit-days joining to hours | **30,917 of 31,035 (99.6%)** |
+| Mean burn rate | **10.49 L per operating hour** (range 0–168.8) |
+| Fuel unit-days with weighbridge tonnes | 24,478 (78.9%) |
+| Fuel units reachable for GPS km | 643 (87.4%) |
+| `DAY_WORKS` hour meters since 2026-02 | **63,913 populated** |
+
+**Build litres-per-operating-hour.** Join
+`WAITING_TIME.EQUIPMENT_ID = EQUIPMENTS_HOURLY_STATUS.ID_EQ` on the same date.
+All 30,917 joined unit-days carry positive operating hours, and the resulting
+mean of 10.49 L/h is a plausible haul-truck figure, so the join is real and not
+an artefact.
+
+**A correction, recorded honestly.** Section 9 below originally predicted this
+join would fail. That prediction was inferred from 20-row samples, in which
+`EQUIPMENTS_HOURLY_STATUS.ID_EQ` happened to show only asset-format IDs
+(`ATCT0450027`). The live table holds **3,701 distinct units spanning several
+namespaces**, including the `A999` fleet format the fuel data uses. The
+sampling was too small, and section 9 is kept below only as a record of that
+reasoning and of the genuine multi-namespace hazard, which still applies to the
+GPS tables. **Section 10 supersedes it.**
 
 
 ## 1. Fuel/Diesel tables found
@@ -4787,7 +4800,13 @@ _(no rows)_
 
 ---
 
-## 9. Join feasibility — the finding that decides the model
+## 9. Join feasibility — superseded by section 10
+
+> **⚠ SUPERSEDED.** This section predicted, from 20-row samples, that fuel and
+> operating hours could not be joined. The live test in section 10 disproves
+> it: **735 of 736 units join directly**. Retained for the namespace map, which
+> is still accurate and still matters for the GPS tables. Do not act on 9.4
+> path selection; use section 10.
 
 Sections 1-8 answer "what data exists". This section answers the question that
 actually determines whether a diesel model can be built: **can litres be
@@ -4850,13 +4869,30 @@ Run it with the VPN up:
 
 ### 9.4 Recommended modelling path, given the constraints
 
-1. **Preferred — litres per operating hour.** Requires bridge B to resolve.
-   Target `litres / OPERATING_HOURS` per unit-day. Features already available:
+1. **Preferred — litres per operating hour. CONFIRMED VIABLE (section 10):
+   no bridge needed, 99.6% of fuel unit-days join.** Target
+   `litres / OPERATING_HOURS` per unit-day. Features already available:
    `CONTRACTOR`, `STBY_HOURS`, `BD_HOURS`, activity, location.
-2. **Fallback, needs no bridge — litres per tonne-km.** `HAULAGE_IWIP_EXT`
-   (1.5 M rows) shares the `A999` namespace with the fuel data, so it joins
-   directly. Combine with `DISTANCE_MINING` / `HAUL_ROAD_STA` chainage and the
-   GPS km table for haulage distance.
+2. **Fallback — litres per tonne-km, but it needs one bridge, not zero.**
+   `HAULAGE_IWIP_EXT` (1.5 M rows) shares the `A999` namespace with the fuel
+   data and joins directly on `TRUCK_ID`, giving **payload tonnes per
+   truck-day** (`NET_WEIGHT`) with no mapping at all. It does **not** carry a
+   distance column, so tonne-km is not available from the ticket alone.
+   Distance must come from one of:
+   - **`FMS_EQUIPMENTS` as the bridge to GPS km (best).** It holds
+     `plateNumber` (`A999`, the fuel namespace) and `imei` (the GPS
+     namespace) **on the same row**, 1,435 rows. That maps fuel units onto
+     `auto_kmFMS_PLAYBACK_TRACK_DATA` (20.4 M rows, `imei` + `SectionKM`),
+     i.e. measured GPS kilometres per unit. This is the same
+     `plateNumber`/`truckId` dual-key trick already documented in
+     `reports/_cross_analysis.md`.
+   - **Route lookup from `ORIGIN_AREA` → `DESTINATION_AREA`** on the ticket,
+     priced against `HAUL_ROAD_STA` chainage. Cheaper, but the area strings
+     contain non-LATIN1 characters that render as `?` under the required
+     charset, so they need careful normalisation.
+   - **Not `DISTANCE_MINING`.** It has a `DISTANCE` column but is keyed by
+     `DIGGER` (`EXC 908`) with **no truck column**, so it cannot attribute
+     distance to a fuelled unit. It is excavator/fleet-level only.
 3. **Do not attempt a seasonal forecast.** Fuel data starts **2026-02-22** and
    spans five months with 4.5% row coverage. That supports a cross-sectional
    intensity model, not a time-series forecast with annual seasonality.
@@ -4866,3 +4902,154 @@ Run it with the VPN up:
    rows covered by the top-30 distinct values in section 1). The parser used
    throughout this report strips `' L'`, `'L'` and normalises `,` to `.`
    before conversion.
+
+---
+
+## 10. Join test results
+
+Run of `scripts/fuel_recon5.py` against the live database. These counts settle the open questions from section 9.3.
+
+### 10.1 Verdict
+
+- **Direct fuel→hours join: 735 of 736 units (99.9%).** Unexpectedly viable; the namespace split is narrower than the sampled shapes implied.
+- **Best bridge: `EQUIPMENTS.ID_EQ` matching 736 fuel units** (DAY_WORKS 295, EQUIPMENTS ID_EQ/NEW_ID_EQ/SERIAL 736/0/0, HAULAGE_IWIP_EXT 729)
+- **DAY_WORKS hour meters since 2026-02: 63913 populated.** Usable — prefer these over derived OPERATING_HOURS.
+- **Training set: 30917 of 31035 fuel unit-days join to hours (99.6%); 24478 join to the weighbridge (78.9%).**
+- **=> Litres-per-operating-hour is viable**, per section 9.4 path (1).
+- **Payload denominator: 24478 of 31035 fuel unit-days have weighbridge tonnes (78.9%).** The ticket carries no distance column, so this alone gives litres-per-tonne, not litres-per-tonne-km.
+- **GPS-km bridge (`FMS_EQUIPMENTS.plateNumber`→`imei`): 643 of 736 fuel units carry an imei (87.4%).** Distance is obtainable, so a true tonne-km target is constructible.
+
+
+### 10.2 Raw results
+
+
+**A. Direct fuel → operating-hours join**
+
+| fuel_units | hour_units | matched |
+|---|---|---|
+| 736 | 3701 | 735 |
+
+
+**B. Bridge candidate: DAY_WORKS.UNIT_ID**
+
+| fuel_units_seen_in_day_works |
+|---|
+| 295 |
+
+
+**B. Bridge candidate: EQUIPMENTS master**
+
+| via_ID_EQ | via_NEW_ID_EQ | via_SERIAL_NO |
+|---|---|---|
+| 736 | 0 | 0 |
+
+
+**B. Bridge candidate: HAULAGE_IWIP_EXT.TRUCK_ID**
+
+| fuel_units_in_haulage_ext |
+|---|
+| 729 |
+
+
+**B. EQUIPMENTS rows for trucks/excavators**
+
+| ID | ID_EQ | NEW_ID_EQ | SERIAL_NO | TYPE | MODEL | CONTRACTOR |
+|---|---|---|---|---|---|---|
+| ATC-DT-42 | IWIP-ATC-U42 |  |  | Light Truck | ???? | ATC |
+| AWK-DT-48 | AWK-LK Z48 |  |  | Light Truck | DUTRO 4X4 | AWK |
+| AWK-DT-78 | AWK-LK L78 |  |  | Light Truck | DUTRO 4X4 | AWK |
+| CKB-EX-201 | MTM-CEXC201 |  | CAT00320CSYW20076 | EXCAVATOR | CAT320 | CKB |
+| CKB-EX-202 | EX 202 |  | CAT00320ESYW20053 | Excavator | CAT320 | CKB |
+| CKB-EX-213 | EX 213 |  | ZBH11338 | Excavator | CAT320 | CKB |
+| CKB-EX-301 | MTM-CEXC301 |  |  | EXCAVATOR | CAT330 | CKB |
+| CKB-EX-303 | MTM-CEXC303 |  |  | EXCAVATOR | HIT350 | CKB |
+| CKB-FT-2 | TTR002 |  |  | Fuel Truck | F3000 | CKB |
+| CKB-FT-6 | FT06 |  | LZGJRLDR47PX116654/1623J029197 | Fuel Truck | F3000 | CKB |
+| CKB-FT-7 | FT07 |  |  | Fuel Truck | F3000 | CKB |
+| CKB-MH-1 | MH01 |  |  | Manhaul |  | CKB |
+| CKB-MH-2 | MH02 |  |  | Manhaul |  | CKB |
+| CKB-WT-1 | WT01 |  |  | Water Truck | JD260 | CKB |
+| FIJ-EX-1 | FIJ- EX 001 |  |  | EXCAVATOR | CDM6060N | FIJ |
+| FIJ-EX-2 | FIJ- EX 002 |  |  | EXCAVATOR | SY 205C | FIJ |
+| FIJ-EX-3 | FIJ- EX 003 |  |  | EXCAVATOR | SY 205C | FIJ |
+| FIJ-Truck Mixer -6 | FIJ-CM006 |  |  | Truck Mixer  | 350 | FIJ |
+| FIJ-Truck Mixer -9 | FIJ-009 |  |  | Truck Mixer  | SY308C-8 | FIJ |
+| GMG-EX-5205 | EXC-5205 |  |  | EXCAVATOR | ZAXIS 210-5G | GMG |
+| GMG-EX-5206 | EXC-5206 |  | 409508 | EXCAVATOR | ZAXIS 210-5G | GMG |
+| GMG-EX-5207 | EXC-5207 |  | 409550 | EXCAVATOR | ZAXIS 210-5G | GMG |
+| GMG-EX-5209 | EXC-5209 |  | 409743 | EXCAVATOR | ZAXIS 210-5G | GMG |
+| GMG-EX-5211 | EXC-5211 |  | 409607 | EXCAVATOR | ZAXIS 210-5G | GMG |
+| GMG-EX-5212 | EXC-5212 |  | 409604 | EXCAVATOR | ZAXIS 210-5G | GMG |
+| GMG-EX-5213 | EXC-5213 |  | 409742 | EXCAVATOR | ZAXIS 210-5G | GMG |
+| GMG-EX-5224 | EXC-5224 |  |  | EXCAVATOR | LIUGONG | GMG |
+| GMG-EX-5301 | EXC-5301 |  | 970533 | EXCAVATOR | ZAXIS 350H | GMG |
+| GMG-EX-5302 | EXC-5302 |  | 971287 | EXCAVATOR | ZAXIS 350H | GMG |
+| GMG-EX-5303 | EXC-5303 |  | 971280 | EXCAVATOR | ZAXIS 350H | GMG |
+
+
+**C. DAY_WORKS hour-meter coverage (all time)**
+
+| rows_all | start_hm | end_hm | units | mn | mx |
+|---|---|---|---|---|---|
+| 496409 | 458125 | 458125 | 1951 | 2024-10-15 | 2026-08-01 |
+
+
+**C. DAY_WORKS hour-meter coverage (since 2026-02)**
+
+| rows_2026 | start_hm | end_hm |
+|---|---|---|
+| 63913 | 63913 | 63913 |
+
+
+**D. Training-set size via operating hours**
+
+| fuel_unit_days | joined_unit_days |
+|---|---|
+| 31035 | 30917 |
+
+
+**D. Training-set size via weighbridge**
+
+| fuel_unit_days | joined_unit_days |
+|---|---|
+| 31035 | 24478 |
+
+
+**D. Sample aggregated fuel unit-days**
+
+| id | d | litres | fills |
+|---|---|---|---|
+| N104 | 2026-07-22 | 650.0 | 3 |
+| N725 | 2026-07-22 | 530.0 | 3 |
+| N523 | 2026-07-22 | 510.0 | 2 |
+| N456 | 2026-07-22 | 500.0 | 2 |
+| N351 | 2026-07-22 | 464.0 | 2 |
+| N707 | 2026-07-22 | 450.0 | 3 |
+| L315 | 2026-07-22 | 450.0 | 2 |
+| N354 | 2026-07-22 | 450.0 | 2 |
+| N501 | 2026-07-22 | 440.0 | 2 |
+| K985 | 2026-07-22 | 440.0 | 2 |
+| N733 | 2026-07-22 | 440.0 | 2 |
+| N538 | 2026-07-22 | 434.0 | 2 |
+| K800 | 2026-07-22 | 430.0 | 2 |
+| N832 | 2026-07-22 | 425.0 | 2 |
+| N388 | 2026-07-22 | 425.0 | 2 |
+| N372 | 2026-07-22 | 420.0 | 2 |
+| L057 | 2026-07-22 | 420.0 | 2 |
+| N375 | 2026-07-22 | 419.0 | 1 |
+| N565 | 2026-07-22 | 415.0 | 2 |
+| K792 | 2026-07-22 | 413.0 | 2 |
+
+
+**E. Payload denominator via weighbridge (direct join)**
+
+| fuel_unit_days | with_payload | avg_net_wt | avg_tickets |
+|---|---|---|---|
+| 31035 | 24478 | 112899.53100743525 | 2.1919682980635673 |
+
+
+**F. GPS-km bridge via FMS_EQUIPMENTS plateNumber→imei**
+
+| fuel_units | in_fms_equipments | with_imei |
+|---|---|---|
+| 736 | 643 | 643 |

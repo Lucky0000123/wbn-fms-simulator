@@ -1,0 +1,36 @@
+{
+ "sanity": {
+  "columns": [
+   "n",
+   "with_pos_hours",
+   "avg_l_per_hr",
+   "min_lph",
+   "max_lph"
+  ],
+  "rows": [
+   [
+    30917,
+    30917,
+    10.488809626958783,
+    0.0,
+    168.75
+   ]
+  ]
+ },
+ "by_contractor": {
+  "columns": [
+   "contractor",
+   "unit_days",
+   "avg_l_per_op_hr",
+   "litres"
+  ],
+  "rows": [
+   [
+    "RIM",
+    30917,
+    10.49,
+    7806378.0
+   ]
+  ]
+ }
+}

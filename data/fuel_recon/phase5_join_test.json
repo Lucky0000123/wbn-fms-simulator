@@ -1,0 +1,551 @@
+{
+ "A_direct_fuel_to_hours": {
+  "columns": [
+   "fuel_units",
+   "hour_units",
+   "matched"
+  ],
+  "rows": [
+   [
+    736,
+    3701,
+    735
+   ]
+  ]
+ },
+ "B_bridge_day_works": {
+  "columns": [
+   "fuel_units_seen_in_day_works"
+  ],
+  "rows": [
+   [
+    295
+   ]
+  ]
+ },
+ "B_bridge_equipments_master": {
+  "columns": [
+   "via_ID_EQ",
+   "via_NEW_ID_EQ",
+   "via_SERIAL_NO"
+  ],
+  "rows": [
+   [
+    736,
+    0,
+    0
+   ]
+  ]
+ },
+ "B_bridge_haulage_ext": {
+  "columns": [
+   "fuel_units_in_haulage_ext"
+  ],
+  "rows": [
+   [
+    729
+   ]
+  ]
+ },
+ "B_equipments_namespace_map": {
+  "columns": [
+   "ID",
+   "ID_EQ",
+   "NEW_ID_EQ",
+   "SERIAL_NO",
+   "TYPE",
+   "MODEL",
+   "CONTRACTOR"
+  ],
+  "rows": [
+   [
+    "ATC-DT-42",
+    "IWIP-ATC-U42",
+    null,
+    null,
+    "Light Truck",
+    "????",
+    "ATC"
+   ],
+   [
+    "AWK-DT-48",
+    "AWK-LK Z48",
+    null,
+    null,
+    "Light Truck",
+    "DUTRO 4X4",
+    "AWK"
+   ],
+   [
+    "AWK-DT-78",
+    "AWK-LK L78",
+    null,
+    null,
+    "Light Truck",
+    "DUTRO 4X4",
+    "AWK"
+   ],
+   [
+    "CKB-EX-201",
+    "MTM-CEXC201",
+    null,
+    "CAT00320CSYW20076",
+    "EXCAVATOR",
+    "CAT320",
+    "CKB"
+   ],
+   [
+    "CKB-EX-202",
+    "EX 202",
+    null,
+    "CAT00320ESYW20053",
+    "Excavator",
+    "CAT320",
+    "CKB"
+   ],
+   [
+    "CKB-EX-213",
+    "EX 213",
+    null,
+    "ZBH11338",
+    "Excavator",
+    "CAT320",
+    "CKB"
+   ],
+   [
+    "CKB-EX-301",
+    "MTM-CEXC301",
+    null,
+    null,
+    "EXCAVATOR",
+    "CAT330",
+    "CKB"
+   ],
+   [
+    "CKB-EX-303",
+    "MTM-CEXC303",
+    null,
+    null,
+    "EXCAVATOR",
+    "HIT350",
+    "CKB"
+   ],
+   [
+    "CKB-FT-2",
+    "TTR002",
+    null,
+    null,
+    "Fuel Truck",
+    "F3000",
+    "CKB"
+   ],
+   [
+    "CKB-FT-6",
+    "FT06",
+    null,
+    "LZGJRLDR47PX116654/1623J029197",
+    "Fuel Truck",
+    "F3000",
+    "CKB"
+   ],
+   [
+    "CKB-FT-7",
+    "FT07",
+    null,
+    null,
+    "Fuel Truck",
+    "F3000",
+    "CKB"
+   ],
+   [
+    "CKB-MH-1",
+    "MH01",
+    null,
+    null,
+    "Manhaul",
+    null,
+    "CKB"
+   ],
+   [
+    "CKB-MH-2",
+    "MH02",
+    null,
+    null,
+    "Manhaul",
+    null,
+    "CKB"
+   ],
+   [
+    "CKB-WT-1",
+    "WT01",
+    null,
+    null,
+    "Water Truck",
+    "JD260",
+    "CKB"
+   ],
+   [
+    "FIJ-EX-1",
+    "FIJ- EX 001",
+    null,
+    null,
+    "EXCAVATOR",
+    "CDM6060N",
+    "FIJ"
+   ],
+   [
+    "FIJ-EX-2",
+    "FIJ- EX 002",
+    null,
+    null,
+    "EXCAVATOR",
+    "SY 205C",
+    "FIJ"
+   ],
+   [
+    "FIJ-EX-3",
+    "FIJ- EX 003",
+    null,
+    null,
+    "EXCAVATOR",
+    "SY 205C",
+    "FIJ"
+   ],
+   [
+    "FIJ-Truck Mixer -6",
+    "FIJ-CM006",
+    null,
+    null,
+    "Truck Mixer ",
+    "350",
+    "FIJ"
+   ],
+   [
+    "FIJ-Truck Mixer -9",
+    "FIJ-009",
+    null,
+    null,
+    "Truck Mixer ",
+    "SY308C-8",
+    "FIJ"
+   ],
+   [
+    "GMG-EX-5205",
+    "EXC-5205",
+    null,
+    null,
+    "EXCAVATOR",
+    "ZAXIS 210-5G",
+    "GMG"
+   ],
+   [
+    "GMG-EX-5206",
+    "EXC-5206",
+    null,
+    "409508",
+    "EXCAVATOR",
+    "ZAXIS 210-5G",
+    "GMG"
+   ],
+   [
+    "GMG-EX-5207",
+    "EXC-5207",
+    null,
+    "409550",
+    "EXCAVATOR",
+    "ZAXIS 210-5G",
+    "GMG"
+   ],
+   [
+    "GMG-EX-5209",
+    "EXC-5209",
+    null,
+    "409743",
+    "EXCAVATOR",
+    "ZAXIS 210-5G",
+    "GMG"
+   ],
+   [
+    "GMG-EX-5211",
+    "EXC-5211",
+    null,
+    "409607",
+    "EXCAVATOR",
+    "ZAXIS 210-5G",
+    "GMG"
+   ],
+   [
+    "GMG-EX-5212",
+    "EXC-5212",
+    null,
+    "409604",
+    "EXCAVATOR",
+    "ZAXIS 210-5G",
+    "GMG"
+   ],
+   [
+    "GMG-EX-5213",
+    "EXC-5213",
+    null,
+    "409742",
+    "EXCAVATOR",
+    "ZAXIS 210-5G",
+    "GMG"
+   ],
+   [
+    "GMG-EX-5224",
+    "EXC-5224",
+    null,
+    null,
+    "EXCAVATOR",
+    "LIUGONG",
+    "GMG"
+   ],
+   [
+    "GMG-EX-5301",
+    "EXC-5301",
+    null,
+    "970533",
+    "EXCAVATOR",
+    "ZAXIS 350H",
+    "GMG"
+   ],
+   [
+    "GMG-EX-5302",
+    "EXC-5302",
+    null,
+    "971287",
+    "EXCAVATOR",
+    "ZAXIS 350H",
+    "GMG"
+   ],
+   [
+    "GMG-EX-5303",
+    "EXC-5303",
+    null,
+    "971280",
+    "EXCAVATOR",
+    "ZAXIS 350H",
+    "GMG"
+   ]
+  ]
+ },
+ "C_day_works_hourmeter_coverage": {
+  "columns": [
+   "rows_all",
+   "start_hm",
+   "end_hm",
+   "units",
+   "mn",
+   "mx"
+  ],
+  "rows": [
+   [
+    496409,
+    458125,
+    458125,
+    1951,
+    "2024-10-15",
+    "2026-08-01"
+   ]
+  ]
+ },
+ "C_day_works_hourmeter_recent": {
+  "columns": [
+   "rows_2026",
+   "start_hm",
+   "end_hm"
+  ],
+  "rows": [
+   [
+    63913,
+    63913,
+    63913
+   ]
+  ]
+ },
+ "D_training_set_direct": {
+  "columns": [
+   "fuel_unit_days",
+   "joined_unit_days"
+  ],
+  "rows": [
+   [
+    31035,
+    30917
+   ]
+  ]
+ },
+ "D_training_set_via_haulage": {
+  "columns": [
+   "fuel_unit_days",
+   "joined_unit_days"
+  ],
+  "rows": [
+   [
+    31035,
+    24478
+   ]
+  ]
+ },
+ "D_sample_joined_rows": {
+  "columns": [
+   "id",
+   "d",
+   "litres",
+   "fills"
+  ],
+  "rows": [
+   [
+    "N104",
+    "2026-07-22",
+    650.0,
+    3
+   ],
+   [
+    "N725",
+    "2026-07-22",
+    530.0,
+    3
+   ],
+   [
+    "N523",
+    "2026-07-22",
+    510.0,
+    2
+   ],
+   [
+    "N456",
+    "2026-07-22",
+    500.0,
+    2
+   ],
+   [
+    "N351",
+    "2026-07-22",
+    464.0,
+    2
+   ],
+   [
+    "N707",
+    "2026-07-22",
+    450.0,
+    3
+   ],
+   [
+    "L315",
+    "2026-07-22",
+    450.0,
+    2
+   ],
+   [
+    "N354",
+    "2026-07-22",
+    450.0,
+    2
+   ],
+   [
+    "N501",
+    "2026-07-22",
+    440.0,
+    2
+   ],
+   [
+    "K985",
+    "2026-07-22",
+    440.0,
+    2
+   ],
+   [
+    "N733",
+    "2026-07-22",
+    440.0,
+    2
+   ],
+   [
+    "N538",
+    "2026-07-22",
+    434.0,
+    2
+   ],
+   [
+    "K800",
+    "2026-07-22",
+    430.0,
+    2
+   ],
+   [
+    "N832",
+    "2026-07-22",
+    425.0,
+    2
+   ],
+   [
+    "N388",
+    "2026-07-22",
+    425.0,
+    2
+   ],
+   [
+    "N372",
+    "2026-07-22",
+    420.0,
+    2
+   ],
+   [
+    "L057",
+    "2026-07-22",
+    420.0,
+    2
+   ],
+   [
+    "N375",
+    "2026-07-22",
+    419.0,
+    1
+   ],
+   [
+    "N565",
+    "2026-07-22",
+    415.0,
+    2
+   ],
+   [
+    "K792",
+    "2026-07-22",
+    413.0,
+    2
+   ]
+  ]
+ },
+ "E_payload_join": {
+  "columns": [
+   "fuel_unit_days",
+   "with_payload",
+   "avg_net_wt",
+   "avg_tickets"
+  ],
+  "rows": [
+   [
+    31035,
+    24478,
+    112899.53100743525,
+    2.1919682980635673
+   ]
+  ]
+ },
+ "F_gps_km_bridge": {
+  "columns": [
+   "fuel_units",
+   "in_fms_equipments",
+   "with_imei"
+  ],
+  "rows": [
+   [
+    736,
+    643,
+    643
+   ]
+  ]
+ }
+}

@@ -105,6 +105,27 @@ def main():
             lines.append("- **=> Neither path joins. Fuel litres cannot be "
                          "normalised; a per-unit intensity model is not "
                          "possible without an external ID mapping.**")
+
+    # E/F: is a tonne-km target actually constructible?
+    pay_tot = val(d, "E_payload_join", "fuel_unit_days")
+    pay_hit = val(d, "E_payload_join", "with_payload")
+    gps_tot = val(d, "F_gps_km_bridge", "fuel_units")
+    gps_hit = val(d, "F_gps_km_bridge", "with_imei")
+    if pay_tot:
+        lines.append(
+            f"- **Payload denominator: {pay_hit} of {pay_tot} fuel unit-days "
+            f"have weighbridge tonnes ({100.0*(pay_hit or 0)/pay_tot:.1f}%).** "
+            "The ticket carries no distance column, so this alone gives "
+            "litres-per-tonne, not litres-per-tonne-km.")
+    if gps_tot:
+        lines.append(
+            f"- **GPS-km bridge (`FMS_EQUIPMENTS.plateNumber`→`imei`): "
+            f"{gps_hit} of {gps_tot} fuel units carry an imei "
+            f"({100.0*(gps_hit or 0)/gps_tot:.1f}%).** " +
+            ("Distance is obtainable, so a true tonne-km target is "
+             "constructible." if (gps_hit or 0) > 0.5 * gps_tot else
+             "Coverage is too thin to price distance for most fuelled units; "
+             "prefer litres-per-tonne or fall back to route lookup."))
     w("\n".join(lines) + "\n")
 
     TITLES = {
@@ -118,6 +139,8 @@ def main():
         "D_training_set_direct": "D. Training-set size via operating hours",
         "D_training_set_via_haulage": "D. Training-set size via weighbridge",
         "D_sample_joined_rows": "D. Sample aggregated fuel unit-days",
+        "E_payload_join": "E. Payload denominator via weighbridge (direct join)",
+        "F_gps_km_bridge": "F. GPS-km bridge via FMS_EQUIPMENTS plateNumber→imei",
     }
     w("\n### 10.2 Raw results\n")
     for k, title in TITLES.items():

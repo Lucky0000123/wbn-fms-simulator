@@ -141,6 +141,39 @@ WITH fuel AS (
 SELECT TOP (20) * FROM fuel ORDER BY d DESC, litres DESC;
 """
 
+# E. Payload denominator: weighbridge tonnes join directly (no bridge needed),
+#    but the ticket carries NO distance column, so tonne-km needs GPS km.
+Q["E_payload_join"] = """
+WITH fuel AS (
+  SELECT LTRIM(RTRIM(EQUIPMENT_ID)) id, CAST([DATE] AS date) d
+  FROM dbo.WAITING_TIME
+  WHERE TOTAL_FUEL IS NOT NULL AND LTRIM(RTRIM(TOTAL_FUEL))<>''
+  GROUP BY LTRIM(RTRIM(EQUIPMENT_ID)), CAST([DATE] AS date)),
+wb AS (
+  SELECT LTRIM(RTRIM(TRUCK_ID)) id, CAST([DATE] AS date) d,
+         SUM(TRY_CONVERT(float, NET_WEIGHT)) net_wt, COUNT(*) tickets
+  FROM dbo.HAULAGE_IWIP_EXT WHERE [DATE] >= '2026-01-01'
+  GROUP BY LTRIM(RTRIM(TRUCK_ID)), CAST([DATE] AS date))
+SELECT COUNT(*) fuel_unit_days,
+       SUM(CASE WHEN wb.id IS NOT NULL THEN 1 ELSE 0 END) with_payload,
+       AVG(wb.net_wt) avg_net_wt, AVG(CAST(wb.tickets AS float)) avg_tickets
+FROM fuel f LEFT JOIN wb ON wb.id = f.id AND wb.d = f.d;
+"""
+
+# F. The GPS-km bridge: FMS_EQUIPMENTS carries plateNumber (fuel namespace)
+#    and imei (GPS namespace) on the same row. Cross-database join.
+Q["F_gps_km_bridge"] = """
+WITH fuel AS (SELECT DISTINCT LTRIM(RTRIM(EQUIPMENT_ID)) id
+              FROM dbo.WAITING_TIME WHERE TOTAL_FUEL IS NOT NULL
+                AND LTRIM(RTRIM(TOTAL_FUEL))<>'')
+SELECT COUNT(*) fuel_units,
+       SUM(CASE WHEN e.plateNumber IS NOT NULL THEN 1 ELSE 0 END) in_fms_equipments,
+       SUM(CASE WHEN e.imei IS NOT NULL THEN 1 ELSE 0 END) with_imei
+FROM fuel f
+LEFT JOIN FMS_DB.dbo.FMS_EQUIPMENTS e
+  ON LTRIM(RTRIM(e.plateNumber)) = f.id;
+"""
+
 
 def main():
     res = {}
