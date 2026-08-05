@@ -46,7 +46,16 @@ accuracy figures, depending on what you can supply (section 13):
 
 `litres_per_day = -3928 + 270.4 × active_units`. **The bottleneck is not the
 fuel model — it is knowing how many units will run.** Forecasting the unit
-count costs +9.5 pp and dominates all remaining error. Join
+count costs +9.5 pp and dominates all remaining error.
+
+**Ready to use:** `scripts/fuel_forecast.py` (10 passing tests). See
+section 14.
+
+```bash
+python scripts/fuel_forecast.py --units 230   # 58,266 L  (56,466 - 60,066)
+```
+
+Join
 `WAITING_TIME.EQUIPMENT_ID = EQUIPMENTS_HOURLY_STATUS.ID_EQ` on the same date,
 then aggregate. **251.9 L per active unit-day**, a 5× improvement on the
 no-model baseline of 16.5%.
@@ -5307,4 +5316,50 @@ driver present, and it is intrinsically hard to predict because it reflects
 operator top-up decisions rather than a schedulable quantity. Closing it
 requires **tank-level telemetry or issued-litres-per-unit records** — the fuel
 accounting subsystem that section 0 established does not exist.
+
+---
+
+## 14. How to actually use this
+
+The model ships as `scripts/fuel_forecast.py`, with 10 tests in
+`scripts/test_fuel_forecast.py`. Everything else in this report is the analysis
+behind it.
+
+### Python
+
+```python
+from fuel_forecast import DieselForecaster
+
+fc = DieselForecaster.load()
+fc.predict(active_units=230)   # roster known  -> ~3.5% MAPE
+fc.predict()                   # nothing known -> ~13%  MAPE (persistence)
+```
+
+Returns litres, a confidence band, the active-unit count used, whether that
+count was assumed, and the MAPE you should expect for that path.
+
+### CLI
+
+```bash
+python scripts/fuel_forecast.py --fit          # refit from training_set.csv
+python scripts/fuel_forecast.py --units 230    # forecast with a roster
+python scripts/fuel_forecast.py                # autonomous forecast
+```
+
+### Refreshing the data
+
+```bash
+python scripts/fuel_training_set.py    # needs VPN; rebuilds training_set.csv
+python scripts/fuel_forecast.py --fit  # refit
+python -m pytest scripts/test_fuel_forecast.py -q
+```
+
+### Two safety behaviours worth knowing
+
+1. **It refuses to extrapolate.** The fit covers 133-281 active units; calls
+   outside 50-400 raise rather than return a confident-looking number. A linear
+   model asked about 900 units would otherwise happily invent one.
+2. **It tells you which accuracy applies.** `units_assumed` is `True` when no
+   roster was supplied, and the band widens from ±1,800 L to ±7,100 L
+   accordingly. The two figures are not interchangeable (section 13).
 

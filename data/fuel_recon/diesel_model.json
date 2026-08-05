@@ -1,0 +1,22 @@
+{
+ "intercept": -3928.3318971258923,
+ "slope": 270.40974835896174,
+ "last_units": 267.0,
+ "last_litres": 71388.0,
+ "meta": {
+  "fitted_on_days": 139,
+  "date_range": [
+   "2026-02-22",
+   "2026-07-22"
+  ],
+  "mean_litres_per_day": 56161.0,
+  "mean_active_units": 222.2,
+  "contractor": "RIM (only contractor with fuel data)",
+  "caveats": [
+   "5 months of data; no annual seasonality is learnable",
+   "all rows contractor RIM; not site-wide",
+   "SUPPORT-dominated activity mix (28,108 vs 2,809 HAULAGE)",
+   "litres measure refuel events (~200 L tank fills), not burn"
+  ]
+ }
+}
