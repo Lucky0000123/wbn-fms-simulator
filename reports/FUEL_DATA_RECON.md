@@ -5127,6 +5127,13 @@ one-variable version — it is simpler and more robust.
 Supporting constants: fleet burn rate **14.61 L/work-hr**, mean fleet day
 **54,766 L**.
 
+> **Note.** The "adding work hours buys nothing" claim above rested on a single
+> 80/20 split. Section 12 re-tests it with rolling-origin CV over twelve
+> feature sets: the conclusion holds (work hours are in fact slightly
+> *harmful*), but one feature, `lag1_litres`, gives a small consistent gain.
+> See section 12 for the final recommendation and for a leakage trap that
+> looked like the best model on the scoreboard.
+
 ### 11.4 Caveats a forecast user must know
 
 1. **Five months of data, one dry-to-wet transition** (2026-02-22 → 07-22).
@@ -5145,4 +5152,61 @@ Supporting constants: fleet burn rate **14.61 L/work-hr**, mean fleet day
 5. **137 rows carry a U+200E invisible mark** prefixing `EQUIPMENT_ID`, which
    splits units (`?N677` vs `N677`). `fuel_training_set.py` strips it and
    upper-cases; without that, 735 real units inflate to 837 phantoms.
+
+---
+
+## 12. Feature search — testing the "exhausted" claim properly
+
+Section 11 concluded the feature space was exhausted after **one** 80/20 split.
+That was weak evidence, so `scripts/fuel_model_features.py` re-tests it with
+**rolling-origin CV** (expanding train window, predict the next 7 days) across
+twelve feature sets and six CV configurations.
+
+### 12.1 A leakage trap, caught and rejected
+
+The apparent winner was `units + fills` at **2.38% MAPE**, a 1.07 pp gain.
+**It is leakage.** `fills` is the count of refuel events, and
+`litres = fills × 199.2 L` fleet-wide — `corr(fills, litres) = **+0.9924**`.
+It is the target decomposed, not a predictor, and it is unknowable before the
+day happens. **Rejected.** Recording it because it looked like the best result
+on the scoreboard.
+
+### 12.2 Leakage-free results, across six CV settings
+
+MAPE, rolling-origin. `tr` = minimum training days, `st` = forecast step.
+
+| Features | tr60/st7 | tr60/st14 | tr80/st7 | tr80/st14 | tr100/st7 | tr100/st14 |
+|---|---|---|---|---|---|---|
+| units only | 4.56% | 4.71% | 3.46% | 3.47% | 3.28% | 3.32% |
+| **units + lag1_litres** | **4.39%** | **4.56%** | **3.29%** | **3.29%** | **3.23%** | **3.26%** |
+| units + is_sunday | 4.42% | 4.57% | 3.29% | 3.30% | 3.28% | 3.32% |
+| units + work_hrs | 4.58% | 4.77% | 3.47% | 3.47% | 3.35% | 3.50% |
+
+Everything else tested was worse than `units only`: day-of-week (3.36%),
+tonnes (3.37%), tickets (3.38%), 7-day lag (3.60%), standby+breakdown (4.12%),
+kitchen sink (4.47%), linear trend (4.60%). Trend and the kitchen sink overfit
+badly on 139 days.
+
+### 12.3 Verdict: section 11 was right, but for a weaker reason than it gave
+
+`units + lag1_litres` wins in **all six** configurations, so the gain is real
+rather than a split artefact. But it is **~0.17 pp** (MAE 1,819 → 1,757 L/day
+on a 56,161 L mean), and the fitted lag coefficient is **0.037** — yesterday's
+litres carry almost no weight.
+
+**Recommendation unchanged: ship the one-variable model.**
+
+```
+litres_per_day = -3928 + 270.4 × active_units        # simple, recommended
+litres_per_day = -4863 + 265.3 × active_units + 0.037 × yesterday_litres
+```
+
+The second form is marginally more accurate and available in production
+(yesterday's litres are known by then), so use it if the plumbing is free.
+It is not worth a dependency on its own.
+
+**What would actually move the number** is not a better feature set on this
+data. It is more data: other contractors beyond RIM, a full monsoon cycle, and
+fuel capture for excavators and dozers rather than the current
+SUPPORT-dominated truck mix. Those are collection changes, not modelling ones.
 
