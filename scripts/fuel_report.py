@@ -181,12 +181,15 @@ for db in DBS:
 OUT.parent.mkdir(exist_ok=True)
 # Sections 0 and 9 are hand-written analysis appended after generation.
 # Re-running this script would silently discard them, so refuse to clobber.
-if OUT.exists() and "## 9. Join feasibility" in OUT.read_text(encoding="utf-8"):
-    alt = OUT.with_name(OUT.stem + "_regenerated.md")
-    alt.write_text("\n".join(L), encoding="utf-8")
-    print(f"REFUSED to overwrite {OUT} (contains hand-written sections 0/9).\n"
-          f"Wrote {alt} instead — merge by hand.")
-    raise SystemExit(0)
+if OUT.exists():
+    with open(OUT, "r", encoding="utf-8", newline="") as fh:
+        existing = fh.read()
+    if "## 9. Join feasibility" in existing:
+        alt = OUT.with_name(OUT.stem + "_regenerated.md")
+        alt.write_text("\n".join(L), encoding="utf-8")
+        print(f"REFUSED to overwrite {OUT} (contains hand-written sections 0/9)."
+              f"\nWrote {alt} instead — merge by hand.")
+        raise SystemExit(0)
 OUT.write_text("\n".join(L), encoding="utf-8")
 print(f"wrote {OUT} ({OUT.stat().st_size//1024} KB, "
       f"{len(OUT.read_text().splitlines())} lines)")

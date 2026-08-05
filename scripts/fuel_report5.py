@@ -128,10 +128,15 @@ def main():
         w(tbl(b["columns"], b["rows"]))
 
     block = "\n".join(L)
-    txt = REPORT.read_text(encoding="utf-8")
+    # View definitions in section 5 contain CRLF. Reading with the default
+    # newline handling then writing back silently strips every CR, rewriting
+    # 812 lines of SQL. Preserve bytes exactly by disabling translation.
+    with open(REPORT, "r", encoding="utf-8", newline="") as fh:
+        txt = fh.read()
     if MARK in txt:
         txt = txt[:txt.index(MARK)]
-    REPORT.write_text(txt.rstrip() + "\n" + block, encoding="utf-8")
+    with open(REPORT, "w", encoding="utf-8", newline="") as fh:
+        fh.write(txt.rstrip() + "\n" + block)
     print(f"section 10 written to {REPORT}")
 
 
