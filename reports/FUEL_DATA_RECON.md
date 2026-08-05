@@ -24,6 +24,19 @@ all 681 tables+views and all column names (including synonyms `BBM`, `SOLAR`,
 so it must be parsed, not cast. Everything else the model needs — operating
 hours, haulage distance, fleet, contractor — is present and large.
 
+**Two further findings that change the plan — see section 9 for the evidence:**
+
+1. **The fuel data does not join to the operating-hours data.**
+   `WAITING_TIME.EQUIPMENT_ID` uses the fleet namespace (`L961`) while
+   `EQUIPMENTS_HOURLY_STATUS.ID_EQ` uses an asset namespace (`ATCT0450027`).
+   There are five such namespaces in play. A naive join returns 0 rows and
+   looks like "no data" rather than a mapping failure. A bridge table must be
+   resolved before litres can be normalised per hour.
+2. **`DAY_WORKS` holds real hour meters** (`UNIT_START_HOUR_METER`,
+   `UNIT_END_HOUR_METER`) and shares the asset namespace with the hours table,
+   making it the prime bridge. The requested Step-2 pattern list could not
+   find these columns; the widened scan in section 7b did.
+
 
 ## 1. Fuel/Diesel tables found
 
@@ -4771,3 +4784,85 @@ _(no rows)_
 | dbo | FMS_LV_BOOKING_ITEM | 0 |
 | dbo | FMS_ERROR_FLOW | 0 |
 | dbo | LV_DRIVER_INFO | 0 |
+
+---
+
+## 9. Join feasibility — the finding that decides the model
+
+Sections 1-8 answer "what data exists". This section answers the question that
+actually determines whether a diesel model can be built: **can litres be
+attached to operating hours?** A litre count with no denominator is not a
+model input.
+
+### 9.1 The blocker: five ID namespaces
+
+Fuel and operating hours are keyed in **different, non-overlapping namespaces**,
+so the obvious join silently returns nothing.
+
+| Namespace shape | Example | Where it appears |
+|---|---|---|
+| `A999` (fleet no.) | `L961` | **`WAITING_TIME.EQUIPMENT_ID` (the fuel data)**, `HAULAGE_IWIP_EXT.TRUCK_ID`, `HAULAGE_IWIP.TRUCK_ID`, `RSF_HAULING_DATA.NB_UNIT`, `EQUIPMENTS_HOURLY_ACTIVITIES.EXCAVATOR_ID`, `FMS_EQUIPMENTS.plateNumber`, `FMS_UNIT_INSTALLED.PLATE`, `FMS_GEOFENCE_VISITS.UNIT_ID`, `FMS_TRUCK_ASSIGNMENTS.TRUCK`, `FMS_HAUL_CYCLES.TRUCK_PLATE` |
+| `AAAA9999999` (asset no.) | `ATCT0450027` | **`EQUIPMENTS_HOURLY_STATUS.ID_EQ` (the hours data)**, `DAY_WORKS.UNIT_ID` |
+| `AAA-A9-AAA-99` (master) | `ATC-P3-GKT-01` | `EQUIPMENTS.ID_EQ` (fleet master) |
+| `AA999` / `AAA999` | `EX407`, `ADT153` | `EQUIPMENTS_STATUS.ID_EQ`, `EQUIPMENTS_HOURLY_ACTIVITIES.TRUCK_ID`, `FMS_PLAYBACK_TRACK_DATA.plateNumber` |
+| 19-digit / 15-digit | `6916297240046994306` | `FMS_EQUIPMENTS.truckId`, `.imei` (GPS device serials) |
+
+**Consequence:** `WAITING_TIME` (`A999`) and `EQUIPMENTS_HOURLY_STATUS`
+(`AAAA9999999`) **cannot be joined directly**. Any naive
+`ON EQUIPMENT_ID = ID_EQ` returns 0 rows and would look like "no fuel data"
+rather than a mapping failure. This is the same class of error documented in
+`reports/_cross_analysis.md`, where a namespace split was mistaken for missing
+data and the mapping table turned out to already exist.
+
+### 9.2 A table the keyword scan missed: real hour meters
+
+`DAY_WORKS` (496,409 rows) carries **`UNIT_START_HOUR_METER`** and
+**`UNIT_END_HOUR_METER`** — genuine hour meters, and the single best
+denominator for a burn-rate model. The requested Step-2 pattern list could not
+find them: it searches for `%HOUR%` only via terms like `OPERATING_HOUR`, while
+these are spelled `UNIT_..._HOUR_METER`. They were surfaced by the widened
+scan in section 7b.
+
+`DAY_WORKS.UNIT_ID` sits in the **same `AAAA9999999` namespace as the hours
+table**, which makes it the prime bridge candidate — but in the sampled rows
+both hour-meter columns are `NULL`, so their real population rate must be
+measured before relying on them.
+
+### 9.3 Open questions, and the script that settles them
+
+`scripts/fuel_recon5.py` is written and ready; it could not run because the
+VPN to `10.211.10.1` dropped (~9.5 h at time of writing) together with the
+`LUCKY_SSD` credential volume — the documented failure mode in
+`reports/HANDOVER.md`. It answers, in counts:
+
+| ID | Question |
+|---|---|
+| A | Does fuel join to hours directly? (expected: 0 matches) |
+| B | Which table bridges `A999` → `AAAA9999999`: `DAY_WORKS`, `EQUIPMENTS`, or `HAULAGE_IWIP_EXT`? |
+| C | Are `DAY_WORKS` hour meters actually populated, overall and since 2026-02? |
+| D | How many fuel unit-days survive the join — i.e. the real training-set size? |
+
+Run it with the VPN up:
+
+```bash
+./.venv/bin/python scripts/fuel_recon5.py
+```
+
+### 9.4 Recommended modelling path, given the constraints
+
+1. **Preferred — litres per operating hour.** Requires bridge B to resolve.
+   Target `litres / OPERATING_HOURS` per unit-day. Features already available:
+   `CONTRACTOR`, `STBY_HOURS`, `BD_HOURS`, activity, location.
+2. **Fallback, needs no bridge — litres per tonne-km.** `HAULAGE_IWIP_EXT`
+   (1.5 M rows) shares the `A999` namespace with the fuel data, so it joins
+   directly. Combine with `DISTANCE_MINING` / `HAUL_ROAD_STA` chainage and the
+   GPS km table for haulage distance.
+3. **Do not attempt a seasonal forecast.** Fuel data starts **2026-02-22** and
+   spans five months with 4.5% row coverage. That supports a cross-sectional
+   intensity model, not a time-series forecast with annual seasonality.
+4. **Parse, never cast, `TOTAL_FUEL`.** It is free-text `nvarchar(100)`
+   (`'200'`, `'200 L'`, `'180L'`, `''`). `TRY_CONVERT` alone silently drops the
+   `L`-suffixed values, which are **12.0%** of the data (3,838 of the 32,000
+   rows covered by the top-30 distinct values in section 1). The parser used
+   throughout this report strips `' L'`, `'L'` and normalises `,` to `.`
+   before conversion.
