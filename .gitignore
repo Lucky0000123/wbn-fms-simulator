@@ -16,6 +16,9 @@ data/cap_snapshot.json
 data/pr_snapshot.json
 data/cap_snapshot.json.tmp
 data/pr_snapshot.json.tmp
+data/plan_day_kpi.json
+data/plan_day_kpi.json.tmp
+data/saved_plans/
 # Operator-edited constraint matrix (local persistence; not production tonnages).
 data/constraints_local.json
 # Phase 3 artifacts — derived from real production tonnages, and the mirror is
@@ -48,3 +51,4 @@ reports/schema_full_raw.json
 data/day_x_*
 reports/day_coverage.json
 reports/day_x_*.json
+data/fuel_recon/watcher.log
