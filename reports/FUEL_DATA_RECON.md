@@ -35,11 +35,18 @@ hours, haulage distance, fleet, contractor — is present and large.
 | Fuel units reachable for GPS km | 643 (87.4%) |
 | `DAY_WORKS` hour meters since 2026-02 | **63,913 populated** |
 
-**Build litres-per-operating-hour.** Join
-`WAITING_TIME.EQUIPMENT_ID = EQUIPMENTS_HOURLY_STATUS.ID_EQ` on the same date.
-All 30,917 joined unit-days carry positive operating hours, and the resulting
-mean of 10.49 L/h is a plausible haul-truck figure, so the join is real and not
-an artefact.
+**Forecast at fleet-day grain from the active-unit count — validated at 3.3%
+MAPE on 28 unseen days (section 11).** Join
+`WAITING_TIME.EQUIPMENT_ID = EQUIPMENTS_HOURLY_STATUS.ID_EQ` on the same date,
+then aggregate. **251.9 L per active unit-day**, a 5× improvement on the
+no-model baseline of 16.5%.
+
+**Do not build a per-unit-day burn-rate model — it is worse than predicting the
+mean** (40.3% vs 35.9% MAPE). A refuel is a ~200 L tank fill, not a day's
+consumption: `corr(fills, litres) = +0.840` against `corr(work_hrs, litres) =
++0.166`. And **`OPERATING_HOURS` is calendar hours, not engine hours** —
+always 24.0 per unit-day, correlation +0.010 with litres. Use
+`WORKING_HOURS`. Both traps are documented in section 11.1.
 
 **A correction, recorded honestly.** Section 9 below originally predicted this
 join would fail. That prediction was inferred from 20-row samples, in which
@@ -5053,3 +5060,89 @@ Run of `scripts/fuel_recon5.py` against the live database. These counts settle t
 | fuel_units | in_fms_equipments | with_imei |
 |---|---|---|
 | 736 | 643 | 643 |
+
+---
+
+## 11. Modelling verdict — validated on a time-based holdout
+
+Sections 9-10 answered "can the data be joined". This answers "does a model
+actually predict". Built via `scripts/fuel_training_set.py`
+(30,917 unit-days cached to `data/fuel_recon/training_set.csv`) and validated
+by `scripts/fuel_model_validate.py`. Both run offline from the cache.
+
+### 11.1 Two data traps, found by testing rather than assuming
+
+**Trap 1 — `OPERATING_HOURS` is not engine hours.** Despite the name it is
+*calendar* hours: every shift row carries `12.0`, so a unit-day always sums to
+`24.0`. Correlation with litres is **+0.010**, i.e. none. **`WORKING_HOURS` is
+the real run-time figure** (+0.166) and is what `l_per_work_hr` uses. The
+first training set I built used `OPERATING_HOURS` and produced a meaningless
+constant denominator.
+
+**Trap 2 — a refuel is a tank fill, not a day's burn.** `corr(fills, litres) =
+**+0.840**` while `corr(work_hrs, litres) = +0.166`. Litres per fill is tightly
+clustered (p05 140, p50 200, p95 280): the operator tops up a ~200 L tank when
+convenient. **Daily litres therefore measure refuelling behaviour, not
+consumption.** Any per-unit-day burn-rate target inherits that noise.
+
+### 11.2 Consequence: per-unit-day models fail, aggregation fixes it
+
+Time-based holdout, train on the first 80% of days, test on the rest.
+
+| Grain | Model | MAE | MAPE |
+|---|---|---|---|
+| unit-day | mean litres (no model) | 79.3 L | 35.9% |
+| unit-day | global L/work-hr × hours | 90.6 L | 40.3% |
+| unit-day | per-unit L/work-hr × hours | 90.6 L | 40.8% |
+
+**Per-unit-day burn-rate models are worse than predicting the mean.** Reporting
+this rather than the flattering aggregate number, because it is the result that
+determines the design.
+
+Aggregating averages the refuel lumpiness away:
+
+- Across 489 units with ≥30 fuel-days: `corr(total work_hrs, total litres)` =
+  **+0.933**, and per-unit lifetime burn rates are tight — p05 11.6, p50 15.3,
+  p95 19.0 L/work-hr. Physically credible for haul trucks.
+- At fleet-day grain (139 days): `corr(active units, litres)` = **+0.976**,
+  work hours +0.799, tonnes +0.560.
+
+### 11.3 The model that works
+
+Fleet-day holdout, 28 unseen days from 2026-06-20:
+
+| Model | MAE | MAPE |
+|---|---|---|
+| mean litres (no model) | 9,966 L | 16.5% |
+| fleet rate × work_hrs | 11,472 L | 18.6% |
+| **litres/active-unit × active units** | **1,933 L** | **3.3%** |
+| OLS(active units, work_hrs) | 1,905 L | 3.3% |
+
+**Forecast fleet diesel from the count of active units**, at
+**251.9 L per active unit-day**. That is a 5× improvement on the no-model
+baseline and needs one input you already plan: how many units run tomorrow.
+Adding work hours buys essentially nothing (3.3% either way), so prefer the
+one-variable version — it is simpler and more robust.
+
+Supporting constants: fleet burn rate **14.61 L/work-hr**, mean fleet day
+**54,766 L**.
+
+### 11.4 Caveats a forecast user must know
+
+1. **Five months of data, one dry-to-wet transition** (2026-02-22 → 07-22).
+   No annual seasonality is learnable. Do not extrapolate across a monsoon
+   cycle.
+2. **All 30,917 joined rows are contractor `RIM`.** The 14.61 L/work-hr figure
+   is RIM's fleet, not site-wide. No other contractor's fuel reaches this
+   table, so a site-wide forecast cannot be built from it.
+   Activity mix is also lopsided: **28,108 rows `SUPPORT` vs 2,809 `HAULAGE`**,
+   so the rate is dominated by support running, not by ore haulage.
+3. **The 3.3% MAPE assumes you know the active-unit count.** In a real forecast
+   that is itself predicted, so error compounds; treat 3.3% as a floor.
+4. **`WAITING_TIME` is a haulage-cycle table**, so fuel is captured for trucks
+   in the weighbridge workflow. Excavators, dozers and light vehicles are
+   under-represented.
+5. **137 rows carry a U+200E invisible mark** prefixing `EQUIPMENT_ID`, which
+   splits units (`?N677` vs `N677`). `fuel_training_set.py` strips it and
+   upper-cases; without that, 735 real units inflate to 837 phantoms.
+
