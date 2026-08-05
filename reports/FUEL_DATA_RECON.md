@@ -5274,3 +5274,37 @@ scheduling system actually holds tomorrow's roster, and you get ~3.5%. If that
 number is unavailable, use persistence and quote ~13%. Do not attempt to derive
 the unit count from `MINING_PLAN_WEEKLY`.
 
+### 13.3 Tested and rejected: fleet-wide working units as the driver
+
+`active_units` in the model above is **units that refuelled that day**, which
+is partly a refuelling-behaviour count rather than a pure fleet-size measure.
+The operationally meaningful quantity — and the one a roster would actually
+supply — is **units that worked**, taken from `EQUIPMENTS_HOURLY_STATUS` and
+independent of whether a unit visited a fuel bay.
+
+It covers the full window (139/139 days, mean 1,549 units, sd 166) and is
+**far more predictable** than the refuelling count: persistence forecasts it at
+**2.59% MAPE** versus **12.21%**. That looked like the way to close the +9.5 pp
+gap in 13.1.
+
+**It does not work.** It is much more predictable but far less informative:
+
+| Driver | corr with litres | oracle MAPE | persistence MAPE of driver | end-to-end MAPE |
+|---|---|---|---|---|
+| refuel units (current) | **+0.976** | **3.46%** | 12.21% | **13.00%** |
+| working units | +0.529 | 16.88% | **2.59%** | 16.91% |
+| working units + work_hrs | — | 16.22% | — | 16.23% |
+| both | — | 3.29% | — | 13.10% |
+
+Even handed the working-unit count **for free** (`known`, no forecast error at
+all), it only reaches 16.88% — worse than forecasting refuel units blind. The
+two are only weakly related (`corr = +0.520`), so knowing how many machines ran
+says little about how many needed diesel.
+
+**Conclusion: the 13.0% autonomous figure stands, and the gap in 13.1 cannot be
+closed from within this data.** Refuel-event count is the only strong fuel
+driver present, and it is intrinsically hard to predict because it reflects
+operator top-up decisions rather than a schedulable quantity. Closing it
+requires **tank-level telemetry or issued-litres-per-unit records** — the fuel
+accounting subsystem that section 0 established does not exist.
+
