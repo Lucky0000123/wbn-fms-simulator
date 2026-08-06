@@ -148,11 +148,87 @@
     load();
   }
 
-  // Delegated clicks: chip toggles, and re-wire when the Plan tab opens.
+  // ── Per-path weighbridges in the plan table (section 3) ───────────────────
+  // When a path is added, snapshot the weighbridges chosen for it; show them as
+  // editable chips under that path's row so the planner can see/remove per path.
+  // plan.js stores no weighbridges per path, so we keep our own map keyed by the
+  // same id it uses (contractor|src>dst) and wrap its two globals at runtime —
+  // its source stays untouched.
+  let _pathWb = {};
+
+  function snapshotAddedPath(){
+    const s = (el('plan-src') || {}).value || '', d = (el('plan-dst') || {}).value || '';
+    if (!s || !d) return;
+    let name = '—';
+    try { if (typeof planContractor === 'function'){ const c = planContractor(); if (c && c.name) name = c.name; } } catch (e) {}
+    const id = name + '|' + s + '>' + d;
+    if (typeof _planDraft !== 'undefined' && _planDraft[id] && _bridges.length){
+      _pathWb[id] = { bridges: _bridges.map(b => ({ wb: b.wb, sharePct: b.sharePct })), sel: new Set(_sel) };
+    }
+  }
+
+  function injectPathWb(){
+    const tbody = el('plan-rows');
+    if (!tbody) return;
+    if (typeof _planDraft !== 'undefined') Object.keys(_pathWb).forEach(id => { if (!_planDraft[id]) delete _pathWb[id]; });
+    Array.prototype.forEach.call(tbody.querySelectorAll('tr'), tr => {
+      if (tr.className === 'pwb-row') return;
+      const a = tr.querySelector('a[onclick^="planRemove"]');
+      if (!a) return;
+      const mm = /planRemove\('([^']*)'\)/.exec(a.getAttribute('onclick') || '');
+      if (!mm) return;
+      const pw = _pathWb[mm[1]];
+      if (!pw || !pw.bridges.length) return;
+      const next = tr.nextSibling;
+      if (next && next.className === 'pwb-row') return;   // already injected
+      const chips = pw.bridges.map(b => {
+        const on = pw.sel.has(b.wb);
+        return `<span class="pwb-chip" data-pwid="${escH(mm[1])}" data-wb="${escH(b.wb)}"`
+          + ` title="${on ? 'click to remove from this path' : 'click to add back'}"`
+          + ` style="cursor:pointer;display:inline-block;margin:1px 3px 1px 0;padding:1px 7px;border-radius:11px;`
+          + `border:1px solid ${on ? '#f59e0b' : 'var(--line)'};background:${on ? 'rgba(245,158,11,.16)' : 'transparent'};`
+          + `color:${on ? 'var(--txt)' : 'var(--muted)'}">${escH(b.wb)} <span style="opacity:.7">${pct(b.sharePct)}</span> ${on ? '✕' : '+'}</span>`;
+      }).join('');
+      const sub = document.createElement('tr');
+      sub.className = 'pwb-row';
+      sub.innerHTML = `<td></td><td colspan="8" style="font-size:10px;padding:0 0 7px">`
+        + `<span class="muted">Weighbridges (${pw.sel.size} of ${pw.bridges.length}):</span> ${chips}</td>`;
+      tr.parentNode.insertBefore(sub, tr.nextSibling);
+    });
+  }
+
+  // Wrap plan.js globals at runtime (source untouched). planAddPath already calls
+  // computePlan() before we snapshot, so re-run it after snapshotting.
+  if (typeof planAddPath === 'function'){
+    const _origAdd = planAddPath;
+    planAddPath = function(){
+      const r = _origAdd.apply(this, arguments);
+      try { snapshotAddedPath(); if (typeof computePlan === 'function') computePlan(); } catch (e) {}
+      return r;
+    };
+  }
+  if (typeof computePlan === 'function'){
+    const _origCompute = computePlan;
+    computePlan = function(){
+      const r = _origCompute.apply(this, arguments);
+      try { injectPathWb(); } catch (e) {}
+      return r;
+    };
+  }
+
+  // Delegated clicks: top-panel chips, per-path chips, and re-wire on tab open.
   document.addEventListener('click', function(ev){
-    const chip = ev.target && ev.target.closest ? ev.target.closest('.wb-chip') : null;
+    const t = ev.target;
+    const pchip = t && t.closest ? t.closest('.pwb-chip') : null;
+    if (pchip){
+      const id = pchip.getAttribute('data-pwid'), wb = pchip.getAttribute('data-wb');
+      const pw = _pathWb[id];
+      if (pw){ if (pw.sel.has(wb)) pw.sel.delete(wb); else pw.sel.add(wb); if (typeof computePlan === 'function') computePlan(); }
+      return;
+    }
+    const chip = t && t.closest ? t.closest('.wb-chip') : null;
     if (chip && chip.dataset && chip.dataset.wb){ toggleChip(chip.dataset.wb); return; }
-    if (ev.target && ev.target.id === 'tabbtn-plan') setTimeout(wire, 60);
+    if (t && t.id === 'tabbtn-plan') setTimeout(wire, 60);
   });
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire);
