@@ -268,10 +268,11 @@ q('f-from').value='2025-09-01'; q('f-to').value=new Date(Date.now()-new Date().g
 // ── Congestion-model preview tab (measured speed-vs-traffic + tunable speed-density model) ──
 let _congData=null,_congLoaded=false;
 function setSimTab(t){
-  ['sim','cong','plan','plansim'].forEach(x=>{const b=q('tabbtn-'+x),p=q('tab-'+x);if(b)b.classList.toggle('on',t===x);if(p)p.style.display=t===x?'':'none';});
+  ['sim','cong','plan','plansim','wbn'].forEach(x=>{const b=q('tabbtn-'+x),p=q('tab-'+x);if(b)b.classList.toggle('on',t===x);if(p)p.style.display=t===x?'':'none';});
   if(t==='cong'&&!_congLoaded){_congLoaded=true;loadCongModel();}
   if(t==='plan')renderPlanBuilder();
   if(t==='plansim')psInit();
+  if(t==='wbn'&&typeof wbnInit==='function')wbnInit();
 }
 let _planDraft={};
 let _wbData=null,_wbLoaded=false;
