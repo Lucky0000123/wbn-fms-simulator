@@ -1384,9 +1384,12 @@ def api_simulator_weighbridge_by_path():
         digits = _re.findall(r'\d+', raw)
         num = str(int(digits[-1])) if digits else raw
         p = next((pos_by_key[k] for k in (raw, num, 'T' + num, 'WB' + num) if k in pos_by_key), None)
+        # onCorridor is UNKNOWN (null), not False, when we have no position for
+        # the bridge — geofences.json is absent on some deployments, so defaulting
+        # to False would wrongly tag every bridge a "spur".
         bridges.append({"wb": raw, "wbNum": num, "trips": n, "wmt": float(wmt or 0),
                         "km": (p or {}).get("km"), "offM": (p or {}).get("offM"),
-                        "onCorridor": (p or {}).get("offM", 999) <= 150})
+                        "onCorridor": None if p is None else (p.get("offM", 999) <= 150)})
     bridges.sort(key=lambda b: -b["trips"])
     for b in bridges:
         b["sharePct"] = round(100.0 * b["trips"] / total, 1) if total else 0.0
@@ -1400,6 +1403,7 @@ def api_simulator_weighbridge_by_path():
         "ok": True, "source": src or None, "dest": dst or None,
         "from": frm or None, "to": to or None,
         "bridges": bridges, "nBridges": n_used, "totalTrips": total,
+        "positionsAvailable": any(b["km"] is not None for b in bridges),
         "capacityTripsPerShift": n_used * PER_BRIDGE_HR * SHIFT_HRS,
         "capacityBasis": "%d on-path bridges x ~%d trips/hr x %dh (assumption)"
                          % (n_used, PER_BRIDGE_HR, SHIFT_HRS),

@@ -96,6 +96,7 @@ function wbnRenderBridges(host, res, src, dst){
     return;
   }
   const n = res.nBridges || bridges.length;
+  const noChainage = res.positionsAvailable === false;
   const rows = bridges.map(b => {
     const kmTxt = (b.km != null) ? (fmt(b.km, 1) + ' km') : '<span class="muted">—</span>';
     const bar = `<span style="display:inline-block;height:9px;width:${Math.max(2, b.sharePct || 0)}%;background:#f59e0b;border-radius:2px;vertical-align:middle"></span>`;
@@ -123,6 +124,7 @@ function wbnRenderBridges(host, res, src, dst){
     + `<th style="text-align:right;padding:0 10px 4px">Share</th>`
     + `<th style="padding:0 0 4px">&nbsp;</th></tr></thead>`
     + `<tbody>${rows}</tbody></table>`
+    + (noChainage ? `<p class="muted" style="margin:-4px 0 12px;font-size:11px">Chainage unavailable on this deployment (weighbridge geofences not present) — ticket counts and shares are unaffected.</p>` : '')
     + `<div class="kpi" style="display:inline-block;min-width:220px">`
     + `  <div class="v">${fmt(res.capacityTripsPerShift || 0)} <span class="u">trips/shift</span></div>`
     + `  <div class="l">Capacity ceiling from on-path bridges</div>`
