@@ -18,6 +18,8 @@
   let _sel = new Set();         // currently selected wb ids
   let _route = { s: '', d: '' };
   let _cached = false;
+  let _excluded = 0;            // incidental (<min share) bridges hidden by the server
+  let _minShare = 1;
   let _lastKey = '';
   let _syncing = false;         // guard: programmatic #plan-wb writes must not re-trigger us
 
@@ -55,6 +57,8 @@
     _bridges = all.filter(b => b.trips > 0).sort((a, b) => b.trips - a.trips);
     _n = _bridges.length;
     _cached = !!(res && res.servedFrom === 'fixture');
+    _excluded = (res && res.excludedMinorBridges) || 0;
+    if (res && res.minSharePct != null) _minShare = res.minSharePct;
     _route = { s, d };
     _sel = new Set(_bridges.map(b => b.wb));   // default: all bridges used on the route
     const wb = el('plan-wb');
@@ -118,7 +122,9 @@
       + ` <span class="muted">· click to choose — the count links to “Weighbridges open”</span>`
       + `<div style="margin-top:4px">${chips}</div>`
       + (note ? `<div style="margin-top:3px;color:#f59e0b">${note}</div>` : '')
-      + `<div class="muted" style="margin-top:2px"><b>${_sel.size}</b> selected of ${_n} max on this route</div>`
+      + `<div class="muted" style="margin-top:2px"><b>${_sel.size}</b> selected of ${_n} max on this route`
+      + (_excluded > 0 ? ` · ${_excluded} incidental bridge${_excluded === 1 ? '' : 's'} (&lt;${_minShare}% of weighs) hidden` : '')
+      + `</div>`
       + `</div>`;
   }
 

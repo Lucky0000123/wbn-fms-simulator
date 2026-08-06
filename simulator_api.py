@@ -1393,17 +1393,29 @@ def api_simulator_weighbridge_by_path():
     bridges.sort(key=lambda b: -b["trips"])
     for b in bridges:
         b["sharePct"] = round(100.0 * b["trips"] / total, 1) if total else 0.0
+    # A weighbridge only "serves" the route if it handled a MATERIAL share of the
+    # weighs. Tickets scatter a few strays onto almost every bridge (a truck
+    # weighed at the wrong scale, a mis-tagged row): e.g. TF>POS 12 has 7 bridges
+    # with 1-47 tickets out of ~89k — noise, not part of the haul. Keep bridges at
+    # or above MIN_SHARE_PCT of the route's weighs; if that would drop everything
+    # (a very fragmented route), keep the single busiest so the list is never empty.
+    MIN_SHARE_PCT = 1.0
+    material = [b for b in bridges if b["sharePct"] >= MIN_SHARE_PCT]
+    if not material and bridges:
+        material = [bridges[0]]
+    excluded = len(bridges) - len(material)
     # Capacity ceiling from the bridges that ACTUALLY serve the path — same
     # ~30 trips/hr assumption plan.js already uses, but multiplied by the
     # measured on-path bridge count instead of a free number. Labelled as an
     # assumption so it is never mistaken for a measured ceiling.
     SHIFT_HRS, PER_BRIDGE_HR = 12, 30
-    n_used = sum(1 for b in bridges if b["trips"] > 0)
+    n_used = len(material)
     return jsonify({
         "ok": True, "source": src or None, "dest": dst or None,
         "from": frm or None, "to": to or None,
-        "bridges": bridges, "nBridges": n_used, "totalTrips": total,
-        "positionsAvailable": any(b["km"] is not None for b in bridges),
+        "bridges": material, "nBridges": n_used, "totalTrips": total,
+        "excludedMinorBridges": excluded, "minSharePct": MIN_SHARE_PCT,
+        "positionsAvailable": any(b["km"] is not None for b in material),
         "capacityTripsPerShift": n_used * PER_BRIDGE_HR * SHIFT_HRS,
         "capacityBasis": "%d on-path bridges x ~%d trips/hr x %dh (assumption)"
                          % (n_used, PER_BRIDGE_HR, SHIFT_HRS),

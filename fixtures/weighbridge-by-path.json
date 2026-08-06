@@ -12,6 +12,8 @@
   ],
   "nBridges": 4,
   "totalTrips": 26420,
+  "excludedMinorBridges": 0,
+  "minSharePct": 1.0,
   "capacityTripsPerShift": 1440,
   "capacityBasis": "4 on-path bridges x ~30 trips/hr x 12h (assumption)",
   "source_table": "WBN_DATABASE.dbo.HAULAGE_IWIP_CLEAN"
