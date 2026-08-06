@@ -286,6 +286,10 @@
                 <input id="ps-trucks" type="number" min="1" max="500" value="30" style="width:100%">
               </label>
               <button class="mode-btn on" onclick="psAddPlan()" style="height:32px">Add haul</button>
+              <label style="display:flex;align-items:center;gap:5px;height:32px" title="Road-only / foreign traffic (IWIP or another mine on our roads): its trucks add congestion on the shared FENI corridor but no WMT for us.">
+                <input id="ps-foreign" type="checkbox">
+                <span class="muted" style="font-size:11px">Road-only (foreign / IWIP&nbsp;— no WMT)</span>
+              </label>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:12px">
               <label style="width:130px">
