@@ -48,7 +48,6 @@
         <button class="sim-tab" id="tabbtn-cong" onclick="setSimTab('cong')">🔬 Congestion Model <span>PREVIEW</span></button>
         <button class="sim-tab" id="tabbtn-plan" onclick="setSimTab('plan')">🧭 Plan</button>
         <button class="sim-tab" id="tabbtn-plansim" onclick="setSimTab('plansim')">⚙️ Production Simulator</button>
-        <button class="sim-tab" id="tabbtn-wbn" onclick="setSimTab('wbn')">🟠 WBN</button>
       </div>
       <div id="tab-sim">
       <div style="display:flex;align-items:center;margin:0 0 12px">
@@ -242,6 +241,9 @@
             <h3 style="margin-bottom:3px">2 · Conditions</h3>
             <label class="plan-cond">Expected rainfall <span><input id="plan-rain" type="number" min="0" step="1" value="0" oninput="computePlan()"> mm</span></label>
             <label class="plan-cond">Weighbridges open <span><input id="plan-wb" type="number" min="1" step="1" value="8" oninput="computePlan()"> of 18</span></label>
+            <!-- On-path weighbridge linkage (our addition; logic in plan_weighbridges.js).
+                 Anchors the count above to the bridges measured on the selected route. -->
+            <div id="plan-wb-onpath" style="margin-top:6px"></div>
             <!-- Shift hours is NO LONGER editable here. It was a second,
                  independent control for the same concept: this one drove
                  plan.js's local estimate while #ps-shift on the Production
@@ -467,12 +469,6 @@
         </div><!-- /pa-sections-bot -->
       </div><!-- /tab-plansim -->
 
-      <!-- WBN-owned tab. Additive; logic lives in static/js/wbn.js. -->
-      <div id="tab-wbn" style="display:none">
-        <h2 style="margin:4px 0 2px;font-size:17px;color:var(--txt)">WBN — Haulage Summary</h2>
-        <div id="wbn-body"></div>
-      </div><!-- /tab-wbn -->
-
     </div>
   </div>
 <div id="mat-backdrop" style="display:none;position:fixed;inset:0;background:rgba(3,8,20,.72);z-index:9000;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)closeMatrix()">
@@ -519,7 +515,7 @@
 <script src="/static/js/plan.js"></script>
 <script src="/static/js/plan_simulator.js"></script>
 <script src="/static/js/plan_assessment.js"></script>
-<script src="/static/js/wbn.js"></script>
+<script src="/static/js/plan_weighbridges.js"></script>
 <script src="/static/js/main.js"></script>
 </body>
 </html>
