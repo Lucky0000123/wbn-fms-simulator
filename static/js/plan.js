@@ -367,6 +367,47 @@ function planApplyRainSuggest(mm){
   if(rain)rain.value=String(Math.max(0,Math.round(mm)));
   computePlan();
 }
+
+// ── 16-day site rain outlook (Open-Meteo forecast, no key) ───────────────────
+// One strip for the whole planning horizon so "when should we plan the big
+// push?" is answerable at a glance. Clicking a day sets the plan date; the
+// existing rain-suggest flow then applies that day's forecast mm to Step 1.
+let _planRainOutlook=null;
+function planFetchRainOutlook(){
+  fetch('/api/plan/rain-outlook',{cache:'no-store'})
+    .then(r=>r.json())
+    .then(res=>{_planRainOutlook=res;planRenderRainOutlook();})
+    .catch(()=>{_planRainOutlook=null;planRenderRainOutlook();});
+}
+function planRenderRainOutlook(){
+  const box=q('plan-rain-outlook');if(!box)return;
+  const res=_planRainOutlook;
+  if(!res||!res.ok||!(res.days||[]).length){
+    box.innerHTML='';
+    return;
+  }
+  const sel=(q('plan-date')||{}).value||'';
+  const chip=d=>{
+    const mm=d.mm==null?null:d.mm;
+    const wet=mm!=null&&mm>=10, damp=mm!=null&&mm>=2&&mm<10;
+    const cls='plan-ro-chip'+(wet?' wet':damp?' damp':'')+(d.date===sel?' on':'');
+    const md=d.date.slice(5);
+    const probTxt=d.probPct!=null?d.probPct+'% chance of rain · ':'';
+    return `<button type="button" class="${cls}" data-date="${d.date}"
+      title="${d.date} · ${mm!=null?mm+' mm forecast':'no data'} · ${probTxt}click to plan this date"
+      onclick="planPickOutlookDay('${d.date}')">
+      <span class="d">${md}</span><span class="mm">${mm!=null?(mm>=1?Math.round(mm):mm>0?'&lt;1':'0'):'—'}</span></button>`;
+  };
+  box.innerHTML=`<div class="plan-ro-head muted">Rain outlook · next ${res.days.length} days (site forecast, mm/day) · click a day to plan it</div>`
+    +`<div class="plan-ro-strip">${res.days.map(chip).join('')}</div>`;
+}
+function planPickOutlookDay(date){
+  const el=q('plan-date');
+  if(!el)return;
+  el.value=date;
+  planDateChange();          // reuses the whole flow: rain-suggest auto-applies
+  planRenderRainOutlook();   // refresh selection highlight
+}
 function planEnsureDate(){
   const el=q('plan-date');
   if(el&&!el.value){ el.value=planTodayISO(); planDateChange(); }
@@ -379,6 +420,7 @@ function planMarkFleetEdit(){ _planUserEditedFleet=true; planPreview(); }
 function renderPlanBuilder(){
   const src=q('plan-src');if(!src)return;
   planEnsureDate();
+  if(!_planRainOutlook)planFetchRainOutlook();   // 16-day site forecast strip
   const cs=q('plan-contractor');
   const keepC=cs?cs.value:'';
   const keepS=src.value;
@@ -428,7 +470,7 @@ function planUpdatePathMeta(){
   const c=planContractor(),f=planContractorFactor(c);
   if(!hint)return;
   if(!m){ hint.innerHTML=''; return; }
-  let html=`<b>${escH(s)} → ${escH(d)}</b> · ${fmt(m.avgTr,2)} trips/DT (main cluster)`;
+  let html=`<b>${escH(s)} → ${escH(d)}</b> · ${fmt(m.avgTr,2)} trips/DT <b>per day</b> (main cluster · ≈${fmt(m.avgTr/2,2)}/shift)`;
   if(Number.isFinite(m.trP25)&&Number.isFinite(m.trP75)){
     html+=` · history P25–P75 ${fmt(m.trP25,2)}–${fmt(m.trP75,2)}`;
   }
@@ -466,7 +508,7 @@ function _planModelLabel(v){
 function _planRenderEstimate(v){
   const box=q('plan-preview');if(!box)return;
   const lines=[
-    ['Trips / DT',fmtExact(v.tripsPerDt,2)],
+    ['Trips / DT (this shift)',fmtExact(v.tripsPerDt,2)],
     [v.swapped?'Trucks needed': 'Trucks',fmtExact(v.dt)+' DT'],
     ['Trips',fmtExact(Math.round(v.trips))],
     ['t / trip',fmtExact(v.payload,1)+' t'],
@@ -480,7 +522,7 @@ function _planRenderEstimate(v){
   const mod=_planModelLabel(v);
   box.classList.remove('empty');
   box.classList.toggle('is-loading', v.model==='local');
-  box.innerHTML=`<div class="est-head">Estimated shift output</div>`
+  box.innerHTML=`<div class="est-head">Estimated shift output <span class="muted" style="font-weight:400;font-size:10.5px">· ONE shift (${escH((q('plan-hours')||{}).value||12)} h), not per day — Capability tab quotes per-day (2 shifts)</span></div>`
     +`<div class="est-body">`
     +`<div class="est-lines">${lines.map(l=>`<div class="est-line"><span>${escH(l[0])}</span><b>${l[1]}</b></div>`).join('')}</div>`
     +`<div class="est-total"><div class="est-total-l">${v.swapped?'Trucks needed':'WMT'}</div>`

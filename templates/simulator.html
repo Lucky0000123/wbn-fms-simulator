@@ -400,6 +400,9 @@
                 <label class="plan-cond">Weighbridges <span><input id="plan-wb" type="number" min="1" step="1" value="8" oninput="computePlan()"> / 18</span></label>
               </div>
               <div id="plan-rain-suggest" class="plan-rain-suggest"></div>
+              <!-- 16-day site rain outlook: click a day to plan that date with
+                   its forecast mm pre-applied to the Step-1 estimate. -->
+              <div id="plan-rain-outlook" class="plan-rain-outlook" aria-live="polite"></div>
               <input id="plan-hours" type="hidden" value="12">
               <select id="ps-weather" style="display:none" aria-hidden="true"><option value="dry" selected>Dry</option><option value="wet">Wet</option></select>
               <div class="plan-shift-mini muted">Shift <b id="plan-hours-display">12</b> h</div>

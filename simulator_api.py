@@ -2171,6 +2171,73 @@ def _forecast_mm(date_s):
         return None
 
 
+_RAIN_OUTLOOK_CACHE = {"at": 0.0, "data": None}
+_RAIN_OUTLOOK_TTL = 3 * 3600.0  # forecasts update ~4x daily; 3h is plenty
+
+
+def _forecast_outlook():
+    """16-day daily rain forecast (mm + probability) for the site, cached.
+
+    One Open-Meteo call covers the full window, so the Plan tab can show the
+    whole planning horizon instead of one date at a time.
+    """
+    import time as _time
+    import urllib.parse
+    import urllib.request
+    now = _time.time()
+    if (_RAIN_OUTLOOK_CACHE["data"] is not None
+            and now - _RAIN_OUTLOOK_CACHE["at"] < _RAIN_OUTLOOK_TTL):
+        return _RAIN_OUTLOOK_CACHE["data"]
+    qs = urllib.parse.urlencode({
+        "latitude": _SITE_LAT,
+        "longitude": _SITE_LNG,
+        "daily": "precipitation_sum,precipitation_probability_max",
+        "timezone": "Asia/Jayapura",
+        "forecast_days": 16,
+    })
+    url = "https://api.open-meteo.com/v1/forecast?" + qs
+    try:
+        with urllib.request.urlopen(url, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        daily = data.get("daily") or {}
+        days = []
+        times = daily.get("time") or []
+        mms = daily.get("precipitation_sum") or []
+        probs = daily.get("precipitation_probability_max") or []
+        for i, d in enumerate(times):
+            mm = mms[i] if i < len(mms) else None
+            prob = probs[i] if i < len(probs) else None
+            days.append({
+                "date": d,
+                "mm": round(float(mm), 1) if mm is not None else None,
+                "probPct": int(prob) if prob is not None else None,
+            })
+        out = {"days": days, "fetchedAt": now}
+        _RAIN_OUTLOOK_CACHE.update({"at": now, "data": out})
+        return out
+    except Exception as e:  # noqa: BLE001
+        print("[sim_api] rain outlook fetch failed: %s" % e)
+        return None
+
+
+@bp.route('/api/plan/rain-outlook', methods=['GET'])
+def api_plan_rain_outlook():
+    """16-day site rain forecast strip for the Plan tab (mm + probability)."""
+    out = _forecast_outlook()
+    if out is None:
+        return jsonify({"ok": False, "error": "forecast unavailable",
+                        "days": []}), 503
+    return jsonify({
+        "ok": True,
+        "site": {"lat": _SITE_LAT, "lng": _SITE_LNG, "tz": "Asia/Jayapura"},
+        "source": "open-meteo forecast (no key)",
+        "days": out["days"],
+        "note": ("Daily precipitation for the haul-road midpoint. Click a day "
+                 "in the Plan tab to plan that date; rain feeds the Step-1 "
+                 "estimate only — simulate tonnes stay weather-invariant."),
+    })
+
+
 # ── Saved holding plans (local disk; keyed by plan date) ─────────────────────
 _SAVED_PLANS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "saved_plans")
 

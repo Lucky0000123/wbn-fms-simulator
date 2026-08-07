@@ -681,3 +681,17 @@ svg{display:block;width:100%;height:280px}
   .scroll,.rain-table{background:linear-gradient(to left,rgba(0,0,0,.35),transparent 24px);background-attachment:local,scroll}
   .plan-estimate .est-total .est-total-v{font-size:22px}
 }
+
+/* ── Plan: 16-day rain outlook strip ───────────────────────────────────── */
+.plan-rain-outlook{margin:8px 0 4px}
+.plan-ro-head{font-size:10.5px;margin-bottom:4px}
+.plan-ro-strip{display:flex;gap:3px;flex-wrap:wrap}
+.plan-ro-chip{display:flex;flex-direction:column;align-items:center;gap:1px;
+  padding:3px 5px;border:1px solid var(--line-light,#2c3947);border-radius:6px;
+  background:rgba(255,255,255,.03);cursor:pointer;min-width:34px}
+.plan-ro-chip .d{font-size:9px;color:var(--muted,#8b98a5)}
+.plan-ro-chip .mm{font-size:11.5px;font-weight:600}
+.plan-ro-chip.damp{border-color:#3b82f6;background:rgba(59,130,246,.12)}
+.plan-ro-chip.wet{border-color:#f59e0b;background:rgba(245,158,11,.16)}
+.plan-ro-chip.on{outline:2px solid var(--accent,#22c55e)}
+.plan-ro-chip:hover{background:rgba(255,255,255,.09)}
