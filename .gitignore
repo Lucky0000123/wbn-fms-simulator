@@ -4,6 +4,12 @@ __pycache__/
 venv/
 .DS_Store
 
+# Local DB credentials (copied from LUCKY_SSD via scripts/sync_creds_from_ssd.sh)
+.env
+.env.*
+!.env.example
+secrets/
+
 # Phase 2 model artifacts — regenerate with `python train_model.py`
 # or POST /api/retrain. Metadata files are committed as reference.
 data/*.csv
@@ -16,6 +22,9 @@ data/cap_snapshot.json
 data/pr_snapshot.json
 data/cap_snapshot.json.tmp
 data/pr_snapshot.json.tmp
+data/plan_day_kpi.json
+data/plan_day_kpi.json.tmp
+data/saved_plans/
 # Operator-edited constraint matrix (local persistence; not production tonnages).
 data/constraints_local.json
 # Phase 3 artifacts — derived from real production tonnages, and the mirror is
@@ -48,3 +57,24 @@ reports/schema_full_raw.json
 data/day_x_*
 reports/day_coverage.json
 reports/day_x_*.json
+data/fuel_recon/watcher.log
+
+# Fuel-recon operational extracts: real litres, hours, contractor names,
+# planned tonnages. Derived from site DBs; regenerable via scripts/fuel_*.py.
+# The public mirror must never carry them (J63).
+data/fuel_recon/*.csv
+
+# DB schema inventories and scan reports carry table/column names and real
+# tonnage figures. Same rule as reports/database_schema_raw.json above.
+reports/wbn_db_all_columns.json
+reports/fms_db_all_columns.json
+reports/fms_db_full_scan.md
+reports/fms_db_playback_tables.md
+reports/gps_peak_season_hunt.md
+reports/dual_db_analysis_plan.md
+
+# Local editor/tool state.
+.cursor/
+
+# Local server logs (jcode dev runner).
+logs/

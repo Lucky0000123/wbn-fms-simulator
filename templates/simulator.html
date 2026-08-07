@@ -47,9 +47,16 @@
         <button class="sim-tab on" id="tabbtn-sim" onclick="setSimTab('sim')">Capability &amp; Scenario</button>
         <button class="sim-tab" id="tabbtn-cong" onclick="setSimTab('cong')">🔬 Congestion Model <span>PREVIEW</span></button>
         <button class="sim-tab" id="tabbtn-plan" onclick="setSimTab('plan')">🧭 Plan</button>
-        <button class="sim-tab" id="tabbtn-plansim" onclick="setSimTab('plansim')">⚙️ Production Simulator</button>
       </div>
       <div id="tab-sim">
+
+      <!-- ══ Part 1: Capability (window KPIs → 3D scenario pick) ══ -->
+      <section class="sim-part" id="sim-part-capability" aria-labelledby="sim-part1-title">
+      <header class="sim-part-head">
+        <h2 id="sim-part1-title">1 · Capability</h2>
+        <p class="sim-part-purpose">What this fleet can deliver in the selected window — default <b>Jan–May peak</b> for Shift Performance / path-response. Jun–Jul is the struggle / low-DT era. (Corridor GPS for the map is Jul-only — retention.)</p>
+      </header>
+
       <div style="display:flex;align-items:center;margin:0 0 12px">
         <p class="lead muted" id="scope" style="margin:0"></p>
         <div style="margin-left:auto;display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden">
@@ -59,7 +66,7 @@
       </div>
       <div class="kpis" id="kpis"></div>
 
-      <h2>Fleet requirement — trucks to hit a tonnage target</h2>
+      <h3 class="sim-subh">Fleet requirement — trucks to hit a tonnage target</h3>
       <div class="card calc">
         <div class="row">
           <span><label class="muted">Target WMT / day</label><br><input type="number" id="calc-t" oninput="calc()" style="width:150px;font-size:15px"></span>
@@ -69,7 +76,7 @@
         <p class="lead muted" id="calc-note" style="margin:10px 0 0"></p>
       </div>
 
-      <h2><span id="eff-title">Efficiency — production vs fleet size (per day)</span> <span class="cnt" id="eff-mode"></span></h2>
+      <h3 class="sim-subh"><span id="eff-title">Efficiency — production vs fleet size (per day)</span> <span class="cnt" id="eff-mode"></span></h3>
       <div class="optbar">
         <span id="path-opt-controls" style="display:contents">
         <span class="muted">Optimize for</span>
@@ -100,48 +107,153 @@
         </span>
       </div>
       <div class="effkpis" id="eff-kpis"></div>
-      <div class="card" style="position:relative"><div id="eff-tip" class="eff-tip"></div><div class="eff-visual-wrap" id="eff-visual-wrap"><div class="c3-tools" id="c3-tools"><span class="muted">3D interaction</span><div class="seg"><button class="mode-btn on" id="c3-tool-rotate" onclick="setC3Tool('rotate')">Rotate</button><button class="mode-btn" id="c3-tool-select" onclick="setC3Tool('select')">Select scenario</button></div><select id="c3-scenario-select" onchange="loadC3ScenarioSelect()"><option value="">Choose an observed scenario…</option></select></div><svg id="scatter" viewBox="0 0 1000 340"></svg>
-        <aside class="c3-flow" id="c3-flow">
-          <div class="c3-flow-head"><h3>07:00–19:00 haul-road scenario planner</h3><span id="flow-mode-badge" class="flow-mode-badge"></span><button class="btn" id="c3-flow-play" onclick="flowRunOrPause()">▶ Run</button><button class="ms-btn" style="min-width:0" onclick="flowReset()">Reset</button></div>
-          <div class="flow-planner" id="flow-planner"></div>
-          <details class="flow-advanced"><summary>Advanced simulation settings</summary>
-            <p class="muted" style="font-size:11px;margin:8px 0 4px">Motion defaults to <b>measured GPS</b> segment speeds. Editing Loaded/Empty km/h overrides that profile. Trip / WMT KPIs stay from dispatch — they are not invented from road speed. Min headway is a fallback for V/C when measured peak trucks/h is unavailable.</p>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
-              <button class="ms-btn" style="min-width:0" type="button" onclick="flowUseMeasuredGps()">Use measured GPS</button>
-              <button class="ms-btn" style="min-width:0" type="button" onclick="flowEstimateSpeeds()">Override from trip-implied speeds</button>
+      <div class="card" style="position:relative">
+        <div id="eff-tip" class="eff-tip"></div>
+        <div class="eff-visual-wrap" id="eff-visual-wrap">
+          <div class="c3-tools" id="c3-tools">
+            <span class="muted">3D interaction</span>
+            <div class="seg">
+              <button class="mode-btn on" id="c3-tool-rotate" onclick="setC3Tool('rotate')">Rotate</button>
+              <button class="mode-btn" id="c3-tool-select" onclick="setC3Tool('select')">Select scenario</button>
             </div>
-            <div class="c3-flow-controls">
-              <label>Start position<select id="flow-start" onchange="flowScenarioChanged()"><option value="split">Split endpoints</option><option value="source">All at sources</option><option value="destination">All at destinations</option></select></label>
-              <label>Loaded km/h (override)<input id="flow-loaded-speed" type="number" min="5" max="80" value="25" onchange="flowScenarioChanged(true)"></label>
-              <label>Empty km/h (override)<input id="flow-empty-speed" type="number" min="5" max="80" value="35" onchange="flowScenarioChanged(true)"></label>
-              <label>Release stagger min<input id="flow-stagger" type="number" min="0" max="60" step="0.5" value="0" onchange="flowScenarioChanged()"></label>
-              <label>Min headway sec (assumed)<input id="flow-headway" type="number" min="10" max="600" value="90" onchange="flowScenarioChanged()"></label>
-              <label>Load + dump min<input id="flow-dwell" type="number" min="0" max="120" value="12" onchange="flowScenarioChanged()"></label>
-              <label>Trace elements<input id="flow-elements" type="number" min="50" max="1500" step="50" value="500" onchange="flowScenarioChanged()"></label>
-            </div>
-          </details>
-          <div class="c3-flow-kpis"><div class="c3-flow-kpi"><b id="flow-attain">—</b><span id="flow-attain-label">Estimated trips / 12h shift</span></div><div class="c3-flow-kpi"><b id="flow-prod">—</b><span id="flow-prod-label">Est. production / shift</span></div><div class="c3-flow-kpi"><b id="flow-vc">—</b><span>Peak lane V/C <span class="muted" id="flow-vc-hint">(capacity)</span></span></div><div class="c3-flow-kpi"><b id="flow-queue">—</b><span>Est. queue DT</span></div></div><div class="c3-flow-alert" id="flow-alert"></div><div class="flow-hotspots" id="flow-hotspots" aria-label="Congestion risk by haul-road section"></div><div class="c3-flow-routes" id="flow-routes"></div><div class="c3-flow-clock" id="c3-flow-clock">07:00</div><div class="c3-flow-meta" id="c3-flow-meta"></div><div class="c3-flow-progress"><i id="c3-flow-progress"></i></div><div id="c3-flow-map" class="c3-flow-map" role="img" aria-label="GPS haul-road corridor with measured speeds and animated trucks"></div><details class="flow-stick-details"><summary>Schematic chainage stick (ribbons + particle detail)</summary><svg id="c3-flow-svg" viewBox="0 0 1000 390" role="img" aria-label="Weighted trace particles sharing one two-way left-hand-traffic road on the proportional TF to FENI corridor"></svg></details><p class="c3-flow-note" id="flow-note">GPS corridor map · motion = measured GPS · posted FMS limits as overlay · trip counts from dispatch (NB_SHIFT basis) · V/C from measured peak trucks/h when available.</p>
-        </aside>
-      </div>
+            <select id="c3-scenario-select" onchange="loadC3ScenarioSelect()"><option value="">Choose an observed scenario…</option></select>
+          </div>
+          <svg id="scatter" viewBox="0 0 1000 340"></svg>
+        </div>
         <div class="lead muted" style="display:flex;gap:14px;margin-top:8px;flex-wrap:wrap">
           <span id="legend-wmt" style="color:#3b82f6">━ WMT/day trend</span><span id="legend-eff" style="color:#eab308">━ Efficiency trend (right axis)</span><span id="legend-marg" style="color:#f87171">╌ Marginal per +1 DT (far right)</span>
           <span id="legend-range"><i class="zb" style="background:rgba(34,197,94,.5)"></i>recommended range</span><span id="legend-over"><i class="zb" style="background:rgba(239,68,68,.5)"></i>over-fleeted</span>
         </div>
         <p class="lead muted" id="eff-math" style="margin:9px 0 0"></p>
-        <div class="c3-analysis" id="c3-analysis">
-          <div>
-            <h3>Shift Performance</h3><div class="c3-stats" id="c3-stats"></div>
-            <h3 style="margin-bottom:3px">Road Capacity Zones</h3><p class="muted" style="margin:0 0 8px;font-size:10.5px">Historical operating limits for the selected shared road.</p>
-            <div style="overflow-x:auto"><table><thead><tr><th>Zone</th><th class="r">Shared Road Loading</th><th class="r">Avg Trips/Truck</th><th>Interpretation</th></tr></thead><tbody id="c3-groups"></tbody></table></div>
-            <h3 style="margin:16px 0 3px">Selected Route Review</h3><p class="muted" style="margin:0 0 8px;font-size:10.5px">All haul routes operating in the selected shift.</p>
-            <div style="overflow-x:auto"><table><thead><tr><th>Route</th><th class="r">Fleet</th><th class="r">Trips/Truck</th><th class="r">Road Share</th><th>Comment</th></tr></thead><tbody id="c3-route-review"></tbody></table></div>
-            <h3 style="margin:16px 0 3px">Fleet Allocation Exceptions</h3><p class="muted" style="margin:0 0 8px;font-size:10.5px">Normal Fleet = average fleet assigned to the route across comparable historical shifts.</p>
-            <div style="overflow-x:auto"><table><thead><tr><th>Route</th><th class="r">Current Fleet</th><th class="r">Normal Fleet</th><th class="r">Difference</th></tr></thead><tbody id="c3-path-response"></tbody></table></div>
+        <p class="sim-part-bridge muted" id="sim-part1-bridge">Pick a point with <b>Select scenario</b> (or the dropdown) to open the shift road simulator below.</p>
+      </div>
+      </section><!-- /sim-part-capability -->
+
+      <!-- ══ Part 2: Shift road simulator (planner → animation → outcomes) ══ -->
+      <section class="sim-part sim-part-shift" id="sim-part-shift" aria-labelledby="sim-part2-title">
+      <header class="sim-part-head">
+        <h2 id="sim-part2-title">2 · Historical shift replay</h2>
+        <p class="sim-part-purpose">Replay a real selected day on the GPS corridor (illustration). Forward planning and capacity estimates live on the <b>Plan</b> tab Step 2.</p>
+      </header>
+
+      <div class="c3-flow" id="c3-flow">
+        <div class="c3-flow-head">
+          <h3>07:00–19:00 haul-road scenario</h3>
+          <span id="flow-mode-badge" class="flow-mode-badge"></span>
+          <button class="btn" id="c3-flow-play" onclick="flowEnsureCapabilityHost();flowRunOrPause()">▶ Run</button>
+          <button class="ms-btn" style="min-width:0" onclick="flowEnsureCapabilityHost();flowReset()">Reset</button>
+        </div>
+        <div class="flow-planner" id="flow-planner"></div>
+        <details class="flow-advanced"><summary>Advanced · map motion (GPS by default)</summary>
+          <div id="flow-motion-banner" class="flow-motion-banner gps" role="status">
+            <b id="flow-motion-mode-label">● Measured GPS motion</b>
+            <span id="flow-motion-mode-detail">Each DT moves at GPS segment speeds from our corridor extract. Manual km/h is off.</span>
           </div>
-          <aside class="c3-findings"><h3>Shift Assessment</h3><div id="c3-findings"></div></aside>
+          <p class="muted" style="font-size:11px;margin:8px 0 6px;line-height:1.45">
+            Normal use: leave <b>Measured GPS</b> on. Fleet size = Fleet what-if / Plan.
+            Trip estimates = path-response. Achievable tonnes = Plan Step 2 simulate.
+            Nothing in this panel changes trips or WMT.
+          </p>
+          <div class="flow-motion-modes" style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
+            <button type="button" class="ms-btn flow-motion-btn on" id="flow-btn-gps" onclick="flowUseMeasuredGps()">Measured GPS (default)</button>
+            <button type="button" class="ms-btn flow-motion-btn" id="flow-btn-override" onclick="flowShowManualSpeeds()">Speed override (debug)</button>
+          </div>
+          <div id="flow-speed-manual" class="flow-speed-manual" hidden>
+            <p class="muted" style="font-size:11px;margin:0 0 6px">
+              Same override mode: you set Loaded/Empty km/h for the <b>cartoon only</b>.
+              <b>Fill from trip rate</b> just guesses those two numbers from trip time — it is not a separate engine.
+            </p>
+            <div class="c3-flow-controls">
+              <label>Loaded km/h<input id="flow-loaded-speed" type="number" min="5" max="80" value="25" onchange="flowScenarioChanged(true)"></label>
+              <label>Empty km/h<input id="flow-empty-speed" type="number" min="5" max="80" value="35" onchange="flowScenarioChanged(true)"></label>
+            </div>
+            <div style="margin-top:8px">
+              <button type="button" class="ms-btn" style="min-width:0" onclick="flowEstimateSpeeds()">Fill from trip rate</button>
+            </div>
+          </div>
+          <details class="flow-illus-tuning" id="flow-illus-tuning">
+            <summary>Optional illustration tuning (not GPS data · not fleet size)</summary>
+            <p class="muted" style="font-size:10.5px;margin:6px 0 8px;line-height:1.4">
+              You do <b>not</b> need these for normal runs. Defaults are fine.
+              Start / stagger / dwell = how dots are staged. Headway = V/C fallback only if measured peaks are missing.
+              Trace elements = max dots drawn (performance), not DT count.
+            </p>
+            <div class="c3-flow-controls">
+              <label>Start position<select id="flow-start" onchange="flowScenarioChanged()"><option value="split">Split endpoints</option><option value="source">All at sources</option><option value="destination">All at destinations</option></select></label>
+              <label>Release stagger min<input id="flow-stagger" type="number" min="0" max="60" step="0.5" value="0" onchange="flowScenarioChanged()"></label>
+              <label>Min headway sec (V/C fallback)<input id="flow-headway" type="number" min="10" max="600" value="90" onchange="flowScenarioChanged()"></label>
+              <label>Load + dump min<input id="flow-dwell" type="number" min="0" max="120" value="12" onchange="flowScenarioChanged()"></label>
+              <label>Trace elements (max dots)<input id="flow-elements" type="number" min="50" max="1500" step="50" value="500" onchange="flowScenarioChanged()"></label>
+            </div>
+          </details>
+        </details>
+
+        <div class="c3-flow-clock" id="c3-flow-clock">07:00</div>
+        <div class="c3-flow-meta" id="c3-flow-meta"></div>
+        <div class="c3-flow-progress"><i id="c3-flow-progress"></i></div>
+        <div class="flow-visuals" id="c3-flow-visuals">
+          <div id="c3-flow-map" class="c3-flow-map" role="img" aria-label="GPS haul-road corridor with measured speeds and animated trucks"></div>
+          <div class="flow-stick" id="c3-flow-stick">
+            <div class="flow-stick-label">Schematic chainage stick · ribbons + particles</div>
+            <svg id="c3-flow-svg" viewBox="0 0 1000 390" role="img" aria-label="Weighted trace particles sharing one two-way left-hand-traffic road on the proportional TF to FENI corridor"></svg>
+          </div>
+        </div>
+
+        <!-- Outcomes sit under the animation -->
+        <div class="flow-outcomes" id="flow-outcomes">
+          <h3 class="flow-outcomes-title">Shift outcomes</h3>
+          <p class="muted flow-outcomes-lead">Trips/WMT from <b>dispatch</b> (or path-response when you edit fleet). V/C and queue are <b>modelled illustration</b> — not measured queues. Forward capacity → <b>Plan</b> tab.</p>
+          <div class="c3-flow-kpis flow-outcomes-kpis">
+            <div class="c3-flow-kpi"><b id="flow-attain">—</b><span id="flow-attain-label">Estimated trips / 12h shift</span></div>
+            <div class="c3-flow-kpi"><b id="flow-prod">—</b><span id="flow-prod-label">Est. production / shift</span></div>
+            <div class="c3-flow-kpi"><b id="flow-vc">—</b><span>Peak lane V/C <span class="muted" id="flow-vc-hint">(capacity)</span></span></div>
+            <div class="c3-flow-kpi"><b id="flow-queue">—</b><span>Modelled excess DT <span class="muted">(not measured queue)</span></span></div>
+          </div>
+          <div class="flow-outcomes-grid">
+            <div>
+              <h4>What this means</h4>
+              <div class="c3-flow-alert" id="flow-alert"></div>
+              <div class="flow-hotspots" id="flow-hotspots" aria-label="Congestion risk by haul-road section"></div>
+            </div>
+            <div>
+              <h4>Next action</h4>
+              <div class="flow-verdict" id="flow-verdict"><p class="muted">Select a 3D scenario above to get a dispatch next action.</p></div>
+            </div>
+          </div>
+          <div class="c3-flow-routes" id="flow-routes"></div>
+          <p class="c3-flow-note" id="flow-note">GPS corridor map · motion = measured GPS · posted FMS limits as overlay · trip counts from dispatch (NB_SHIFT basis) · V/C from measured peak trucks/h when available.</p>
         </div>
       </div>
 
+      <div class="c3-analysis" id="c3-analysis">
+        <div class="c3-analysis-lead">
+          <div>
+            <h3>Shift performance</h3>
+            <p class="muted" style="margin:0 0 8px;font-size:11px">Updates with what-if fleet edits (path-response predict). Banner says PREDICTED when not pure dispatch replay.</p>
+            <div class="c3-stats" id="c3-stats"></div>
+          </div>
+          <aside class="c3-findings">
+            <h3>Verdict</h3>
+            <div id="c3-findings"></div>
+          </aside>
+        </div>
+        <details class="c3-detail-tables">
+          <summary>Detail tables — zones, routes, allocation exceptions</summary>
+          <div class="c3-detail-body">
+            <h3 style="margin-bottom:3px">Road Capacity Zones</h3>
+            <p class="muted" style="margin:0 0 8px;font-size:10.5px">Historical operating limits for the selected shared road.</p>
+            <div style="overflow-x:auto"><table><thead><tr><th>Zone</th><th class="r">Shared Road Loading</th><th class="r">Avg Trips/Truck</th><th>Interpretation</th></tr></thead><tbody id="c3-groups"></tbody></table></div>
+            <h3 style="margin:16px 0 3px">Selected Route Review</h3>
+            <p class="muted" style="margin:0 0 8px;font-size:10.5px">All haul routes operating in the selected shift.</p>
+            <div style="overflow-x:auto"><table><thead><tr><th>Route</th><th class="r">Fleet</th><th class="r">Trips/Truck</th><th class="r">Road Share</th><th>Comment</th></tr></thead><tbody id="c3-route-review"></tbody></table></div>
+            <h3 style="margin:16px 0 3px">Fleet Allocation Exceptions</h3>
+            <p class="muted" style="margin:0 0 8px;font-size:10.5px">Normal Fleet = average fleet assigned to the route across comparable historical shifts.</p>
+            <div style="overflow-x:auto"><table><thead><tr><th>Route</th><th class="r">Current Fleet</th><th class="r">Normal Fleet</th><th class="r">Difference</th></tr></thead><tbody id="c3-path-response"></tbody></table></div>
+          </div>
+        </details>
+      </div>
+
+      <h3 class="sim-subh">Shift context</h3>
       <section class="ops-context" aria-label="Operating context">
         <div class="card"><h3>Weighbridge Load</h3><div class="sub">Latest measured IWIP bridge activity · every truck contributes to bridge demand</div><div id="wb-shift-toggle" style="display:flex;gap:4px;margin:2px 0 8px">
           <button type="button" class="wbsh on" data-sh="all" onclick="setWbShift('all')">Whole day</button>
@@ -150,6 +262,7 @@
         <div class="card"><h3>Rainfall Impact by Route</h3><div class="sub">Wet vs dry Trips/DT compared on days with a <b>similar fleet</b> (matched, no model) · context, not a weather forecast</div><div id="cap-rain-shift" style="margin:2px 0 10px"></div><div class="rain-table"><table><thead><tr><th>Route</th><th class="r">Dry</th><th class="r">Wet</th><th class="r">Impact / 10 mm</th><th>Assessment</th></tr></thead><tbody id="cap-rain"><tr><td colspan="5" class="muted">Loading rainfall-matched route history…</td></tr></tbody></table></div></div>
         <div class="card"><h3>IWIP Traffic Impact by Route</h3><div class="sub">Estimated effect of that day's non-WBN traffic on the shared FENI routes vs a typical day · measured, not a forecast</div><div id="cap-iwip-shift" style="margin:2px 0 10px"></div><div class="rain-table"><table><thead><tr><th>Route (FENI-bound)</th><th class="r">Base Trips/DT</th><th class="r">Est. Impact</th><th>Assessment</th></tr></thead><tbody id="cap-iwip"><tr><td colspan="4" class="muted">Select a scenario point on the chart to estimate IWIP impact for that shift.</td></tr></tbody></table></div></div>
       </section>
+      </section><!-- /sim-part-shift -->
 
       <!-- Collapsible from here down. Listeners are attached in JS (secRestore),
            NOT via an inline ontoggle= attribute: a <details open> fires its
@@ -217,118 +330,251 @@
         <div class="card" style="position:relative;margin-top:10px"><svg id="cong-svg" viewBox="0 0 1000 340"></svg></div>
         <p class="lead muted" id="cong-note" style="margin-top:8px"></p>
       </div><!-- /tab-cong -->
-      <div id="tab-plan" style="display:none">
-        <div class="info-banner">
-          <b>Plan a shift.</b> <span class="banner-body">Pick the contractor and haul paths, set the fleet you'd run (or the WMT you need), add expected rainfall &amp; weighbridges open, and get estimated <b>Trips/DT</b> and <b>WMT per shift</b> — using each path's <b>historical average Trips/DT</b> (20-month DB), adjusted for the contractor, fleet size and rain.</span>
-        </div>
-        <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start">
-          <div class="card" style="flex:2;min-width:360px">
-            <h3 style="margin-bottom:3px">1 · Add a haul path</h3><div class="sub">Pick the contractor, source and destination from the DB, set the fleet, and add.</div>
-            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start;margin-top:10px">
-              <label class="plan-field">Contractor<select id="plan-contractor" onchange="planContractorChange()"></select></label>
-              <label class="plan-field">Source<select id="plan-src" onchange="planSrcChange()"></select></label>
-              <label class="plan-field">Destination<select id="plan-dst" onchange="planDstChange()"></select></label>
-              <label id="plan-input-dt" class="plan-field">Number of Trucks (DT)<span><input id="plan-dt" type="number" min="1" step="1" value="50" oninput="planPreview()" style="width:80px"> DT</span></label>
-              <label id="plan-input-wmt" class="plan-field" style="display:none">Target WMT (tonnes)<span><input id="plan-wmt" type="number" min="1" step="100" value="5000" oninput="planPreview()" style="width:96px"> t</span></label>
-              <span class="plan-field">&nbsp;<button class="ms-btn" id="plan-swap-btn" style="min-width:0;cursor:pointer" onclick="planSwapMode()">⇄ DT → WMT</button>
-                <span class="plan-swap-note">Switch between entering trucks to get WMT, or entering WMT to get required trucks</span></span>
+      <div id="tab-plan" class="plan-tab" style="display:none">
+        <div class="plan-topbar">
+          <div class="plan-date-bar">
+            <label class="plan-field plan-date-field">Plan date
+              <input id="plan-date" type="date" onchange="planDateChange()">
+            </label>
+            <span id="plan-date-note" class="muted" style="font-size:12px"></span>
+            <div class="plan-save-bar">
+              <button class="ms-btn" type="button" id="plan-save-btn" onclick="planSaveForDate()" disabled title="Save holding plan for this date">Save plan</button>
+              <button class="ms-btn" type="button" id="plan-load-btn" onclick="planLoadSavedForDate()" disabled title="Load saved plan for this date">Load saved</button>
+              <span id="plan-save-status" class="muted" style="font-size:11px"></span>
             </div>
-            <div id="plan-hint" class="muted" style="font-size:10.5px;margin-top:7px"></div>
-            <div id="plan-preview" class="plan-estimate"></div>
-            <div style="margin-top:10px"><button class="plan-add" onclick="planAddPath()">+ Add this path to plan</button></div>
           </div>
-          <div class="card" style="flex:1;min-width:250px">
-            <h3 style="margin-bottom:3px">2 · Conditions</h3>
-            <label class="plan-cond">Expected rainfall <span><input id="plan-rain" type="number" min="0" step="1" value="0" oninput="computePlan()"> mm</span></label>
-            <label class="plan-cond">Weighbridges open <span><input id="plan-wb" type="number" min="1" step="1" value="8" oninput="computePlan()"> of 18</span></label>
-            <!-- On-path weighbridge linkage (our addition; logic in plan_weighbridges.js).
-                 Anchors the count above to the bridges measured on the selected route. -->
-            <div id="plan-wb-onpath" style="margin-top:6px"></div>
-            <!-- Shift hours is NO LONGER editable here. It was a second,
-                 independent control for the same concept: this one drove
-                 plan.js's local estimate while #ps-shift on the Production
-                 Simulator tab drove the engine, so the two tabs could quote
-                 different shift lengths with nothing on screen saying which
-                 applied. Two controls for one concept is how the 0.85
-                 availability defect survived. The field is kept as a HIDDEN
-                 input so plan.js is untouched, and psSyncShift() drives it from
-                 #ps-shift -- they cannot diverge. -->
-            <label class="plan-cond">Shift hours <span>
+          <div class="plan-gps-strip">
+            <div class="plan-gps-strip-head">
+              <b>Haul GPS days</b>
+              <span class="muted" id="plan-gps-range">Jul+ banked · click a day for details</span>
+            </div>
+            <div id="plan-gps-days" class="plan-gps-days" aria-live="polite"></div>
+            <details class="plan-data-notes" id="plan-data-notes">
+              <summary>Day details <span class="muted">(segments · Playback · peak ops · bias)</span></summary>
+              <p class="muted plan-data-notes-lead">Select a GPS day above to inspect it. Does not change Step 1 WMT.</p>
+              <div id="plan-day-detail" class="plan-day-detail" aria-live="polite"></div>
+              <div id="plan-gps-coverage" class="plan-gps-coverage" style="display:none" aria-hidden="true"></div>
+              <div id="plan-playback-truth" class="plan-playback-truth" aria-live="polite"></div>
+              <details class="plan-peak-ref">
+                <summary>Peak season reference <span class="muted">(Jan–May averages — not the selected day)</span></summary>
+                <div id="plan-peak-proxy" class="plan-peak-proxy" aria-live="polite"></div>
+              </details>
+              <label class="plan-bias-toggle muted" title="Ticket-calibrated companion = raw ÷ 1.055. Primary simulate stays raw; availability stays 1.0.">
+                <input type="checkbox" id="plan-bias-lens" checked onchange="planBiasLensToggle()"> Show ticket-calibrated tonnes (−5.5% companion)
+              </label>
+            </details>
+          </div>
+        </div>
+
+        <div class="plan-step1">
+          <div class="plan-inputs-row">
+            <div class="card plan-builder">
+              <div class="plan-panel-head">
+                <h3>1 · Add a haul path</h3>
+                <button class="plan-add" type="button" onclick="planAddPath()">+ Add to plan</button>
+              </div>
+              <div class="plan-builder-fields">
+                <label class="plan-field">Contractor<select id="plan-contractor" onchange="planContractorChange()"></select></label>
+                <label class="plan-field">Source<select id="plan-src" onchange="planSrcChange()"></select></label>
+                <label class="plan-field">Destination<select id="plan-dst" onchange="planDstChange()"></select></label>
+                <label id="plan-input-dt" class="plan-field">Trucks (DT)
+                  <span class="plan-dt-row">
+                    <input id="plan-dt" type="number" min="1" step="1" value="50" oninput="planMarkFleetEdit()">
+                    <button class="ms-btn plan-swap-inline" id="plan-swap-btn" type="button" onclick="planSwapMode()" title="Switch DT / WMT">⇄ WMT</button>
+                  </span>
+                </label>
+                <label id="plan-input-wmt" class="plan-field" style="display:none">Target WMT
+                  <span class="plan-dt-row">
+                    <input id="plan-wmt" type="number" min="1" step="100" value="5000" oninput="planMarkFleetEdit()">
+                    <button class="ms-btn plan-swap-inline" id="plan-swap-btn-wmt" type="button" onclick="planSwapMode()" title="Switch DT / WMT">⇄ DT</button>
+                  </span>
+                </label>
+                <!-- Road-only / foreign (IWIP) traffic (our addition). A path added
+                     with this ticked contributes NO WMT for us but its trucks still
+                     load the shared FENI corridor and drag our trips/DT. Engine logic
+                     in plan_simulator.py; carried on each _planDraft row as `foreign`. -->
+                <label id="plan-input-foreign" class="plan-field plan-field-foreign" title="Road-only / foreign traffic (IWIP or another mine on our roads): its trucks add congestion on the shared FENI corridor but no WMT for us.">
+                  <span class="plan-foreign-check"><input id="plan-foreign" type="checkbox"> Road-only (foreign / IWIP&nbsp;— no WMT)</span>
+                </label>
+              </div>
+              <div id="plan-hint" class="plan-hint"></div>
+            </div>
+
+            <div class="card plan-cond-card">
+              <h3>Conditions</h3>
+              <div class="plan-cond-grid">
+                <label class="plan-cond">Rainfall <span><input id="plan-rain" type="number" min="0" step="1" value="0" oninput="planRainManual();computePlan()"> mm</span></label>
+                <label class="plan-cond">Weighbridges <span><input id="plan-wb" type="number" min="1" step="1" value="8" oninput="computePlan()"> / 18</span></label>
+              </div>
+              <!-- On-path weighbridge linkage (our addition; logic in plan_weighbridges.js).
+                   Anchors the count above to the bridges measured on the selected route. -->
+              <div id="plan-wb-onpath" style="margin-top:6px"></div>
+              <div id="plan-rain-suggest" class="plan-rain-suggest"></div>
               <input id="plan-hours" type="hidden" value="12">
-              <b id="plan-hours-display">12</b> h
-              <span class="muted" style="font-size:10.5px">&mdash; set on the Production Simulator tab</span>
-            </span></label>
-            <div class="effkpis" id="plan-kpis" style="margin-top:12px"></div>
-          </div>
-        </div>
-        <div class="card" style="margin-top:14px"><h3 style="margin-bottom:3px">3 · Your plan &amp; estimate</h3>
-          <div class="sub" id="plan-scope"></div>
-          <div class="rain-table" style="margin-top:8px"><table><thead><tr><th>Path</th><th>Contractor</th><th class="r">Fleet DT</th><th class="r">Est. Trips/DT</th><th class="r">Trips</th><th class="r">t/trip</th><th class="r">WMT</th><th>Notes</th><th></th></tr></thead><tbody id="plan-rows"><tr><td colspan="9" class="muted">Add a path above to start… your live estimate is shown in step 1.</td></tr></tbody><tfoot id="plan-foot"></tfoot></table></div>
-          <div id="plan-warn" style="margin-top:8px;font-size:11.5px"></div></div>
-      </div><!-- /tab-plan -->
-
-      <div id="tab-plansim" style="display:none">
-        <div class="info-banner">
-          <b>Production simulator.</b> <span class="banner-body">Enter the plan &mdash; how many trucks on which hauls &mdash; and get predicted trip time, loading and dumping time, and tonnes per shift. Where two plans share a loading point, the combined demand is checked against that point&rsquo;s <b>measured</b> throughput ceiling. Cycle time is <b>not</b> scaled by truck count: that effect could not be identified in weighbridge data, and the reason is shown below the results.</span>
-        </div>
-
-        <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start">
-          <div class="card" style="flex:2;min-width:380px">
-            <h3 style="margin-bottom:3px">1 &middot; Build the plan</h3>
-            <div class="sub">Add one line per haul. Only routes with observed history are offered.</div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">
-              <label style="flex:2;min-width:210px">
-                <div class="muted" style="font-size:11px;margin-bottom:3px">Haul route</div>
-                <select id="ps-route" style="width:100%"></select>
-              </label>
-              <label style="width:110px">
-                <div class="muted" style="font-size:11px;margin-bottom:3px">Trucks</div>
-                <input id="ps-trucks" type="number" min="1" max="500" value="30" style="width:100%">
-              </label>
-              <button class="mode-btn on" onclick="psAddPlan()" style="height:32px">Add haul</button>
-              <label style="display:flex;align-items:center;gap:5px;height:32px" title="Road-only / foreign traffic (IWIP or another mine on our roads): its trucks add congestion on the shared FENI corridor but no WMT for us.">
-                <input id="ps-foreign" type="checkbox">
-                <span class="muted" style="font-size:11px">Road-only (foreign / IWIP&nbsp;— no WMT)</span>
-              </label>
-            </div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:12px">
-              <label style="width:130px">
-                <div class="muted" style="font-size:11px;margin-bottom:3px">Weather</div>
-                <select id="ps-weather" style="width:100%" onchange="psRun()">
-                  <option value="dry">Dry</option><option value="wet">Wet</option>
-                </select>
-              </label>
-              <!-- THE ONLY shift-length control in the app. The Plan tab's
-                   #plan-hours used to be a second, independent one; it is now a
-                   hidden field driven from here, so the two can never disagree.
-                   Range narrowed from 60-1440 to 480-720: measured on 538,586
-                   truck-shifts, 98.5% are exactly 12.0 h, the shortest observed
-                   is 8.0 h, and NOTHING is below 6 h. The 1.3% above 12 h is
-                   almost entirely 24.00 h, which is a day-aggregated record
-                   rather than a 24-hour shift. min/max here is guidance, not a
-                   block -- a typed value outside it still runs, and the engine
-                   labels anything off 720 as an extrapolation. -->
-              <label style="width:190px">
+              <select id="ps-weather" style="display:none" aria-hidden="true"><option value="dry" selected>Dry</option><option value="wet">Wet</option></select>
+              <div class="plan-shift-mini muted">Shift <b id="plan-hours-display">12</b> h</div>
+                            <label style="width:170px">
                 <div class="muted" style="font-size:11px;margin-bottom:3px">Shift length (min)
                   <span title="Measured over 538,586 truck-shifts: 98.5% are exactly 12.0 h (720 min), shortest observed 8.0 h. The effective cycle that trips divide by is itself calibrated at 720, so other values are extrapolations and are labelled as such.">&#9432;</span>
                 </div>
                 <input id="ps-shift" type="number" min="480" max="720" step="30" value="720" style="width:100%" onchange="psShiftChanged()">
                 <div class="muted" style="font-size:10px;margin-top:2px;line-height:1.3">data supports 8&ndash;12 h (480&ndash;720)</div>
               </label>
-              <!-- The "Availability (assumed)" input that stood here is REMOVED.
-                   It defaulted to 0.85 and was sent to /api/simulate, which
-                   honoured it, so the UI under-quoted tonnage by 15% using the
-                   exact assumption this project measured as wrong. Availability
-                   is not an input: it is measured per route and it sizes the
-                   roster, shown in "Fleet sizing" below. -->
-              <div style="width:210px;font-size:11px" class="muted">
-                <div style="margin-bottom:3px">Availability</div>
-                <div id="ps-avail-note" style="line-height:1.35">measured per route &mdash; sizes the <b>roster</b>, not the tonnage</div>
-              </div>
-              <button class="mode-btn" onclick="psClear()" style="height:32px">Clear all</button>
+              <div class="effkpis" id="plan-kpis" style="display:none"></div>
             </div>
           </div>
 
+          <div class="card plan-hist-card">
+            <div class="plan-panel-head plan-hist-head">
+              <div>
+                <h3>Best past days</h3>
+                <div class="plan-hist-legend muted">Selected contractor · closest DT · trips · trips/DT · <span class="ph-legend-dry">dry</span> / <span class="ph-legend-wet">wet</span></div>
+              </div>
+              <div id="plan-hist-summary" class="plan-hist-summary muted">Select path + DT…</div>
+            </div>
+            <div id="plan-hist-list" class="plan-hist-list"></div>
+          </div>
+
+          <!-- Running Step 1 WMT / trips — full row under paths & history -->
+          <div id="plan-preview" class="card plan-estimate plan-estimate-compact plan-estimate-footer"></div>
+        </div>
+
+        <div class="card plan-holding">
+          <h3>Your plan</h3>
+          <div class="sub" id="plan-scope"></div>
+          <div class="rain-table plan-holding-table"><table><thead><tr><th>Path</th><th>Contractor</th><th class="r">DT</th><th class="r">Trips/DT</th><th class="r">Trips</th><th class="r">t/trip</th><th class="r">WMT</th><th></th><th></th></tr></thead><tbody id="plan-rows"><tr><td colspan="9" class="muted">No paths yet.</td></tr></tbody><tfoot id="plan-foot"></tfoot></table></div>
+          <div id="plan-warn"></div>
+        </div>
+
+        <!-- Step 2 · stacked: decision → capacity → illustration → insights -->
+        <div class="card plan-step2">
+          <div class="plan-step2-head">
+            <div>
+              <h3>2 · Run scenario</h3>
+              <p class="muted plan-step2-lead">Run scenario loads A · outcomes and B · capacity first. Press ▶ Run on the GPS corridor to open C · road illustration (motion / V/C — not tonnes), then review history.</p>
+            </div>
+            <div class="plan-step2-actions">
+              <button class="btn" type="button" id="plan-run-scenario" onclick="planRunScenario()" disabled>Run simulated scenario</button>
+              <button class="ms-btn" type="button" id="plan-open-assessment" onclick="planOpenFullAssessment()" disabled>Open full assessment</button>
+            </div>
+          </div>
+
+          <div id="plan-scenario-panel" class="plan-scenario-stack" style="display:none">
+            <!-- A · Shift outcomes -->
+            <section class="plan-s2-block plan-s2-decision">
+              <div class="plan-s2-label">A · Shift outcomes</div>
+              <div class="plan-calc-busy" id="plan-outcomes-busy">
+                <div class="plan-calc-overlay" role="status" aria-live="polite">
+                  <div class="ph-spin" aria-hidden="true"></div>
+                  <div class="ph-load-text">Calculating productivity &amp; capacity…</div>
+                  <div class="ph-load-sub">Running simulate · history band</div>
+                </div>
+                <div id="plan-scenario-outcomes"></div>
+              </div>
+            </section>
+
+            <!-- B · Production capacity (simulate) + path estimate delta -->
+            <section class="plan-s2-block">
+              <div class="plan-s2-label">B · Production &amp; capacity</div>
+              <div class="plan-calc-busy" id="plan-estimate-busy">
+                <div class="plan-calc-overlay" role="status" aria-live="polite">
+                  <div class="ph-spin" aria-hidden="true"></div>
+                  <div class="ph-load-text">Calculating productivity &amp; capacity…</div>
+                  <div class="ph-load-sub">Loader ceilings and path-model vs achievable</div>
+                </div>
+                <div id="plan-scenario-estimate"></div>
+              </div>
+            </section>
+
+            <!-- GPS corridor — play here; C · Road illustration loads after ▶ Run -->
+            <section class="plan-s2-block plan-s2-corridor" id="plan-s2-corridor">
+              <div class="plan-s2-label">GPS corridor <span class="muted">(▶ Run opens road illustration)</span></div>
+              <div class="c3-flow" id="plan-c3-flow">
+                <div class="c3-flow-head">
+                  <h3>Holding plan on GPS corridor</h3>
+                  <button class="btn" id="plan-c3-flow-play" onclick="flowSetHost('plan');flowRunOrPause()">▶ Run</button>
+                  <button class="ms-btn" style="min-width:0" onclick="flowSetHost('plan');flowReset()">Reset</button>
+                </div>
+                <div class="plan-test-prod" id="plan-test-prod" aria-live="polite">
+                  <div class="plan-test-prod-head">
+                    <span class="plan-test-prod-label">Shift readout</span>
+                    <span class="plan-test-prod-sub muted">Predict trips · simulate tonnes · illustration only</span>
+                  </div>
+                  <div class="plan-test-prod-kpis">
+                    <div class="plan-readout-metric">
+                      <span class="plan-readout-kicker">Predict</span>
+                      <b class="plan-readout-value" id="plan-flow-attain">—</b>
+                      <span class="plan-readout-unit" id="plan-flow-attain-label">trips / 12h shift</span>
+                    </div>
+                    <div class="plan-readout-metric">
+                      <span class="plan-readout-kicker">Simulate</span>
+                      <b class="plan-readout-value" id="plan-flow-prod">—</b>
+                      <span class="plan-readout-unit" id="plan-flow-prod-label">achievable t</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="flow-planner" id="plan-flow-planner" style="display:none"></div>
+                <div class="plan-illust-meta">
+                  <div class="plan-run-clock">
+                    <span class="plan-run-clock-label">Shift clock</span>
+                    <div class="c3-flow-clock" id="plan-c3-flow-clock">07:00</div>
+                  </div>
+                  <div class="c3-flow-meta" id="plan-c3-flow-meta"></div>
+                  <div class="plan-illust-kpis">
+                    <div class="plan-readout-metric plan-readout-metric--compact">
+                      <span class="plan-readout-kicker">Peak V/C</span>
+                      <b class="plan-readout-value" id="plan-flow-vc">—</b>
+                      <span class="plan-readout-unit"><span class="muted" id="plan-flow-vc-hint"></span></span>
+                    </div>
+                    <div class="plan-readout-metric plan-readout-metric--compact">
+                      <span class="plan-readout-kicker">Excess DT</span>
+                      <b class="plan-readout-value" id="plan-flow-queue">—</b>
+                      <span class="plan-readout-unit">modelled · not measured queue</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="c3-flow-progress"><i id="plan-c3-flow-progress"></i></div>
+                <div class="flow-visuals" id="plan-c3-flow-visuals">
+                  <div id="plan-c3-flow-map" class="c3-flow-map" role="img" aria-label="Plan illustration GPS corridor"></div>
+                  <div class="flow-stick" id="plan-c3-flow-stick">
+                    <div class="flow-stick-label">Schematic chainage stick · ribbons + particles</div>
+                    <svg id="plan-c3-flow-svg" viewBox="0 0 1000 390" role="img" aria-label="Plan illustration stick"></svg>
+                  </div>
+                </div>
+                <p class="muted plan-corridor-hint" id="plan-corridor-hint">After A and B finish, press <b>▶ Run</b> to load C · road illustration (hour profile · shared-road timing · congestion advice).</p>
+              </div>
+            </section>
+
+            <!-- C · Road illustration — revealed after GPS corridor ▶ Run -->
+            <section class="plan-s2-block plan-s2-illust" id="plan-s2-illust" style="display:none" hidden>
+              <div class="plan-s2-label">C · Road illustration <span class="muted">(motion / V/C only — not production)</span></div>
+              <div class="plan-calc-busy" id="plan-illust-busy">
+                <div class="plan-calc-overlay" role="status" aria-live="polite">
+                  <div class="ph-spin" aria-hidden="true"></div>
+                  <div class="ph-load-text">Loading road illustration…</div>
+                  <div class="ph-load-sub">Jul+ hour profile · shared-road timing · congestion advice</div>
+                </div>
+                <div id="plan-corridor-hours" class="plan-corridor-hours" aria-live="polite"></div>
+                <div id="plan-shared-flow" class="plan-shared-flow" aria-live="polite"></div>
+                <div id="plan-congestion-advice" class="plan-congestion-advice" aria-live="polite"></div>
+                <div class="flow-outcomes" id="plan-flow-outcomes">
+                  <div class="c3-flow-alert" id="plan-flow-alert"></div>
+                  <div class="flow-verdict" id="plan-flow-verdict" style="display:none"></div>
+                  <div class="flow-hotspots" id="plan-flow-hotspots"></div>
+                  <div class="c3-flow-routes" id="plan-flow-routes"></div>
+                  <p class="c3-flow-note" id="plan-flow-note"></p>
+                </div>
+              </div>
+            </section>
+
+            <!-- Full assessment (sections 2-9, engine: /api/simulate via psRun).
+                 Lives HERE now: it auto-runs when the corridor illustration
+                 finishes, replacing the separate Production Simulator page.
+                 Same holding plan, same engine, one page. -->
+            <section class="plan-s2-block" id="plan-assessment-host" style="display:none">
+              <h3 style="margin:0 0 4px">E · Full assessment <span class="muted" style="font-size:11.5px">(simulation of this holding plan — same engine as Production &amp; capacity)</span></h3>
+              <div id="plan-assessment-busy" class="muted" style="display:none;font-size:12px;margin:6px 0">Running prediction on the holding plan…</div>
+              <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;margin-top:8px">
           <div class="card" style="flex:1;min-width:260px">
             <h3 style="margin-bottom:3px">Shift total</h3>
             <div class="sub">Planned is what the fleet would do unconstrained. Achievable applies measured capacity.</div>
@@ -339,20 +585,12 @@
             </div>
             <div id="ps-warnings" style="margin-top:10px"></div>
           </div>
-        </div>
-
-        <div style="margin-top:14px">
-          <button class="btn" onclick="paRun()" style="cursor:pointer">▶ Run assessment</button>
-          <span class="muted" style="font-size:11.5px;margin-left:10px">Sections 2&ndash;8 below assess the plan in the table: where the time goes, how fast each road section runs, where plans collide, and how it compares with the days this haul actually ran.</span>
-        </div>
-
-        <!-- Sections 2-5. Hidden until a plan exists, so an empty page never
-             shows axes with no data on them. -->
+              </div>
         <div id="pa-sections-top" style="display:none">
 
           <div class="card" style="margin-top:14px">
             <h3 style="margin-bottom:3px">2 &middot; Trip time breakdown</h3>
-            <div class="sub">Where the time goes on each haul. The first three bands are the weigh-to-weigh trip a planner recognises; the fourth is everything between one trip and the next.</div>
+            <div class="sub">Weigh-to-weigh (predicted cycle) vs <b>effective cycle</b> (tonnage denominator). Residual = effective &minus; predicted (queue + empty return + breaks) — not “travel empty” alone.</div>
             <div id="pa-breakdown-chart" style="height:250px;margin-top:8px"></div>
             <div class="rain-table" style="margin-top:8px"><table>
               <thead><tr><th>Haul</th><th class="r">Load</th><th class="r">Travel loaded</th>
@@ -372,10 +610,15 @@
 
           <div class="card" style="margin-top:14px">
             <h3 style="margin-bottom:3px">4 &middot; Congestion and shared points</h3>
-            <div class="sub">Two different things, kept apart on purpose: which points these plans <b>share</b> (modelled, as capacity) and how much slower busy road sections actually run (measured, and deliberately not modelled).</div>
+            <div class="sub">Two different things, kept apart on purpose: which points these plans <b>share</b> (modelled, as capacity) and how much slower busy road sections actually run (measured, and deliberately not modelled). Shared <b>road</b> risk below is advisory from historical analogues — it does not clip tonnes.</div>
             <div class="rain-table" style="margin-top:8px"><table>
               <thead><tr><th style="width:110px">Point type</th><th>Shared between plans</th></tr></thead>
               <tbody id="pa-shared-rows"></tbody></table></div>
+            <div id="pa-shared-road" style="margin-top:10px"></div>
+            <div class="rain-table" style="margin-top:8px"><table>
+              <thead><tr><th>Date</th><th class="r">Section DT</th><th class="r">Trips/DT</th><th>Season</th><th>Sections</th></tr></thead>
+              <tbody id="pa-shared-road-rows"><tr><td colspan="5" class="muted">Run analogues (Plan tab or assessment refresh)…</td></tr></tbody>
+            </table></div>
             <div id="pa-drop-chart" style="height:230px;margin-top:12px"></div>
             <div class="rain-table" style="margin-top:8px"><table>
               <thead><tr><th>Segment</th><th class="r">Free-flow km/h</th><th class="r">Mean km/h</th>
@@ -415,8 +658,16 @@
 
           <div class="card" style="margin-top:14px">
             <h3 style="margin-bottom:3px">7 &middot; Historical reference</h3>
-            <div class="sub">How this prediction sits against the days this exact haul actually ran. A sanity check on the number, not an input to it.</div>
-            <div id="pa-history-chart" style="height:260px;margin-top:8px"></div>
+            <div class="sub">Top matched days for this plan (fleet band + route), plus the all-days boxplot sanity check. Analogue ensemble is history only — not an input to simulate tonnes.</div>
+            <div id="pa-analogues-ensemble" class="plan-analogues-ensemble" style="margin-top:8px"></div>
+            <div class="rain-table" style="margin-top:8px"><table>
+              <thead><tr>
+                <th>Date</th><th>Route</th><th>Season</th><th class="r">Hist DT</th>
+                <th class="r">Trips/DT</th><th class="r">WMT</th><th class="r">Speed</th><th>Why</th>
+              </tr></thead>
+              <tbody id="pa-analogues-rows"><tr><td colspan="8" class="muted">Loading analogues…</td></tr></tbody>
+            </table></div>
+            <div id="pa-history-chart" style="height:260px;margin-top:12px"></div>
             <div class="rain-table" style="margin-top:8px"><table>
               <thead><tr><th>Haul</th><th class="r">Days observed</th><th class="r">Min</th>
                 <th class="r">Median</th><th class="r">Max</th><th class="r">This plan</th>
@@ -471,7 +722,47 @@
           </div>
 
         </div><!-- /pa-sections-bot -->
-      </div><!-- /tab-plansim -->
+            </section>
+
+
+            <!-- D · Insights: history band + shared road (new information) -->
+            <section class="plan-s2-block plan-s2-insights">
+              <div class="plan-s2-label">D · Insights from history <span class="muted">(what past days say — not a second production total)</span></div>
+              <div class="plan-insights-grid">
+                <div class="plan-analogues-wrap">
+                  <h4>Similar days band</h4>
+                  <p class="muted" style="font-size:11px;margin:0 0 8px">Realistic range from matched past days. Compare to your plan — do not average with simulate.</p>
+                  <div id="plan-analogues-ensemble" class="plan-analogues-ensemble"></div>
+                  <div class="rain-table plan-insights-table"><table>
+                    <thead><tr>
+                      <th>Date</th><th>Route</th><th>Season</th><th class="r">DT</th>
+                      <th class="r">Trips/DT</th><th class="r">WMT</th><th class="r">GPS</th><th>Note</th>
+                    </tr></thead>
+                    <tbody id="plan-analogues-rows"><tr><td colspan="8" class="muted">Run to retrieve…</td></tr></tbody>
+                  </table></div>
+                  <div id="plan-analogues-note" class="muted" style="font-size:11px;margin-top:6px"></div>
+                  <div id="plan-day-segments" class="plan-day-segments" aria-live="polite"></div>
+                </div>
+                <div class="plan-road-wrap">
+                  <h4>Shared-road risk</h4>
+                  <p class="muted" style="font-size:11px;margin:0 0 8px">When paths share corridor — advisory only; does not cut tonnes.</p>
+                  <div id="plan-road-summary"></div>
+                  <div class="rain-table plan-insights-table"><table>
+                    <thead><tr>
+                      <th>Date</th><th class="r">Section DT</th><th class="r">Trips/DT</th>
+                      <th class="r">Overlap</th><th>Season</th>
+                    </tr></thead>
+                    <tbody id="plan-road-rows"><tr><td colspan="5" class="muted">Need 2+ overlapping paths…</td></tr></tbody>
+                  </table></div>
+                  <div id="plan-road-note" class="muted" style="font-size:11px;margin-top:6px"></div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div><!-- /tab-plan -->
+
+
 
     </div>
   </div>
@@ -519,6 +810,7 @@
 <script src="/static/js/plan.js"></script>
 <script src="/static/js/plan_simulator.js"></script>
 <script src="/static/js/plan_assessment.js"></script>
+<script src="/static/js/plan_scenario.js"></script>
 <script src="/static/js/plan_weighbridges.js"></script>
 <script src="/static/js/main.js"></script>
 </body>

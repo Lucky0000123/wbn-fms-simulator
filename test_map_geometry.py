@@ -97,10 +97,16 @@ print("\n=== the FULL extract stays out of the repo ===")
 full_tracked = git("ls-files", "data/haul_road_chainage.csv")
 check("the full extract is NOT tracked", full_tracked == "", full_tracked)
 check("no other data/*.csv has been un-ignored",
-      all(not f.endswith(".csv") or f.endswith("haul_road_chainage_public.csv")
+      all(not f.endswith(".csv")
+          or f.endswith("haul_road_chainage_public.csv")
+          # Posted speed-limit zones: chainage + km/h only (see .gitignore
+          # rationale; content pinned by test_flow_gps_speeds.py / J69).
+          or f.endswith("speed_limit_zones_public.csv")
           for f in git("ls-files", "data/").split("\n") if f),
       [f for f in git("ls-files", "data/").split("\n")
-       if f.endswith(".csv") and not f.endswith("haul_road_chainage_public.csv")])
+       if f.endswith(".csv")
+       and not f.endswith("haul_road_chainage_public.csv")
+       and not f.endswith("speed_limit_zones_public.csv")])
 
 print("\n=== the endpoint serves it when the extract is absent ===")
 import simulator_api as sa                                          # noqa: E402

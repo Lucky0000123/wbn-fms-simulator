@@ -38,69 +38,64 @@ def main():
         pg.goto(BASE + "/simulator", wait_until="domcontentloaded", timeout=30000)
         pg.wait_for_timeout(2500)
 
-        # Open the Production Simulator tab and build a two-plan scenario that
+        # Build a two-plan scenario that
         # SHARES a dumping point, so section 4 has something real to report.
-        pg.click("#tabbtn-plansim")
-        pg.wait_for_selector("#ps-route", timeout=15000)
+        # The assessment lives INSIDE the Plan tab now (plansim page retired
+        # 2026-08-07). Drive it the way the app does: build the holding plan
+        # in _planDraft, then planOpenFullAssessment() -> psRun() renders
+        # sections 2-9 under the corridor block.
+        pg.click("#tabbtn-plan")
+        pg.wait_for_selector("#plan-src", timeout=15000)
 
-        # Wait for the CONDITION, not a fixed sleep. With the DB configured but
-        # unreachable, other start-up fetches stall for seconds and the options
-        # fetch lands at ~4.5s instead of well under 1s -- a 1200 ms sleep here
-        # failed all 17 checks and looked like a total page failure when nothing
-        # was wrong with the page at all.
+        # Wait for the CONDITION, not a fixed sleep (see AGENTS.md).
         try:
             pg.wait_for_function(
-                "() => document.querySelectorAll('#ps-route option').length > 1",
+                "() => document.querySelectorAll('#plan-src option').length >= 1",
                 timeout=30000)
         except Exception:                                          # noqa: BLE001
-            pass                     # let the check below report it properly
+            pass
 
-        opts = pg.eval_on_selector_all(
-            "#ps-route option", "els => els.map(e => e.textContent)")
-        check("route dropdown populated", len(opts) > 3, "%d options" % len(opts))
-
-        def add(prefix, trucks):
-            idx = pg.evaluate(
-                """(s) => {const o=[...document.querySelectorAll('#ps-route option')];
-                   return o.findIndex(x => x.textContent.trim().startsWith(s));}""", prefix)
-            if idx < 0:
-                return False
-            pg.select_option("#ps-route", index=idx)
-            pg.fill("#ps-trucks", str(trucks))
-            pg.click("text=Add haul")
-            # Wait for the simulation to actually land rather than sleeping: the
-            # table shows "Simulating..." until /api/simulate returns.
-            try:
-                pg.wait_for_function(
-                    "() => {const b=document.getElementById('ps-rows');"
-                    " return b && !b.textContent.includes('Simulating') "
-                    "&& b.querySelectorAll('tr').length > 0;}", timeout=30000)
-            except Exception:                                      # noqa: BLE001
-                pass
-            return True
+        # psInit populates the (now hidden) route list used for options; make
+        # sure the engine's route options are available for later assertions.
+        pg.evaluate("() => { if (typeof psInit === 'function') psInit(); }")
+        try:
+            pg.wait_for_function(
+                "() => (typeof _psRoutes !== 'undefined' ? _psRoutes : []).length > 1", timeout=30000)
+        except Exception:                                          # noqa: BLE001
+            pass
+        opts = pg.evaluate("() => (typeof _psRoutes !== 'undefined' ? _psRoutes : []).map(r => r.route)")
+        check("route options populated", len(opts) > 3, "%d options" % len(opts))
 
         # TWO DIFFERENT origins into ONE destination, so section 4 has a genuinely
-        # shared dumping point to report. Adding the same route twice merges into
-        # one bigger fleet and shares nothing, which is what an earlier version of
-        # this check did -- it asserted against the "nothing is shared" message.
+        # shared dumping point to report. Same intent as the old plansim driver.
         dests = pg.evaluate(
-            """() => {const o=[...document.querySelectorAll('#ps-route option')]
-                 .map(x=>x.textContent.trim().split(' —')[0]);
+            """() => {const o=(typeof _psRoutes !== 'undefined' ? _psRoutes : []).map(r=>r.route);
                const by={}; o.forEach(r=>{const d=r.split('>')[1]; if(d)(by[d]=by[d]||[]).push(r);});
                const k=Object.keys(by).find(k=>by[k].length>=2);
                return k ? by[k].slice(0,2) : [];}""")
         check("found two routes sharing a destination", len(dests) == 2, dests)
+
+        def add(route, trucks):
+            return pg.evaluate(
+                """(a) => {const [route, dt] = a;
+                   const [s, d] = route.split('>');
+                   if (!s || !d) return false;
+                   _planDraft['RIM|' + route] = {contractor: 'RIM', source: s,
+                     dest: d, key: route, dt: dt};
+                   if (typeof computePlan === 'function') computePlan();
+                   return true;}""", [route, trucks])
+
         added = add(dests[0], 30) if dests else False
         check("added first haul", added)
         if len(dests) == 2:
             add(dests[1], 20)
 
-        # Render at least three times before asserting. A chart cached against a
-        # detached DOM node only blanks from the SECOND render on, so a check that
-        # looks after one render cannot see it.
-        pg.click("text=Run assessment")
+        # Reveal + run the in-Plan assessment. Render at least three times
+        # before asserting: a chart cached against a detached DOM node only
+        # blanks from the SECOND render on.
+        pg.evaluate("() => planOpenFullAssessment()")
         pg.wait_for_timeout(2500)
-        pg.click("text=Run assessment")
+        pg.evaluate("() => { if (typeof psRun === 'function') psRun(); }")
         # Wait for the assessment to populate, then a short settle for the charts.
         try:
             pg.wait_for_function(

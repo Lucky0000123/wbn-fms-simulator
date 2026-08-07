@@ -1,0 +1,27 @@
+{
+  "ok": true,
+  "haul_gps_start": "2026-07-15",
+  "playback": {
+    "tables": ["FMS_PLAYBACK_TRACK_DATA", "FMS_PLAYBACK_TRACK_CLEAN", "auto_kmFMS_PLAYBACK_TRACK_DATA"],
+    "window": {"from": "2026-02-24", "to": "2026-08-03"},
+    "chainage_from": "2026-04-15",
+    "fleet": "HRM / support / light vehicles",
+    "plate_prefixes_typical": ["E", "SS", "P", "Y"],
+    "haul_plate_overlap_pct": 0.0,
+    "haul_prefixes": ["L", "N", "R", "K", "A"]
+  },
+  "haul_corridor": {
+    "tables": ["FMS_CONGESTION_SEG", "FMS_GPS_Historical"],
+    "window": {"from": "2026-07-15", "note": "rolling retention + archive"},
+    "use_for": ["corridor speeds", "V/C illustration", "hour-of-day clock"]
+  },
+  "invent_jan_may_haul_speeds": false,
+  "reason": "Playback Feb–May has 0% plate overlap with weighbridge haul trucks. Speeds from that feed are not haul corridor V/C and must not be invented into Plan / simulate.",
+  "peak_ops_source": "Capability Jan–May weighbridge / path-response /api/simulate",
+  "evidence": "reports/gps_peak_season_hunt.md",
+  "basis": {
+    "congestion_clips_tonnes": false,
+    "simulate_unchanged": true,
+    "invents_playback_haul_speeds": false
+  }
+}

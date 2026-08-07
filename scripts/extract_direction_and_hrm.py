@@ -31,28 +31,25 @@ sys.path.insert(0, ROOT)
 DATA = os.path.join(ROOT, "data")
 REPORTS = os.path.join(ROOT, "reports")
 
-ENVF = "/Volumes/LUCKY_SSD/LV_APP/fms-dashboard/backend/.env"
-
-
 def creds():
-    """Env vars first; fall back to reading the SSD .env at runtime.
+    """Env vars first; then local .env / secrets/fms.env; then SSD fallback.
 
-    Never hardcoded and never written to disk -- the mirror is public. The .env
-    names the password FMS_DB_PWD, so it must be mapped.
+    Never hardcoded into the repo — the mirror is public. The .env names the
+    password FMS_DB_PWD, so it must be mapped to FMS_DB_PASS.
     """
     h, u, p = (os.environ.get("FMS_DB_HOST"), os.environ.get("FMS_DB_USER"),
                os.environ.get("FMS_DB_PASS"))
     if h and u and p:
         return h, u, p
-    if not os.path.exists(ENVF):
-        sys.exit("no credentials: FMS_DB_* unset and %s not mounted" % ENVF)
-    vals = {}
-    for line in open(ENVF):
-        if "=" in line and line.split("=")[0].strip() in (
-                "FMS_DB_HOST", "FMS_DB_USER", "FMS_DB_PWD"):
-            k, v = line.split("=", 1)
-            vals[k.strip()] = v.strip().strip('"').strip("\r")
-    return vals.get("FMS_DB_HOST"), vals.get("FMS_DB_USER"), vals.get("FMS_DB_PWD")
+    sys.path.insert(0, ROOT)
+    from scripts.load_fms_env import load_fms_env
+    path = load_fms_env()
+    h, u, p = (os.environ.get("FMS_DB_HOST"), os.environ.get("FMS_DB_USER"),
+               os.environ.get("FMS_DB_PASS"))
+    if h and u and p:
+        return h, u, p
+    sys.exit("no credentials: FMS_DB_* unset and no local/SSD .env "
+             "(run scripts/sync_creds_from_ssd.sh) — tried %s" % (path,))
 
 
 def fetch(db, sql, tries=6, wait=12):

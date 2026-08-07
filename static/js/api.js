@@ -107,10 +107,19 @@ async function loadCapabilityWeighbridge(){
 }
 async function loadShiftContext(date){date=(date||'').slice(0,10);if(!date||date===_shiftCtxDate)return;_shiftCtxDate=date;
   try{const d=await(await fetch('/api/simulator/shift-context?date='+encodeURIComponent(date)+_shParam(),{cache:'no-store'})).json();if(d&&d.ok)renderShiftContext(d);}catch(e){}}
-async function loadWbPositions(tries,date){tries=tries||0;date=(date||(_flowPointScenario&&_flowPointScenario.date)||'').slice(0,10);try{const d=await(await fetch('/api/simulator/weighbridge-positions'+(date?'?date='+encodeURIComponent(date)+_shParam():''),{cache:'no-store'})).json();
-    if(d&&d.ok&&d.positions&&d.positions.length){_wbPos=d.positions;_wbPosDate=d.date||date||null;if(_flowSource&&_flowSim&&!_flowSim.running&&_flowSim.hour===0)renderFlowSimulator(_flowSource.P,_flowSource.colours,true);return;}
+let _wbPosInflight=null; // date currently being fetched — collapses the render-loop stampede
+async function loadWbPositions(tries,date){tries=tries||0;date=(date||(_flowPointScenario&&_flowPointScenario.date)||'').slice(0,10);
+  // Every re-render calls this when _wbPosDate lags; without a gate an empty-
+  // positions day fired 15+ identical fetches (each render restarting the
+  // retry ladder). One date in flight at a time; retries pass the gate.
+  if(tries===0&&_wbPosInflight===date)return;
+  _wbPosInflight=date;
+  try{const d=await(await fetch('/api/simulator/weighbridge-positions'+(date?'?date='+encodeURIComponent(date)+_shParam():''),{cache:'no-store'})).json();
+    if(d&&d.ok&&d.positions&&d.positions.length){_wbPos=d.positions;_wbPosDate=d.date||date||null;_wbPosInflight=null;if(_flowSource&&_flowSim&&!_flowSim.running&&_flowSim.hour===0)renderFlowSimulator(_flowSource.P,_flowSource.colours,true);return;}
+    if(d&&d.ok){_wbPos=[];_wbPosDate=d.date||date||null;_wbPosInflight=null;return;} // empty day is an answer, not a failure — stop retrying
   }catch(e){}
-  if(tries<4)setTimeout(()=>loadWbPositions(tries+1,date),1500);}
+  if(tries<4)setTimeout(()=>loadWbPositions(tries+1,date),1500);
+  else _wbPosInflight=null;}
 async function loadWeighbridge(){
   const note=q('wb-note');if(note)note.textContent='Loading measured weighbridge history…';
   try{const d=await(await fetch('/api/simulator/weighbridge',{cache:'no-store'})).json();

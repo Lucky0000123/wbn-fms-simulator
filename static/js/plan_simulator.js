@@ -64,7 +64,8 @@ function psShiftChanged() {
 }
 
 function psAddPlan() {
-  const sel = q('ps-route'), n = parseInt(q('ps-trucks').value, 10);
+  // Legacy (plansim page retired): kept only because nothing calls it now.
+  const sel = q('ps-route'), n = parseInt((q('ps-trucks') || {}).value, 10);
   if (!sel || !_psRoutes.length || !(n > 0)) return;
   const r = _psRoutes[parseInt(sel.value, 10)];
   if (!r) return;
@@ -80,8 +81,28 @@ function psAddPlan() {
   psRun();
 }
 
-function psRemove(i) { _psPlans.splice(i, 1); psRun(); }
-function psClear() { _psPlans = []; psRun(); }
+function psRemove(i) {
+  // The holding plan (_planDraft) is the single source of truth now: removing
+  // a haul from the assessment table must remove it from the plan, or the
+  // assessment and Plan Step 2 silently diverge on the next run.
+  const gone = _psPlans.splice(i, 1)[0];
+  if (gone && typeof _planDraft !== 'undefined') {
+    Object.keys(_planDraft).forEach(k => {
+      const r = _planDraft[k];
+      if (r && (r.source + '>' + r.dest) === gone.route) delete _planDraft[k];
+    });
+    if (typeof computePlan === 'function') { try { computePlan(); } catch (e) {} }
+  }
+  psRun();
+}
+function psClear() {
+  _psPlans = [];
+  if (typeof _planDraft !== 'undefined') {
+    Object.keys(_planDraft).forEach(k => delete _planDraft[k]);
+    if (typeof computePlan === 'function') { try { computePlan(); } catch (e) {} }
+  }
+  psRun();
+}
 
 function psRun() {
   const body = q('ps-rows');
@@ -214,7 +235,10 @@ function psRender(d) {
       + '⚠ ' + sx.replace(/</g, '&lt;') + '</div>' + q('ps-warnings').innerHTML;
   }
 
-  // Sections 2-8 render from THIS response, so a chart can never disagree with
+  // Sections 2–9 render from THIS response, so a chart can never disagree with
   // the table above it.
   if (typeof paRender === 'function') paRender(d);
+  // Assessment now lives inside the Plan tab: clear its busy note on results.
+  const paBusy = q('plan-assessment-busy');
+  if (paBusy) paBusy.style.display = 'none';
 }

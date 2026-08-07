@@ -161,13 +161,20 @@ function drawCombinedScatter(plan){
 function drawScatter(daily, plan){
   const svg=q('scatter'), kb=q('eff-kpis');
   const combined=_xAxis==='combined';
-  q('eff-visual-wrap').classList.toggle('combined',combined&&_gSelSec.size>0);
+  const part2Open=combined&&_gSelSec.size>0;
+  q('eff-visual-wrap').classList.toggle('combined',part2Open);
+  const part2=q('sim-part-shift');
+  if(part2)part2.classList.toggle('is-open',part2Open);
+  const bridge=q('sim-part1-bridge');
+  if(bridge)bridge.style.display=part2Open?'':'none';
   svg.setAttribute('viewBox',combined?'0 0 1100 620':'0 0 1000 340');svg.style.height=combined?'560px':'280px';
   svg.style.cursor=combined?'grab':'';svg.style.touchAction=combined?'none':'';svg.style.userSelect=combined?'none':'';svg.style.webkitUserSelect=combined?'none':'';svg.onselectstart=combined?()=>false:null;
   if(!combined){stopFlowSimulator();_combined3D=null;svg.onpointerdown=null;svg.onpointermove=null;svg.onpointerup=null;svg.onpointercancel=null;svg.onpointerleave=null;svg.ondblclick=null;}
   if((_xAxis==='section'||_xAxis==='combined')&&!_gSelSec.size){
     svg.innerHTML='<text x="500" y="145" fill="#94a3b8" font-size="14" text-anchor="middle">Select at least one constraint section to plot DT on section.</text><text x="500" y="168" fill="#64748b" font-size="11" text-anchor="middle">Use the “Constraint sections” control above the graph.</text>';
-    stopFlowSimulator();kb.innerHTML=''; q('eff-math').textContent='';q('c3-analysis').style.display='none'; return;
+    stopFlowSimulator();kb.innerHTML=''; q('eff-math').textContent='';q('c3-analysis').style.display='none';
+    const part2Miss=q('sim-part-shift');if(part2Miss)part2Miss.classList.remove('is-open');
+    return;
   }
   if(_xAxis==='combined'){drawCombinedScatter(plan);return;}
   if(_xAxis==='section'){ drawSectionScatter(daily,plan); return; }
