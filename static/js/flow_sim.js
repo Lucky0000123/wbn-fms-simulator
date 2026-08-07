@@ -302,7 +302,17 @@ function flowSectionCapacity(cap,label){
   return cap.laneCapacity;
 }
 function evaluateFlowScenario(){
-  const s=_flowSim;if(!s)return;const p=flowInputs(),cap=flowLaneCapacity(p),laneCapacity=cap.laneCapacity,demand=s.routes.reduce((n,r)=>n+r.dt*p.fleet*flowRouteTarget(r)/p.hours,0),vc=demand/laneCapacity,congestion=vc>1?1/vc:1;
+  const s=_flowSim;if(!s)return;const p=flowInputs(),cap=flowLaneCapacity(p),laneCapacity=cap.laneCapacity;
+  let demand=s.routes.reduce((n,r)=>n+r.dt*p.fleet*flowRouteTarget(r)/p.hours,0);
+  // Plan host: non-plan (IWIP/Position) trucks share the same road. Their trips
+  // come from the Step-1 "Other trips" input (measured last shift, editable).
+  let otherPlanTph=0;
+  if(_flowHost==='plan'&&typeof _planOtherTrips!=='undefined'&&_planOtherTrips>0){
+    otherPlanTph=_planOtherTrips/p.hours;
+    demand+=otherPlanTph;
+  }
+  const vc=demand/laneCapacity,congestion=vc>1?1/vc:1;
+  s.otherPlanTph=otherPlanTph;
   s.capSource=cap.capSource;s.laneCapacity=laneCapacity;
   // Trip KPIs stay from DB / path-response. Motion uses GPS — do NOT inflate speeds
   // so kinematics invent the trip rate (old sharedOpenFactor behaviour).
@@ -333,7 +343,11 @@ function evaluateFlowScenario(){
   setTxt('flow-attain-label',_flowHost==='plan'
     ?attainLabel
     :(_flowMode==='plan'?'predict · trips / 12h shift':'dispatch · trips / shift'));
-  setTxt('flow-vc',fmt(vc,2));
+  setTxt('flow-vc',fmt(vc,2)+(otherPlanTph>0?' ⊕':''));
+  const vcEl=flowQ('flow-vc');
+  if(vcEl)vcEl.title=otherPlanTph>0
+    ?('includes '+fmt(otherPlanTph*p.hours,0)+' non-plan (other) trips from Step 1 — remove them there to see plan-only V/C')
+    :'plan trips only';
   setTxt('flow-queue',fmt(s.queue));
   const winMeta=(((_D&&_D.corridor)||{}).measuredWindow)||{};
   const gpsStruggle=!!winMeta.struggleSeasonExtract;

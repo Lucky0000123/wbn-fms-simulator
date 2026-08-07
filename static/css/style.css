@@ -682,9 +682,16 @@ svg{display:block;width:100%;height:280px}
   .plan-estimate .est-total .est-total-v{font-size:22px}
 }
 
-/* ── Plan: 16-day rain outlook strip ───────────────────────────────────── */
-.plan-rain-outlook{margin:8px 0 4px}
-.plan-ro-head{font-size:10.5px;margin-bottom:4px}
+/* ── Plan: 16-day rain outlook (collapsed under Open-Meteo) ─────────────── */
+.plan-rain-outlook-details{margin:4px 0 2px;border:1px solid var(--line-light);border-radius:8px;background:rgba(0,0,0,.12)}
+.plan-rain-outlook-details[hidden]{display:none}
+.plan-rain-outlook-sum{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 10px;padding:7px 10px;cursor:pointer;list-style:none;font-size:11.5px;color:var(--txt-secondary);user-select:none}
+.plan-rain-outlook-sum::-webkit-details-marker{display:none}
+.plan-rain-outlook-sum::before{content:'▸';display:inline-block;width:12px;color:var(--txt-muted);transition:transform .15s ease}
+.plan-rain-outlook-details[open]>.plan-rain-outlook-sum::before{transform:rotate(90deg)}
+.plan-ro-sum-label{font-weight:700;color:var(--txt)}
+.plan-ro-sum-hint{font-size:10.5px}
+.plan-rain-outlook{margin:0;padding:0 10px 10px}
 .plan-ro-strip{display:flex;gap:3px;flex-wrap:wrap}
 .plan-ro-chip{display:flex;flex-direction:column;align-items:center;gap:1px;
   padding:3px 5px;border:1px solid var(--line-light,#2c3947);border-radius:6px;
@@ -695,3 +702,15 @@ svg{display:block;width:100%;height:280px}
 .plan-ro-chip.wet{border-color:#f59e0b;background:rgba(245,158,11,.16)}
 .plan-ro-chip.on{outline:2px solid var(--accent,#22c55e)}
 .plan-ro-chip:hover{background:rgba(255,255,255,.09)}
+
+/* ── Plan: weighbridge load bar ────────────────────────────────────────── */
+.plan-wb-load{margin:8px 0 4px}
+.wbl-head{font-size:10.5px;margin-bottom:3px}
+.wbl-bar{position:relative;height:16px;border:1px solid var(--line-light,#2c3947);border-radius:8px;overflow:hidden;background:rgba(255,255,255,.04)}
+.wbl-fill{height:100%;border-radius:8px 0 0 8px;position:relative;transition:width .3s}
+.wbl-fill.wbl-green{background:rgba(34,197,94,.45)}
+.wbl-fill.wbl-amber{background:rgba(245,158,11,.5)}
+.wbl-fill.wbl-red{background:rgba(239,68,68,.55)}
+.wbl-plan{display:block;height:100%;background:rgba(255,255,255,.18);border-right:1px solid rgba(255,255,255,.4)}
+.wbl-pct{position:absolute;right:6px;top:0;line-height:16px;font-size:10.5px;font-weight:600}
+.wbl-note{font-size:10.5px;margin-top:3px;line-height:1.4}

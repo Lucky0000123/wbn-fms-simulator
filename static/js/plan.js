@@ -380,12 +380,18 @@ function planFetchRainOutlook(){
     .catch(()=>{_planRainOutlook=null;planRenderRainOutlook();});
 }
 function planRenderRainOutlook(){
-  const box=q('plan-rain-outlook');if(!box)return;
+  const box=q('plan-rain-outlook');
+  const wrap=q('plan-rain-outlook-details');
+  if(!box)return;
   const res=_planRainOutlook;
   if(!res||!res.ok||!(res.days||[]).length){
     box.innerHTML='';
+    if(wrap)wrap.hidden=true;
     return;
   }
+  if(wrap)wrap.hidden=false;
+  const sumLabel=document.querySelector('#plan-rain-outlook-details .plan-ro-sum-label');
+  if(sumLabel)sumLabel.textContent='Rain outlook · next '+res.days.length+' days';
   const sel=(q('plan-date')||{}).value||'';
   const chip=d=>{
     const mm=d.mm==null?null:d.mm;
@@ -394,23 +400,118 @@ function planRenderRainOutlook(){
     const md=d.date.slice(5);
     const probTxt=d.probPct!=null?d.probPct+'% chance of rain · ':'';
     return `<button type="button" class="${cls}" data-date="${d.date}"
-      title="${d.date} · ${mm!=null?mm+' mm forecast':'no data'} · ${probTxt}click to plan this date"
+      title="${d.date} · ${mm!=null?mm+' mm forecast':'no data'} · ${probTxt}click to set Rainfall and plan date"
       onclick="planPickOutlookDay('${d.date}')">
       <span class="d">${md}</span><span class="mm">${mm!=null?(mm>=1?Math.round(mm):mm>0?'&lt;1':'0'):'—'}</span></button>`;
   };
-  box.innerHTML=`<div class="plan-ro-head muted">Rain outlook · next ${res.days.length} days (site forecast, mm/day) · click a day to plan it</div>`
-    +`<div class="plan-ro-strip">${res.days.map(chip).join('')}</div>`;
+  box.innerHTML=`<div class="plan-ro-strip">${res.days.map(chip).join('')}</div>`;
 }
 function planPickOutlookDay(date){
   const el=q('plan-date');
   if(!el)return;
   el.value=date;
-  planDateChange();          // reuses the whole flow: rain-suggest auto-applies
+  // Fill Rainfall from the outlook chip immediately (Open-Meteo day total).
+  const day=((_planRainOutlook&&_planRainOutlook.days)||[]).find(d=>d.date===date);
+  if(day&&day.mm!=null){
+    _planRainManual=false;
+    const rain=q('plan-rain');
+    if(rain)rain.value=String(Math.max(0,Math.round(Number(day.mm)||0)));
+    if(typeof computePlan==='function')computePlan();
+  }
+  planDateChange();          // sync date note / Use-mm button / GPS chips
   planRenderRainOutlook();   // refresh selection highlight
 }
 function planEnsureDate(){
   const el=q('plan-date');
   if(el&&!el.value){ el.value=planTodayISO(); planDateChange(); }
+}
+
+// ── Other (non-plan) traffic + weighbridge load ──────────────────────────────
+// IWIP / Position trucks are not in the holding plan but cross the SAME
+// weighbridges on the way to the dumps and share the road. Prefilled from the
+// last measured shift (shift-context otherTrips); the planner can edit it.
+// The bridges are modelled as a THROUGHPUT CEILING, not a delay curve: measured
+// wait is flat (11.7→12.1 min from 3.6→31 trucks/bridge-hour) while single
+// bridges have demonstrated 35–49 trucks/hour peaks. Same doctrine as loaders.
+let _planOtherTrips=0,_planOtherManual=false,_planOtherSrc='';
+const PLAN_WB_TRIPS_PER_HOUR=30;   // conservative vs measured 35–49 peaks
+function planOtherManualEdit(){
+  _planOtherManual=true;
+  _planOtherTrips=Math.max(0,parseFloat((q('plan-other-trips')||{}).value)||0);
+  computePlan();
+}
+function planFetchOtherTraffic(){
+  // The ticket table (HAULAGE_IWIP_CLEAN) ends before the GPS archive does, so
+  // recent days have no other-traffic rows. Seed the search from the LAST DAY
+  // THE TICKET DATA HAS (weighbridge-summary.date — the same freshness marker
+  // the Capability tab shows), then walk back to the most recent day shift that
+  // actually measured other trips.
+  fetch('/api/weighbridge-summary')
+    .then(r=>r.json())
+    .then(ws=>{
+      const seed=(ws&&ws.date)||new Date(Date.now()-86400e3).toISOString().slice(0,10);
+      const tryDay=(dateS,left)=>{
+        if(left<=0)return;
+        fetch('/api/simulator/shift-context?date='+encodeURIComponent(dateS)+'&shift=1')
+          .then(r=>r.json())
+          .then(res=>{
+            const trips=res&&res.ok?(Number(res.otherTrips)||0):0;
+            if(trips>0){
+              _planOtherSrc=res.date||dateS;
+              if(!_planOtherManual){
+                _planOtherTrips=trips;
+                const el=q('plan-other-trips');
+                if(el)el.value=String(Math.round(trips));
+              }
+              const src=q('plan-other-src');
+              if(src)src.textContent='meas. '+_planOtherSrc.slice(5)+' day shift';
+              computePlan();
+              return;
+            }
+            const prev=new Date(dateS+'T00:00:00Z');prev.setUTCDate(prev.getUTCDate()-1);
+            tryDay(prev.toISOString().slice(0,10),left-1);
+          })
+          .catch(()=>{});
+      };
+      tryDay(seed,10);
+    })
+    .catch(()=>{});
+}
+function planRenderWbLoad(totTrips,wb,hours,avgTf){
+  const box=q('plan-wb-load');if(!box)return;
+  const other=_planOtherTrips||0;
+  const demand=totTrips+other;
+  if(!(demand>0)){box.innerHTML='';return;}
+  const cap=wb*PLAN_WB_TRIPS_PER_HOUR*hours;
+  const util=cap>0?demand/cap:0;
+  const pct=Math.round(100*util);
+  const cls=util>=1?'wbl-red':util>=0.7?'wbl-amber':'wbl-green';
+  const icon=util>=1?'🔴':util>=0.7?'🟡':'🟢';
+  let advice;
+  if(util>=1){
+    const excess=Math.round(demand-cap);
+    const tAtRisk=Math.round(excess*(avgTf||0));
+    const needWb=Math.ceil(demand/(PLAN_WB_TRIPS_PER_HOUR*hours));
+    advice=`<b>${fmtExact(excess)}</b> trips over the ${fmtExact(wb)}-bridge ceiling — `
+      +(avgTf?`≈<b>${fmtExact(tAtRisk)} t</b> of the plan cannot weigh in this shift. `:'')
+      +`Open <b>${needWb} bridges</b> (or move trips off this shift) to clear it.`;
+  }else if(util>=0.7){
+    advice=`Bridges busy — headroom ${fmtExact(Math.round(cap-demand))} trips. A wet day or extra non-plan trucks can tip this over; consider opening one more bridge.`;
+  }else{
+    advice=`Comfortable — headroom ${fmtExact(Math.round(cap-demand))} trips at ${fmtExact(wb)} bridges.`;
+  }
+  const planPct=demand>0?Math.round(100*totTrips/demand):0;
+  box.innerHTML=`
+    <div class="wbl-head muted">Weighbridge load
+      <span title="Ceiling = bridges × ${PLAN_WB_TRIPS_PER_HOUR} trips/bridge-hour × shift hours. Conservative vs measured single-bridge peaks of 35–49/h. Measured wait is FLAT below the ceiling (11.7→12.1 min), so bridges cap throughput rather than slow trips — advisory for Step 1; simulate tonnes unchanged.">ⓘ</span>
+    </div>
+    <div class="wbl-bar" role="img" aria-label="weighbridge utilisation ${pct}%">
+      <div class="wbl-fill ${cls}" style="width:${Math.min(100,pct)}%">
+        <span class="wbl-plan" style="width:${planPct}%"></span>
+      </div>
+      <span class="wbl-pct">${icon} ${pct}%</span>
+    </div>
+    <div class="wbl-note muted">${fmtExact(Math.round(totTrips))} plan + <b>${fmtExact(Math.round(other))} other</b> trips vs ~${fmtExact(Math.round(cap))} ceiling (${fmtExact(wb)} WB × ${PLAN_WB_TRIPS_PER_HOUR}/h × ${fmtExact(hours)} h) · ${advice}</div>`;
 }
 let _planPathKey='';   // last source>dest — only seed DT when this changes
 let _planUserEditedFleet=false;  // once user types DT/WMT, never auto-overwrite
@@ -421,6 +522,7 @@ function renderPlanBuilder(){
   const src=q('plan-src');if(!src)return;
   planEnsureDate();
   if(!_planRainOutlook)planFetchRainOutlook();   // 16-day site forecast strip
+  if(!_planOtherSrc&&!_planOtherManual)planFetchOtherTraffic(); // non-plan trucks
   const cs=q('plan-contractor');
   const keepC=cs?cs.value:'';
   const keepS=src.value;
@@ -765,10 +867,14 @@ function computePlan(){
   const avgEff=totDt?totTrips/totDt:0;
   if(foot)foot.innerHTML=`<tr class="plan-total-row"><td><b>TOTAL</b></td><td class="muted">${ids.length}</td><td class="r"><b>${fmtExact(Math.round(totDt))}</b></td><td class="r"><b>${fmtExact(avgEff,2)}</b></td><td class="r"><b>${fmtExact(Math.round(totTrips))}</b></td><td class="r muted">${totTrips?fmtExact(totWmt/totTrips,1):'—'}</td><td class="r"><b>${fmtExact(Math.round(totWmt))} t</b></td><td colspan="2"></td></tr>`;
   const names=[...new Set(ids.map(id=>_planDraft[id].contractor))];
-  if(scope)scope.textContent=`${ids.length} path${ids.length===1?'':'s'} · ${names.join(', ')} · ${rain>0?fmtExact(rain)+' mm':'dry'} · ${fmtExact(wb)} WB`;
-  const wbCap=wb*30*hours;
-  q('plan-warn').innerHTML=totTrips>wbCap
-    ?`<span class="er">⚠ WB limit: ${fmtExact(Math.round(totTrips))} trips > ~${fmtExact(Math.round(wbCap))} capacity</span>`
+  const otherN=Math.round(_planOtherTrips||0);
+  if(scope)scope.textContent=`${ids.length} path${ids.length===1?'':'s'} · ${names.join(', ')} · ${rain>0?fmtExact(rain)+' mm':'dry'} · ${fmtExact(wb)} WB`+(otherN>0?` · +${fmtExact(otherN)} other trips`:'');
+  // Weighbridge load: plan trips + other (non-plan) traffic vs bridge ceiling.
+  const avgTf=totTrips?totWmt/totTrips:0;
+  planRenderWbLoad(totTrips,wb,hours,avgTf);
+  const wbCap=wb*PLAN_WB_TRIPS_PER_HOUR*hours;
+  q('plan-warn').innerHTML=(totTrips+otherN)>wbCap
+    ?`<span class="er">⚠ WB limit: ${fmtExact(Math.round(totTrips))} plan + ${fmtExact(otherN)} other trips > ~${fmtExact(Math.round(wbCap))} bridge capacity — see Weighbridge load above</span>`
     :'';
   if(typeof planSetScenarioBtn==='function')planSetScenarioBtn();
   if(typeof planRefreshSaveButtons==='function')planRefreshSaveButtons();

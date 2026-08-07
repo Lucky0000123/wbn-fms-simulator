@@ -398,11 +398,21 @@
               <div class="plan-cond-grid">
                 <label class="plan-cond">Rainfall <span><input id="plan-rain" type="number" min="0" step="1" value="0" oninput="planRainManual();computePlan()"> mm</span></label>
                 <label class="plan-cond">Weighbridges <span><input id="plan-wb" type="number" min="1" step="1" value="8" oninput="computePlan()"> / 18</span></label>
+                <label class="plan-cond" title="Non-plan trucks (IWIP / position works) also cross the weighbridges on the way to the dumps and share the road. Prefilled from the last measured shift; edit to test scenarios.">Other trips (non-plan) <span><input id="plan-other-trips" type="number" min="0" step="10" value="0" oninput="planOtherManualEdit()"> <span id="plan-other-src" class="muted" style="font-size:9.5px"></span></span></label>
               </div>
+              <!-- Weighbridge load: every path AND the other traffic funnels
+                   through the bridges on the way to the dumps. Utilisation bar
+                   + advice; ceiling assumption is labelled on hover. -->
+              <div id="plan-wb-load" class="plan-wb-load" aria-live="polite"></div>
               <div id="plan-rain-suggest" class="plan-rain-suggest"></div>
-              <!-- 16-day site rain outlook: click a day to plan that date with
-                   its forecast mm pre-applied to the Step-1 estimate. -->
-              <div id="plan-rain-outlook" class="plan-rain-outlook" aria-live="polite"></div>
+              <!-- 16-day outlook stays collapsed under Open-Meteo; open to pick a day → fills Rainfall. -->
+              <details class="plan-rain-outlook-details" id="plan-rain-outlook-details">
+                <summary class="plan-rain-outlook-sum">
+                  <span class="plan-ro-sum-label">16-day rain outlook</span>
+                  <span class="muted plan-ro-sum-hint">site forecast · click a day to set Rainfall</span>
+                </summary>
+                <div id="plan-rain-outlook" class="plan-rain-outlook" aria-live="polite"></div>
+              </details>
               <input id="plan-hours" type="hidden" value="12">
               <select id="ps-weather" style="display:none" aria-hidden="true"><option value="dry" selected>Dry</option><option value="wet">Wet</option></select>
               <div class="plan-shift-mini muted">Shift <b id="plan-hours-display">12</b> h</div>
