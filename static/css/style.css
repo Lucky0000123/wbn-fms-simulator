@@ -333,8 +333,12 @@ tbody tr:hover{background:var(--panel-hover)}
 .plan-optimize-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:8px}
 .plan-optimize-head h4{margin:0;font-size:12.5px}
 .plan-optimize-table{max-height:280px}
+.plan-optimize-locked{opacity:.98}
+.plan-opt-lock-tag{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#4ade80;background:rgba(74,222,128,.14);border:1px solid rgba(74,222,128,.35);vertical-align:middle}
 .plan-sug-changed td{background:rgba(240,136,62,.08)}
 .plan-sug-picked td{background:rgba(74,222,128,.10)}
+.plan-sug-locked td{background:rgba(74,222,128,.06)}
+.plan-sug-locked-mark{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;border:1px solid rgba(74,222,128,.45);background:rgba(74,222,128,.14);color:#4ade80;font-weight:700}
 .plan-sug-x-cell{text-align:center;width:52px}
 .plan-sug-x{appearance:none;width:30px;height:30px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,.04);color:var(--txt-muted);font-size:14px;font-weight:700;cursor:pointer;line-height:1}
 .plan-sug-x:hover{border-color:var(--accent);color:var(--txt)}

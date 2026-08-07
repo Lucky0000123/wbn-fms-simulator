@@ -213,6 +213,10 @@ function planRenderEstimateColumn(sim,predict){
 }
 
 let _planScenarioBusy=false,_planLastSim=null,_planLastAnalogues=null;
+/** Monotonic run id — drop paint from superseded in-flight simulate responses. */
+let _planScenarioGen=0;
+/** Latest opts waiting to run after the current calculate finishes (coalesced). */
+let _planScenarioQueued=null;
 let _planLastSuggestions=null; // [{id,key,currentDt,suggestedDt,reason,changed}]
 let _planCorridorHours=null;   // Jul+ hour profile (advisory)
 let _planDaySegments=null;     // click-through for one GPS-window analogue day
@@ -224,6 +228,8 @@ let _planRoadIllustReady=false; // C · road illustration loaded after GPS ▶ R
 let _planOptChoice={};
 /** After user finalizes keep/apply (all or per-row) — B reflects that plan. */
 let _planOptFinalized=false;
+/** Frozen Optimize rows after Finalize — do not re-suggest until unlock. */
+let _planOptLockedRows=null; // [{id,key,label,contractor,finalDt,note}]
 
 const PLAN_NODE_KM={
   TF:67.8,TOFU:67.8,BLB:67.8,KR:39,KRENE:39,
@@ -410,6 +416,25 @@ function planBiasAdjustedAchievable(raw){
   return {raw:Number(raw),adj,on:true};
 }
 
+function planCaptureOptLock(){
+  /** Snapshot holding-plan DT after Finalize — Optimize must not re-suggest until unlock. */
+  return planDraftEntries().map(r=>({
+    id:r.id,
+    key:r.key,
+    label:(r.source||'')+' → '+(r.dest||''),
+    contractor:r.contractor||'',
+    finalDt:Math.max(0,Math.round(r.dt)),
+    note:'Locked in Production & capacity',
+  }));
+}
+
+function planUnlockOptimize(){
+  _planOptFinalized=false;
+  _planOptLockedRows=null;
+  _planOptChoice={};
+  if(_planLastSim)planRenderOutcomes(_planLastSim,planPredictTotals());
+}
+
 function planRenderOutcomes(sim,predict){
   const box=q('plan-scenario-outcomes');if(!box)return;
   const s=(sim&&sim.summary)||{};
@@ -428,23 +453,82 @@ function planRenderOutcomes(sim,predict){
   const ens=(_planLastAnalogues&&_planLastAnalogues.ensemble)||{};
   const ambition=planAmbitionLabel(predict,ens);
 
-  const suggestions=planSuggestOptimize(sim,predict);
-  _planLastSuggestions=suggestions;
-  // Default: accept suggested DT on every changed path. ✕ opts out (keep current).
-  suggestions.forEach(x=>{
-    if(!x.changed)_planOptChoice[x.id]='current';
-    else if(_planOptChoice[x.id]!=='current')_planOptChoice[x.id]='suggested';
-  });
-  const nChange=suggestions.filter(x=>x.changed).length;
-  const nAccept=suggestions.filter(x=>x.changed&&_planOptChoice[x.id]==='suggested').length;
-  const afterDraft={};
-  suggestions.forEach(x=>{
-    const src=(_planDraft&&_planDraft[x.id])||{};
-    const useSug=x.changed&&_planOptChoice[x.id]!=='current';
-    afterDraft[x.id]={...src,dt:useSug?x.suggestedDt:x.currentDt,key:x.key};
-  });
-  const afterPred=planPredictTotalsForDraft(afterDraft);
-  const beforeDt=Math.round(predict.dt||0),afterDt=Math.round(afterPred.dt||0);
+  // After Finalize: freeze Optimize. Re-running suggest would turn accepted DT into
+  // "current" and invent another Suggested step — confusing and not final.
+  const locked=!!_planOptFinalized;
+  if(locked&&(!_planOptLockedRows||!_planOptLockedRows.length)){
+    _planOptLockedRows=planCaptureOptLock();
+  }
+  let suggestions,nChange,nAccept,afterPred,beforeDt,afterDt,sugRows,optStatus,optHead,optTableHead,optActions;
+  if(locked){
+    const rows=_planOptLockedRows||planCaptureOptLock();
+    _planLastSuggestions=rows.map(r=>({
+      id:r.id,key:r.key,contractor:r.contractor,label:r.label,
+      currentDt:r.finalDt,suggestedDt:r.finalDt,reason:r.note,changed:false,
+    }));
+    suggestions=_planLastSuggestions;
+    nChange=0;nAccept=0;
+    beforeDt=Math.round(predict.dt||0);
+    afterDt=beforeDt;
+    afterPred=predict;
+    sugRows=rows.map(r=>`<tr class="plan-sug-locked">
+      <td><b>${escH(r.label)}</b><div class="muted" style="font-size:10px">${escH(r.contractor)}</div></td>
+      <td class="r"><b>${r.finalDt}</b></td>
+      <td class="muted" style="font-size:11px">${escH(r.note)}</td>
+      <td class="plan-sug-x-cell"><span class="plan-sug-locked-mark" title="Finalized">✓</span></td>
+    </tr>`).join('');
+    optStatus='Finalized — Optimize is locked. Production &amp; capacity uses this DT. Re-open only if you want a new suggestion pass.';
+    optHead=`Locked · ${beforeDt} DT · path WMT ${planFmtN(predict.wmt)} t · achievable ${planFmtN(achv)} t`;
+    optTableHead=`<tr><th>Path</th><th class="r">Final DT</th><th>Status</th><th class="c">Locked</th></tr>`;
+    optActions=`
+      <button class="ms-btn" type="button" id="plan-unlock-opt" onclick="planUnlockOptimize()" title="Clear lock and regenerate Optimize suggestions from the current plan">Re-open optimize</button>
+      <button class="ms-btn" type="button" onclick="planOpenFullAssessment()">Open full assessment</button>`;
+  }else{
+    suggestions=planSuggestOptimize(sim,predict);
+    _planLastSuggestions=suggestions;
+    // Default: accept suggested DT on every changed path. ✕ opts out (keep current).
+    suggestions.forEach(x=>{
+      if(!x.changed)_planOptChoice[x.id]='current';
+      else if(_planOptChoice[x.id]!=='current')_planOptChoice[x.id]='suggested';
+    });
+    nChange=suggestions.filter(x=>x.changed).length;
+    nAccept=suggestions.filter(x=>x.changed&&_planOptChoice[x.id]==='suggested').length;
+    const afterDraft={};
+    suggestions.forEach(x=>{
+      const src=(_planDraft&&_planDraft[x.id])||{};
+      const useSug=x.changed&&_planOptChoice[x.id]!=='current';
+      afterDraft[x.id]={...src,dt:useSug?x.suggestedDt:x.currentDt,key:x.key};
+    });
+    afterPred=planPredictTotalsForDraft(afterDraft);
+    beforeDt=Math.round(predict.dt||0);
+    afterDt=Math.round(afterPred.dt||0);
+    sugRows=suggestions.map(x=>{
+      const accepted=x.changed&&_planOptChoice[x.id]!=='current';
+      const tip=accepted
+        ?('Will apply suggested '+x.suggestedDt+' DT — click to keep '+x.currentDt)
+        :('Keeping '+x.currentDt+' DT — click to apply suggested '+x.suggestedDt);
+      // Single-quoted onclick so JSON.stringify's double quotes (path ids like TF>FENI KM0) do not break HTML.
+      const act=x.changed
+        ?`<button type="button" class="plan-sug-x ${accepted?'on':''}" title="${escH(tip)}"
+            onclick='planToggleSuggestionRow(${JSON.stringify(String(x.id))})' aria-pressed="${accepted?'true':'false'}">${accepted?'✓':'✕'}</button>`
+        :`<span class="muted plan-sug-ok">—</span>`;
+      return `<tr class="${x.changed?'plan-sug-changed':''}${accepted?' plan-sug-picked':''}">
+        <td><b>${escH(x.label)}</b><div class="muted" style="font-size:10px">${escH(x.contractor)}</div></td>
+        <td class="r">${x.currentDt}</td>
+        <td class="r">${x.suggestedDt}</td>
+        <td class="muted" style="font-size:11px">${escH(x.reason)}</td>
+        <td class="plan-sug-x-cell">${act}</td>
+      </tr>`;
+    }).join('');
+    optStatus=nChange
+      ?`Finalize applies suggested DT on ${nAccept}/${nChange} path(s). Click ✓/✕ only to exclude a path (keep current).`
+      :'No DT change suggested — Finalize to lock this plan into Production &amp; capacity.';
+    optHead=`${nChange?nChange+' path(s) with a suggestion':'No DT change'} · selected ${beforeDt} → ${afterDt} DT · path WMT ${planFmtN(predict.wmt)} → ${planFmtN(afterPred.wmt)} t · achievable ${planFmtN(achv)} t`;
+    optTableHead=`<tr><th>Path</th><th class="r">Current DT</th><th class="r">Suggested DT</th><th>Reason</th><th class="c">Accept</th></tr>`;
+    optActions=`
+      <button class="btn" type="button" id="plan-finalize-opt" onclick="planFinalizeOptimize()" title="Apply accepted suggestions and lock Optimize; refresh Production &amp; capacity">Finalize plan → refresh Production and capacity</button>
+      <button class="ms-btn" type="button" onclick="planOpenFullAssessment()">Open full assessment</button>`;
+  }
 
   const status=ratio<0.85?'Simulate shortfall — capacity limiting'
     :ratio<0.98?'Simulate below planned — review loaders'
@@ -459,30 +543,6 @@ function planRenderOutcomes(sim,predict){
   const histBand=(p25!=null&&p75!=null)
     ?(planFmtN(p25)+'–'+planFmtN(p75)+' t')
     :'—';
-
-  const sugRows=suggestions.map(x=>{
-    const accepted=x.changed&&_planOptChoice[x.id]!=='current';
-    const tip=accepted
-      ?('Will apply suggested '+x.suggestedDt+' DT — click to keep '+x.currentDt)
-      :('Keeping '+x.currentDt+' DT — click to apply suggested '+x.suggestedDt);
-    // Single-quoted onclick so JSON.stringify's double quotes (path ids like TF>FENI KM0) do not break HTML.
-    const act=x.changed
-      ?`<button type="button" class="plan-sug-x ${accepted?'on':''}" title="${escH(tip)}"
-          onclick='planToggleSuggestionRow(${JSON.stringify(String(x.id))})' aria-pressed="${accepted?'true':'false'}">${accepted?'✓':'✕'}</button>`
-      :`<span class="muted plan-sug-ok">—</span>`;
-    return `<tr class="${x.changed?'plan-sug-changed':''}${accepted?' plan-sug-picked':''}">
-      <td><b>${escH(x.label)}</b><div class="muted" style="font-size:10px">${escH(x.contractor)}</div></td>
-      <td class="r">${x.currentDt}</td>
-      <td class="r">${x.suggestedDt}</td>
-      <td class="muted" style="font-size:11px">${escH(x.reason)}</td>
-      <td class="plan-sug-x-cell">${act}</td>
-    </tr>`;
-  }).join('');
-  const optStatus=_planOptFinalized
-    ?'Plan finalized — Production &amp; capacity uses the DT you accepted.'
-    :(nChange
-      ?`Finalize applies suggested DT on ${nAccept}/${nChange} path(s). Click ✓/✕ only to exclude a path (keep current).`
-      :'No DT change suggested — Finalize to lock this plan into Production &amp; capacity.');
 
   const html=`
     <div class="plan-decision-card">
@@ -523,19 +583,18 @@ function planRenderOutcomes(sim,predict){
         </div>
       </div>
 
-      <div class="plan-optimize">
+      <div class="plan-optimize${locked?' plan-optimize-locked':''}">
         <div class="plan-optimize-head">
-          <h4>Optimize · DT</h4>
-          <span class="muted" style="font-size:11px">${nChange?nChange+' path(s) with a suggestion':'No DT change'} · selected ${beforeDt} → ${afterDt} DT · path WMT ${planFmtN(predict.wmt)} → ${planFmtN(afterPred.wmt)} t · achievable ${planFmtN(achv)} t</span>
+          <h4>Optimize · DT${locked?' <span class="plan-opt-lock-tag">Locked</span>':''}</h4>
+          <span class="muted" style="font-size:11px">${optHead}</span>
         </div>
         <p class="plan-opt-status" id="plan-opt-status" role="status">${optStatus}</p>
         <div class="rain-table plan-optimize-table"><table>
-          <thead><tr><th>Path</th><th class="r">Current DT</th><th class="r">Suggested DT</th><th>Reason</th><th class="c">Accept</th></tr></thead>
+          <thead>${optTableHead}</thead>
           <tbody>${sugRows||'<tr><td colspan="5" class="muted">No paths</td></tr>'}</tbody>
         </table></div>
         <div class="plan-outcome-actions">
-          <button class="btn" type="button" id="plan-finalize-opt" onclick="planFinalizeOptimize()" title="Apply accepted suggestions (✕) and refresh Production &amp; capacity">Finalize plan → refresh Production and capacity</button>
-          <button class="ms-btn" type="button" onclick="planOpenFullAssessment()">Open full assessment</button>
+          ${optActions}
         </div>
       </div>
     </div>`;
@@ -1092,21 +1151,41 @@ function planSetCalcBusy(on){
   if(runBtn&&on){runBtn.disabled=true;runBtn.textContent='Running…';}
 }
 
+function planDraftFleetDt(plans){
+  return (plans||[]).reduce((n,p)=>n+(Number(p.n_trucks)||0),0);
+}
+
+/**
+ * Run A+B from the current holding plan.
+ * If a calculate is already in flight, coalesce a follow-up run instead of
+ * silently dropping (that left Finalize applying DT while B stayed stale).
+ */
 function planRunScenario(opts){
   opts=opts||{};
   const plans=planDraftToPsPlans();
   const btn=q('plan-run-scenario');
   if(!plans.length){alert('Add at least one path to the holding plan first.');return;}
-  if(_planScenarioBusy)return;
+  if(_planScenarioBusy){
+    // Latest draft wins when the in-flight call finishes — do not paint stale sim.
+    _planScenarioQueued=Object.assign({},_planScenarioQueued||{},opts);
+    const st=q('plan-opt-status');
+    if(st)st.textContent='Calculate in progress — will refresh Production & capacity with the latest DT when it finishes…';
+    return;
+  }
+  const gen=++_planScenarioGen;
+  const fleetDtSent=planDraftFleetDt(plans);
   _planScenarioBusy=true;
+  // New scenario run: re-arm the illustration→assessment auto-trigger so the
+  // next completed corridor playback refreshes the assessment for THIS plan.
+  if(typeof planArmAssessAuto==='function')planArmAssessAuto();
   planSetCalcBusy(true);
   if(!opts.preserveFinalize){
     _planOptChoice={};
     _planOptFinalized=false;
+    _planOptLockedRows=null;
   }
   planHideRoadIllustration();
   if(btn){btn.disabled=true;btn.textContent='Running…';}
-  const predict=planPredictTotals();
   planSyncWeatherToPs();
   const shiftMin=parseFloat((q('ps-shift')||{}).value)||((parseFloat((q('plan-hours')||{}).value)||12)*60);
   const panel=q('plan-scenario-panel');
@@ -1126,15 +1205,24 @@ function planRunScenario(opts){
   const anaP=planFetchAnalogues();
 
   Promise.all([simP,anaP]).then(([sim])=>{
+    // Superseded by a queued Finalize/re-run with newer DT — skip stale paint.
+    if(gen!==_planScenarioGen||_planScenarioQueued)return;
+    // Draft edited while simulate was in flight — re-run instead of mixing fleets.
+    if(planDraftFleetDt(planDraftToPsPlans())!==fleetDtSent){
+      _planScenarioQueued=Object.assign({},opts);
+      return;
+    }
     _planLastSim=sim;
     const s=sim.summary||{};
     const planned=s.planned_production_t||0,achv=s.achievable_production_t||0;
     _flowSimRatio=(planned>0)?Math.max(0,Math.min(1,achv/planned)):1;
+    // Always read path-model from live draft (not a closure captured at fetch start).
+    const predict=planPredictTotals();
     planRenderEstimateColumn(sim,predict);
     planSeedFlowAnimation();
     // Re-paint D before outcomes so realism/shared-road feed into A
     if(_planLastAnalogues)planRenderAnalogues(_planLastAnalogues);
-    planRenderOutcomes(sim,planPredictTotals());
+    planRenderOutcomes(sim,predict);
     const open=q('plan-open-assessment');
     if(open)open.disabled=false;
     planRefreshSaveButtons();
@@ -1145,16 +1233,24 @@ function planRunScenario(opts){
       catch(_){stage.scrollIntoView(true);}
     }
   }).catch(e=>{
+    if(gen!==_planScenarioGen||_planScenarioQueued)return;
     if(est)est.innerHTML='<p class="er">simulate failed: '+escH(String(e))+'</p>';
   }).finally(()=>{
+    if(gen!==_planScenarioGen)return;
     _planScenarioBusy=false;
     planSetCalcBusy(false);
     if(btn){btn.disabled=false;btn.textContent='Run simulated scenario';}
     planSetScenarioBtn();
+    const queued=_planScenarioQueued;
+    _planScenarioQueued=null;
+    if(queued)planRunScenario(queued);
   });
 }
 
 function planOpenFullAssessment(){
+  // The full assessment (sections 2-9) now lives INSIDE the Plan tab, under
+  // the corridor illustration, and runs on the SAME holding plan. There is no
+  // separate Production Simulator page to switch to and no second plan.
   const plans=planDraftToPsPlans();
   if(!plans.length){alert('No holding plan to assess.');return;}
   planSyncWeatherToPs();
@@ -1164,10 +1260,32 @@ function planOpenFullAssessment(){
     window._paAnaloguePlans=planDraftToAnaloguePlans();
     window._paAnalogues=_planLastAnalogues;
   }
-  setSimTab('plansim');
+  const host=q('plan-assessment-host');
+  if(host)host.style.display='';
+  // Host lives inside the scenario panel — reveal that too when the assessment
+  // is opened directly (e.g. before any Run scenario click).
+  const panel=q('plan-scenario-panel');
+  if(panel)panel.style.display='block';
+  const busy=q('plan-assessment-busy');
+  if(busy)busy.style.display='';
   if(typeof psInit==='function')psInit();
   if(typeof psRun==='function')psRun();
+  if(host&&typeof host.scrollIntoView==='function'){
+    try{host.scrollIntoView({behavior:'smooth',block:'start'});}catch(_){host.scrollIntoView(true);}
+  }
 }
+
+/** Staged reveal: when the corridor illustration finishes its 24h clock, the
+ * full assessment runs automatically underneath — illustration plays, then
+ * "prediction running", then results. Same engine (/api/simulate), same plan. */
+let _planAssessAutoDone=false;
+function planOnIllustrationFinished(){
+  if(_planAssessAutoDone)return;   // once per scenario run; Reset/re-Run re-arms below
+  if(!planDraftEntries().length)return;
+  _planAssessAutoDone=true;
+  planOpenFullAssessment();
+}
+function planArmAssessAuto(){_planAssessAutoDone=false;}
 
 /** Replace the lexical holding plan (main.js `_planDraft`) and refresh UI. */
 function planLoadDraft(obj){
@@ -1180,16 +1298,17 @@ function planLoadDraft(obj){
 }
 
 function planToggleSuggestionRow(id){
+  if(_planOptFinalized)return; // locked until Re-open optimize
   // ✓ (suggested, default) ↔ ✕ (keep current / opt out)
   const cur=_planOptChoice[id]==='current'?'current':'suggested';
   _planOptChoice[id]=cur==='suggested'?'current':'suggested';
-  _planOptFinalized=false;
   if(_planLastSim)planRenderOutcomes(_planLastSim,planPredictTotals());
 }
 
 /** Apply suggested DT for every changed path unless the user opted out (✕). Then refresh Production & capacity. */
 function planFinalizeOptimize(){
   if(typeof _planDraft==='undefined')return;
+  if(_planOptFinalized)return; // already locked — use Re-open optimize for another pass
   let applied=0;
   (_planLastSuggestions||[]).forEach(x=>{
     if(!_planDraft[x.id]||!x.changed)return;
@@ -1200,11 +1319,23 @@ function planFinalizeOptimize(){
     applied++;
   });
   _planOptFinalized=true;
+  _planOptLockedRows=planCaptureOptLock();
   if(typeof computePlan==='function')computePlan();
   const st=q('plan-opt-status');
-  if(st)st.textContent=applied
-    ?('Applying '+applied+' suggested DT change(s) — refreshing Production & capacity…')
-    :'No suggested DT to apply — refreshing Production & capacity with current DT…';
+  const waiting=_planScenarioBusy;
+  if(st){
+    if(waiting){
+      st.textContent=applied
+        ?('Applied '+applied+' DT change(s) — locking Optimize; B will refresh when calculate finishes…')
+        :'DT locked — B will refresh when calculate finishes…';
+    }else{
+      st.textContent=applied
+        ?('Applying '+applied+' suggested DT change(s) — locking Optimize and refreshing Production & capacity…')
+        :'Locking this DT into Production & capacity…';
+    }
+  }
+  // Always request a run with the post-accept draft. If busy, this queues and
+  // the in-flight (pre-accept) response is discarded so B cannot stick on old DT.
   planRunScenario({preserveFinalize:true});
   setTimeout(()=>{
     const b=q('plan-scenario-estimate');

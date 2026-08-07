@@ -228,8 +228,10 @@ def main() -> int:
 
         page.evaluate("()=>planOpenFullAssessment()")
         time.sleep(1.5)
-        tab = page.evaluate("()=>document.getElementById('tab-plansim')?.style?.display")
-        check("Open full assessment shows plansim", tab != "none")
+        # The assessment now renders INSIDE the Plan tab (plansim page retired).
+        host = page.evaluate(
+            "()=>document.getElementById('plan-assessment-host')?.style?.display")
+        check("Open full assessment reveals in-Plan host", host != "none")
         # Run assessment if needed
         page.evaluate("()=>{ if(typeof psRun==='function') psRun(); if(typeof paRun==='function') paRun(); }")
         time.sleep(2)

@@ -271,15 +271,17 @@ q('f-from').value='2026-01-01'; q('f-to').value='2026-05-31';
 // ── Congestion-model preview tab (measured speed-vs-traffic + tunable speed-density model) ──
 let _congData=null,_congLoaded=false;
 function setSimTab(t){
-  ['sim','cong','plan','plansim'].forEach(x=>{const b=q('tabbtn-'+x),p=q('tab-'+x);if(b)b.classList.toggle('on',t===x);if(p)p.style.display=t===x?'':'none';});
-  // Plan / Production Simulator: hide Capability filter header; keep sim-tabs.
-  const planFocus=(t==='plan'||t==='plansim');
+  // 'plansim' was retired 2026-08-07: the full assessment lives inside the
+  // Plan tab now (auto-runs when the corridor illustration finishes).
+  if(t==='plansim')t='plan';
+  ['sim','cong','plan'].forEach(x=>{const b=q('tabbtn-'+x),p=q('tab-'+x);if(b)b.classList.toggle('on',t===x);if(p)p.style.display=t===x?'':'none';});
+  // Plan: hide Capability filter header; keep sim-tabs.
+  const planFocus=(t==='plan');
   document.body.classList.toggle('plan-focus',planFocus);
   const top=document.querySelector('.top');
   if(top)top.style.display=planFocus?'none':'';
   if(t==='cong'&&!_congLoaded){_congLoaded=true;loadCongModel();}
-  if(t==='plan'){renderPlanBuilder();if(typeof planSetScenarioBtn==='function')planSetScenarioBtn();}
-  if(t==='plansim')psInit();
+  if(t==='plan'){renderPlanBuilder();if(typeof planSetScenarioBtn==='function')planSetScenarioBtn();if(typeof psInit==='function')psInit();}
   if(t==='sim'&&typeof flowEnsureCapabilityHost==='function'&&_flowHost==='plan'&&_flowSource)flowEnsureCapabilityHost();
 }
 let _planDraft={};

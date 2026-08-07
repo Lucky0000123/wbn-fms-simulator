@@ -103,8 +103,16 @@ function updateFlowSimulator(){
     return {id:p.id,km:kmAt(p.x),loaded:Math.abs(p.y-180)<.8,col:(c&&c.getAttribute('fill'))||'#38bdf8'};
   }));
 }
-function flowFrame(ts){const s=_flowSim;if(!s||!s.running)return;if(!s.last)s.last=ts;const dt=Math.min(.1,(ts-s.last)/1000);s.last=ts;s.hour=Math.min(FLOW_SHIFT_HOURS,s.hour+dt*FLOW_SHIFT_HOURS/24);updateFlowSimulator();if(s.hour>=FLOW_SHIFT_HOURS){stopFlowSimulator();return;}s.raf=requestAnimationFrame(flowFrame);}
-function flowToggle(){const s=_flowSim;if(!s)return;if(s.running){stopFlowSimulator();return;}if(s.hour>=FLOW_SHIFT_HOURS){s.hour=0;s.liveCongestion=0;s.liveDensity=0;s.vehicleStates={};s.laneOrders={loaded:[],empty:[]};}if(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches){s.hour=FLOW_SHIFT_HOURS;updateFlowSimulator();return;}s.running=true;s.last=0;const play=flowQ('c3-flow-play');if(play)play.textContent='Ⅱ Pause';s.raf=requestAnimationFrame(flowFrame);}
+function flowFrame(ts){const s=_flowSim;if(!s||!s.running)return;if(!s.last)s.last=ts;const dt=Math.min(.1,(ts-s.last)/1000);s.last=ts;s.hour=Math.min(FLOW_SHIFT_HOURS,s.hour+dt*FLOW_SHIFT_HOURS/24);updateFlowSimulator();if(s.hour>=FLOW_SHIFT_HOURS){stopFlowSimulator();
+  // Plan host: the illustration finished its full clock — run the full
+  // assessment (prediction) underneath. Staged: illustration → predict → results.
+  if(_flowHost==='plan'&&typeof planOnIllustrationFinished==='function'){
+    try{planOnIllustrationFinished();}catch(_){}
+  }
+  return;}s.raf=requestAnimationFrame(flowFrame);}
+function flowToggle(){const s=_flowSim;if(!s)return;if(s.running){stopFlowSimulator();return;}if(s.hour>=FLOW_SHIFT_HOURS){s.hour=0;s.liveCongestion=0;s.liveDensity=0;s.vehicleStates={};s.laneOrders={loaded:[],empty:[]};}if(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches){s.hour=FLOW_SHIFT_HOURS;updateFlowSimulator();
+  if(_flowHost==='plan'&&typeof planOnIllustrationFinished==='function'){try{planOnIllustrationFinished();}catch(_){}}
+  return;}s.running=true;s.last=0;const play=flowQ('c3-flow-play');if(play)play.textContent='Ⅱ Pause';s.raf=requestAnimationFrame(flowFrame);}
 function flowReset(){stopFlowSimulator();if(_flowSim){_flowSim.hour=0;_flowSim.liveCongestion=0;_flowSim.liveDensity=0;_flowSim.vehicleStates={};_flowSim.laneOrders={loaded:[],empty:[]};updateFlowSimulator();}}
 // When false (default), motion uses corridor.measuredSpeeds (GPS). Advanced km/h
 // inputs are display/override only — touching them sets _flowSpeedOverride.
