@@ -299,8 +299,24 @@ function evaluateFlowScenario(){
   const setHtml=(id,v)=>{const el=flowQ(id);if(el)el.innerHTML=v;};
   setTxt('flow-attain',fmt(_flowMode==='plan'?achieved:dbTrips));
   // Plan readout kickers already say Predict/Simulate; keep unit lines short.
+  // BUT: the corridor stick only carries TF–FENI-mapped routes. A holding plan
+  // with off-corridor paths (e.g. BLB>BSE) has those DT silently excluded from
+  // this trip figure — say so, or "73 trips from 134 DT" reads as a bug.
+  let attainLabel='trips / 12h shift';
+  if(_flowHost==='plan'&&typeof _flowPlanDraft!=='undefined'){
+    const draftKeys=Object.keys(_flowPlanDraft||{});
+    const onStick=new Set(s.routes.map(r=>r.key));
+    const excluded=draftKeys.filter(k=>!onStick.has(k));
+    const exclDt=excluded.reduce((n,k)=>n+(Number.isFinite(_flowPlanDraft[k])?_flowPlanDraft[k]:0),0);
+    if(excluded.length&&exclDt>0){
+      attainLabel='trips / 12h · corridor routes only ('+fmt(fleetTotal,0)+' DT — excludes '
+        +fmt(exclDt,0)+' DT off-corridor: '+excluded.map(k=>k.replace('>','→')).join(', ')+')';
+    }else{
+      attainLabel='trips / 12h shift · '+fmt(fleetTotal,0)+' DT on corridor';
+    }
+  }
   setTxt('flow-attain-label',_flowHost==='plan'
-    ?'trips / 12h shift'
+    ?attainLabel
     :(_flowMode==='plan'?'predict · trips / 12h shift':'dispatch · trips / shift'));
   setTxt('flow-vc',fmt(vc,2));
   setTxt('flow-queue',fmt(s.queue));

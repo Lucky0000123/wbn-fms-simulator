@@ -184,9 +184,18 @@ function planRenderEstimateColumn(sim,predict){
   const byRoute=planPredictByRoute();
   const fmtN=n=>n==null?'—':Math.round(n).toLocaleString('en-GB');
   const gap=(achv!=null&&plannedPath!=null)?Math.round(plannedPath-achv):null;
+  // Two DIFFERENT gaps, and the label must not conflate them:
+  //  - capacity clipping: simulate-unconstrained > achievable (a loader ceiling
+  //    actually removed tonnes) — a real physical constraint;
+  //  - model disagreement: path model (Step-1 history) vs the engine, with NO
+  //    capacity binding. Calling that "above capacity" blamed loaders for a
+  //    modelling difference and confused planners after Optimize.
+  const unconADJ=s.planned_production_t;
+  const capClip=(unconADJ!=null&&achv!=null)?Math.round(unconADJ-achv):null;
   const gapLabel=gap==null?'—'
-    :(gap>200?`Path model +${fmtN(gap)} t above capacity`
-    :(gap<-200?`Path model ${fmtN(Math.abs(gap))} t below capacity`:'Path model ≈ capacity'));
+    :(capClip!=null&&capClip>200?`Capacity clips ${fmtN(capClip)} t (loader ceiling)`
+    :(gap>200?`Path model +${fmtN(gap)} t vs engine — models differ, no capacity limit`
+    :(gap<-200?`Path model ${fmtN(Math.abs(gap))} t below engine`:'Path model ≈ engine')));
   const fin=_planOptFinalized
     ?`<p class="plan-b-finalized" role="status">Finalized plan · B uses the DT you accepted (${fmtN(s.total_trucks)} DT · path model ${fmtN(plannedPath)} t).</p>`
     :'';
