@@ -14,24 +14,20 @@ import time
 
 import pymssql
 
-ENV = "/Volumes/LUCKY_SSD/LV_APP/fms-dashboard/backend/.env"
-OUT = pathlib.Path(__file__).resolve().parent.parent / "data" / "fuel_recon"
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+OUT = ROOT / "data" / "fuel_recon"
 OUT.mkdir(parents=True, exist_ok=True)
 DBS = ["WBN_DATABASE", "FMS_DB"]
+sys.path.insert(0, str(ROOT))
 
 
 def creds():
-    c = {}
-    if os.path.exists(ENV):
-        for line in open(ENV, encoding="utf-8", errors="ignore"):
-            line = line.strip()
-            if "=" in line and not line.startswith("#"):
-                k, v = line.split("=", 1)
-                c[k.strip()] = v.strip().strip('"').strip("'")
+    from scripts.load_fms_env import load_fms_env
+    load_fms_env()
     return (
-        os.environ.get("FMS_DB_HOST") or c.get("FMS_DB_HOST"),
-        os.environ.get("FMS_DB_USER") or c.get("FMS_DB_USER"),
-        os.environ.get("FMS_DB_PASS") or c.get("FMS_DB_PWD"),
+        os.environ.get("FMS_DB_HOST"),
+        os.environ.get("FMS_DB_USER"),
+        os.environ.get("FMS_DB_PASS"),
     )
 
 

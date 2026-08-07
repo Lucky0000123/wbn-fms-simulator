@@ -264,14 +264,23 @@ function secRestore(){
   });
 }
 secRestore();
-q('f-from').value='2025-09-01'; q('f-to').value=new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10);
+// Peak-production window for Capability / path-response / Shift Performance.
+// Jan–May is the busy fleet era; Jun–Jul is the struggle / low-DT period.
+// (Segment GPS still only exists from mid-Jul — motion uses that extract; see flow notes.)
+q('f-from').value='2026-01-01'; q('f-to').value='2026-05-31';
 // ── Congestion-model preview tab (measured speed-vs-traffic + tunable speed-density model) ──
 let _congData=null,_congLoaded=false;
 function setSimTab(t){
   ['sim','cong','plan','plansim'].forEach(x=>{const b=q('tabbtn-'+x),p=q('tab-'+x);if(b)b.classList.toggle('on',t===x);if(p)p.style.display=t===x?'':'none';});
+  // Plan / Production Simulator: hide Capability filter header; keep sim-tabs.
+  const planFocus=(t==='plan'||t==='plansim');
+  document.body.classList.toggle('plan-focus',planFocus);
+  const top=document.querySelector('.top');
+  if(top)top.style.display=planFocus?'none':'';
   if(t==='cong'&&!_congLoaded){_congLoaded=true;loadCongModel();}
-  if(t==='plan')renderPlanBuilder();
+  if(t==='plan'){renderPlanBuilder();if(typeof planSetScenarioBtn==='function')planSetScenarioBtn();}
   if(t==='plansim')psInit();
+  if(t==='sim'&&typeof flowEnsureCapabilityHost==='function'&&_flowHost==='plan'&&_flowSource)flowEnsureCapabilityHost();
 }
 let _planDraft={};
 let _wbData=null,_wbLoaded=false;

@@ -54,7 +54,10 @@ sim = open(os.path.join(ROOT, "simulator_api.py"), encoding="utf-8").read()
 check("flowMapEnsure / flowMapSync present",
       "function flowMapEnsure" in js and "function flowMapSync" in js)
 check("c3-flow-map in HTML", 'id="c3-flow-map"' in html)
-check("stick collapsed under details", "flow-stick-details" in html)
+check("stick always visible with map",
+      'id="c3-flow-visuals"' in html and 'id="c3-flow-stick"' in html
+      and "flow-stick-details" not in html
+      and "function flowScrollVisualsIntoView" in js)
 check("flowLaneCapacity uses measuredCapacity",
       "function flowLaneCapacity" in js and "measuredCapacity" in js)
 check("flow-vc-hint label", "flow-vc-hint" in html)

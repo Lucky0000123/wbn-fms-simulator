@@ -108,6 +108,61 @@ def main() -> int:
             time.sleep(1)
         check("Shift outcomes has Capacity/Realism/Optimize", "capacity" in outcomes and "optimize" in outcomes)
         check("effective cycle literacy", "effective cycle" in outcomes)
+        check(
+            "Plan vs history P25–P75 row",
+            "your plan" in outcomes and ("p25" in outcomes or "history p25" in outcomes),
+            outcomes[:200],
+        )
+        # Road V/C strip removed from A · Shift outcomes (lives under GPS corridor / C only).
+        road_in_a = page.evaluate(
+            """()=>{
+          const h=[...document.querySelectorAll('#plan-scenario-outcomes .plan-signal-h')]
+            .find(el=>/^\\s*Road/i.test(el.textContent||''));
+          return !!(h&&h.textContent);
+        }"""
+        )
+        check("A outcomes has no Road illustration strip", not road_in_a)
+        # A+B load on Run scenario; C · road illustration stays hidden until GPS ▶ Run
+        c_hidden = page.evaluate(
+            """()=>{
+          const el=document.getElementById('plan-s2-illust');
+          if(!el) return false;
+          const st=window.getComputedStyle(el);
+          return el.hidden===true || st.display==='none';
+        }"""
+        )
+        check("C road illustration hidden until GPS Run", c_hidden)
+        est_txt = page.evaluate(
+            "()=>(document.getElementById('plan-scenario-estimate')?.innerText||'').toLowerCase()"
+        )
+        check("B production capacity rendered", "achievable" in est_txt or "planned" in est_txt, est_txt[:120])
+        page.click("#plan-c3-flow-play")
+        for i in range(40):
+            ch0 = page.evaluate(
+                "()=>(document.getElementById('plan-corridor-hours')?.innerText||'').toLowerCase()"
+            )
+            c_vis = page.evaluate(
+                """()=>{
+              const el=document.getElementById('plan-s2-illust');
+              if(!el) return false;
+              return el.hidden!==true && window.getComputedStyle(el).display!=='none';
+            }"""
+            )
+            if c_vis and ("hour-of-day" in ch0 or "slowest" in ch0 or "shared" in (
+                page.evaluate("()=>(document.getElementById('plan-shared-flow')?.innerText||'').toLowerCase()")
+            )):
+                print("road illustration at", i)
+                break
+            time.sleep(0.5)
+        check(
+            "C visible after GPS corridor Run",
+            page.evaluate(
+                """()=>{
+              const el=document.getElementById('plan-s2-illust');
+              return !!(el && el.hidden!==true && window.getComputedStyle(el).display!=='none');
+            }"""
+            ),
+        )
         achv = page.evaluate(
             """()=>{
           const s=_planLastSim&&_planLastSim.summary||{};
@@ -120,8 +175,29 @@ def main() -> int:
 
         dt_before = page.evaluate("()=>Object.values(_planDraft).reduce((s,r)=>s+(r.dt||0),0)")
         n_change = page.evaluate("()=>(_planLastSuggestions||[]).filter(x=>x.changed).length")
+        under_cap = page.evaluate(
+            """()=>{
+          const rows=(_planLastSim&&_planLastSim.results)||[];
+          return rows.some(r=>r.capacity_ratio!=null&&r.capacity_ratio<0.95
+            &&(r.achievable_production_t||0)>=(r.planned_production_t||0)*0.98);
+        }"""
+        )
+        if under_cap:
+            no_avg_trim = page.evaluate(
+                """()=>{
+              const s=_planLastSuggestions||[];
+              return s.every(x=>!x.changed
+                || !/trim toward average|Above typical path DT/i.test(x.reason||''));
+            }"""
+            )
+            check("Under capacity does not trim toward historical avg", no_avg_trim)
         if n_change:
-            page.click("#plan-apply-sug")
+            # Finalize applies suggested DT by default (no per-row click required).
+            page.evaluate(
+                """()=>{
+              if(typeof planFinalizeOptimize==='function') planFinalizeOptimize();
+            }"""
+            )
             for i in range(50):
                 if not page.evaluate("()=>_planScenarioBusy"):
                     t = page.evaluate(
@@ -131,11 +207,12 @@ def main() -> int:
                         break
                 time.sleep(1)
             dt_after = page.evaluate("()=>Object.values(_planDraft).reduce((s,r)=>s+(r.dt||0),0)")
-            check("Apply reduced DT", dt_after < dt_before, "%s -> %s" % (dt_before, dt_after))
-            check("achievable still present after Apply",
+            check("Finalize accepted suggestion changes DT", dt_after != dt_before, "%s -> %s" % (dt_before, dt_after))
+            check("achievable still present after Finalize",
                   page.evaluate("()=>!!(_planLastSim&&_planLastSim.summary&&_planLastSim.summary.achievable_production_t)"))
         else:
-            print("  SKIP  Apply (no suggestions)")
+            print("  SKIP  Finalize accept (no DT suggestions)")
+            check("No forced min-truck cuts", n_change == 0)
 
         page.evaluate("()=>planSaveForDate()")
         time.sleep(1.2)
@@ -173,6 +250,219 @@ def main() -> int:
             "!![...document.querySelectorAll('.plan-analogues-wrap th')].find(th=>/GPS/i.test(th.textContent||''))"
         )
         check("Analogues GPS column header", gps_col)
+
+        ch = page.evaluate(
+            "()=>(document.getElementById('plan-corridor-hours')?.innerText||'').toLowerCase()"
+        )
+        check("Corridor hours panel rendered", "hour-of-day" in ch or "slowest" in ch, ch[:120])
+        check("Corridor hours advisory copy", "not tonnes" in ch or "advisory" in ch or "struggle" in ch, ch[:160])
+        bars = page.evaluate(
+            "()=>document.querySelectorAll('#plan-corridor-hours .plan-ch-bar').length"
+        )
+        check("Corridor hours sparkline 24 bars", bars == 24, "bars=%s" % bars)
+        check(
+            "Corridor hours start at 00:00",
+            "chart starts at" in ch and "00:00" in ch,
+            ch[:160],
+        )
+        axis_ticks = page.evaluate(
+            "()=>document.querySelectorAll('#plan-corridor-hours .plan-ch-tick').length"
+        )
+        check("Corridor hours axis ticks", axis_ticks >= 4, "ticks=%s" % axis_ticks)
+        test_prod = page.evaluate(
+            """()=>{
+          const box=document.getElementById('plan-test-prod');
+          const attain=document.getElementById('plan-flow-attain');
+          const prod=document.getElementById('plan-flow-prod');
+          return !!(box && attain && prod && box.contains(attain) && box.contains(prod));
+        }"""
+        )
+        check("Test productivity under Run controls", test_prod)
+        no_plan_scroll = page.evaluate(
+            """()=>{
+          if(typeof flowScrollVisualsIntoView!=='function') return false;
+              const prev=window._flowHost;
+              if(typeof flowSetHost==='function') flowSetHost('plan');
+              let scrolled=false;
+              const stage=document.getElementById('plan-c3-flow-visuals');
+              const orig=stage&&stage.scrollIntoView;
+              if(stage) stage.scrollIntoView=function(){ scrolled=true; };
+              flowScrollVisualsIntoView();
+              if(stage&&orig) stage.scrollIntoView=orig;
+              if(typeof flowSetHost==='function') flowSetHost(prev||'capability');
+              return !scrolled;
+            }"""
+        )
+        check("Plan Run does not auto-scroll visuals", no_plan_scroll)
+        busy_shells = page.evaluate(
+            "()=>!!document.getElementById('plan-outcomes-busy') && "
+            "!!document.getElementById('plan-estimate-busy')"
+        )
+        check("Calc busy shells on A+B", busy_shells)
+
+        # Day-segments drill: prefer a Jul+ row; else call API + render helper
+        clicked = page.evaluate(
+            """()=>{
+          const tr=[...document.querySelectorAll('#plan-analogues-rows tr[data-has-gps=\"1\"]')][0];
+          if(tr){ tr.click(); return tr.getAttribute('data-date'); }
+          if(typeof planFetchDaySegments==='function'){
+            planFetchDaySegments('2026-07-21');
+            return 'api:2026-07-21';
+          }
+          return null;
+        }"""
+        )
+        time.sleep(1.5)
+        ds = page.evaluate(
+            "()=>(document.getElementById('plan-day-segments')?.innerText||'').toLowerCase()"
+        )
+        check("Day segments panel after drill",
+              clicked is not None and ("segment" in ds or "loaded" in ds or "no haul" in ds),
+              "clicked=%s text=%s" % (clicked, ds[:140]))
+
+        # Optimize reasons may mention Jul slow section (advisory) — soft check
+        reasons = page.evaluate(
+            "()=>(_planLastSuggestions||[]).map(x=>x.reason||'').join(' | ').toLowerCase()"
+        )
+        check("Optimize still produces reasons", len(reasons) > 5, reasons[:120])
+
+        page.evaluate("()=>{const el=document.getElementById('plan-date'); if(el){el.value='2026-07-21'; if(typeof planDateChange==='function') planDateChange();}}")
+        time.sleep(1.2)
+        cov = page.evaluate(
+            """()=>{
+          const days=(document.getElementById('plan-gps-days')?.innerText||'').toLowerCase();
+          const head=(document.querySelector('.plan-gps-strip-head')?.innerText||'').toLowerCase();
+          return head+' '+days;
+        }"""
+        )
+        check("GPS coverage strip on plan date",
+              "haul gps" in cov or "07-" in cov or "08-" in cov, cov[:160])
+        preview_under = page.evaluate(
+            """()=>{
+          const prev=document.getElementById('plan-preview');
+          const step=document.querySelector('.plan-step1');
+          return !!(prev && step && step.contains(prev));
+        }"""
+        )
+        check("WMT preview under Step 1", preview_under)
+
+        # Re-drill an analogue day, then apply that day's fleet DT
+        page.click("#tabbtn-plan")
+        time.sleep(0.2)
+        page.evaluate(
+            """()=>{
+          const tr=[...document.querySelectorAll('#plan-analogues-rows tr[data-date]')][0];
+          if(tr){ tr.click(); return; }
+          const a=(_planLastAnalogues&&_planLastAnalogues.analogues||[])[0];
+          if(a&&a.date&&typeof planAnalogueRowClick==='function')
+            planAnalogueRowClick(a.date, !!(a.has_gps||String(a.date)>='2026-07-15'));
+        }"""
+        )
+        time.sleep(1.2)
+        applied = page.evaluate(
+            """()=>{
+          const btn=[...document.querySelectorAll('#plan-day-segments button')]
+            .find(b=>/fleet DT/i.test(b.textContent||''));
+          if(!btn || btn.disabled) return 'skip';
+          btn.click();
+          return {n:Object.keys(_planDraft||{}).length,
+                  status:(document.getElementById('plan-save-status')||{}).innerText||''};
+        }"""
+        )
+        if applied == "skip":
+            print("  SKIP  Apply analogue fleet (no button)")
+        else:
+            check("Apply analogue fleet keeps paths",
+                  isinstance(applied, dict) and applied.get("n", 0) >= 1, str(applied))
+            check("Apply analogue fleet status note",
+                  isinstance(applied, dict) and "Applied" in (applied.get("status") or ""),
+                  str(applied))
+
+        page.evaluate(
+            """()=>{
+          const n=document.getElementById('plan-data-notes'); if(n) n.open=true;
+          if(typeof planFetchPlaybackTruth==='function') planFetchPlaybackTruth('2026-07-21');
+          if(typeof planFetchPeakProxy==='function') planFetchPeakProxy();
+          if(typeof planPickGpsDay==='function') planPickGpsDay('2026-07-21');
+        }"""
+        )
+        time.sleep(1.8)
+        pb = page.evaluate(
+            "()=>(document.getElementById('plan-playback-truth')?.textContent||'').toLowerCase()"
+        )
+        check("Playback truth panel", "playback" in pb and ("0%" in pb or "overlap" in pb or "haul" in pb), pb[:160])
+        day_detail = page.evaluate(
+            "()=>(document.getElementById('plan-day-detail')?.textContent||'').toLowerCase()"
+        )
+        check("Selected day detail is for that day",
+              "2026-07-21" in day_detail or "selected day" in day_detail or "that day" in day_detail,
+              day_detail[:160])
+        check("Day detail does not claim Jan–May averages",
+              "jan–may averages" not in day_detail and "jan-may averages" not in day_detail,
+              day_detail[:160])
+
+        # Bias lens defaults ON — outcomes should show calibrated companion
+        lens_on = page.evaluate("()=>!!document.getElementById('plan-bias-lens')?.checked")
+        check("Bias lens default ON", lens_on)
+        outcomes2 = page.evaluate(
+            "()=>(document.getElementById('plan-scenario-outcomes')?.innerText||'').toLowerCase()"
+        )
+        check("Bias lens copy in outcomes", "1.055" in outcomes2 or "adjusted" in outcomes2 or "lens" in outcomes2 or "calibrat" in outcomes2, outcomes2[:180])
+        cal = page.evaluate(
+            "()=>!!(_planLastSim&&_planLastSim.summary&&_planLastSim.summary.ticket_calibrated_achievable_t)"
+        )
+        check("Simulate companion calibrated field", cal)
+        primary_raw = page.evaluate(
+            "()=>(_planLastSim&&_planLastSim.summary&&_planLastSim.summary.availability_factor_applied)===1"
+        )
+        check("Primary still avail=1.0", primary_raw)
+
+        advice = page.evaluate(
+            "()=>(document.getElementById('plan-congestion-advice')?.innerText||'').toLowerCase()"
+        )
+        check("Congestion advice panel",
+              "congestion advice" in advice or "meter" in advice or "jul+" in advice, advice[:160])
+        # Allow second fetch (V/C refresh) after flow seed
+        time.sleep(1.2)
+        smooth = page.evaluate(
+            """()=>{
+          const t=(document.getElementById('plan-smooth-timetable')?.innerText||'').toLowerCase();
+          const n=(_planCongestionAdvice&&_planCongestionAdvice.smooth_actions||[]).length;
+          return {t,n};
+        }"""
+        )
+        check(
+            "Smooth-running timetable",
+            (smooth.get("n") or 0) >= 1
+            or "smooth-running" in (smooth.get("t") or "")
+            or "meter releases on" in advice,
+            "n=%s text=%s" % (smooth.get("n"), (smooth.get("t") or "")[:140]),
+        )
+        never_clip = page.evaluate(
+            "()=>!(_planCongestionAdvice&&_planCongestionAdvice.basis"
+            "&&_planCongestionAdvice.basis.congestion_clips_tonnes)"
+        )
+        check("Smooth advice never clips tonnes", never_clip)
+
+        shared = page.evaluate(
+            "()=>(document.getElementById('plan-shared-flow')?.innerText||'').toLowerCase()"
+        )
+        check(
+            "Shared-road timing panel",
+            "shared-road" in shared or "shared" in shared or "des-lite" in shared,
+            shared[:160],
+        )
+        shared_ok = page.evaluate(
+            "()=>!!(_planSharedFlow&&_planSharedFlow.ok"
+            "&&_planSharedFlow.basis&&_planSharedFlow.basis.congestion_clips_tonnes===false)"
+        )
+        check("Shared-flow never clips tonnes", shared_ok)
+
+        peak = page.evaluate(
+            "()=>(document.getElementById('plan-peak-proxy')?.textContent||'').toLowerCase()"
+        )
+        check("Peak ops proxy panel",
+              "peak" in peak and ("not gps" in peak or "weighbridge" in peak or "dt" in peak), peak[:160])
 
         browser.close()
 

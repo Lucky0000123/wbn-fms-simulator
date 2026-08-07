@@ -8,29 +8,35 @@
 # scheduled. Every one of those nights would have lost segment speeds that the
 # site deletes upstream and that cannot be backfilled.
 #
-# Credentials are read at runtime from the SSD .env and never written into the
-# repo -- the mirror is public. Note the .env names the password FMS_DB_PWD,
-# not FMS_DB_PASS, so it must be mapped. The .env is NOT sourced: FMS_DB_DRIVER
-# holds an unquoted value with spaces ("ODBC Driver 17 for SQL Server"), which
-# a shell would try to execute. Keys are extracted by name instead.
+# Credentials: prefer local gitignored .env (copied via sync_creds_from_ssd.sh),
+# then secrets/fms.env, then the SSD path. Never commit these — the mirror is
+# public. Note the .env names the password FMS_DB_PWD, not FMS_DB_PASS, so it
+# must be mapped. The .env is NOT sourced: FMS_DB_DRIVER holds an unquoted value
+# with spaces ("ODBC Driver 17 for SQL Server"), which a shell would try to
+# execute. Keys are extracted by name instead.
 #
-# A missing SSD or a dropped VPN exits 0, because both are routine here and
-# must not look like a failure. But they are always LOGGED: a silent skip is
-# indistinguishable from a successful run in a log file, and that ambiguity is
-# exactly how a decaying archive goes unnoticed.
+# A missing credential file or a dropped VPN exits 0, because both are routine
+# here and must not look like a failure. But they are always LOGGED: a silent
+# skip is indistinguishable from a successful run in a log file, and that
+# ambiguity is exactly how a decaying archive goes unnoticed.
 set -uo pipefail
 
 REPO="/Users/lucky/wbn-fms-simulator"
-ENVF="/Volumes/LUCKY_SSD/LV_APP/fms-dashboard/backend/.env"
+SSD_ENV="/Volumes/LUCKY_SSD/LV_APP/fms-dashboard/backend/.env"
+ENVF=""
+for cand in "$REPO/.env" "$REPO/secrets/fms.env" "$SSD_ENV"; do
+  if [ -f "$cand" ]; then ENVF="$cand"; break; fi
+done
 
 stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 cd "$REPO" || { echo "$(stamp) FATAL repo missing: $REPO"; exit 1; }
 
-if [ ! -f "$ENVF" ]; then
-  echo "$(stamp) SKIP credentials volume not mounted ($ENVF) - no append this run"
+if [ -z "$ENVF" ]; then
+  echo "$(stamp) SKIP no credentials (run scripts/sync_creds_from_ssd.sh when LUCKY_SSD is mounted)"
   exit 0
 fi
+echo "$(stamp) using credentials from $ENVF"
 
 # Read one key's value without echoing it. head -1 guards against a duplicated
 # key later in the file silently winning.

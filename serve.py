@@ -24,6 +24,9 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 FX = os.path.join(BASE, "fixtures")
 CONSTRAINTS_LOCAL = os.path.join(BASE, "data", "constraints_local.json")
 app = Flask(__name__, template_folder=os.path.join(BASE, "templates"))
+# Dev: pick up HTML/template edits without a process restart (debug is off).
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.jinja_env.auto_reload = True
 app.register_blueprint(simulator_api.bp)      # the real, editable model endpoints
 
 # Phase 2 prediction service (/api/predict, /api/retrain, /api/model-info).

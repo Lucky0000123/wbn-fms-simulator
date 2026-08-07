@@ -46,6 +46,8 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
+import plan_bias as _plan_bias
+
 BASE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(BASE, "data")
 
@@ -547,6 +549,20 @@ def simulate(payload: dict) -> dict:
             # Surfacing it is the point: a silently-dropped parameter is how the
             # UI and the engine disagreed for as long as they did.
             "availability_override_ignored": avail_ignored,
+            # Companion only — does NOT replace achievable_production_t and does
+            # NOT change availability_factor_applied (J52/J55). Measured residual
+            # vs tickets on 44 routes is +5.5% with avail=1.0; holdout is already
+            # slightly under, so this must not become the engine primary.
+            "ticket_calibrated_achievable_t": (
+                _plan_bias.ticket_calibrated_t(
+                    sum(x["achievable_production_t"] for x in ok)) if ok else None),
+            "ticket_calibration": {
+                "measured_bias": _plan_bias.MEASURED_BIAS,
+                "divisor": _plan_bias.ADJUST_DIVISOR,
+                "applied_to_primary": False,
+                "note": ("Companion = achievable ÷ 1.055 for ticket comparison. "
+                         "Primary achievable stays raw; do not re-add availability."),
+            },
             "fleet_sizing": {
                 "trucks_hauling": int(sum(x["n_trucks"] for x in ok)),
                 "trucks_to_roster": int(sum(

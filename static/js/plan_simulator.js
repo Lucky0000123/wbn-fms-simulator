@@ -196,7 +196,7 @@ function psRender(d) {
       + '⚠ ' + sx.replace(/</g, '&lt;') + '</div>' + q('ps-warnings').innerHTML;
   }
 
-  // Sections 2-8 render from THIS response, so a chart can never disagree with
+  // Sections 2–9 render from THIS response, so a chart can never disagree with
   // the table above it.
   if (typeof paRender === 'function') paRender(d);
 }

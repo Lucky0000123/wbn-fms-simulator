@@ -83,7 +83,19 @@ function updateFlowSimulator(){
   });
   const loadedNow=moving.filter(p=>Math.abs(p.y-180)<.8&&p.el.getAttribute('visibility')!=='hidden').length,emptyNow=moving.filter(p=>Math.abs(p.y-210)<.8&&p.el.getAttribute('visibility')!=='hidden').length,crossoverNow=moving.filter(p=>Math.abs(p.y-180)>=.8&&Math.abs(p.y-210)>=.8&&p.el.getAttribute('visibility')!=='hidden').length;
   const metaHost=flowQ('c3-flow-meta');
-  if(metaHost)metaHost.innerHTML=`<b>${escH(s.band)} load</b> · illustration density ${fmt(s.liveDensity||0,2)} DT/km · ${fmt(s.corridorKm,1)} km corridor<br>${_flowMode==='plan'?'path-response estimate':'dispatch replay'} clock ${fmt(completed)} / ${fmt(shiftTrips)} trips (linear progress, not event sim) · on-screen elements: loaded ${loadedNow} · empty ${emptyNow} · crossover ${crossoverNow}${_flowSimRatio<0.999?` · simulate tint ${fmt(100*_flowSimRatio,0)}% achievable`:''}`;
+  if(metaHost){
+    const tripSrc=_flowMode==='plan'?'Path-response':'Dispatch';
+    const tintChip=_flowSimRatio<0.999?`<span class="flow-run-chip">Simulate tint <b>${fmt(100*_flowSimRatio,0)}%</b> <span class="muted">achievable</span></span>`:'';
+    metaHost.innerHTML=`<div class="flow-run-status">
+      <span class="flow-run-chip"><b>${escH(s.band)}</b> load</span>
+      <span class="flow-run-chip">Density <b>${fmt(s.liveDensity||0,2)}</b> <span class="muted">DT/km</span></span>
+      <span class="flow-run-chip">Corridor <b>${fmt(s.corridorKm,1)}</b> <span class="muted">km</span></span>
+      <span class="flow-run-chip">${tripSrc} <b>${fmt(completed)}</b> <span class="muted">/ ${fmt(shiftTrips)} trips</span></span>
+      <span class="flow-run-chip">On screen <b>${loadedNow}</b> <span class="muted">loaded</span> · <b>${emptyNow}</b> <span class="muted">empty</span> · <b>${crossoverNow}</b> <span class="muted">turn</span></span>
+      ${tintChip}
+      <p class="flow-run-note">Linear progress clock — not an event simulator.</p>
+    </div>`;
+  }
   const ranges={1:[67.8,39],2:[39,27],3:[27,17],4:[17,0]},activeRanges=[..._gSelSec].map(id=>ranges[+id]).filter(Boolean),kmAt=x=>s.corridorKm-(x-s.roadLeft)/(s.roadRight-s.roadLeft)*s.corridorKm,densities=activeRanges.map(z=>{const weight=moving.reduce((n,p)=>{const km=kmAt(p.x),onLane=Math.abs(p.y-180)<.8||Math.abs(p.y-210)<.8;return n+(onLane&&km<=z[0]&&km>=z[1]?p.weight:0);},0);return weight/Math.max(.1,z[0]-z[1]);}),density=Math.max(0,...densities),pressure=Math.max(0,Math.min(1,(density-2)/4));s.liveCongestion=(s.liveCongestion||0)+.08*(pressure-(s.liveCongestion||0));s.liveDensity=density;
   // Project visible particles onto the GPS polyline map (chainage → lat/lng).
   flowMapSync(moving.filter(p=>p.el.getAttribute('visibility')!=='hidden').map(p=>{
@@ -278,7 +290,10 @@ function evaluateFlowScenario(){
   const setTxt=(id,v)=>{const el=flowQ(id);if(el)el.textContent=v;};
   const setHtml=(id,v)=>{const el=flowQ(id);if(el)el.innerHTML=v;};
   setTxt('flow-attain',fmt(_flowMode==='plan'?achieved:dbTrips));
-  setTxt('flow-attain-label',_flowMode==='plan'?'predict · trips / 12h shift':'dispatch · trips / shift');
+  // Plan readout kickers already say Predict/Simulate; keep unit lines short.
+  setTxt('flow-attain-label',_flowHost==='plan'
+    ?'trips / 12h shift'
+    :(_flowMode==='plan'?'predict · trips / 12h shift':'dispatch · trips / shift'));
   setTxt('flow-vc',fmt(vc,2));
   setTxt('flow-queue',fmt(s.queue));
   const winMeta=(((_D&&_D.corridor)||{}).measuredWindow)||{};
@@ -287,10 +302,10 @@ function evaluateFlowScenario(){
   if(vcHint){
     if(cap.capSource==='measured'){
       vcHint.textContent=gpsStruggle
-        ?(`illustration · Jul GPS ~${fmt(laneCapacity,0)} tph (struggle extract · not Jan–May peak)`)
-        :(`illustration · measured ~${fmt(laneCapacity,0)} tph · ≡${fmt(cap.equivHeadway)}s`);
+        ?(`~${fmt(laneCapacity,0)} tph · Jul GPS struggle extract`)
+        :(`~${fmt(laneCapacity,0)} tph · ≡${fmt(cap.equivHeadway)}s`);
     }else{
-      vcHint.textContent=`illustration · assumed headway ${fmt(cap.equivHeadway)}s`;
+      vcHint.textContent=`assumed headway ${fmt(cap.equivHeadway)}s`;
     }
   }
   // Production KPI: Cap what-if = predict WMT; Plan host after simulate = achievable tonnes.
@@ -300,10 +315,14 @@ function evaluateFlowScenario(){
   const simAchv=simSum&&Number.isFinite(simSum.achievable_production_t)?simSum.achievable_production_t:null;
   if(_flowHost==='plan'&&simAchv!=null){
     setHtml('flow-prod',fmtM(simAchv));
-    setTxt('flow-prod-label','simulate · achievable t'+(simSum.planned_production_t!=null?` · ${fmt(100*simAchv/Math.max(1,simSum.planned_production_t),0)}% of planned`:''));
+    setTxt('flow-prod-label',simSum.planned_production_t!=null
+      ?`${fmt(100*simAchv/Math.max(1,simSum.planned_production_t),0)}% of planned`
+      :'achievable t');
   }else{
     setHtml('flow-prod',_prod?(fmtM(_prod)+(_flowMode==='plan'&&Math.abs(_dWMT)>=1?` <span style="font-size:11px;color:${_dWMT>=0?'#22c55e':'#ef4444'}">${_dWMT>=0?'+':'−'}${fmtM(Math.abs(_dWMT))}</span>`:'')):'—');
-    setTxt('flow-prod-label',(_flowMode==='plan'?'predict · WMT / shift':'dispatch · WMT / shift')+(_tf?' · TF '+fmt(_tf,1)+' t':''));
+    setTxt('flow-prod-label',_flowHost==='plan'
+      ?('WMT / shift'+(_tf?' · TF '+fmt(_tf,1)+' t':''))
+      :((_flowMode==='plan'?'predict · WMT / shift':'dispatch · WMT / shift')+(_tf?' · TF '+fmt(_tf,1)+' t':'')));
   }
   updateFlowModeBadge();
   const sectionDefs=[{id:1,label:'TOFU–KR',from:67.8,to:39},{id:2,label:'KR–POS 12',from:39,to:27},{id:3,label:'POS 12–POS 10',from:27,to:17},{id:4,label:'POS 10–FENI',from:17,to:0}];

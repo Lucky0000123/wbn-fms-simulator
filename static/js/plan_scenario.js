@@ -426,9 +426,7 @@ function planRenderOutcomes(sim,predict){
   const shortfall=Math.max(0,plannedPath-showAchv);
   const planned=plannedPath;
   const ens=(_planLastAnalogues&&_planLastAnalogues.ensemble)||{};
-  const sr=(_planLastAnalogues&&_planLastAnalogues.shared_road)||{};
   const ambition=planAmbitionLabel(predict,ens);
-  const riskLabel=sr.risk_label||sr.risk||'—';
 
   const suggestions=planSuggestOptimize(sim,predict);
   _planLastSuggestions=suggestions;
@@ -461,14 +459,6 @@ function planRenderOutcomes(sim,predict){
   const histBand=(p25!=null&&p75!=null)
     ?(planFmtN(p25)+'–'+planFmtN(p75)+' t')
     :'—';
-  const slowH0=((_planCorridorHours&&_planCorridorHours.slow_hours)||[])[0];
-  const slowHourLabel=(!slowH0||slowH0.h==null)?'—'
-    :(String(slowH0.h).padStart(2,'0')+':00'
-      +(slowH0.speed_kmh!=null?(' · '+slowH0.speed_kmh+' km/h'):''));
-  const slowSrc=(_planCorridorHours&&_planCorridorHours.source)||'';
-  const hourRow=((_planCorridorHours&&_planCorridorHours.hours)||[]).find(h=>h&&slowH0&&h.h===slowH0.h);
-  const slowSamples=hourRow&&hourRow.n!=null?hourRow.n:null;
-  const slowReal=!!(slowH0&&slowH0.speed_kmh!=null&&_planCorridorHours&&_planCorridorHours.ok);
 
   const sugRows=suggestions.map(x=>{
     const accepted=x.changed&&_planOptChoice[x.id]!=='current';
@@ -530,22 +520,6 @@ function planRenderOutcomes(sim,predict){
             </div>
           </div>
           <p class="muted" style="font-size:10.5px;margin:6px 0 0">One comparison only — do not average with achievable tonnes.</p>
-        </div>
-        <div class="plan-signal">
-          <div class="plan-signal-h">Road <span class="muted">(illustration · not tonnes)</span></div>
-          <div class="plan-outcomes-strip plan-outcomes-strip-3">
-            <div><span class="muted">Peak V/C</span><b>${vc==null?'—':fmt(vc,2)}</b></div>
-            <div><span class="muted">Shared-road</span><b style="font-size:13px">${escH(String(riskLabel))}</b></div>
-            <div><span class="muted">Slow hour</span><b style="font-size:12px">${escH(slowHourLabel)}</b></div>
-          </div>
-          <p class="muted" style="font-size:10.5px;margin:6px 0 0">
-            <b>V/C</b> = Volume / Capacity. Illustration only — never changes simulate tonnes.
-            ${slowReal
-              ?(' Slow hour is <b>measured</b>'
-                +(slowSamples!=null?(' · '+Number(slowSamples).toLocaleString('en-GB')+' samples'):'')
-                +'.')
-              :' Slow hour unavailable until ▶ Run loads the Jul+ hour profile.'}
-          </p>
         </div>
       </div>
 

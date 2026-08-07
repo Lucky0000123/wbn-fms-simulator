@@ -100,8 +100,37 @@ def _path_fits():
     return _PATH_FIT_CACHE
 
 
+def _rain_scale(source, destination, rainfall):
+    """Multiply trips/DT for rainfall. Used when the CV winner is rain-blind
+    (group-mean baseline) so Conditions rainfall still moves WMT.
+
+    Prefers measured wet/dry path impact when rain clearly hurts; otherwise a
+    modest default drag (~4% per 10 mm, floor 75%).
+    """
+    mm = float(rainfall or 0.0)
+    if mm <= 0:
+        return 1.0
+    fits = _path_fits()
+    key = "%s>%s" % (pp._norm(source), pp._norm(destination))
+    m = fits.get(key) or {}
+    wet, dry = m.get("mWet"), m.get("mDry")
+    if isinstance(wet, (int, float)) and isinstance(dry, (int, float)) and dry > 0:
+        # Effect measured at ~10 mm; scale linearly with rainfall.
+        at_rain = dry + (wet - dry) * (mm / 10.0)
+        scale = at_rain / dry
+        if scale < 0.999:                     # only trust when rain reduces output
+            return max(0.5, min(1.0, scale))
+    # Default Halmahera haul drag when path has no (or confounded) wet/dry split
+    return max(0.75, 1.0 - 0.04 * (mm / 10.0))
+
+
 def _fallback_trips_per_dt(source, destination, trucks, rainfall, shift_hours):
-    """Original Plan-tab maths: avgTr + b·(DT − avgDT) + rain, day → shift."""
+    """Plan-tab maths: avgTr + b·(DT − avgDT) + rain, day → shift.
+
+    avgTr from path-response is the mid-60% trimmed mean of daily trips/DT
+    (main cluster), not the raw arithmetic mean. Slope still uses measured
+    bAdj/b when negative.
+    """
     fits = _path_fits()
     key = "%s>%s" % (pp._norm(source), pp._norm(destination))
     m = fits.get(key)
@@ -114,8 +143,7 @@ def _fallback_trips_per_dt(source, destination, trucks, rainfall, shift_hours):
     slope = b_adj if (isinstance(b_adj, (int, float)) and b_adj < 0) else (b if (isinstance(b, (int, float)) and b < 0) else 0)
     if slope and m.get("avgDt"):
         tr += slope * (float(trucks) - float(m["avgDt"]))
-    if rainfall and isinstance(m.get("mWet"), (int, float)) and isinstance(m.get("mDry"), (int, float)):
-        tr += (m["mWet"] - m["mDry"]) * (float(rainfall) / 10.0)
+    tr *= _rain_scale(source, destination, rainfall)
     tr = max(0.3 * float(m["avgTr"]), tr)
     tr *= 0.5 * (float(shift_hours) / SHIFT_HOURS_DEFAULT)     # day → single shift
     return tr, float(m.get("tf") or 0)
@@ -207,21 +235,62 @@ def _predict_selected(payload: dict):
     return None, None
 
 
-def _predict_trips_per_dt(payload: dict):
-    """Model-based trips/DT/shift. Returns (value, used_model) or (None, False)."""
-    # The CV winner answers first when it is not the RandomForest.
-    val, name = _predict_selected(payload)
-    if val is not None and val > 0:
-        return val, True
+def _predict_rf(payload: dict):
+    """RandomForest trips/DT/shift (rain-aware). (value,) or None."""
     bundle = load_model()
     if not bundle:
-        return None, False
+        return None
     try:
         X = pp.transform_one(payload)
-        return float(bundle["model"].predict(X)[0]), True
+        v = float(bundle["model"].predict(X)[0])
+        return v if v > 0 else None
     except Exception as exc:                          # noqa: BLE001
-        print("[prediction] model inference failed: %s" % exc)
-        return None, False
+        print("[prediction] RF inference failed: %s" % exc)
+        return None
+
+
+def _rf_rain_ratio(payload: dict, rainfall: float):
+    """Relative rain effect from RF: trips(rain) / trips(dry). None if unusable.
+
+    Keeps the CV baseline's absolute level, but borrows the VPN-trained RF's
+    weather sensitivity so wet Plan days move without jumping to a different
+    tonnes scale.
+    """
+    if not (rainfall > 0):
+        return None
+    wet_payload = dict(payload)
+    wet_payload["rainfall_mm"] = float(rainfall)
+    dry_payload = dict(payload)
+    dry_payload["rainfall_mm"] = 0.0
+    rf_wet = _predict_rf(wet_payload)
+    rf_dry = _predict_rf(dry_payload)
+    if rf_wet is None or rf_dry is None or rf_dry <= 0:
+        return None
+    return max(0.5, min(1.05, rf_wet / rf_dry))
+
+
+def _predict_trips_per_dt(payload: dict, prefer_rain_aware: bool = False):
+    """Model-based trips/DT/shift. Returns (value, model_name) or (None, None).
+
+    prefer_rain_aware + wet day + baseline CV winner: keep baseline tonnes, then
+    scale by RF's wet/dry ratio (or path/default rain drag if RF is flat/up).
+    """
+    rain = float(payload.get("rainfall_mm") or 0.0)
+    val, name = _predict_selected(payload)
+    if val is not None and val > 0:
+        name = name or "group_mean_baseline"
+        if prefer_rain_aware and rain > 0 and name == "group_mean_baseline":
+            ratio = _rf_rain_ratio(payload, rain)
+            if ratio is not None and ratio < 0.995:
+                return val * ratio, "group_mean_baseline+rf_rain"
+            # RF flat/up → honest default/path rain drag (never invent a gain)
+            return val * _rain_scale(payload.get("source"), payload.get("destination"), rain), \
+                "group_mean_baseline+rain"
+        return val, name
+    rf = _predict_rf(payload)
+    if rf is not None:
+        return rf, "random_forest"
+    return None, None
 
 
 def _arg(data, *names, default=None, cast=None):
@@ -277,15 +346,33 @@ def api_predict():
 
     bundle = load_model()
     meta = (bundle or {}).get("meta", {})
+    # Plan tab always asks for rain-aware answers on wet days; other callers opt in.
+    prefer_rain = bool(_arg(data, "prefer_rain_aware", "plan", default=False))
+    if str(_arg(data, "prefer_rain_aware", default="")).lower() in ("1", "true", "yes"):
+        prefer_rain = True
+    # Default ON for Plan-shaped requests (dt_to_wmt / wmt_to_dt with rainfall).
+    if rainfall > 0 and mode in ("dt_to_wmt", "wmt_to_dt"):
+        prefer_rain = True
+
+    model_used_name = None
 
     def trips_for(n_trucks):
         """trips/DT for a fleet size, model first then OLS fallback."""
-        value, used = _predict_trips_per_dt(features(n_trucks))
-        if used and value and value > 0:
+        nonlocal model_used_name
+        value, name = _predict_trips_per_dt(features(n_trucks), prefer_rain_aware=prefer_rain)
+        if value and value > 0:
+            # Plain baseline (no rain layer applied inside) still gets path/default drag.
+            if name == "group_mean_baseline" and rainfall > 0:
+                value *= _rain_scale(source, destination, rainfall)
+                name = "group_mean_baseline+rain"
+            model_used_name = name
             # The model is trained on the DB's ~12 h shift; scale a different ask.
             return value * (float(shift_hours) / SHIFT_HOURS_DEFAULT), False
         fb, _tf = _fallback_trips_per_dt(source, destination, n_trucks, rainfall, shift_hours)
-        return (fb, True) if fb else (None, True)
+        if fb:
+            model_used_name = "fallback_ols"
+            return fb, True
+        return None, True
 
     fallback = False
     if mode == "wmt_to_dt":
@@ -380,9 +467,10 @@ def api_predict():
         "prediction": prediction,
         # Name what ACTUALLY produced the number: the CV-selected model when one
         # is served, else the RandomForest, else the OLS fallback.
-        "model_used": ("fallback_ols" if fallback
+        "model_used": (model_used_name or (
+                       "fallback_ols" if fallback
                        else (meta.get("selected_model")
-                             if _load_selected() else meta.get("model_type", "unknown"))),
+                             if _load_selected() else meta.get("model_type", "unknown")))),
         "model_trained_at": meta.get("trained_at"),
         "model_r2": meta.get("r2"),
         # Additive fields only — existing consumers keep working. R2 alone

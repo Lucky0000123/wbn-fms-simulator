@@ -154,6 +154,17 @@ def main():
                   "two weeks, so segment speeds cannot be backfilled. This archive "
                   "is the only way the record grows. Idempotent: re-runs add nothing.")
     io.open(MANIFEST, "w", encoding="utf-8").write(json.dumps(man, indent=2))
+    # Keep stick measuredSpeeds aligned with the banked Jul+ window (offline).
+    try:
+        import plan_corridor_hours as pch
+        stick = pch.rebuild_by_dir_from_archive()
+        if stick.get("ok"):
+            print("  stick by_dir: %s rows / %s segs from archive"
+                  % (stick.get("rows"), stick.get("segments")))
+        else:
+            print("  stick by_dir refresh skipped: %s" % stick.get("error"))
+    except Exception as e:  # noqa: BLE001
+        print("  stick by_dir refresh failed: %s" % str(e)[:120])
     print("\n" + json.dumps(status(), indent=2))
 
 

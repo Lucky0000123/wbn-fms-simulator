@@ -18,26 +18,8 @@ sys.path.insert(0, ROOT)
 
 
 def _load_env():
-    # Optional: pull from LV_APP dashboard .env if present (same pattern as other scripts)
-    candidates = [
-        os.path.join(ROOT, ".env"),
-        "/Volumes/LUCKY_SSD/LV_APP/fms-dashboard/backend/.env",
-    ]
-    for path in candidates:
-        if not os.path.isfile(path):
-            continue
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, _, v = line.partition("=")
-                k, v = k.strip(), v.strip().strip('"').strip("'")
-                if k == "FMS_DB_PWD" and "FMS_DB_PASS" not in os.environ:
-                    os.environ["FMS_DB_PASS"] = v
-                elif k.startswith("FMS_DB_") and k not in os.environ:
-                    os.environ[k] = v
-        break
+    from scripts.load_fms_env import load_fms_env
+    load_fms_env()
 
 
 def main():

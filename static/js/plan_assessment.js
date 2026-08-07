@@ -1,6 +1,6 @@
-/* plan_assessment.js — the plan assessment view (Sections 2-8 of the Production
- * Simulator tab). Charts are ECharts from CDN; there is no build step and no npm
- * dependency.
+/* plan_assessment.js — the plan assessment view (Sections 2–9 of the Production
+ * Simulator tab; S1 = plan builder, S6 = production table in plan_simulator.js).
+ * Charts are ECharts from CDN; there is no build step and no npm dependency.
  *
  * IT RENDERS FROM THE SAME /api/simulate RESPONSE the results table already
  * uses, so a number can never disagree between the table and a chart. The extra
@@ -41,6 +41,7 @@
 
 let _paOptions = null, _paCongestion = null, _paCapability = null;
 let _paLastSim = null, _paCharts = {}, _paRoad = null;
+let _paAnalogues = null;
 /* Section 9 map state. _paGeom is the corridor centreline; it is fetched once
  * and may legitimately be an "unavailable" payload, because site coordinates are
  * not committed to the public mirror. */
@@ -157,7 +158,8 @@ function paLoadRefs() {
  * just rendered, so the assessment and the results table are the same numbers. */
 function paRender(sim) {
   _paLastSim = sim;
-  // Two wrappers, because sections 2-5 sit ABOVE the production table (section 6)
+  // Two wrappers, because sections 2–5 sit ABOVE the production table (section 6);
+  // sections 7–9 sit below.
   // and 7-8 below it, so the page reads 1..8 top to bottom.
   const hosts = ['pa-sections-top', 'pa-sections-bot']
     .map(id => document.getElementById(id)).filter(Boolean);
@@ -168,12 +170,88 @@ function paRender(sim) {
   paLoadRefs().then(() => {
     paBreakdown(rows);
     paSpeed();
-    paCongestion(sim, rows);
     paGauges(sim, rows);
-    paHistory(rows);
     paFleet(sim, rows);
     paMap();
+    return paEnsureAnalogues(rows).then(() => {
+      paCongestion(sim, rows);
+      paHistory(rows);
+    });
   });
+}
+
+function paAnaloguePlansFromRows(rows) {
+  // Prefer Plan-tab draft (keeps contractor); else build from simulate rows.
+  if (window._paAnaloguePlans && window._paAnaloguePlans.length) {
+    return window._paAnaloguePlans;
+  }
+  return (rows || []).map(r => ({
+    source: r.source, destination: r.destination,
+    n_trucks: r.n_trucks, contractor: null,
+  }));
+}
+
+function paEnsureAnalogues(rows) {
+  if (window._paAnalogues && window._paAnalogues.ok) {
+    _paAnalogues = window._paAnalogues;
+    return Promise.resolve(_paAnalogues);
+  }
+  const plans = paAnaloguePlansFromRows(rows);
+  if (!plans.length) {
+    _paAnalogues = null;
+    return Promise.resolve(null);
+  }
+  const rainEl = document.getElementById('plan-rain') || document.getElementById('ps-weather');
+  let rain_mm = 0;
+  if (rainEl && rainEl.id === 'ps-weather') {
+    rain_mm = rainEl.value === 'wet' ? 2 : 0;
+  } else if (rainEl) {
+    rain_mm = Math.max(0, parseFloat(rainEl.value) || 0);
+  }
+  return fetch('/api/plan/analogues', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({plans, rain_mm, k: 8}),
+  }).then(r => r.json()).then(data => {
+    _paAnalogues = data;
+    window._paAnalogues = data;
+    return data;
+  }).catch(() => {
+    _paAnalogues = null;
+    return null;
+  });
+}
+
+function paRenderSharedRoad(sr) {
+  const box = document.getElementById('pa-shared-road');
+  const rowsEl = document.getElementById('pa-shared-road-rows');
+  if (!box && !rowsEl) return;
+  sr = sr || {};
+  const risk = sr.risk || 'none';
+  if (box) {
+    box.innerHTML = '<p style="margin:0 0 4px"><span class="plan-risk-badge plan-risk-'
+      + paEsc(risk) + '">' + paEsc(sr.risk_label || risk) + '</span></p>'
+      + '<p class="muted" style="margin:0;font-size:12px">Shared road sections: <b>'
+      + paEsc((sr.shared_sections || []).join(', ') || '—')
+      + '</b> · planned ~ <b>' + paNum(sr.plan_dt_total) + ' DT</b>'
+      + (sr.max_hist_section_dt != null
+          ? ' · hist peak <b>' + paNum(sr.max_hist_section_dt) + ' DT</b>' : '')
+      + (sr.trips_per_dt_collapse_pct != null
+          ? ' · busy trips/DT <b>' + paNum(sr.trips_per_dt_collapse_pct, 1)
+            + '%</b> below quiet days' : '')
+      + '</p>';
+  }
+  const ev = sr.evidence || [];
+  if (rowsEl) {
+    rowsEl.innerHTML = ev.length ? ev.map(e => {
+      const secBits = Object.keys(e.sections || {}).map(k => k + ': ' + paNum(e.sections[k])).join(', ');
+      return '<tr><td><b>' + paEsc(e.date) + '</b></td>'
+        + '<td class="r">' + paNum(e.section_dt, 1) + '</td>'
+        + '<td class="r">' + paNum(e.trips_per_dt, 2) + '</td>'
+        + '<td>' + paEsc(e.season || '') + '</td>'
+        + '<td class="muted" style="font-size:10.5px">' + paEsc(secBits) + '</td></tr>';
+    }).join('') : '<tr><td colspan="5" class="muted">'
+      + paEsc(sr.note || 'No shared-road evidence.') + '</td></tr>';
+  }
 }
 
 /* ---------- Section 2 · trip time breakdown ---------- */
@@ -410,6 +488,14 @@ function paCongestion(sim, rows) {
       + 'between the plans in this assessment.</td></tr>';
   document.getElementById('pa-shared-rows').innerHTML = shareHtml;
 
+  // Shared-road advisory from analogue engine (separate from loader shared_with).
+  paRenderSharedRoad((_paAnalogues && _paAnalogues.shared_road) || {
+    risk: 'none',
+    risk_label: 'Shared-road analogues not loaded',
+    shared_sections: [],
+    note: 'Open from Plan tab Run, or wait for /api/plan/analogues.',
+  });
+
   // Segment speed-drop table + bar: measured free-flow vs measured mean, biggest
   // drops first. Sorted by drop so the worst sections lead, but n is shown on
   // every row because a large drop on 6 observations is not a finding.
@@ -558,6 +644,40 @@ function paGauges(sim, rows) {
 /* ---------- Section 7 · historical reference ---------- */
 
 function paHistory(rows) {
+  // Top-k matched days from /api/plan/analogues (fleet-banded), then all-days boxplot.
+  const ana = _paAnalogues;
+  const ensEl = document.getElementById('pa-analogues-ensemble');
+  const anaRows = document.getElementById('pa-analogues-rows');
+  if (ensEl) {
+    if (ana && ana.ok && ana.ensemble) {
+      const e = ana.ensemble;
+      ensEl.innerHTML =
+        '<div class="effkpi"><div class="v">' + paNum(e.trips_med) + '</div><div class="l">history trips med</div></div>'
+        + '<div class="effkpi"><div class="v">' + paNum(e.wmt_med) + ' t</div><div class="l">history WMT med</div></div>'
+        + '<div class="effkpi"><div class="v">' + paNum(e.wmt_p25) + '–' + paNum(e.wmt_p75)
+        + '</div><div class="l">history WMT P25–P75</div></div>'
+        + '<div class="effkpi"><div class="v">' + paNum((ana.analogues || []).length)
+        + '</div><div class="l">matched days</div></div>';
+    } else {
+      ensEl.innerHTML = '<p class="muted" style="margin:0;font-size:12px">Analogue ensemble unavailable.</p>';
+    }
+  }
+  if (anaRows) {
+    const list = (ana && ana.ok && ana.analogues) || [];
+    anaRows.innerHTML = list.length ? list.map(a => {
+      const spd = a.avg_speed_kmh != null ? paNum(a.avg_speed_kmh, 1) + ' km/h' : '—';
+      const why = paEsc((a.why || '') + (a.location_note ? ' · ' + a.location_note : ''));
+      return '<tr><td><b>' + paEsc(a.date) + '</b></td><td>' + paEsc(a.route || '') + '</td>'
+        + '<td>' + paEsc(a.season || '') + '</td>'
+        + '<td class="r">' + paNum(a.dt, 1) + '</td>'
+        + '<td class="r">' + paNum(a.trips_per_dt, 2) + '</td>'
+        + '<td class="r">' + paNum(a.wmt) + '</td>'
+        + '<td class="r">' + spd + '</td>'
+        + '<td class="muted" style="font-size:10.5px">' + why + '</td></tr>';
+    }).join('') : '<tr><td colspan="8" class="muted">'
+      + paEsc((ana && ana.error) || 'No matched days.') + '</td></tr>';
+  }
+
   const daily = ((_paCapability || {}).dailyByPath) || [];
   // dailyByPath is per (path, DAY): srit = trips in the shift-normalised figure,
   // snb = average shift fleet. Trips per DT is srit/snb, which is the same
@@ -628,16 +748,15 @@ function paHistory(rows) {
       <td>${paEsc(v.verdict)}</td></tr>`).join('')
     || '<tr><td colspan="7" class="muted">No plans to compare.</td></tr>';
 
+  const corpusNote = (ana && ana.basis)
+    ? (' Matched-day table uses <b>' + paEsc(ana.basis.corpus_source || '')
+       + '</b> corpus (' + paNum(ana.basis.corpus_n) + ' path-days); GPS speeds only from '
+       + paEsc(ana.basis.gps_haul_start || '2026-07-15') + ' onward.')
+    : '';
   document.getElementById('pa-history-note').innerHTML =
-    'Each box is the distribution of <b>observed</b> trips per DT per shift for that '
-    + 'exact origin&rarr;destination over its recorded days; the amber dot is this '
-    + "plan's prediction. This is a sanity check on the prediction, not an input to "
-    + 'it. <b>Two caveats.</b> The brief asked to match on shift and weather: '
-    + 'dailyByPath is aggregated per day, not per shift, and carries no rainfall, so '
-    + 'neither can be matched at this grain &mdash; the box is all days, not '
-    + 'weather-matched days. And a box is only drawn where at least 4 days exist; '
-    + 'routes with fewer are listed with their count instead of a distribution '
-    + 'invented from 2 points.';
+    'The <b>matched days</b> table ranks historical path-days by fleet band (+ contractor / weather when available). '
+    + 'The boxplot below is still all days for that OD — a wider sanity check. '
+    + 'Neither feeds /api/simulate tonnes.' + corpusNote;
 }
 
 /* ---------- Section 8 · fleet sizing ---------- */

@@ -42,15 +42,28 @@ function planShiftFactor(){
 }
 // Trips per DT for ONE shift on a path at a given fleet — the same regression the other pages use:
 //   eff = avgTr + b·(DT − avgDT) + rain, × contractor factor, × day→shift factor.
-// Only a MEASURED decline (b<0) is applied; flat/confounded paths stay flat.
+// avgTr from path-response is the mid-60% trimmed mean of daily trips/DT
+// (main cluster), not the raw arithmetic mean. Only a MEASURED decline (b<0)
+// is applied; flat/confounded paths stay flat.
+// Rain multiplier for trips/DT. Prefer measured wet/dry when rain clearly hurts;
+// otherwise a modest default (~4% loss per 10 mm). Matches /api/predict.
+function planRainScale(key,rain){
+  const mm=Math.max(0,Number(rain)||0);if(!(mm>0))return 1;
+  const m=_pathResp&&_pathResp[key];
+  if(m&&Number.isFinite(m.mWet)&&Number.isFinite(m.mDry)&&m.mDry>0){
+    const at=m.mDry+(m.mWet-m.mDry)*(mm/10), scale=at/m.mDry;
+    if(scale<0.999)return Math.max(.5,Math.min(1,scale));
+  }
+  return Math.max(.75,1-0.04*(mm/10));
+}
 function planTripsPerDT(key,dt,rain,contractor){
   const m=_pathResp&&_pathResp[key];if(!m)return null;
   let tr=m.avgTr;
   const slope=(Number.isFinite(m.bAdj)&&m.bAdj<0)?m.bAdj:(m.b<0?m.b:0);
   if(slope<0&&Number.isFinite(m.avgDt))tr+=slope*(dt-m.avgDt);
-  let rainDelta=0;
-  if(rain>0&&Number.isFinite(m.mWet)&&Number.isFinite(m.mDry)){rainDelta=(m.mWet-m.mDry)*(rain/10);tr+=rainDelta;}
-  tr=Math.max(.3*m.avgTr,tr)*planContractorFactor(contractor);
+  const scale=planRainScale(key,rain);
+  const rainDelta=tr*(scale-1);
+  tr=Math.max(.3*m.avgTr,tr*scale)*planContractorFactor(contractor);
   const sf=planShiftFactor();
   return {daily:tr,shift:tr*sf,rainDelta:rainDelta*sf,slope,m};
 }
@@ -76,40 +89,356 @@ function planDtForWmt(key,targetWmt,rain,contractor){
 }
 function planSwapMode(){
   _planMode=_planMode==='dt'?'wmt':'dt';
-  const dtBox=q('plan-input-dt'),wmtBox=q('plan-input-wmt'),btn=q('plan-swap-btn');
+  const dtBox=q('plan-input-dt'),wmtBox=q('plan-input-wmt');
   if(dtBox)dtBox.style.display=_planMode==='dt'?'':'none';
   if(wmtBox)wmtBox.style.display=_planMode==='wmt'?'':'none';
-  if(btn){btn.textContent=_planMode==='dt'?'⇄ DT → WMT':'⇄ WMT → DT';
-    btn.title=_planMode==='dt'
-      ?'Currently: enter trucks, get WMT. Click to enter a tonnage target instead.'
-      :'Currently: enter a tonnage target, get the trucks needed. Click to enter trucks instead.';}
   planPreview();
 }
+let _planRainManual=false;
+function planRainManual(){ _planRainManual=true; }
+function planTodayISO(){
+  const d=new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+let _planGpsCoverage=null;
+let _planGpsPickBusy=false;
+
+function planRenderGpsCoverage(data,selectedDate){
+  _planGpsCoverage=data;
+  const box=q('plan-gps-days')||q('plan-gps-coverage');
+  const range=q('plan-gps-range');
+  if(!box)return;
+  if(!data||!data.ok){
+    box.innerHTML='<span class="muted">Haul GPS calendar unavailable</span>';
+    if(range)range.textContent='unavailable';
+    return;
+  }
+  const days=data.days||[];
+  if(!days.length){
+    box.innerHTML='<span class="muted">No Jul+ haul GPS banked yet</span>';
+    if(range)range.textContent='empty archive';
+    return;
+  }
+  const sel=String(selectedDate||'').slice(0,10);
+  // Show all banked days — easy to click
+  const chips=days.map(d=>{
+    const on=d.date===sel?' on':'';
+    const tip=d.date+' · '+d.hours_n+'h · '+d.segs_n+' segs · '+d.fix_n+' fixes';
+    return `<button type="button" class="plan-gps-chip${on}" data-date="${escH(d.date)}" title="${escH(tip)}"
+      onclick="planPickGpsDay('${escH(d.date)}')">${escH(d.date.slice(5))}</button>`;
+  }).join('');
+  box.innerHTML=chips;
+  if(range){
+    range.textContent=(data.from||'?')+' → '+(data.to||'?')+' · '+days.length+' days · click for details';
+  }
+  // Keep hidden mirror for any legacy readers
+  const hidden=q('plan-gps-coverage');
+  if(hidden&&hidden!==box)hidden.textContent=days.length+' GPS days';
+}
+
+function planOpenDataNotes(){
+  const notes=q('plan-data-notes');
+  if(notes)notes.open=true;
+}
+
+function planRenderDayDetail(gpsData,opsData,dateS){
+  const box=q('plan-day-detail');if(!box)return;
+  const d=String(dateS||(gpsData&&gpsData.date)||(opsData&&opsData.date)||'').slice(0,10);
+  if(!gpsData&&!opsData){
+    box.innerHTML='<span class="muted">Select a GPS day to see that day’s GPS speeds and ops DT/trips.</span>';
+    return;
+  }
+  let html=`<div><b>${escH(d)}</b> · selected day only</div>`;
+
+  // Ops for THIS day (weighbridge path-days)
+  if(opsData&&opsData.ok&&opsData.has_ops){
+    const rows=(opsData.sections||[]).map(s=>
+      `<tr><td><b>${escH(s.section)}</b></td>
+        <td class="r">${escH(String(s.dt!=null?s.dt:s.total_dt))}</td>
+        <td class="r">${escH(String(s.trips!=null?s.trips:s.total_trips))}</td></tr>`
+    ).join('');
+    html+=`<div style="margin-top:8px"><b>Ops that day</b>
+      <span class="muted">(weighbridge · ${escH(opsData.corpus_source||'')} · ${escH(String(opsData.path_days_n||0))} path-days)</span></div>
+      <p class="muted" style="margin:4px 0 0;font-size:11px">${escH(opsData.note||'')}</p>
+      <table><thead><tr><th>Section</th><th class="r">DT that day</th><th class="r">Trips that day</th></tr></thead>
+        <tbody>${rows||'<tr><td colspan="3" class="muted">No section crossings</td></tr>'}</tbody></table>`;
+  }else if(opsData){
+    html+=`<p class="muted" style="margin:8px 0 0">${escH((opsData&&opsData.note)||('No weighbridge ops rows for '+d))}</p>`;
+  }
+
+  // GPS for THIS day (Jul+ haul archive)
+  if(gpsData&&gpsData.has_gps===false){
+    html+=`<p class="muted" style="margin:8px 0 0">${escH(gpsData.note||'No haul GPS for this day.')}</p>`;
+  }else if(gpsData&&gpsData.ok){
+    const bySec=(gpsData.by_section||[]).map(s=>
+      `<tr><td><b>${escH(s.section)}</b></td><td class="r">${escH(String(s.loadedKmh))}</td><td class="r">${escH(String(s.n))}</td></tr>`
+    ).join('');
+    html+=`<div style="margin-top:10px"><b>Haul GPS that day</b>
+      <span class="muted">(${escH(gpsData.source||'')} · SEGS = stick segments with fixes)</span></div>
+      <p class="muted" style="margin:4px 0 0;font-size:11px">${escH(gpsData.note||'')}</p>
+      <table><thead><tr><th>Section</th><th class="r">Loaded km/h</th><th class="r">Segs</th></tr></thead>
+        <tbody>${bySec||'<tr><td colspan="3" class="muted">No stick sections</td></tr>'}</tbody></table>`;
+  }else if(gpsData&&!gpsData.ok){
+    html+=`<p class="muted" style="margin:8px 0 0">${escH(gpsData.error||'GPS detail unavailable')}</p>`;
+  }
+
+  box.innerHTML=html;
+}
+
+function planPickGpsDay(dateS){
+  const d=String(dateS||'').slice(0,10);
+  if(!d||_planGpsPickBusy)return;
+  _planGpsPickBusy=true;
+  const el=q('plan-date');
+  if(el)el.value=d;
+  planOpenDataNotes();
+  const daysBox=q('plan-gps-days');
+  if(daysBox){
+    [...daysBox.querySelectorAll('.plan-gps-chip')].forEach(btn=>{
+      btn.classList.toggle('on',(btn.getAttribute('data-date')||'')===d);
+    });
+  }
+  const detail=q('plan-day-detail');
+  if(detail)detail.innerHTML='<span class="muted">Loading '+escH(d)+' (ops + GPS for that day)…</span>';
+  planDateChange({fromGpsChip:true});
+  Promise.all([
+    fetch('/api/plan/day-segments?date='+encodeURIComponent(d)).then(r=>r.json()).catch(e=>({ok:false,error:String(e),date:d})),
+    fetch('/api/plan/day-road-ops?date='+encodeURIComponent(d)).then(r=>r.json()).catch(e=>({ok:false,error:String(e),date:d,has_ops:false})),
+  ]).then(([gps,ops])=>{
+    planRenderDayDetail(gps,ops,d);
+  }).finally(()=>{ _planGpsPickBusy=false; });
+}
+
+function planFetchGpsCoverage(selectedDate){
+  return fetch('/api/plan/gps-coverage').then(r=>r.json()).then(data=>{
+    planRenderGpsCoverage(data,selectedDate);
+    return data;
+  }).catch(()=>{
+    planRenderGpsCoverage({ok:false},selectedDate);
+    return null;
+  });
+}
+
+function planRenderPlaybackTruth(data,selectedDate){
+  const box=q('plan-playback-truth');if(!box)return;
+  if(!data||!data.ok){
+    box.innerHTML='';
+    return;
+  }
+  const pb=data.playback||{};
+  const ov=pb.haul_plate_overlap_pct;
+  const ovTxt=(ov==null)?'0%':(Math.round(Number(ov)*10)/10)+'%';
+  const sel=String(selectedDate||'').slice(0,10);
+  const forDate=data.for_date||{};
+  let dateLine='';
+  if(sel){
+    if(sel<(data.haul_gps_start||'2026-07-15')){
+      dateLine=`Selected <b>${escH(sel)}</b>: ops/weighbridge only — <b>no invented haul GPS</b> from Playback.`;
+    }else{
+      dateLine=`Selected <b>${escH(sel)}</b>: haul GPS window — use corridor clock / day segments.`;
+    }
+  }
+  if(forDate.note&&sel&&sel<(data.haul_gps_start||'2026-07-15')){
+    dateLine=escH(forDate.note);
+  }
+  box.innerHTML=`<div><b>Playback ≠ haul GPS</b> · overlap with haul plates <b>${escH(ovTxt)}</b>
+    · Playback ${escH((pb.window&&pb.window.from)||'?')}→${escH((pb.window&&pb.window.to)||'?')} is ${escH(pb.fleet||'support')}</div>
+    <div style="margin-top:3px">${dateLine||escH(data.reason||'')}</div>
+    <div class="muted" style="margin-top:3px">Peak ops tonnes: Capability Jan–May + simulate — not Playback speeds.</div>`;
+}
+
+function planFetchPlaybackTruth(selectedDate){
+  const qs=selectedDate?('?date='+encodeURIComponent(selectedDate)):'';
+  return fetch('/api/plan/playback-truth'+qs).then(r=>r.json()).then(data=>{
+    planRenderPlaybackTruth(data,selectedDate);
+    return data;
+  }).catch(()=>{ planRenderPlaybackTruth(null); return null; });
+}
+
+function planRenderPeakProxy(data){
+  const box=q('plan-peak-proxy');if(!box)return;
+  if(!data||!data.ok){ box.innerHTML=''; return; }
+  const rows=(data.busy_for_plan&&data.busy_for_plan.length?data.busy_for_plan:data.sections||[]).slice(0,4);
+  const tr=rows.map(s=>`<tr>
+    <td><b>${escH(s.section)}</b></td>
+    <td class="r">${escH(String(s.avg_dt_per_day))}</td>
+    <td class="r">${escH(String(s.avg_trips_per_day))}</td>
+  </tr>`).join('');
+  const win=data.window||{};
+  box.innerHTML=`<div><b>Jan–May averages</b>
+      <span class="muted">(${escH(win.from||'?')}→${escH(win.to||'?')} · ${escH(String(data.days_n||0))} days · reference only)</span></div>
+    <div class="muted" style="margin-top:2px">${escH(data.note||'Not the selected GPS day.')}</div>
+    <table><thead><tr><th>Section</th><th class="r">Avg DT/day</th><th class="r">Avg trips/day</th></tr></thead>
+      <tbody>${tr||'<tr><td colspan="3" class="muted">No peak path-days</td></tr>'}</tbody></table>`;
+}
+
+function planFetchPeakProxy(){
+  const plans=(typeof planDraftToAnaloguePlans==='function'?planDraftToAnaloguePlans():[])||[];
+  return fetch('/api/plan/peak-road-proxy',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({plans}),
+  }).then(r=>r.json()).then(data=>{
+    planRenderPeakProxy(data);
+    return data;
+  }).catch(()=>{ planRenderPeakProxy(null); return null; });
+}
+
+let _planBiasLensOn=true; // default ON — ticket companion; engine primary stays raw
+function planBiasLensToggle(){
+  const el=q('plan-bias-lens');
+  _planBiasLensOn=!!(el&&el.checked);
+  if(typeof planRenderOutcomes==='function'&&typeof _planLastSim!=='undefined'&&_planLastSim){
+    const pred=typeof planPredictTotals==='function'?planPredictTotals():{wmt:0,dt:0,trips:0};
+    planRenderOutcomes(_planLastSim,pred);
+  }
+  if(typeof planRenderEstimateColumn==='function'&&typeof _planLastSim!=='undefined'&&_planLastSim){
+    const pred=typeof planPredictTotals==='function'?planPredictTotals():{wmt:0,dt:0,trips:0};
+    planRenderEstimateColumn(_planLastSim,pred);
+  }
+}
+
+function planDateChange(opts){
+  opts=opts||{};
+  _planRainManual=false;
+  const el=q('plan-date'), note=q('plan-date-note'), sug=q('plan-rain-suggest');
+  const date=(el&&el.value)||'';
+  if(!date){
+    if(note)note.textContent='';
+    if(sug)sug.innerHTML='';
+    if(typeof planRefreshSaveButtons==='function')planRefreshSaveButtons();
+    return;
+  }
+  if(note)note.textContent='Looking up rain…';
+  if(sug)sug.innerHTML='';
+  planFetchGpsCoverage(date);
+  planFetchPlaybackTruth(date);
+  planFetchPeakProxy();
+  // Manual date pick (not chip): sync chip highlight; clear day detail until a GPS day is chosen
+  if(!opts.fromGpsChip){
+    const daysBox=q('plan-gps-days');
+    if(daysBox){
+      [...daysBox.querySelectorAll('.plan-gps-chip')].forEach(btn=>{
+        btn.classList.toggle('on',(btn.getAttribute('data-date')||'')===date);
+      });
+    }
+    const detail=q('plan-day-detail');
+    const inArchive=(_planGpsCoverage&&(_planGpsCoverage.days||[]).some(x=>x.date===date));
+    if(detail&&!inArchive){
+      detail.innerHTML='<span class="muted">Click a Haul GPS day to open segment details for that date.</span>';
+    }
+  }
+  if(typeof planCheckSavedExists==='function'){
+    planCheckSavedExists(date).then(exists=>{
+      if(!exists)return;
+      const n=typeof planDraftEntries==='function'?planDraftEntries().length:0;
+      const st=q('plan-save-status');
+      if(n<1){
+        // Empty draft — auto-load saved plan for this date
+        if(typeof planLoadSavedForDate==='function'){
+          planLoadSavedForDate({quiet:true}).then(ok=>{
+            if(st)st.textContent=ok?'Loaded saved plan for '+date:'Saved plan available — click Load saved';
+          });
+        }else if(st)st.textContent='Saved plan available — click Load saved';
+      }else if(st){
+        st.textContent='Saved plan on file for '+date+' (Load to replace)';
+      }
+    });
+  }
+  fetch('/api/plan/rain-suggest?date='+encodeURIComponent(date))
+    .then(r=>r.json())
+    .then(res=>{
+      if(!res||!res.ok){ if(note)note.textContent=''; return; }
+      if(note)note.textContent=(res.label||'')+(res.mm!=null?' · '+Math.round(res.mm)+' mm':'');
+      if(sug){
+        sug.innerHTML=escH(res.note||'')
+          +(res.apply?` <button type="button" class="ms-btn" onclick="planApplyRainSuggest(${Number(res.mm)||0})">Use ${Math.round(res.mm)} mm</button>`:'');
+      }
+      // Auto-apply when user hasn't typed rain manually
+      if(!_planRainManual&&res.apply&&res.mm!=null){
+        const rain=q('plan-rain');
+        if(rain){ rain.value=String(Math.round(res.mm)); computePlan(); }
+      }
+    })
+    .catch(()=>{ if(note)note.textContent='Rain lookup failed'; });
+}
+function planApplyRainSuggest(mm){
+  _planRainManual=false;
+  const rain=q('plan-rain');
+  if(rain)rain.value=String(Math.max(0,Math.round(mm)));
+  computePlan();
+}
+function planEnsureDate(){
+  const el=q('plan-date');
+  if(el&&!el.value){ el.value=planTodayISO(); planDateChange(); }
+}
+let _planPathKey='';   // last source>dest — only seed DT when this changes
+let _planUserEditedFleet=false;  // once user types DT/WMT, never auto-overwrite
+
+function planMarkFleetEdit(){ _planUserEditedFleet=true; planPreview(); }
+
 function renderPlanBuilder(){
   const src=q('plan-src');if(!src)return;
+  planEnsureDate();
   const cs=q('plan-contractor');
-  if(cs){const cur=cs.value;
-    cs.innerHTML=planContractors().map(c=>`<option value="${escH(c.name)}"${c.name===cur?' selected':''}>${escH(c.name)}${Number.isFinite(c.tripsPerDT)?'':' (no history)'}</option>`).join('');}
+  const keepC=cs?cs.value:'';
+  const keepS=src.value;
+  const keepD=(q('plan-dst')||{}).value;
+  if(cs){
+    cs.innerHTML=planContractors().map(c=>`<option value="${escH(c.name)}"${c.name===keepC?' selected':''}>${escH(c.name)}${Number.isFinite(c.tripsPerDT)?'':' (no history)'}</option>`).join('');
+  }
   const keys=_planValidKeys();
   if(!keys.length){src.innerHTML='<option>loading…</option>';return;}
-  const sources=[...new Set(keys.map(k=>k.split('>')[0].trim()))].sort(),cur=src.value;
-  src.innerHTML=sources.map(s=>`<option${s===cur?' selected':''}>${escH(s)}</option>`).join('');
-  planSrcChange();computePlan();
+  const sources=[...new Set(keys.map(k=>k.split('>')[0].trim()))].sort();
+  const srcVal=sources.includes(keepS)?keepS:sources[0];
+  src.innerHTML=sources.map(s=>`<option${s===srcVal?' selected':''}>${escH(s)}</option>`).join('');
+  // Rebuild dest list without forcing a DT reset unless the path key actually changes.
+  planSrcChange(keepD, /*fromBuilder*/true);
+  computePlan();
 }
-function planContractorChange(){planDstChange();computePlan();}
-function planSrcChange(){
+function planContractorChange(){ planUpdatePathMeta(); planPreview(); computePlan(); }
+function planSrcChange(preferredDest, fromBuilder){
   const s=(q('plan-src')||{}).value,dst=q('plan-dst');if(!dst)return;
   const dests=[...new Set(_planValidKeys().filter(k=>k.split('>')[0].trim()===s).map(k=>k.split('>')[1].trim()))].sort();
-  dst.innerHTML=dests.map(d=>`<option>${escH(d)}</option>`).join('');
-  planDstChange();
+  const want=preferredDest||dst.value;
+  const dVal=dests.includes(want)?want:dests[0];
+  dst.innerHTML=dests.map(d=>`<option${d===dVal?' selected':''}>${escH(d)}</option>`).join('');
+  planDstChange(!!fromBuilder);
 }
-function planDstChange(){
-  const s=(q('plan-src')||{}).value,d=(q('plan-dst')||{}).value,m=_pathResp[s+'>'+d],hint=q('plan-hint'),dt=q('plan-dt');
-  const c=planContractor(),f=planContractorFactor(c);
-  if(hint)hint.innerHTML=m?`<b>${escH(s)} → ${escH(d)}</b>: ${fmt(m.avgTr,2)} avg Trips/DT/day · ${fmt(m.tf,1)} t/trip · typically ~${fmt(m.avgDt)} DT · ${fmt(m.n)} shifts of history`
-    +(c?` · <b>${escH(c.name)}</b> ${f===1?'has no separate history — using fleet average':(f>1?fmt(100*(f-1),0)+'% above':fmt(100*(1-f),0)+'% below')+' fleet average'}${Number.isFinite(c.tf)?', '+fmt(c.tf,1)+' t/trip':''}`:''):'';
-  if(dt&&m&&_planMode==='dt')dt.value=Math.round(m.avgDt||50);
+function planDstChange(_fromBuilder){
+  const s=(q('plan-src')||{}).value,d=(q('plan-dst')||{}).value;
+  const key=s+'>'+d, m=_pathResp&&_pathResp[key], dt=q('plan-dt');
+  const pathChanged=key!==_planPathKey;
+  if(pathChanged){
+    const prevKey=_planPathKey;
+    _planPathKey=key;
+    // Seed typical DT only when the haul path actually changes AND the user
+    // hasn't typed a fleet yet. Never overwrite on tab/capability refresh
+    // (same path) or after the user has edited DT/WMT.
+    const realSwitch=!!prevKey&&prevKey!==key;
+    if(realSwitch)_planUserEditedFleet=false;
+    if(dt&&m&&_planMode==='dt'&&!_planUserEditedFleet){
+      dt.value=Math.round(m.avgDt||50);
+    }
+  }
+  planUpdatePathMeta();
   planPreview();
+}
+function planUpdatePathMeta(){
+  const s=(q('plan-src')||{}).value,d=(q('plan-dst')||{}).value,m=_pathResp&&_pathResp[s+'>'+d],hint=q('plan-hint');
+  const c=planContractor(),f=planContractorFactor(c);
+  if(!hint)return;
+  if(!m){ hint.innerHTML=''; return; }
+  let html=`<b>${escH(s)} → ${escH(d)}</b> · ${fmt(m.avgTr,2)} trips/DT (main cluster)`;
+  if(Number.isFinite(m.trP25)&&Number.isFinite(m.trP75)){
+    html+=` · history P25–P75 ${fmt(m.trP25,2)}–${fmt(m.trP75,2)}`;
+  }
+  html+=` · ${fmt(m.tf,1)} t/trip · ~${fmt(m.avgDt)} DT typical`;
+  if(c){
+    html+=` · ${escH(c.name)}`;
+    if(Number.isFinite(c.tf))html+=` ${fmt(c.tf,1)} t/trip`;
+    if(f!==1)html+=` · factor ${fmt(f,2)}×`;
+  }
+  hint.innerHTML=html;
 }
 // Live estimate panel — the visual focus of the page. Renders the breakdown (Trips/DT, total trips,
 // payload) above one big exact total: WMT in DT→WMT mode, DTs required in WMT→DT mode. Runs on every
@@ -121,86 +450,54 @@ function planDstChange(){
 // what stays on screen is exactly what the page showed before Phase 2 existed.
 let _planPredictSeq=0, _planPredictTimer=null;
 const PLAN_PREDICT_DEBOUNCE_MS=180;
+function _planModelLabel(v){
+  if(v.model==='local')return {cls:'pending', text:'Model · historical average (loading…)'};
+  if(v.fallback||v.model==='offline')return {cls:'warn', text:'Model · path formula fallback (offline)'};
+  const name=PLAN_MODEL_LABELS[v.model]||v.modelLabel||v.model||'model';
+  const cv=Number.isFinite(v.cvR2), shown=cv?v.cvR2:v.r2;
+  let text=`Model · ${escH(name)}`;
+  if(Number.isFinite(shown))text+=` · R² ${fmtExact(shown,2)}`;
+  if(Number.isFinite(v.contractorFactor)&&v.contractorFactor!==1){
+    text+=` · factor ${fmtExact(v.contractorFactor,2)}×`;
+  }
+  const weak=Number.isFinite(v.baselineLift)&&v.baselineLift<0.01;
+  return {cls:weak?'warn':'ok', text};
+}
 function _planRenderEstimate(v){
   const box=q('plan-preview');if(!box)return;
   const lines=[
-    ['Trips/DT',fmtExact(v.tripsPerDt,2)],
-    [v.swapped?'DTs required':'Number of trucks',fmtExact(v.dt)+' DT'],
-    ['Total trips',fmtExact(Math.round(v.trips))],
-    ['Payload/trip',fmtExact(v.payload,1)+' t'],
+    ['Trips / DT',fmtExact(v.tripsPerDt,2)],
+    [v.swapped?'Trucks needed': 'Trucks',fmtExact(v.dt)+' DT'],
+    ['Trips',fmtExact(Math.round(v.trips))],
+    ['t / trip',fmtExact(v.payload,1)+' t'],
   ];
-  // Model attribution: what produced this number, and how much to trust it.
-  // R² on its own is misleading — a lookup table of per-route averages already
-  // scores ~0.53 here — so the lift over that baseline is shown beside it.
-  let attr;
-  if(v.model==='local'){
-    attr=`<span class="est-model pending">Historical average · asking model…</span>`;
-  }else if(v.fallback){
-    attr=`<span class="est-model warn">⚠ Using fallback formula — train the model for better accuracy</span>`;
-  }else{
-    const lift=v.baselineLift, hasLift=Number.isFinite(lift), weak=hasLift&&lift<0.01;
-    // Prefer the CROSS-VALIDATED R² when Phase 3 has produced one. The
-    // single-split figure is measured on one block of held-out shifts and runs
-    // optimistic; the walk-forward mean is what actually survived being tested
-    // on months the model had never seen.
-    const cv=Number.isFinite(v.cvR2), shown=cv?v.cvR2:v.r2;
-    attr=`<span class="est-model ${weak?'warn':'ok'}">Predicted by ${escH(v.modelLabel||v.model)} model`
-        +`${Number.isFinite(shown)?` · R² = ${fmtExact(shown,2)}`:''}</span>`;
-    const bits=[];
-    if(v.trainedAt)bits.push(`Trained ${escH(String(v.trainedAt).slice(0,10))}`);
-    if(cv)bits.push(escH(v.cvBasis||'cross-validated'));
-    if(hasLift)bits.push(`Lift over baseline: ${lift>=0?'+':''}${fmtExact(lift*100,1)}%`
-        +(Number.isFinite(v.baselineR2)?` (lookup R² ${fmtExact(v.baselineR2,2)})`:''));
-    if(bits.length)attr+=`<span class="est-model-sub">${bits.join(' · ')}</span>`;
-    if(weak)attr+=`<span class="est-model-sub warn">⚠ Model is barely better than historical averages — treat as a lookup.</span>`;
-    // The served model is not always the one that validated best. Saying so is
-    // the difference between reporting a score and implying an endorsement.
-    if(v.isCvWinner===false&&Number.isFinite(v.cvBest)){
-      attr+=`<span class="est-model-sub warn">⚠ A simpler ${escH(PLAN_MODEL_LABELS[v.selectedModel]||v.selectedModel||'model')} `
-           +`validates better (R² ${fmtExact(v.cvBest,2)}) under walk-forward testing.</span>`;
-    }
+  if(Number.isFinite(v.contractorFactor)&&v.contractorFactor!==1){
+    lines.push(['Contractor factor',fmtExact(v.contractorFactor,2)+'×']);
   }
-  // Phase 3.5 cycle time. Shown as a separate line, not folded into the
-  // headline, because it comes from a different model on different data and
-  // carries a different accuracy. Hidden entirely when no cycle model has
-  // answered, rather than rendering a dash that looks like a real zero.
-  let cyc='';
   if(v.cycle&&Number.isFinite(v.cycle.cycle_time_min)){
-    const c=v.cycle, mae=Number.isFinite(c.cv_mae_min)?fmtExact(c.cv_mae_min,0):null;
-    // Name the branch that answered. A route the model never saw is served by
-    // a historical average, and claiming the model's accuracy for it would be
-    // a lie the user cannot detect.
-    const modelled=c.basis&&c.basis.indexOf('ols')===0;
-    cyc=`<div class="est-rule"></div>`
-      +`<div class="est-line"><span>Cycle time</span><b>${fmtExact(c.cycle_time_min,0)} min</b></div>`
-      +`<span class="est-model-sub">`
-      +(modelled?`Cycle model`:`Per-route average (this route is new to the model)`)
-      +(mae?` · typically within ±${mae} min`:'')
-      +`</span>`;
-    // Two independent models, two data sources. When they disagree materially
-    // the user should see it rather than be handed whichever number the layout
-    // happened to put first.
-    if(c.models_agree===false&&Number.isFinite(c.vs_weighbridge_pct)){
-      cyc+=`<span class="est-model-sub warn">⚠ Haul telemetry implies `
-         +`${c.vs_weighbridge_pct>0?'+':''}${fmtExact(c.vs_weighbridge_pct,0)}% vs the weighbridge model on this route — treat both as approximate.</span>`;
-    }
+    lines.push(['Cycle',fmtExact(v.cycle.cycle_time_min,0)+' min']);
   }
+  const mod=_planModelLabel(v);
   box.classList.remove('empty');
+  box.classList.toggle('is-loading', v.model==='local');
   box.innerHTML=`<div class="est-head">Estimated shift output</div>`
+    +`<div class="est-body">`
     +`<div class="est-lines">${lines.map(l=>`<div class="est-line"><span>${escH(l[0])}</span><b>${l[1]}</b></div>`).join('')}</div>`
-    +`<div class="est-rule"></div>`
-    +`<div class="est-total"><div class="est-total-l">${v.swapped?'DTs required':'Total WMT'}</div>`
-    +`<div class="est-total-v">${v.swapped?fmtExact(v.dt):fmtExact(Math.round(v.wmt))} <span class="u">${v.swapped?'trucks':'t'}</span></div></div>`
-    +`<div class="est-note">${escH(v.src)} → ${escH(v.dst)} · ${escH(v.contractor||'—')} · ${fmtExact(v.hours)}h shift · ${escH(v.payloadSrc)} payload`
-    +(v.swapped?` · delivers ${fmtExact(Math.round(v.wmt))} t`:'')+`</div>`
-    +`<div class="est-attr">${attr}</div>`
-    +cyc
+    +`<div class="est-total"><div class="est-total-l">${v.swapped?'Trucks needed':'WMT'}</div>`
+    +`<div class="est-total-v">${v.swapped?fmtExact(v.dt):fmtExact(Math.round(v.wmt))} <span class="u">${v.swapped?'DT':'t'}</span></div></div>`
+    +`</div>`
+    +`<div class="est-foot">`
+    +`<div class="est-note">${escH(v.src)} → ${escH(v.dst)} · ${escH(v.contractor||'—')}`
+    +(v.swapped?` · ${fmtExact(Math.round(v.wmt))} t`:'')+`</div>`
+    +`<div class="est-attr"><span class="est-model ${mod.cls}">${mod.text}</span></div>`
+    +`</div>`
     +(v.warns&&v.warns.length?`<div class="est-warn">${v.warns.map(escH).join('<br>')}</div>`:'');
 }
 function planPreview(){
   const box=q('plan-preview');if(!box)return;
-  const blank=(msg)=>{box.classList.add('empty');
-    box.innerHTML=`<div class="est-head">Estimated shift output</div><div class="est-total"><div class="est-total-v">—</div></div><div class="est-note">${escH(msg)}</div>`;};
+  const blank=(msg)=>{box.classList.add('empty');box.classList.remove('is-loading');
+    box.innerHTML=`<div class="est-head">Estimated shift output</div><div class="est-body"><div class="est-lines"></div><div class="est-total"><div class="est-total-v">—</div></div></div><div class="est-foot"><div class="est-note">${escH(msg)}</div></div>`;
+    planRenderBestHistory({ok:false,error:msg});};
   const s=(q('plan-src')||{}).value,d=(q('plan-dst')||{}).value,key=s+'>'+d,m=_pathResp&&_pathResp[key];
   if(!m)return blank('Select a source and destination to see the estimate.');
   const rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0),c=planContractor(),pay=planPayload(key,c),
@@ -219,32 +516,48 @@ function planPreview(){
   if(!e)return blank('No history for this path yet.');
   trips=dt*e.shift; wmt=trips*pay.tf;
   const swapped=_planMode==='wmt';
+  const cFactor=planContractorFactor(c);
   const warns=[];
   if(Number.isFinite(m.dtMax)&&dt>m.dtMax)warns.push(`⚠ ${fmtExact(dt)} DT is beyond the ${fmtExact(m.dtMax)} DT ever observed on this path`);
-  if(e.rainDelta<=-.03)warns.push(`☔ rain costs ${fmtExact(e.rainDelta,2)} Trips/DT at ${fmtExact(rain)} mm`);
+  if(e.rainDelta<=-.03)warns.push(`☔ rain −${fmtExact(Math.abs(e.rainDelta),2)} Trips/DT`);
   const base={src:s,dst:d,contractor:c?c.name:'—',hours,swapped,warns,
-    dt,tripsPerDt:e.shift,trips,wmt,payload:pay.tf,payloadSrc:pay.src,model:'local'};
+    dt,tripsPerDt:e.shift,trips,wmt,payload:pay.tf,payloadSrc:pay.src,model:'local',
+    contractorFactor:cFactor};
   _planRenderEstimate(base);                       // stage 1 — instant, local
-  // stage 2 — the server model, debounced so typing doesn't spam the endpoint
+  planFetchBestHistory(s,d,dt,c?c.name:null,rain); // side panel: best past days at this fleet
+  // stage 2 — trained model (/api/predict). Never writes back into the DT/WMT inputs.
   const seq=++_planPredictSeq;
   clearTimeout(_planPredictTimer);
   _planPredictTimer=setTimeout(()=>{
+    // Re-read inputs at fire time so a late response cannot use a stale typed value
+    // and so we never push model output into the fleet fields.
+    const rainNow=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0);
+    const stillSwapped=_planMode==='wmt';
+    let trucksNow=dt, targetNow=0;
+    if(stillSwapped){
+      targetNow=Math.max(0,parseFloat((q('plan-wmt')||{}).value)||0);
+    }else{
+      trucksNow=Math.max(1,parseFloat((q('plan-dt')||{}).value)||1);
+    }
     const body={contractor:base.contractor,source:s,destination:d,shift_hours:hours,
-      rainfall:rain,shift:'day',weighbridges_open:wbOpen,
-      mode:swapped?'wmt_to_dt':'dt_to_wmt'};
-    if(swapped)body.target_wmt=Math.max(0,parseFloat((q('plan-wmt')||{}).value)||0);
-    else body.trucks=dt;
+      rainfall:rainNow,shift:'day',weighbridges_open:wbOpen,
+      mode:stillSwapped?'wmt_to_dt':'dt_to_wmt',
+      prefer_rain_aware:true};  // wet days → Random Forest (VPN-trained), not rain-blind average
+    if(stillSwapped)body.target_wmt=targetNow; else body.trucks=trucksNow;
     const ctl=('AbortController' in window)?new AbortController():null;
-    if(ctl)setTimeout(()=>ctl.abort(),4000);       // never hang the panel
+    if(ctl)setTimeout(()=>ctl.abort(),4000);
     fetch('/api/predict',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(body),signal:ctl?ctl.signal:undefined})
       .then(r=>r.ok?r.json():Promise.reject(new Error('HTTP '+r.status)))
       .then(res=>{
-        if(seq!==_planPredictSeq)return;           // a newer edit already won
+        if(seq!==_planPredictSeq)return;
         if(!res||!res.ok||!res.prediction)throw new Error('bad payload');
-        const p=res.prediction, ndt=swapped?p.trucks_needed:dt;
+        const p=res.prediction;
+        // Estimate panel only — do NOT touch #plan-dt / #plan-wmt.
+        const showDt=stillSwapped?p.trucks_needed:trucksNow;
         _planPredictLast=res;
-        _planRenderEstimate({...base, dt:ndt, tripsPerDt:p.trips_per_dt, trips:p.total_trips,
+        _planRenderEstimate({...base, swapped:stillSwapped, dt:showDt,
+          tripsPerDt:p.trips_per_dt, trips:p.total_trips,
           wmt:p.total_wmt, payload:p.payload_per_trip, payloadSrc:p.payload_source||base.payloadSrc,
           model:res.model_used, modelLabel:PLAN_MODEL_LABELS[res.model_used]||res.model_used,
           r2:res.model_r2, fallback:!!res.fallback,
@@ -252,29 +565,142 @@ function planPreview(){
           baselineLift:res.model_baseline_lift,
           cvR2:res.model_cv_r2, cvBasis:res.model_cv_basis,
           cvBest:res.model_cv_best, isCvWinner:res.model_is_cv_winner,
-          selectedModel:res.model_selected, cycle:res.cycle});
+          selectedModel:res.model_selected, cycle:res.cycle,
+          contractorFactor:cFactor});
       })
-      .catch(()=>{                                  // keep the local estimate visible
+      .catch(()=>{
         if(seq!==_planPredictSeq)return;
-        _planRenderEstimate({...base, model:'offline', fallback:true});
+        _planRenderEstimate({...base, model:'offline', fallback:true, contractorFactor:cFactor});
       });
   },PLAN_PREDICT_DEBOUNCE_MS);
 }
 const PLAN_MODEL_LABELS={random_forest:'Random Forest',ols:'OLS regression',fallback_ols:'fallback OLS',
-  group_mean_baseline:'per-route average'};
+  group_mean_baseline:'per-route average',
+  'group_mean_baseline+rf_rain':'per-route average × RF rain',
+  'group_mean_baseline+rain':'per-route average × rain factor'};
 let _planPredictLast=null;
+let _planHistTimer=null,_planHistSeq=0,_planHistLastKey='';
+
+function planHistFmt(n,d){
+  if(n==null||!Number.isFinite(Number(n)))return '—';
+  return Number(n).toLocaleString('en-GB',{maximumFractionDigits:d==null?0:d,minimumFractionDigits:0});
+}
+
+function planRenderBestHistory(data, context){
+  const list=q('plan-hist-list'),sum=q('plan-hist-summary');
+  if(!list)return;
+  if(!data||!data.ok){
+    list.innerHTML='';
+    if(sum)sum.textContent=(data&&data.error)||'No matching history for this haul / fleet yet.';
+    return;
+  }
+  const days=data.analogues||[];
+  const ctx=context||{};
+  const meta=(data.by_plan&&data.by_plan[0]&&data.by_plan[0].meta)||data.meta||{};
+  const wantC=ctx.contractor||meta.contractor||'';
+  const onlyC=meta.contractor_only!==false&&!!wantC;
+  if(sum){
+    sum.innerHTML=days.length
+      ?`${escH(ctx.source||'')} → ${escH(ctx.dest||'')} · ${wantC?escH(wantC)+' · ':''}~${planHistFmt(ctx.dt)} DT · top ${days.length}`
+        +(wantC&&!onlyC?` <span class="muted">(few ${escH(wantC)} days — mixed haulers)</span>`:'')
+      :'No similar days.';
+  }
+  list.innerHTML=days.map((a,i)=>{
+    const remark=escH(a.remark||a.why||'');
+    const rain=a.rain_mm, hasRain=rain!=null&&Number.isFinite(Number(rain));
+    const isWet=a.wet===true||(hasRain&&Number(rain)>=1);
+    const isDry=a.wet===false||(hasRain&&Number(rain)<1);
+    let weatherCls='unknown', weatherLabel='rain n/a';
+    if(isWet){
+      weatherCls='wet';
+      weatherLabel=hasRain?`wet · ${planHistFmt(rain,0)} mm`:'wet';
+    }else if(isDry){
+      weatherCls='dry';
+      weatherLabel=hasRain?`dry · ${planHistFmt(rain,0)} mm`:'dry';
+    }
+    const hauler=(a.contractor||'').trim();
+    const matchC=wantC&&hauler&&hauler.toUpperCase()===String(wantC).toUpperCase();
+    return `<div class="plan-hist-item ph-${weatherCls}${matchC?' ph-contractor-match':''}">
+      <div class="ph-top">
+        <span class="ph-date">${escH(a.date||'')}${hauler?` · <span class="ph-contractor${matchC?' match':''}">${escH(hauler)}</span>`:''}${a.season?` · <span class="plan-season-${escH(a.season)}">${escH(a.season)}</span>`:''}</span>
+        <span class="ph-right"><span class="ph-weather ph-weather-${weatherCls}">${escH(weatherLabel)}</span><span class="ph-rank">#${i+1}</span></span>
+      </div>
+      <div class="ph-kpis">
+        <div><b>${planHistFmt(a.dt,1)}</b>DT that day</div>
+        <div><b>${planHistFmt(a.trips,1)}</b>trips</div>
+        <div><b>${planHistFmt(a.trips_per_dt,2)}</b>trips/DT</div>
+        <div><b>${planHistFmt(a.wmt)} t</b>WMT</div>
+      </div>
+      <div class="ph-remark">${remark}</div>
+    </div>`;
+  }).join('');
+}
+
+function planHistShowLoading(ctx){
+  const list=q('plan-hist-list'),sum=q('plan-hist-summary');
+  const who=ctx&&ctx.contractor?escH(ctx.contractor)+' · ':'';
+  const path=ctx&&ctx.source&&ctx.dest?`${escH(ctx.source)} → ${escH(ctx.dest)}`:'this haul';
+  if(sum)sum.innerHTML=`<span class="plan-hist-sum-load">Searching ${who}${path}…</span>`;
+  if(list){
+    list.innerHTML=`<div class="plan-hist-loading" role="status" aria-live="polite">
+      <div class="ph-spin" aria-hidden="true"></div>
+      <div class="ph-load-text">Finding best past days</div>
+      <div class="ph-load-sub">${who?who:''}similar fleet · closest DT</div>
+      <div class="plan-hist-skel" aria-hidden="true"><i></i><i></i><i></i></div>
+    </div>`;
+  }
+}
+
+/** Live side panel: best past days at similar DT (highest WMT, then trips). */
+function planFetchBestHistory(source,dest,dt,contractor,rain){
+  const list=q('plan-hist-list'),sum=q('plan-hist-summary');
+  if(!source||!dest||!(dt>0)){
+    if(list)list.innerHTML='';
+    if(sum)sum.textContent='Pick source, destination and DT to load history…';
+    return;
+  }
+  const key=[source,dest,Math.round(dt),contractor||'',Math.round(rain||0)].join('|');
+  if(key===_planHistLastKey&&list&&list.children.length&&!list.querySelector('.plan-hist-loading'))return;
+  const seq=++_planHistSeq;
+  clearTimeout(_planHistTimer);
+  planHistShowLoading({source,dest,dt,contractor});
+  _planHistTimer=setTimeout(()=>{
+    fetch('/api/plan/analogues',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        plans:[{source,destination:dest,n_trucks:Math.round(dt),contractor:contractor||null}],
+        rain_mm:rain||0,k:10,rank:'best_output',nocache:true,
+      }),
+    }).then(r=>r.json()).then(data=>{
+      if(seq!==_planHistSeq)return;
+      _planHistLastKey=key;
+      planRenderBestHistory(data,{source,dest,dt,contractor});
+    }).catch(()=>{
+      if(seq!==_planHistSeq)return;
+      planRenderBestHistory({ok:false,error:'Could not load history (server offline?).'});
+    });
+  },280);
+}
 // A plan row is one contractor on one path, so two contractors can share the same path.
 function planAddPath(){
   const s=(q('plan-src')||{}).value,d=(q('plan-dst')||{}).value,key=s+'>'+d;
   if(!s||!d||!_pathResp[key])return;
+  const btn=document.querySelector('.plan-add');
+  if(btn){btn.classList.add('is-busy');btn.disabled=true;}
   const c=planContractor(),name=c?c.name:'—',rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0);
   let dt;
   if(_planMode==='wmt'){
     dt=planDtForWmt(key,Math.max(0,parseFloat((q('plan-wmt')||{}).value)||0),rain,c);
-    if(!dt){const b=q('plan-preview');if(b)b.innerHTML='<span class="er">Could not size a fleet for that target on this path.</span>';return;}
+    if(!dt){
+      const b=q('plan-preview');if(b)b.innerHTML='<span class="er">Could not size a fleet for that target on this path.</span>';
+      if(btn){btn.classList.remove('is-busy');btn.disabled=false;}
+      return;
+    }
   }else dt=Math.max(1,parseFloat((q('plan-dt')||{}).value)||50);
-  _planDraft[name+'|'+key]={key,dt,contractor:name};
+  _planDraft[name+'|'+key]={key,dt,contractor:name,source:s,dest:d};
   computePlan();
+  // Brief busy flash so “Add to plan” feels acknowledged while tables refresh
+  setTimeout(()=>{if(btn){btn.classList.remove('is-busy');btn.disabled=false;}},320);
 }
 function planRemove(id){delete _planDraft[id];computePlan();}
 function planSet(id,v){const r=_planDraft[id];if(r){r.dt=Math.max(0,parseFloat(v)||0);computePlan();}}
@@ -283,26 +709,27 @@ function computePlan(){
   planPreview();
   const rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0),wb=Math.max(1,parseFloat((q('plan-wb')||{}).value)||8),
     hours=Math.max(1,parseFloat((q('plan-hours')||{}).value)||12),ids=Object.keys(_planDraft),scope=q('plan-scope'),foot=q('plan-foot');
-  if(!ids.length){rows.innerHTML='<tr><td colspan="9" class="muted">Add a path above to start… your live estimate is shown in step 1.</td></tr>';
-    if(foot)foot.innerHTML='';q('plan-kpis').innerHTML='';q('plan-warn').innerHTML='';if(scope)scope.textContent='';return;}
+  if(!ids.length){rows.innerHTML='<tr><td colspan="9" class="muted">No paths yet.</td></tr>';
+    if(foot)foot.innerHTML='';const pk=q('plan-kpis');if(pk)pk.innerHTML='';q('plan-warn').innerHTML='';if(scope)scope.textContent='';
+    if(typeof planSetScenarioBtn==='function')planSetScenarioBtn();
+    if(typeof planRefreshSaveButtons==='function')planRefreshSaveButtons();
+    return;}
   let totTrips=0,totWmt=0,totDt=0;
   rows.innerHTML=ids.map(id=>{const r=_planDraft[id],m=_pathResp[r.key];if(!m)return '';
     const c=planContractor(r.contractor),e=planTripsPerDT(r.key,r.dt,rain,c),pay=planPayload(r.key,c);
     if(!e)return '';
     const trips=r.dt*e.shift,wmt=trips*pay.tf;totTrips+=trips;totWmt+=wmt;totDt+=r.dt;
-    const notes=[];
-    if(e.rainDelta<=-.03)notes.push('☔ '+fmtExact(e.rainDelta,2));
-    if(Number.isFinite(m.dtMax)&&r.dt>m.dtMax)notes.push('⚠ beyond '+fmtExact(m.dtMax)+' DT');
-    if(e.slope<0)notes.push('efficiency declines with fleet');
-    return `<tr><td><b>${escH(r.key.replace('>',' → '))}</b></td><td>${escH(r.contractor)}</td><td class="r"><input type="number" min="0" step="1" value="${Math.round(r.dt)}" onchange="planSet('${escH(id)}',this.value)" style="width:56px;text-align:center"></td><td class="r">${fmtExact(e.shift,2)}</td><td class="r">${fmtExact(Math.round(trips))}</td><td class="r muted">${fmtExact(pay.tf,1)}</td><td class="r">${fmtExact(Math.round(wmt))} t</td><td class="muted" style="font-size:10px">${notes.join(' · ')}</td><td><a onclick="planRemove('${escH(id)}')" style="cursor:pointer;color:#f87171" title="remove">✕</a></td></tr>`;}).join('');
+    return `<tr><td><b>${escH(r.key.replace('>',' → '))}</b></td><td>${escH(r.contractor)}</td><td class="r"><input type="number" min="0" step="1" value="${Math.round(r.dt)}" onchange="planSet('${escH(id)}',this.value)" style="width:56px;text-align:center"></td><td class="r">${fmtExact(e.shift,2)}</td><td class="r">${fmtExact(Math.round(trips))}</td><td class="r muted">${fmtExact(pay.tf,1)}</td><td class="r">${fmtExact(Math.round(wmt))} t</td><td></td><td><a onclick="planRemove('${escH(id)}')" style="cursor:pointer;color:#f87171" title="remove">✕</a></td></tr>`;}).join('');
   const avgEff=totDt?totTrips/totDt:0;
-  // Explicit totals row — the sum of every added path, in exact numbers.
-  if(foot)foot.innerHTML=`<tr class="plan-total-row"><td><b>TOTAL</b></td><td class="muted">${ids.length} path${ids.length===1?'':'s'}</td><td class="r"><b>${fmtExact(Math.round(totDt))} DT</b></td><td class="r"><b>${fmtExact(avgEff,2)}</b></td><td class="r"><b>${fmtExact(Math.round(totTrips))}</b></td><td class="r muted">${totTrips?fmtExact(totWmt/totTrips,1):'—'}</td><td class="r"><b>${fmtExact(Math.round(totWmt))} t</b></td><td colspan="2" class="muted" style="font-size:10px">per ${fmtExact(hours)}h shift</td></tr>`;
-  q('plan-kpis').innerHTML=[['Est. WMT / shift',fmtExact(Math.round(totWmt))+' t'],['Total trips',fmtExact(Math.round(totTrips))],['Fleet',fmtExact(Math.round(totDt))+' DT'],['Avg Trips/DT',fmtExact(avgEff,2)]].map(x=>`<div class="effkpi"><div class="v">${x[1]}</div><div class="l">${x[0]}</div></div>`).join('');
+  if(foot)foot.innerHTML=`<tr class="plan-total-row"><td><b>TOTAL</b></td><td class="muted">${ids.length}</td><td class="r"><b>${fmtExact(Math.round(totDt))}</b></td><td class="r"><b>${fmtExact(avgEff,2)}</b></td><td class="r"><b>${fmtExact(Math.round(totTrips))}</b></td><td class="r muted">${totTrips?fmtExact(totWmt/totTrips,1):'—'}</td><td class="r"><b>${fmtExact(Math.round(totWmt))} t</b></td><td colspan="2"></td></tr>`;
   const names=[...new Set(ids.map(id=>_planDraft[id].contractor))];
-  if(scope)scope.textContent=`${ids.length} path${ids.length===1?'':'s'} · ${names.join(', ')} · ${fmtExact(hours)}h shift · ${rain>0?fmtExact(rain)+' mm rain':'dry'} · ${fmtExact(wb)} weighbridges open`;
+  if(scope)scope.textContent=`${ids.length} path${ids.length===1?'':'s'} · ${names.join(', ')} · ${rain>0?fmtExact(rain)+' mm':'dry'} · ${fmtExact(wb)} WB`;
   const wbCap=wb*30*hours;
-  q('plan-warn').innerHTML=totTrips>wbCap?`<span class="er">⚠ Weighbridge bottleneck: ${fmtExact(Math.round(totTrips))} trips exceed ~${fmtExact(Math.round(wbCap))} weigh capacity (${fmtExact(wb)} bridges × ~30/hr × ${fmtExact(hours)}h). Add bridges or trim fleet.</span>`:`<span class="muted">Weighbridge capacity OK (~${fmtExact(Math.round(wbCap))} trips headroom at ${fmtExact(wb)} bridges). Trips/DT is per <b>${fmtExact(hours)}h shift</b>, from each path's 20-month average adjusted for contractor, fleet size${rain>0?' and rainfall':''}. First-level estimate — not a committed plan.</span>`;
+  q('plan-warn').innerHTML=totTrips>wbCap
+    ?`<span class="er">⚠ WB limit: ${fmtExact(Math.round(totTrips))} trips > ~${fmtExact(Math.round(wbCap))} capacity</span>`
+    :'';
+  if(typeof planSetScenarioBtn==='function')planSetScenarioBtn();
+  if(typeof planRefreshSaveButtons==='function')planRefreshSaveButtons();
 }
 
 
