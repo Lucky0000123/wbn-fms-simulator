@@ -8,45 +8,37 @@
 
 Applies to every agent and contributor working in this checkout.
 
-## Push to `mirror` ONLY — `origin` is on hold
+## Push to BOTH remotes, always
 
-**This rule reversed on 2026-07-30.** It previously read "push to BOTH remotes,
-always". The owner has instructed that `origin` (Rudolf's repo) must **not**
-receive commits until they explicitly lift the hold. Earlier commits already
-reached `origin` under the old rule, so it sits at `48985b4`; everything after
-that is mirror-only until told otherwise.
+**The hold on `origin` was LIFTED by the owner on 2026-08-07** ("push
+everything to git, me and Rudolf"). History: pushes were dual until
+2026-07-30, mirror-only during the hold (origin froze at `48985b4`), and
+dual again from `b9cb86e`. Gate `G24` asserts BOTH remotes match local HEAD.
 
-| Remote   | URL                                          | Push?                    |
-|----------|----------------------------------------------|--------------------------|
-| `mirror` | `github.com/Lucky0000123/wbn-fms-simulator`  | **YES — the only target** |
-| `origin` | `github.com/rdinkelmann/wbn-fms-simulator`   | **NO — on hold**          |
-| `all`    | both URLs attached                           | **NO — reaches origin**   |
+| Remote   | URL                                          | Push?   |
+|----------|----------------------------------------------|---------|
+| `mirror` | `github.com/Lucky0000123/wbn-fms-simulator`  | **YES** |
+| `origin` | `github.com/rdinkelmann/wbn-fms-simulator`   | **YES** |
+| `all`    | both URLs attached                           | works, but prefer naming each |
 
 ```bash
-git push mirror main      # CORRECT
-git push all main         # WRONG — also pushes to origin
-git push                  # works today (main tracks mirror/main) but is
-                          # fragile: it silently follows whatever the branch
-                          # tracks. Name the remote.
+git push mirror main && git push origin main    # CORRECT — both, named
+git push                  # fragile: silently follows whatever the branch
+                          # tracks. Name the remotes.
 ```
 
-WARNING: the `all` remote still has **both** URLs attached, so `git push all`
-reaches Rudolf. It was deliberately left configured rather than rewritten, so
-that lifting the hold is a decision rather than a discovery. Do not use it.
-
-Verify the push landed:
+Verify the push landed on both:
 
 ```bash
 git rev-parse HEAD
 git ls-remote --heads mirror main | cut -f1     # must match
+git ls-remote --heads origin main | cut -f1     # must match
 ```
 
-Gate `G24` asserts mirror parity and merely *reports* origin's position, for
-exactly this reason — see the comment above it in `scripts/verify_phase2.sh`.
-When the owner lifts the hold, re-widen G24 and revert this section together.
-
-> `mirror` is **public**. Do not commit credentials, `geofences.json`, or any
-> new operational data. The existing `fixtures/` already contain real
+> BOTH remotes are on public GitHub. Do not commit credentials,
+> `geofences.json`, or any new operational data. Reports derived from DB
+> introspection get gitignored in the same change that creates them (see the
+> 2026-08-07 audit section). The existing `fixtures/` already contain real
 > contractor names and tonnages.
 
 ## Where the code lives

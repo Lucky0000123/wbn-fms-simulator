@@ -144,27 +144,16 @@ done
 # stalling the harness instead of failing it.
 [ "$(curl -s -o /dev/null --max-time 900 -w '%{http_code}' -X POST "$BASE/api/retrain?cycle=0")" = "200" ]
 chk $? "F23  /api/retrain returns 200" "retrain endpoint down or >900s"
-# G24 gates the MIRROR only, and this is a deliberate narrowing (2026-07-30).
-#
-# It used to require origin AND mirror to both match local HEAD. That encoded
-# "push to both, always", which was the rule at the time. The owner has since
-# instructed that `origin` (rdinkelmann) must NOT receive commits until they say
-# so, which made the old gate unsatisfiable: honouring the instruction failed
-# the harness, and satisfying the harness leaked work to a repo the owner had
-# ringfenced. A gate that can only be passed by violating an instruction is
-# worse than no gate, because the pressure is to "fix" it by pushing.
-#
-# So: mirror parity is ASSERTED (it is the remote this project publishes to and
-# the invariant that must hold), and origin's position is REPORTED without
-# failing. The divergence stays visible in the harness output, so nobody has to
-# remember it, and re-widening the gate is a one-line change when the owner
-# lifts the hold.
+# G24: BOTH remotes must match local HEAD. The hold on origin (rdinkelmann)
+# was lifted by the owner on 2026-08-07 ("push everything to git, me and
+# Rudolf"), so the gate is re-widened to its original two-remote form. The
+# 2026-07-30..2026-08-07 narrowing (mirror-only assert, origin reported) is in
+# this file's git history if the hold ever returns.
 LOCAL=$(git rev-parse HEAD 2>/dev/null)
 M=$(git ls-remote --heads mirror main 2>/dev/null | cut -f1)
 O=$(git ls-remote --heads origin main 2>/dev/null | cut -f1)
-[ -n "$LOCAL" ] && [ "$LOCAL" = "$M" ]
-chk $? "G24  mirror matches local HEAD" "not pushed to mirror"
-[ "$LOCAL" = "$O" ] || echo "     INFO origin held at ${O:0:7} vs local ${LOCAL:0:7} (intentional, owner's instruction)"
+[ -n "$LOCAL" ] && [ "$LOCAL" = "$M" ] && [ "$LOCAL" = "$O" ]
+chk $? "G24  mirror AND origin match local HEAD" "mirror=${M:0:7} origin=${O:0:7} local=${LOCAL:0:7}"
 
 echo "── H · Phase 3 · OLS, validation, leakage ────────────────────────"
 [ -f data/model_ols.pkl ]; chk $? "H25  model_ols.pkl written" "missing"
