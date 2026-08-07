@@ -249,6 +249,21 @@ function buildFlowMotion(r,p,vc){
   };
   addTravel(r.fromKm,r.toKm,true);segments.push({hours:p.dwell/120,cross:'dump'});
   addTravel(r.toKm,r.fromKm,false);segments.push({hours:p.dwell/120,cross:'load'});
+  // The trip rate implies a LOOP time (shift hours / trips-per-shift) far longer
+  // than the driving time: on TF>FENI the drive is ~1.5 h but the measured
+  // effective cycle is ~11 h. Without representing that residual, the animation
+  // stretched the drive over the whole loop — trucks crawled and never visibly
+  // returned to the loading point, which read as "trips never finish". The
+  // residual (shovel queue, refuelling, breaks, standby) is idle time AT the
+  // loading point, so draw it as exactly that: park the particle there.
+  {
+    const drivingH=segments.reduce((s,x)=>s+x.hours,0);
+    const tr=Number.isFinite(r.targetTr)&&r.targetTr>0.05?r.targetTr:0;
+    const loopH=tr?p.hours/tr:0;
+    const residH=loopH>drivingH?loopH-drivingH:0;
+    if(residH>0.02)segments.push({hours:residH,cross:'wait'});
+    r.residualWaitH=residH;
+  }
   const travel=segments.filter(x=>x.speed),loadedTravel=travel.filter(x=>x.loaded),emptyTravel=travel.filter(x=>!x.loaded);
   const cL=loadedTravel.filter(x=>x.congested),cE=emptyTravel.filter(x=>x.congested);
   r.loadedSpeedRange=loadedTravel.length?[Math.min(...loadedTravel.map(x=>x.speed)),Math.max(...loadedTravel.map(x=>x.speed))]:[0,0];
@@ -259,7 +274,7 @@ function buildFlowMotion(r,p,vc){
   const overKm=travel.filter(x=>x.overLimit).reduce((s,x)=>s+x.km,0);
   r.overLimitPct=dist?100*overKm/dist:0;
   const total=segments.reduce((s,x)=>s+x.hours,0)||1;let time=0,g=0,travelledLoaded=0,travelledEmpty=0;r.motion=[{t:0,g:0}];
-  segments.forEach(x=>{time+=x.hours/total;if(x.cross==='dump')g=gDump;else if(x.cross==='load')g=1;else if(x.loaded){travelledLoaded+=x.km;g=gLoaded*travelledLoaded/dist;}else{travelledEmpty+=x.km;g=gDump+(gEmpty-gDump)*travelledEmpty/dist;}r.motion.push({t:time,g});});
+  segments.forEach(x=>{time+=x.hours/total;if(x.cross==='dump')g=gDump;else if(x.cross==='load')g=1;else if(x.cross==='wait')g=1;else if(x.loaded){travelledLoaded+=x.km;g=gLoaded*travelledLoaded/dist;}else{travelledEmpty+=x.km;g=gDump+(gEmpty-gDump)*travelledEmpty/dist;}r.motion.push({t:time,g});});
   r.destTimeFraction=segments.filter(x=>x.loaded).reduce((s,x)=>s+x.hours,0)/total;
   r.startTimes=r.startTimes.map((_,j)=>p.start==='destination'?r.destTimeFraction:p.start==='split'&&j%2?r.destTimeFraction:0);
   return total;
