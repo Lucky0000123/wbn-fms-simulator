@@ -4,6 +4,12 @@ __pycache__/
 venv/
 .DS_Store
 
+# Local DB credentials (copied from LUCKY_SSD via scripts/sync_creds_from_ssd.sh)
+.env
+.env.*
+!.env.example
+secrets/
+
 # Phase 2 model artifacts — regenerate with `python train_model.py`
 # or POST /api/retrain. Metadata files are committed as reference.
 data/*.csv
@@ -52,3 +58,23 @@ data/day_x_*
 reports/day_coverage.json
 reports/day_x_*.json
 data/fuel_recon/watcher.log
+
+# Fuel-recon operational extracts: real litres, hours, contractor names,
+# planned tonnages. Derived from site DBs; regenerable via scripts/fuel_*.py.
+# The public mirror must never carry them (J63).
+data/fuel_recon/*.csv
+
+# DB schema inventories and scan reports carry table/column names and real
+# tonnage figures. Same rule as reports/database_schema_raw.json above.
+reports/wbn_db_all_columns.json
+reports/fms_db_all_columns.json
+reports/fms_db_full_scan.md
+reports/fms_db_playback_tables.md
+reports/gps_peak_season_hunt.md
+reports/dual_db_analysis_plan.md
+
+# Local editor/tool state.
+.cursor/
+
+# Local server logs (jcode dev runner).
+logs/
