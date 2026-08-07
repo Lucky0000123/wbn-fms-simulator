@@ -233,12 +233,23 @@ failure when nothing was wrong. Wait on the **condition**, not the clock.
 ## Weather now comes from an API, not the site gauges
 
 `scripts/fetch_weather.py` pulls daily rainfall, temperature, humidity and wind
-for the site (-0.7297, 127.9056) from Open-Meteo's ERA5 archive and caches it to
+for the site from Open-Meteo's ERA5 archive and caches it to
 `data/weather_cache.csv` (gitignored, regenerable):
 
 ```bash
-python scripts/fetch_weather.py --start 2025-01-01 --end 2026-07-31
+python scripts/fetch_weather.py --start 2025-01-01 --end 2026-08-06
 ```
+
+**The site coordinates were wrong twice, differently (fixed 2026-08-07).**
+This file used to quote (-0.7297, 127.9056) — the WRONG HEMISPHERE, ~140 km
+south of the haul road — while `simulator_api.py`'s rain-suggest used a third
+value (0.78, 127.92). The authority is the committed road survey
+`data/haul_road_chainage_public.csv`: lat 0.476..0.807, lng 127.898..128.038.
+Both code sites now use its median **(0.5586 N, 127.9647 E)** and the forecast
+bins days in **Asia/Jayapura (WIT, UTC+9)**, not Asia/Jakarta. If you touch a
+coordinate here, derive it from the survey, do not copy a number from a doc.
+The cache was rebuilt at the correct point: 583 days, 144 wet days (>=10 mm).
+Old percentages below predate the rebuild but the qualitative findings held.
 
 No API key, so there is nothing to leak into the public mirror. 573 days cached
 with zero gaps. It matters most where the site gauges failed: across the outage
@@ -677,11 +688,76 @@ claiming it from another machine takes the public endpoint over.
 
 ## Score
 
-**63/63**, measured 2026-07-31 in no-DB mode, with `J55`–`J63` added. `G24` gates
-the **mirror only** — see the top of this file and the comment above it in
+**70/70**, measured 2026-08-07 in database mode after the Plan-page audit
+(J64–J70 added since the 63/63 measurement of 2026-07-31). `G24` gates the
+**mirror only** — see the top of this file and the comment above it in
 `scripts/verify_phase2.sh`.
+
+### 2026-08-07 audit — seven defects found and fixed, and what they teach
+
+- **Two "site" coordinates coexisted, both wrong** (fetch_weather.py southern
+  hemisphere; rain-suggest a third value). Nothing failed loudly because
+  Open-Meteo happily returns weather for any point. See the Weather section:
+  derive coordinates from the road survey, never copy them from prose.
+- **HOUR_TS is true epoch ms, not local wall clock.** Corridor hour labels ran
+  9 h off site time; "slow hours 19:00–20:00" were really 04:00–05:00. The
+  corroboration to look for: truck-count dips align with the 07:00/19:00 shift
+  changes only under UTC+9. `plan_corridor_hours.SITE_TZ` is the conversion.
+- **A cache key must include every input that changes the answer.** The
+  analogue DB cache hashed {plans, rain, k} but not `rank`/`prefer_peak`, so
+  match-mode results were served for best-output requests. The response
+  fingerprint knew better — the two had drifted apart.
+- **The ONE-shift-control rule was broken again**, this time by
+  `planLoadSavedForDate` writing the hidden mirror (#plan-hours) directly.
+  Write the source (#ps-shift) and call `psSyncShift()`; never write the mirror.
+- **Plan Step 2 and Capability share flow globals.** Seeding the plan
+  illustration clobbered Capability's replay until `flowSetHost` learned to
+  snapshot/restore. If you add shared state to flow_sim.js, ask which host owns
+  it and what happens on tab return.
+- **`use_reloader=False` claimed another round**: the running server predated
+  the day's `simulator_api.py` edits, so plan.js read `trP25` fields the live
+  API did not serve — silently absent behind a `Number.isFinite` guard.
+  Restart the server after backend edits, then verify the field is in the
+  actual HTTP response, not just the source.
+- **`git add -A` was one command away from publishing the ops-DB schema and
+  fuel extracts.** New scan reports and fuel_recon CSVs were untracked but not
+  ignored; the CSVs were even committed locally. Both are now gitignored, the
+  CSVs were rewritten out of unpushed history before the mirror push
+  (original preserved on local branch `backup-pre-csv-rewrite`), and J63 pins
+  the allowed-CSV list. When you create a report from DB introspection,
+  gitignore it in the same change.
 
 `data/simulator_model_results.json` no longer churns: `simulator_model.
 preserve_stamp()` carries `generated_at` forward when nothing else changed, so
 `git status` is clean after a harness run and stays a usable signal. Gate `J59`.
+
+## Learned User Preferences
+
+- Default DT motion to Measured GPS; hide manual Loaded/Empty km/h until the user explicitly chooses an override, and show a clear highlight that GPS logic is active. Plan GPS corridor particles must stage at the **loading point**, not dump/split endpoints.
+- Treat Advanced Simulation Settings (start, stagger, headway, dwell, trace, and similar knobs) as illustration-only — they must not change fleet size, trips, or WMT.
+- Treat trip-implied speed and manual km/h as one override mode, not two separate engines.
+- Available fleet (budget) should follow the sum of route what-if DT boxes, not stay stuck on the day-dispatch total.
+- Forward planning and achievable tonnes belong on Plan Step 2 / `/api/simulate`; Capability Shift Road is for historical replay and illustration, not the planning estimate.
+- Keep the schematic chainage stick always visible with the map; Run should scroll both visuals into view so the user can watch what is playing.
+- Best past days / analogues: filter by selected contractor; rank nearby trip count first, then trips/DT; color wet vs dry; show a loading state while searching; omit “ops only / no haul GPS” caveats from that list. When a day is selected, show that day’s figures — do not label Jan–May season averages as that day’s DT/trips.
+- Keep Plan Step 1 sparse and space-efficient (date + rain in conditions, estimated output beside plan date, best-past-days under conditions in a compact scrollable grid); rainfall in conditions should move the Step 1 WMT estimate; show which model/factor produced the number.
+- On Run Scenario (Step 2), lead with estimated production and capacity with a professional loading state for A/B; defer road/GPS corridor block (C) until after the corridor run; hour-of-day charts must show which hour/argument is selected; prefer decision-oriented outcomes over repeating the same tables.
+- Optimize DT: per-row Accept (✕/✓) for suggested vs current DT (default keep current); fewer bulk option buttons; label the orange action “Finalize plan → refresh Production and capacity” (not “refresh B”); remove Save-plan-for-date from that optimize strip.
+- Shift outcomes: one clear plan-vs-history (P25–P75) row; label the road band “Road” (not “Jul GPS”); helper text that V/C means Volume/Capacity; hide Bottleneck/Do-next road-advisory fluff; keep planned WMT vs achievable/adjusted figures consistent across A and B — never average predict + simulate + history into one total.
+- Planning goal: best production with less congestion using the minimum required trucks — support edit-from-outcomes once verdicts exist.
+
+## Learned Workspace Facts
+
+- Simulate tonnes use **effective cycle** `(truck_shifts × 720) / trips`, not weigh-to-weigh predicted cycle (~77 min median). Confusing them overpredicts badly. Site median effective is ~389 min; consecutive start-to-start pairs ~240 min — do not conflate those two “240” stories.
+- `DEFAULT_AVAILABILITY = 1.0` for tonnage (J52 + J55). Downtime is already inside effective cycle; never re-add 0.85/0.80. Measured residual **+5.5%** is exposed as companion `ticket_calibrated_achievable_t` (÷1.055, not primary) with Plan lens default ON. Do not “fix” via availability (×0.85 → −10.3%). Roster sizing may still use mechanical availability (~0.72) for fleet count only.
+- Congestion / road V/C, Jul+ corridor clock (`/api/plan/corridor-hours`, `/api/plan/day-segments`, `/api/plan/gps-coverage`), congestion advice (`/api/plan/congestion-advice`), and shared-road DES-lite (`/api/plan/shared-flow`) are measured or advisory and must **never** modify simulate tonnes (J53); `basis.congestion_clips_tonnes` always false. Stick CSV refresh: `scripts/refresh_stick_from_archive.py` (also after `accumulate_gps`).
+- Point capacity is a **p99 hourly throughput lookup** (not ML). Shared-loader p99 can clip achievable tonnes — that is point capacity, not a congestion term in cycle. Dwell models: wet/dry are served; day/night may be computed but unused at serve. Dual-mode `_register` wraps **7** simulator endpoints (not “all APIs”).
+- Achievable tonnes / Plan Step 2 outcomes come from `/api/simulate`, never flow particles. Step 1 WMT uses path-response **main-cluster** `avgTr` (mid-60% trimmed mean of daily trips/DT, with P25–P75) × contractor `clamp(tripsPerDT/fleet, 0.5–1.5)` × rain; **simulate ignores contractor factors**. Rain may move Step 1 WMT; simulate tonnes stay weather-invariant (J57).
+- Capability Shift Road is illustration/replay; particles are not production. Flow speeds default to measured GPS; posted limits are overlay only. Disk snapshots (`cap_snapshot.json` / `pr_snapshot.json`) sit between memory and fixtures.
+- **DB roles:** `WBN_DATABASE` = ops truth; `FMS_DB` = location. Haul GPS (`FMS_CONGESTION_SEG` / `FMS_GPS_Historical`) from **2026-07-15** only. Playback Feb+ is HRM/support (**0%** haul plate overlap) — never for haul V·C or analogue replay; `/api/plan/playback-truth` documents that. Grow haul history with `scripts/accumulate_gps.py` (cron 07:00/19:00); `FMS_EQUIPMENTS.plateNumber` joins weighbridge.
+- Capability defaults `2026-01-01` → `2026-05-31` (peak). Jul GPS V/C is struggle-season illustration only. Plan analogues (`/api/plan/analogues`) match contractor; rank trips then trips/DT. HRM impact on trips/DT is ~0 (r≈0.0006) — keep excluded.
+- **Peak road proxy:** `/api/plan/peak-road-proxy` — Jan–May section DT/trips from weighbridge path-days (ops pressure). `speeds_kmh` is always null. Not Playback and must not be presented as a selected analogue day’s averages.
+- Shift length calibrated at **720 min** (~98.5% of shifts); other lengths raise `shift_minutes_extrapolated` (J60). Holding plans save locally via `/api/plan/saved` → `data/saved_plans/{date}.json`.
+- Hide the Capability filter header (`.top`) on Plan and Production Simulator tabs; keep the sim-tab strip so users can leave Plan.
+- Never invent pre-2026-07-15 haul speeds from Playback; path-response main-cluster trips/DT will sit below a single best past day by design (trimmed mean, not the peak day).
 
