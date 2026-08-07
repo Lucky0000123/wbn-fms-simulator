@@ -469,7 +469,7 @@ function _planRenderEstimate(v){
     ['Trips / DT',fmtExact(v.tripsPerDt,2)],
     [v.swapped?'Trucks needed': 'Trucks',fmtExact(v.dt)+' DT'],
     ['Trips',fmtExact(Math.round(v.trips))],
-    ['t / trip',fmtExact(v.payload,1)+' t'],
+    ['t / trip',v.foreign?'—':fmtExact(v.payload,1)+' t'],   // road-only: not weighed for us
   ];
   if(Number.isFinite(v.contractorFactor)&&v.contractorFactor!==1){
     lines.push(['Contractor factor',fmtExact(v.contractorFactor,2)+'×']);
@@ -483,12 +483,14 @@ function _planRenderEstimate(v){
   box.innerHTML=`<div class="est-head">Estimated shift output</div>`
     +`<div class="est-body">`
     +`<div class="est-lines">${lines.map(l=>`<div class="est-line"><span>${escH(l[0])}</span><b>${l[1]}</b></div>`).join('')}</div>`
-    +`<div class="est-total"><div class="est-total-l">${v.swapped?'Trucks needed':'WMT'}</div>`
-    +`<div class="est-total-v">${v.swapped?fmtExact(v.dt):fmtExact(Math.round(v.wmt))} <span class="u">${v.swapped?'DT':'t'}</span></div></div>`
+    +`<div class="est-total"><div class="est-total-l">${v.foreign?'WMT':(v.swapped?'Trucks needed':'WMT')}</div>`
+    +(v.foreign
+       ?`<div class="est-total-v" style="font-size:15px;color:var(--muted,#8b98a5)">Road-only · <span class="u">no WMT</span></div></div>`
+       :`<div class="est-total-v">${v.swapped?fmtExact(v.dt):fmtExact(Math.round(v.wmt))} <span class="u">${v.swapped?'DT':'t'}</span></div></div>`)
     +`</div>`
     +`<div class="est-foot">`
     +`<div class="est-note">${escH(v.src)} → ${escH(v.dst)} · ${escH(v.contractor||'—')}`
-    +(v.swapped?` · ${fmtExact(Math.round(v.wmt))} t`:'')+`</div>`
+    +(v.foreign?` · road-only (foreign / IWIP — no WMT for us)`:(v.swapped?` · ${fmtExact(Math.round(v.wmt))} t`:''))+`</div>`
     +`<div class="est-attr"><span class="est-model ${mod.cls}">${mod.text}</span></div>`
     +`</div>`
     +(v.warns&&v.warns.length?`<div class="est-warn">${v.warns.map(escH).join('<br>')}</div>`:'');
@@ -502,7 +504,8 @@ function planPreview(){
   if(!m)return blank('Select a source and destination to see the estimate.');
   const rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0),c=planContractor(),pay=planPayload(key,c),
     hours=Math.max(1,parseFloat((q('plan-hours')||{}).value)||12),
-    wbOpen=Math.max(1,parseFloat((q('plan-wb')||{}).value)||8);
+    wbOpen=Math.max(1,parseFloat((q('plan-wb')||{}).value)||8),
+    foreign=!!(q('plan-foreign')&&q('plan-foreign').checked);   // road-only / IWIP: trucks run, but no WMT for us
   let dt,trips,wmt,e;
   if(_planMode==='wmt'){
     const target=Math.max(0,parseFloat((q('plan-wmt')||{}).value)||0);
@@ -520,10 +523,14 @@ function planPreview(){
   const warns=[];
   if(Number.isFinite(m.dtMax)&&dt>m.dtMax)warns.push(`⚠ ${fmtExact(dt)} DT is beyond the ${fmtExact(m.dtMax)} DT ever observed on this path`);
   if(e.rainDelta<=-.03)warns.push(`☔ rain −${fmtExact(Math.abs(e.rainDelta),2)} Trips/DT`);
-  const base={src:s,dst:d,contractor:c?c.name:'—',hours,swapped,warns,
+  const base={src:s,dst:d,contractor:c?c.name:'—',hours,swapped,warns,foreign,
     dt,tripsPerDt:e.shift,trips,wmt,payload:pay.tf,payloadSrc:pay.src,model:'local',
     contractorFactor:cFactor};
   _planRenderEstimate(base);                       // stage 1 — instant, local
+  // Road-only / foreign path: its trucks add congestion but no WMT for us, so there is
+  // no tonnage to predict and no WMT history to rank. Stop after the local estimate —
+  // do NOT call /api/predict (would re-render a WMT) or the best-past-days search.
+  if(foreign){planRenderBestHistory({ok:false,error:'Road-only / foreign path — adds congestion, no WMT for us, so there is no tonnage history to compare.'});return;}
   planFetchBestHistory(s,d,dt,c?c.name:null,rain); // side panel: best past days at this fleet
   // stage 2 — trained model (/api/predict). Never writes back into the DT/WMT inputs.
   const seq=++_planPredictSeq;

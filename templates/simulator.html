@@ -394,7 +394,7 @@
                      load the shared FENI corridor and drag our trips/DT. Engine logic
                      in plan_simulator.py; carried on each _planDraft row as `foreign`. -->
                 <label id="plan-input-foreign" class="plan-field plan-field-foreign" title="Road-only / foreign traffic (IWIP or another mine on our roads): its trucks add congestion on the shared FENI corridor but no WMT for us.">
-                  <span class="plan-foreign-check"><input id="plan-foreign" type="checkbox"> Road-only (foreign / IWIP&nbsp;— no WMT)</span>
+                  <span class="plan-foreign-check"><input id="plan-foreign" type="checkbox" onchange="computePlan()"> Road-only (foreign / IWIP&nbsp;— no WMT)</span>
                 </label>
               </div>
               <div id="plan-hint" class="plan-hint"></div>
