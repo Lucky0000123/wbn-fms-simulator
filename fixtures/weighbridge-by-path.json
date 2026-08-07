@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "source": "TF",
+  "dest": "FENI KM0",
+  "from": "2025-09-01",
+  "to": "2026-08-05",
+  "bridges": [
+    {"wb": "WB_IWIP_T15", "wbNum": "15", "trips": 11840, "wmt": 534096, "km": 32.1, "offM": 21, "onCorridor": true, "sharePct": 44.8},
+    {"wb": "WB_IWIP_T14", "wbNum": "14", "trips": 7420, "wmt": 334742, "km": 26.1, "offM": 16, "onCorridor": true, "sharePct": 28.1},
+    {"wb": "WB_IWIP_T11", "wbNum": "11", "trips": 4310, "wmt": 194383, "km": 1.5, "offM": 25, "onCorridor": true, "sharePct": 16.3},
+    {"wb": "WB_IWIP_T8", "wbNum": "8", "trips": 2850, "wmt": 128535, "km": 10.8, "offM": 4, "onCorridor": true, "sharePct": 10.8}
+  ],
+  "nBridges": 4,
+  "totalTrips": 26420,
+  "excludedMinorBridges": 0,
+  "minSharePct": 1.0,
+  "capacityTripsPerShift": 1440,
+  "capacityBasis": "4 on-path bridges x ~30 trips/hr x 12h (assumption)",
+  "source_table": "WBN_DATABASE.dbo.HAULAGE_IWIP_CLEAN"
+}

@@ -389,6 +389,13 @@
                     <button class="ms-btn plan-swap-inline" id="plan-swap-btn-wmt" type="button" onclick="planSwapMode()" title="Switch DT / WMT">⇄ DT</button>
                   </span>
                 </label>
+                <!-- Road-only / foreign (IWIP) traffic (our addition). A path added
+                     with this ticked contributes NO WMT for us but its trucks still
+                     load the shared FENI corridor and drag our trips/DT. Engine logic
+                     in plan_simulator.py; carried on each _planDraft row as `foreign`. -->
+                <label id="plan-input-foreign" class="plan-field plan-field-foreign" title="Road-only / foreign traffic (IWIP or another mine on our roads): its trucks add congestion on the shared FENI corridor but no WMT for us.">
+                  <span class="plan-foreign-check"><input id="plan-foreign" type="checkbox" onchange="computePlan()"> Road-only (foreign / IWIP&nbsp;— no WMT)</span>
+                </label>
               </div>
               <div id="plan-hint" class="plan-hint"></div>
             </div>
@@ -400,6 +407,9 @@
                 <label class="plan-cond">Weighbridges <span><input id="plan-wb" type="number" min="1" step="1" value="8" oninput="computePlan()"> / 18</span></label>
                 <label class="plan-cond" title="Non-plan trucks (IWIP / position works) also cross the weighbridges on the way to the dumps and share the road. Prefilled from the last measured shift; edit to test scenarios.">Other trips (non-plan) <span><input id="plan-other-trips" type="number" min="0" step="10" value="0" oninput="planOtherManualEdit()"> <span id="plan-other-src" class="muted" style="font-size:9.5px"></span></span></label>
               </div>
+              <!-- On-path weighbridge linkage (Rudolf; logic in plan_weighbridges.js).
+                   Anchors the count above to the bridges measured on the selected route. -->
+              <div id="plan-wb-onpath" style="margin-top:6px"></div>
               <!-- Weighbridge load: every path AND the other traffic funnels
                    through the bridges on the way to the dumps. Utilisation bar
                    + advice; ceiling assumption is labelled on hover. -->
@@ -814,6 +824,7 @@
 <script src="/static/js/plan_simulator.js"></script>
 <script src="/static/js/plan_assessment.js"></script>
 <script src="/static/js/plan_scenario.js"></script>
+<script src="/static/js/plan_weighbridges.js"></script>
 <script src="/static/js/main.js"></script>
 </body>
 </html>

@@ -13,10 +13,12 @@ function planDraftEntries(){
 
 function planDraftToPsPlans(){
   // Aggregate by route (engine has no contractor). Sum DT when two contractors share a path.
+  // Road-only / foreign rows stay a SEPARATE entry (keyed with a |road suffix) and carry
+  // foreign:true, so the engine keeps them out of production and applies their corridor drag.
   const by={};
   planDraftEntries().forEach(r=>{
-    const route=r.source+'>'+r.dest;
-    const g=by[route]||(by[route]={route,source:r.source,destination:r.dest,n_trucks:0});
+    const foreign=!!r.foreign,gk=r.source+'>'+r.dest+(foreign?'|road':'');
+    const g=by[gk]||(by[gk]={route:r.source+'>'+r.dest,source:r.source,destination:r.dest,n_trucks:0,foreign});
     g.n_trucks+=Math.round(r.dt);
   });
   return Object.values(by).filter(p=>p.n_trucks>0);
@@ -616,7 +618,8 @@ function planRenderOutcomes(sim,predict){
 
 function planDraftToAnaloguePlans(){
   // Keep contractor (unlike simulate). Aggregate DT per contractor|route.
-  return planDraftEntries().map(r=>({
+  // Foreign / road-only rows have no WMT history, so they are not sent to analogues.
+  return planDraftEntries().filter(r=>!r.foreign).map(r=>({
     source:r.source,destination:r.dest,n_trucks:Math.round(r.dt),
     contractor:r.contractor||null,
   })).filter(p=>p.n_trucks>0&&p.source&&p.destination);

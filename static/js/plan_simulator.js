@@ -69,11 +69,15 @@ function psAddPlan() {
   if (!sel || !_psRoutes.length || !(n > 0)) return;
   const r = _psRoutes[parseInt(sel.value, 10)];
   if (!r) return;
-  // Adding the same haul twice means one bigger fleet, not two entries.
-  const dup = _psPlans.find(p => p.route === r.route);
+  // A haul is production by default, or road-only/foreign (IWIP, other mine):
+  // congestion but no WMT. The two are distinct lines for the same route.
+  const foreign = !!(q('ps-foreign') && q('ps-foreign').checked);
+  // Adding the same haul twice means one bigger fleet, not two entries — but a
+  // foreign line and a production line for the same route stay separate.
+  const dup = _psPlans.find(p => p.route === r.route && !!p.foreign === foreign);
   if (dup) dup.n_trucks += n;
   else _psPlans.push({route: r.route, source: r.source,
-                      destination: r.destination, n_trucks: n});
+                      destination: r.destination, n_trucks: n, foreign: foreign});
   psRun();
 }
 
@@ -158,8 +162,13 @@ function psRender(d) {
     const capCell = `<span style="color:${over ? 'var(--bad,#e5534b)' : 'var(--muted,#8b98a5)'}">`
       + `${r.capacity_note.split(':')[0]}${r.capacity_ratio != null ? ' · ' + Math.round(100 * r.capacity_ratio) + '%' : ''}</span>`;
     const tip = Object.entries(r.basis || {}).map(([k, v]) => k + ': ' + v).join('\n');
-    return `<tr title="${tip.replace(/"/g, '&quot;')}">
-      <td><b>${r.route}</b></td>
+    const foreignTag = r.foreign
+      ? ' <span title="Road-only / foreign traffic: adds congestion, no WMT" style="font-size:9px;padding:1px 5px;border-radius:8px;background:rgba(148,163,184,.18);color:var(--muted,#8b98a5);vertical-align:middle">ROAD-ONLY</span>'
+      : '';
+    const plannedCell = r.foreign ? '<span class="muted" title="foreign traffic adds no WMT">—</span>' : fmt(r.planned_production_t);
+    const achvCell = r.foreign ? '<span class="muted">—</span>' : (over ? '<b>' + fmt(r.achievable_production_t) + '</b>' : fmt(r.achievable_production_t));
+    return `<tr title="${tip.replace(/"/g, '&quot;')}"${r.foreign ? ' style="opacity:.72"' : ''}>
+      <td><b>${r.route}</b>${foreignTag}</td>
       <td class="r">${r.n_trucks}</td>
       <td class="r" title="Weigh-to-weigh trip time">${r.predicted_cycle_time_min} min</td>
       <td class="r" title="Shift-minutes per completed trip, measured per route. This is what trips/shift divides by; it includes the empty return, the queue and breaks.">${r.effective_cycle_min} min</td>
@@ -168,8 +177,8 @@ function psRender(d) {
       <td class="r">${r.implied_travel_time_min}</td>
       <td class="r">${r.trips_per_shift_per_truck}</td>
       <td class="r">${rosterCell(r)}</td>
-      <td class="r">${fmt(r.planned_production_t)}</td>
-      <td class="r">${over ? '<b>' + fmt(r.achievable_production_t) + '</b>' : fmt(r.achievable_production_t)}</td>
+      <td class="r">${plannedCell}</td>
+      <td class="r">${achvCell}</td>
       <td>${capCell}</td>
       <td><button class="mode-btn" onclick="psRemove(${i})" title="Remove this haul">×</button></td>
     </tr>`;
@@ -189,8 +198,17 @@ function psRender(d) {
 
   const w = (s.capacity_warnings || []);
   const shared = (s.shared_loading_points || []);
+  const fc = s.foreign_congestion;
+  const fcLine = fc
+    ? `<div style="font-size:12px;color:var(--warn,#d29922);margin-bottom:6px">`
+      + `🚧 Road-only / foreign load: <b>${fc.foreign_trucks}</b> trucks · ${fmt(fc.feni_trips)} FENI-corridor trips`
+      + ` → <b>${fc.drag_per_dt}</b> trips/DT on ${fc.routes_affected.length} shared route${fc.routes_affected.length === 1 ? '' : 's'}`
+      + (fc.tonnage_cost_t ? ` → <b>−${fmt(fc.tonnage_cost_t)} t</b> of our production` : ' (no shared FENI routes in this plan yet)')
+      + ` <span class="muted">— congestion only, no WMT added</span></div>`
+    : '';
   q('ps-warnings').innerHTML =
-    (w.length ? w.map(x => `<div style="font-size:12px;color:var(--bad,#e5534b);margin-bottom:6px">⚠ ${x}</div>`).join('') : '')
+    fcLine
+    + (w.length ? w.map(x => `<div style="font-size:12px;color:var(--bad,#e5534b);margin-bottom:6px">⚠ ${x}</div>`).join('') : '')
     + (shared.length ? `<div class="muted" style="font-size:12px">Shared loading points: ${shared.join('; ')}</div>` : '')
     + (!w.length && !shared.length ? '<div class="muted" style="font-size:12px">No shared loading points and no capacity breach in this plan.</div>' : '');
 
