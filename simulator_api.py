@@ -308,7 +308,8 @@ def _load_measured_speeds_from_csv():
                     except ValueError:
                         pk = 0
                     if pk > 0:
-                        peak_loaded.append(pk)
+                        mid_km = (lo + hi) / 2.0
+                        peak_loaded.append((mid_km, pk))
                 for col in ("ts_min", "ts_max"):
                     try:
                         ts = int(float(row.get(col) or 0))
@@ -341,14 +342,47 @@ def _load_measured_speeds_from_csv():
         from datetime import datetime, timezone
         def _iso(ms):
             return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).date().isoformat()
-        window = {"from": _iso(t_lo), "to": _iso(t_hi),
-                  "source": "data/congestion_seg_by_dir.csv"}
+        w_from, w_to = _iso(t_lo), _iso(t_hi)
+        # Retention: FMS_CONGESTION_SEG only keeps ~2 weeks. Jan–May peak
+        # production has no segment GPS — speeds/capacity here are struggle-season.
+        peak_lo, peak_hi = "2026-01-01", "2026-05-31"
+        overlaps_peak = not (w_to < peak_lo or w_from > peak_hi)
+        struggle = not overlaps_peak
+        window = {
+            "from": w_from,
+            "to": w_to,
+            "source": "data/congestion_seg_by_dir.csv",
+            "peakSeason": {"from": peak_lo, "to": peak_hi},
+            "struggleSeasonExtract": bool(struggle),
+            "note": ("Segment GPS retention starts mid-July; Jan–May peak has no "
+                     "corridor GPS. Speeds/V·C capacity below are from this extract "
+                     "only — use Capability Jan–May window for Shift Performance / "
+                     "path-response, and /api/simulate for achievable tonnes.")
+            if struggle else None,
+        }
     capacity = None
     if peak_loaded:
-        peak_loaded.sort()
-        n = len(peak_loaded)
-        p50 = peak_loaded[n // 2]
-        p25 = peak_loaded[max(0, n // 4)]
+        peaks = sorted(pk for _, pk in peak_loaded)
+        n = len(peaks)
+        p50 = peaks[n // 2]
+        p25 = peaks[max(0, n // 4)]
+        # Per corridor section (same labels as Shift Road hotspots).
+        SECS = [("TOFU–KR", 39.0, 67.8), ("KR–POS 12", 27.0, 39.0),
+                ("POS 12–POS 10", 17.0, 27.0), ("POS 10–FENI", 0.0, 17.0)]
+        by_section = {}
+        for label, slo, shi in SECS:
+            vals = sorted(pk for mid, pk in peak_loaded if mid > slo and mid <= shi)
+            if not vals:
+                vals = sorted(pk for mid, pk in peak_loaded
+                              if mid >= slo - 1e-6 and mid <= shi + 1e-6)
+            if vals:
+                med = vals[len(vals) // 2]
+                by_section[label] = {
+                    "trucksPerHour": round(med, 2),
+                    "bottleneckTph": round(vals[max(0, len(vals) // 4)], 2),
+                    "nSegments": len(vals),
+                    "equivHeadwaySec": round(3600.0 / med) if med > 0 else None,
+                }
         capacity = {
             "trucksPerHour": round(p50, 2),
             "bottleneckTph": round(p25, 2),
@@ -356,6 +390,7 @@ def _load_measured_speeds_from_csv():
             "source": "data/congestion_seg_by_dir.csv",
             "method": "median peak TRUCK_N / segment-hour (stick, DIR=down)",
             "nSegments": n,
+            "bySection": by_section,
         }
     return out, window, capacity
 
@@ -533,16 +568,19 @@ def _cap_load_rows():
 
 
 def _cap_bg_refresh():
-    """Reload from DB in the background; overwrite memory + disk when done."""
+    """Reload from DB in the background; overwrite disk, then memory."""
     try:
         fresh = _cap_load_rows()
         at = time.time()
+        # Disk BEFORE memory: observers key off source=="db" / refreshing=False
+        # (set under the lock), so the disk copy must already be current when
+        # they see that state — J68 caught the reversed order as a race.
+        _cap_disk_write(fresh, at)
         with _CAP_LOCK:
             _CAP_SNAP["rows"] = fresh
             _CAP_SNAP["at"] = at
             _CAP_SNAP["source"] = "db"
             _CAP_SNAP["refreshing"] = False
-        _cap_disk_write(fresh, at)
         print("  capability snapshot refreshed (%d rows)" % len(fresh), flush=True)
     except Exception as exc:  # noqa: BLE001
         with _CAP_LOCK:
@@ -1007,13 +1045,14 @@ def _path_bg_refresh():
     try:
         rows, rain = _path_load()
         at = time.time()
+        # Disk before memory — same ordering rationale as _cap_bg_refresh.
+        _path_disk_write(rows, rain, at)
         with _PATH_LOCK:
             _PATH_SNAP["rows"] = rows
             _PATH_SNAP["rain"] = rain
             _PATH_SNAP["at"] = at
             _PATH_SNAP["source"] = "db"
             _PATH_SNAP["refreshing"] = False
-        _path_disk_write(rows, rain, at)
         print("  path-response snapshot refreshed (%d rows)" % len(rows), flush=True)
     except Exception as exc:  # noqa: BLE001
         with _PATH_LOCK:
@@ -1061,10 +1100,47 @@ def _path_snapshot():
     return rows, rain
 
 
+def _path_eff_pctile(xs, p):
+    """Linear-interpolated percentile of a numeric sequence. p in [0, 1]."""
+    if not xs:
+        return None
+    s = sorted(float(x) for x in xs)
+    if len(s) == 1:
+        return s[0]
+    p = max(0.0, min(1.0, float(p)))
+    idx = p * (len(s) - 1)
+    lo = int(idx)
+    hi = min(lo + 1, len(s) - 1)
+    frac = idx - lo
+    return s[lo] * (1.0 - frac) + s[hi] * frac
+
+
+def _path_mid60_mean(xs):
+    """Mid-60% trimmed mean: drop lowest/highest 20% of samples, mean the rest.
+
+    Plan Step 1 uses this as avgTr (main-cluster trips/DT) so one extreme day
+    cannot pull the forecast. n < 5 falls back to the plain mean.
+    """
+    vals = [float(x) for x in xs if x is not None]
+    n = len(vals)
+    if n == 0:
+        return None
+    if n < 5:
+        return sum(vals) / n
+    s = sorted(vals)
+    drop = int(n * 0.2)
+    core = s[drop:n - drop] if n - 2 * drop > 0 else s
+    return sum(core) / len(core)
+
+
 def api_simulator_path_response():
     """Per-path fleet→efficiency response from the historical DB (LITE 3): fits trips/DT = a + b·DT for
     each route so the scenario planner can predict how efficiency (and thus WMT) shifts as you add/remove
     trucks. Only a MEASURED decline (b<0) is later applied — confounded/flat paths stay flat.
+
+    avgTr is the mid-60% trimmed mean of daily trips/DT (main cluster), not the
+    raw arithmetic mean. meanTr / trP25 / trMed / trP75 accompany it. OLS slope
+    still fits on all days; avgDt stays the mean fleet size.
 
     Honours optional from/to (and uses the capability snapshot pattern) so Tab 1
     Apply can refresh the rain panel without a 15 s SQL hit every time.
@@ -1122,6 +1198,13 @@ def api_simulator_path_response():
             continue
         dt = [x[0] for x in v]; eff = [x[1] / x[0] for x in v]
         n = len(v); mx = sum(dt) / n; my = sum(eff) / n
+        # Plan base = mid-60% trimmed mean (main cluster); OLS still uses raw mean my.
+        avg_tr = _path_mid60_mean(eff)
+        if avg_tr is None:
+            avg_tr = my
+        tr_p25 = _path_eff_pctile(eff, 0.25)
+        tr_med = _path_eff_pctile(eff, 0.5)
+        tr_p75 = _path_eff_pctile(eff, 0.75)
         den = sum((x - mx) ** 2 for x in dt)
         b = (sum((x - mx) * (y - my) for x, y in zip(dt, eff)) / den) if den else 0.0
         a = my - b * mx
@@ -1131,7 +1214,11 @@ def api_simulator_path_response():
         tf = (sum(x[2] for x in v) / srit) if srit else 0.0
         rec = {"a": round(a, 4), "b": round(b, 5), "r2": round(r2, 3), "n": n,
                "dtMin": round(min(dt)), "dtMax": round(max(dt)), "avgDt": round(mx),
-               "avgTr": round(my, 3), "tf": round(tf, 2)}
+               "avgTr": round(avg_tr, 3), "meanTr": round(my, 3),
+               "trP25": round(tr_p25, 3) if tr_p25 is not None else None,
+               "trMed": round(tr_med, 3) if tr_med is not None else None,
+               "trP75": round(tr_p75, 3) if tr_p75 is not None else None,
+               "tf": round(tf, 2)}
         # rain-controlled fit + dry/wet efficiency split
         wet = [(x[0], x[3], x[1] / x[0]) for x in v if x[3] is not None]
         m2 = _ols2(wet)
@@ -1365,8 +1452,11 @@ def api_simulator_shift_context():
         _of = cur.fetchone(); other_fleet = int(_of[0] or 0); other_trips = int(_of[1] or 0)
         conn.close()
 
-        # FENI smelter bays (FENI K/M/Q/A/…) sit at the FENI 0 end; CRUSHER CAS is just up-corridor of it.
-        NODE_KM = {"TF": 67.8, "KR": 39.0, "POS 12": 27.0, "POS 10": 17.0, "FENI": 0.0, "CRUSHER": 3.0}
+        # Keys MUST match the SQL CASE labels above (FENI KM0, not FENI) or
+        # other-paths that end at the smelter are dropped and otherFeniTrips=0.
+        NODE_KM = {"TF": 67.8, "KR": 39.0, "POS 12": 27.0, "POS 10": 17.0,
+                   "FENI KM0": 0.0, "FENI KM15": 15.0, "CRUSHER": 3.0,
+                   "HUAFEI": 0.0, "BSE": 0.0, "BLB": 67.8}
         other_paths = []
         for og, dg, trips, trucks in grp_rows:
             ok, dk = NODE_KM.get(og), NODE_KM.get(dg)
@@ -1399,16 +1489,17 @@ def api_simulator_shift_context():
     rain_assess = ("Heavy rain — likely traction/mud impact" if maxmm >= 10 else
                    "Some rain — possible impact" if maxmm >= 2 else "Dry — no rain effect")
     busiest = bridges[0] if bridges else None
+    feni_dests = ("FENI KM0", "FENI KM15", "CRUSHER", "HUAFEI", "BSE")
     return jsonify({"ok": True, "date": date, "shift": shift or "all",
                     "rain": rain, "rainMax": maxmm, "rainAssess": rain_assess,
                     "wbAvailable": bool(bridges), "bridges": bridges,
                     "busiest": busiest,
                     "otherFleet": other_fleet, "otherTrips": other_trips,
                     "otherBySection": other_by_section, "otherPaths": other_paths,
-                    "otherFeniTrips": sum(p["trips"] for p in other_paths if p["dest"] in ("FENI", "CRUSHER")),
+                    "otherFeniTrips": sum(p["trips"] for p in other_paths
+                                         if p["dest"] in feni_dests),
                     "otherFeniTypical": _other_feni_typical(),
                     "wbNote": None if bridges else "No weighbridge weigh data before Dec 2025 for this shift."})
-
 def api_weighbridge_summary():
     """Small home-page status payload. Deliberately avoids the simulator's 90-day wait-curve query.
 
@@ -1858,3 +1949,552 @@ def api_simulate_options():
     return jsonify({"routes": routes, **pts,
                     "note": ("capacity is the p99 of hourly throughput actually "
                              "observed at that point, not a design figure")})
+
+
+def _analogues_corpus():
+    """Build retrieval corpus: FMS memory → capability snapshot → fixture."""
+    import plan_analogues as pa
+    import plan_memory as pm
+
+    rain_by_date = {}
+    try:
+        _rows, rain = _path_snapshot()
+        for (d, _a), h in (rain or {}).items():
+            ds = str(d)[:10]
+            rain_by_date[ds] = max(rain_by_date.get(ds, 0.0), float(h))
+    except Exception:  # noqa: BLE001
+        rain_by_date = {}
+
+    # 1) Materialised memory table in FMS_DB
+    if _db_ready():
+        try:
+            conn = _conn("FMS_DB")
+            try:
+                pm.ensure_tables(conn)
+                mem = pm.read_day_kpi_rows(conn)
+                if mem:
+                    corpus, src = pa.load_corpus(memory_rows=mem, rain_by_date=rain_by_date)
+                    return corpus, src
+            finally:
+                conn.close()
+        except Exception as e:  # noqa: BLE001
+            print("[sim_api] plan memory read skipped: %s" % e)
+
+    # 2) Local disk memory (built by scripts/build_plan_memory.py)
+    try:
+        local = pm.read_local_day_kpi()
+        if local:
+            corpus, src = pa.load_corpus(memory_rows=local, rain_by_date=rain_by_date)
+            return corpus, "local_memory"
+    except Exception as e:  # noqa: BLE001
+        print("[sim_api] local plan memory skipped: %s" % e)
+
+    # 3) Live / disk capability snapshot (has contractor grain)
+    try:
+        cap_rows = _cap_snapshot()
+        if cap_rows:
+            corpus, src = pa.load_corpus(cap_rows=cap_rows, rain_by_date=rain_by_date)
+            return corpus, src
+    except Exception as e:  # noqa: BLE001
+        print("[sim_api] capability corpus skipped: %s" % e)
+
+    # 4) Fixture dailyByPath
+    return pa.load_fixture_corpus()
+
+
+def _analogues_attach_gps(result):
+    """Attach per-day haul GPS speeds for analogue dates in the GPS window only."""
+    import plan_analogues as pa
+    import plan_memory as pm
+    if not result.get("ok") or not _db_ready():
+        return result
+    dates = [a["date"] for a in (result.get("analogues") or [])]
+    for bp in result.get("by_plan") or []:
+        dates.extend(a["date"] for a in (bp.get("analogues") or []))
+    dates = list({d for d in dates if pa.has_haul_gps(d)})
+    if not dates:
+        return result
+    try:
+        conn = _conn("FMS_DB")
+        try:
+            speeds = pm.fetch_gps_speed_by_date(conn, dates)
+        finally:
+            conn.close()
+    except Exception as e:  # noqa: BLE001
+        print("[sim_api] gps speed attach skipped: %s" % e)
+        return result
+    if not speeds:
+        return result
+    pa.attach_location_speeds(result.get("analogues"), speeds)
+    for bp in result.get("by_plan") or []:
+        pa.attach_location_speeds(bp.get("analogues"), speeds)
+    return result
+
+
+@bp.route('/api/plan/analogues', methods=['POST'])
+def api_plan_analogues():
+    """Retrieve 5–10 historical analogue days for a holding plan + shared-road risk.
+
+    Does not change /api/simulate tonnes. Congestion is advisory only.
+    """
+    import plan_analogues as pa
+    import plan_memory as pm
+    try:
+        payload = request.get_json(force=True, silent=True) or {}
+    except Exception:  # noqa: BLE001
+        payload = {}
+    if not isinstance(payload.get("plans"), list) or not payload["plans"]:
+        return jsonify({"ok": False,
+                        "error": "supply plans: [{source, destination, n_trucks, contractor?}]",
+                        "analogues": [], "ensemble": {}, "shared_road": {}}), 400
+
+    # Cache hit (optional)
+    fp = None
+    try:
+        k = max(5, min(10, int(payload.get("k") or 8)))
+        rain_mm = payload.get("rain_mm")
+        if rain_mm is None:
+            rain_mm = payload.get("rain", 0)
+        fp = pa.fingerprint_hash(
+            payload.get("plans"), rain_mm, k,
+            rank=payload.get("rank"),
+            prefer_peak=payload.get("prefer_peak", True))
+        if _db_ready() and not payload.get("nocache"):
+            conn = _conn("FMS_DB")
+            try:
+                pm.ensure_tables(conn)
+                cached = pm.cache_get(conn, fp)
+                if cached and cached.get("ok"):
+                    cached = dict(cached)
+                    cached["servedFrom"] = "fms_cache"
+                    return jsonify(cached)
+            finally:
+                conn.close()
+    except Exception as e:  # noqa: BLE001
+        print("[sim_api] analogue cache read skipped: %s" % e)
+
+    try:
+        corpus, src = _analogues_corpus()
+        result = pa.find_analogues(payload, corpus=corpus, corpus_source=src)
+        result = _analogues_attach_gps(result)
+    except Exception as e:  # noqa: BLE001
+        print("[sim_api] plan analogues failed: %s" % e)
+        # Last resort: fixture corpus only
+        try:
+            corpus, src = pa.load_fixture_corpus()
+            result = pa.find_analogues(payload, corpus=corpus, corpus_source=src)
+        except Exception as e2:  # noqa: BLE001
+            return jsonify({"ok": False, "error": "analogues failed: %s" % e2,
+                            "analogues": [], "ensemble": {}, "shared_road": {}}), 500
+
+    # Persist cache + graph memory (best-effort)
+    if result.get("ok") and _db_ready() and not payload.get("nocache"):
+        try:
+            conn = _conn("FMS_DB")
+            try:
+                pm.ensure_tables(conn)
+                if fp:
+                    pm.cache_put(conn, fp, payload, result)
+                pm.upsert_nodes_edges(conn, result)
+            finally:
+                conn.close()
+        except Exception as e:  # noqa: BLE001
+            print("[sim_api] analogue memory write skipped: %s" % e)
+
+    return jsonify(result)
+
+
+# Site centre for rainfall forecast lookups. Derived from the committed road
+# survey (data/haul_road_chainage_public.csv): lat 0.476..0.807, lng
+# 127.898..128.038, median (0.5586, 127.9647). NOTE the road survey is the
+# authority here — scripts/fetch_weather.py previously used (-0.7297, 127.9056),
+# the wrong hemisphere, ~140 km south of the road.
+_SITE_LAT, _SITE_LNG = 0.5586, 127.9647
+
+
+def _rain_by_date_map():
+    """Max mm per calendar day from path-response rain gauges (site history)."""
+    out = {}
+    try:
+        _rows, rain = _path_snapshot()
+        for (d, _a), h in (rain or {}).items():
+            ds = str(d)[:10]
+            try:
+                out[ds] = max(out.get(ds, 0.0), float(h))
+            except (TypeError, ValueError):
+                continue
+    except Exception:  # noqa: BLE001
+        return {}
+    return out
+
+
+def _climatology_mm(rain_map, date_s):
+    """Mean of same month-day across years in the rain map."""
+    md = str(date_s)[5:10]  # MM-DD
+    vals = [v for d, v in rain_map.items() if len(d) >= 10 and d[5:10] == md]
+    if not vals:
+        return None, 0
+    return round(sum(vals) / len(vals), 1), len(vals)
+
+
+def _forecast_mm(date_s):
+    """Open-Meteo daily precipitation for the mine site (no API key)."""
+    import urllib.parse
+    import urllib.request
+    from datetime import date as _date
+    try:
+        target = _date.fromisoformat(str(date_s)[:10])
+    except ValueError:
+        return None
+    today = _date.today()
+    if target < today or (target - today).days > 16:
+        return None
+    qs = urllib.parse.urlencode({
+        "latitude": _SITE_LAT,
+        "longitude": _SITE_LNG,
+        "daily": "precipitation_sum",
+        "timezone": "Asia/Jayapura",
+        "start_date": target.isoformat(),
+        "end_date": target.isoformat(),
+    })
+    url = "https://api.open-meteo.com/v1/forecast?" + qs
+    try:
+        with urllib.request.urlopen(url, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        daily = data.get("daily") or {}
+        precip = (daily.get("precipitation_sum") or [None])[0]
+        if precip is None:
+            return None
+        return round(float(precip), 1)
+    except Exception as e:  # noqa: BLE001
+        print("[sim_api] rain forecast fetch failed: %s" % e)
+        return None
+
+
+# ── Saved holding plans (local disk; keyed by plan date) ─────────────────────
+_SAVED_PLANS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "saved_plans")
+
+
+def _saved_plan_path(date_s):
+    """Absolute path for YYYY-MM-DD.json under data/saved_plans/."""
+    from datetime import date as _date
+    try:
+        _date.fromisoformat(date_s)
+    except ValueError:
+        return None
+    if len(date_s) != 10 or date_s[4] != "-" or date_s[7] != "-":
+        return None
+    return os.path.join(_SAVED_PLANS_DIR, date_s + ".json")
+
+
+@bp.route('/api/plan/saved', methods=['GET', 'POST', 'DELETE'])
+def api_plan_saved():
+    """Save / load / delete a holding plan for a calendar date (local JSON)."""
+    if request.method == 'GET':
+        date_s = (request.args.get("date") or "").strip()[:10]
+        path = _saved_plan_path(date_s)
+        if not path:
+            return jsonify({"ok": False, "error": "supply date=YYYY-MM-DD"}), 400
+        if not os.path.isfile(path):
+            return jsonify({"ok": True, "date": date_s, "plan": None, "exists": False})
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                plan = json.load(f)
+        except Exception as e:  # noqa: BLE001
+            return jsonify({"ok": False, "error": "read failed: %s" % e}), 500
+        return jsonify({"ok": True, "date": date_s, "plan": plan, "exists": True})
+
+    if request.method == 'DELETE':
+        date_s = (request.args.get("date") or "").strip()[:10]
+        path = _saved_plan_path(date_s)
+        if not path:
+            return jsonify({"ok": False, "error": "supply date=YYYY-MM-DD"}), 400
+        if os.path.isfile(path):
+            try:
+                os.remove(path)
+            except Exception as e:  # noqa: BLE001
+                return jsonify({"ok": False, "error": "delete failed: %s" % e}), 500
+        return jsonify({"ok": True, "date": date_s, "deleted": True})
+
+    # POST
+    body = request.get_json(silent=True) or {}
+    date_s = (body.get("date") or "").strip()[:10]
+    path = _saved_plan_path(date_s)
+    if not path:
+        return jsonify({"ok": False, "error": "supply date=YYYY-MM-DD"}), 400
+    paths = body.get("paths")
+    if not isinstance(paths, dict) or not paths:
+        return jsonify({"ok": False, "error": "paths object required"}), 400
+    plan = {
+        "date": date_s,
+        "paths": paths,
+        "rain_mm": body.get("rain_mm"),
+        "hours": body.get("hours"),
+        "wb": body.get("wb"),
+        "meta": body.get("meta") or {},
+        "saved_at": __import__("datetime").datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    try:
+        os.makedirs(_SAVED_PLANS_DIR, exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(plan, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, path)
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"ok": False, "error": "write failed: %s" % e}), 500
+    return jsonify({"ok": True, "date": date_s, "plan": plan, "exists": True})
+
+
+@bp.route('/api/plan/saved/list', methods=['GET'])
+def api_plan_saved_list():
+    """List recently saved plan dates (newest first)."""
+    dates = []
+    if os.path.isdir(_SAVED_PLANS_DIR):
+        for name in os.listdir(_SAVED_PLANS_DIR):
+            if name.endswith(".json") and len(name) == 15:
+                dates.append(name[:-5])
+    dates.sort(reverse=True)
+    return jsonify({"ok": True, "dates": dates[:60]})
+
+
+@bp.route('/api/plan/corridor-hours', methods=['GET'])
+def api_plan_corridor_hours():
+    """Jul+ hour-of-day corridor speed profile (advisory). Does not clip tonnes."""
+    import plan_corridor_hours as pch
+    sections = request.args.get("sections") or ""
+    sec_list = [s.strip() for s in sections.replace("|", ",").split(",") if s.strip()]
+    direction = (request.args.get("dir") or "down").strip().lower()
+    use_fixture = str(request.args.get("fixture") or "").strip() in ("1", "true", "yes")
+    path = pch._FIXTURE if use_fixture else None
+    payload = pch.corridor_hours(sections=sec_list or None, dir_filter=direction, path=path)
+    status = 200 if payload.get("ok") else 503
+    return jsonify(payload), status
+
+
+@bp.route('/api/plan/day-segments', methods=['GET'])
+def api_plan_day_segments():
+    """Per-segment loaded/empty speeds for one GPS-window day. Empty before Jul 15."""
+    import plan_corridor_hours as pch
+    date_s = (request.args.get("date") or "").strip()[:10]
+    if not date_s:
+        return jsonify({"ok": False, "error": "supply date=YYYY-MM-DD",
+                        "has_gps": False, "segments": [],
+                        "basis": {"congestion_clips_tonnes": False}}), 400
+    use_fixture = str(request.args.get("fixture") or "").strip() in ("1", "true", "yes")
+    path = pch._FIXTURE if use_fixture else None
+    payload = pch.day_segments(date_s, path=path)
+    status = 200 if payload.get("ok") else (400 if payload.get("error", "").startswith("supply") else 503)
+    return jsonify(payload), status
+
+
+@bp.route('/api/plan/gps-coverage', methods=['GET'])
+def api_plan_gps_coverage():
+    """Which calendar days have banked Jul+ haul stick GPS (advisory calendar)."""
+    import plan_corridor_hours as pch
+    use_fixture = str(request.args.get("fixture") or "").strip() in ("1", "true", "yes")
+    path = pch._FIXTURE if use_fixture else None
+    payload = pch.gps_coverage(path=path)
+    status = 200 if payload.get("ok") else 503
+    return jsonify(payload), status
+
+
+@bp.route('/api/plan/refresh-stick', methods=['POST'])
+def api_plan_refresh_stick():
+    """Rebuild stick measuredSpeeds CSV from gps_archive (no tonne model change)."""
+    global _CORRIDOR_LAYERS
+    import plan_corridor_hours as pch
+    payload = pch.rebuild_by_dir_from_archive()
+    if payload.get("ok"):
+        _CORRIDOR_LAYERS = None  # next corridor payload reloads CSV
+    return jsonify(payload), (200 if payload.get("ok") else 503)
+
+
+@bp.route('/api/plan/playback-truth', methods=['GET'])
+def api_plan_playback_truth():
+    """Why Jan–May haul speeds are not invented from Playback (0% haul overlap)."""
+    import plan_playback as pp
+    date_s = (request.args.get("date") or "").strip()[:10]
+    truth = pp.load_playback_truth()
+    if date_s:
+        truth["for_date"] = pp.refuse_invented_speeds(date_s)
+    return jsonify(truth)
+
+
+@bp.route('/api/plan/bias-lens', methods=['GET', 'POST'])
+def api_plan_bias_lens():
+    """Display-only +5.5% delivery lens. Never changes /api/simulate tonnes."""
+    import plan_bias as pb
+    if request.method == "POST":
+        body = request.get_json(force=True, silent=True) or {}
+    else:
+        body = {}
+    raw = body.get("achievable_t", request.args.get("achievable_t"))
+    enabled = body.get("enabled", request.args.get("enabled"))
+    if isinstance(enabled, str):
+        enabled = enabled.strip().lower() in ("1", "true", "yes", "on")
+    else:
+        enabled = bool(enabled)
+    try:
+        raw_f = float(raw) if raw is not None and raw != "" else None
+    except (TypeError, ValueError):
+        raw_f = None
+    return jsonify({"ok": True, **pb.bias_lens(raw_f, enabled=enabled)})
+
+
+@bp.route('/api/plan/shared-flow', methods=['GET', 'POST'])
+def api_plan_shared_flow():
+    """DES-lite shared-section occupancy for multi-contractor plans (advisory)."""
+    import plan_shared_flow as psf
+    import plan_corridor_hours as pch
+    if request.method == "POST":
+        body = request.get_json(force=True, silent=True) or {}
+    else:
+        body = {}
+    plans = body.get("plans") if isinstance(body.get("plans"), list) else None
+    try:
+        shift_h = float(body.get("shift_hours") or request.args.get("shift_hours") or 12)
+    except (TypeError, ValueError):
+        shift_h = 12.0
+    try:
+        rain = float(body.get("rain_mm") or request.args.get("rain_mm") or 0)
+    except (TypeError, ValueError):
+        rain = 0.0
+    try:
+        start_h = int(body.get("start_hour") or request.args.get("start_hour") or 7)
+    except (TypeError, ValueError):
+        start_h = 7
+    use_fixture = str(request.args.get("fixture") or body.get("fixture") or "").strip() in ("1", "true", "yes")
+    path = pch._FIXTURE if use_fixture else None
+    payload = psf.shared_flow(
+        plans=plans,
+        shift_hours=shift_h,
+        rain_mm=rain,
+        start_hour=start_h,
+        path=path,
+    )
+    return jsonify(payload), (200 if payload.get("ok") else 400)
+
+
+@bp.route('/api/plan/congestion-advice', methods=['GET', 'POST'])
+def api_plan_congestion_advice():
+    """Jul+ hour congestion advisory (+ saved-plan hints). Does not clip tonnes."""
+    import plan_congestion_ml as pcm
+    import plan_corridor_hours as pch
+    if request.method == "POST":
+        body = request.get_json(force=True, silent=True) or {}
+    else:
+        body = {}
+    sections = body.get("sections") or request.args.get("sections") or ""
+    if isinstance(sections, str):
+        sec_list = [s.strip() for s in sections.replace("|", ",").split(",") if s.strip()]
+    else:
+        sec_list = [str(s).strip() for s in sections if str(s).strip()]
+    plan_dt = body.get("plan_dt_by_section") if isinstance(body.get("plan_dt_by_section"), dict) else None
+    vc_by = body.get("vc_by_section") if isinstance(body.get("vc_by_section"), dict) else None
+    limit_gap = body.get("limit_gap_by_section") if isinstance(body.get("limit_gap_by_section"), dict) else None
+    use_fixture = str(request.args.get("fixture") or body.get("fixture") or "").strip() in ("1", "true", "yes")
+    path = pch._FIXTURE if use_fixture else None
+    payload = pcm.congestion_advice(
+        sections=sec_list or None,
+        path=path,
+        plan_dt_by_section=plan_dt,
+        vc_by_section=vc_by,
+        limit_gap_by_section=limit_gap,
+    )
+    return jsonify(payload), (200 if payload.get("ok") else 503)
+
+
+@bp.route('/api/plan/peak-road-proxy', methods=['GET', 'POST'])
+def api_plan_peak_road_proxy():
+    """Jan–May peak REFERENCE averages, or single-day ops when date= is supplied."""
+    import plan_peak_proxy as ppp
+    if request.method == "POST":
+        body = request.get_json(force=True, silent=True) or {}
+    else:
+        body = {}
+    date_s = (body.get("date") or request.args.get("date") or "").strip()[:10]
+    plans = body.get("plans") if isinstance(body.get("plans"), list) else None
+    try:
+        corpus, src = _analogues_corpus()
+    except Exception:  # noqa: BLE001
+        corpus, src = None, None
+    if date_s:
+        payload = ppp.day_road_ops(date_s, corpus=corpus, corpus_source=src)
+    else:
+        payload = ppp.peak_road_proxy(corpus=corpus, corpus_source=src, plans=plans)
+    return jsonify(payload)
+
+
+@bp.route('/api/plan/day-road-ops', methods=['GET'])
+def api_plan_day_road_ops():
+    """Weighbridge section DT/trips for one calendar day only."""
+    import plan_peak_proxy as ppp
+    date_s = (request.args.get("date") or "").strip()[:10]
+    if not date_s:
+        return jsonify({"ok": False, "error": "supply date=YYYY-MM-DD",
+                        "has_ops": False, "sections": []}), 400
+    try:
+        corpus, src = _analogues_corpus()
+    except Exception:  # noqa: BLE001
+        corpus, src = None, None
+    return jsonify(ppp.day_road_ops(date_s, corpus=corpus, corpus_source=src))
+
+
+@bp.route('/api/plan/rain-suggest', methods=['GET'])
+def api_plan_rain_suggest():
+    """Suggest rainfall (mm) for a planning date on site.
+
+    Priority: observed site gauge that day → Open-Meteo forecast (near future)
+    → same calendar-day climatology from site history.
+    """
+    from datetime import date as _date
+    date_s = (request.args.get("date") or "").strip()[:10]
+    if not date_s:
+        return jsonify({"ok": False, "error": "supply date=YYYY-MM-DD"}), 400
+    try:
+        target = _date.fromisoformat(date_s)
+    except ValueError:
+        return jsonify({"ok": False, "error": "bad date"}), 400
+
+    rain_map = _rain_by_date_map()
+    today = _date.today()
+
+    if date_s in rain_map:
+        mm = round(float(rain_map[date_s]), 1)
+        return jsonify({
+            "ok": True, "date": date_s, "mm": mm,
+            "source": "observed",
+            "label": "Site gauge",
+            "note": "Measured on site that day (%.0f mm)." % mm,
+            "apply": True,
+        })
+
+    if target >= today:
+        fc = _forecast_mm(date_s)
+        if fc is not None:
+            return jsonify({
+                "ok": True, "date": date_s, "mm": fc,
+                "source": "forecast",
+                "label": "Forecast",
+                "note": "Open-Meteo forecast for site (~%.0f mm)." % fc,
+                "apply": True,
+            })
+
+    clim, n = _climatology_mm(rain_map, date_s)
+    if clim is not None:
+        return jsonify({
+            "ok": True, "date": date_s, "mm": clim,
+            "source": "climatology",
+            "label": "Typical",
+            "note": "Average for this calendar day over %d past year(s) (%.0f mm)." % (n, clim),
+            "apply": True,
+        })
+
+    return jsonify({
+        "ok": True, "date": date_s, "mm": 0,
+        "source": "none",
+        "label": "No data",
+        "note": "No gauge / forecast / typical rain for this date — leaving 0 mm.",
+        "apply": False,
+    })

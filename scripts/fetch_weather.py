@@ -35,8 +35,12 @@ CACHE = os.path.join(DATA, "weather_cache.csv")
 
 # Weda Bay Nickel site. The haul road runs TF -> FENI over 67.8 km, well inside
 # one ERA5 cell, so a single point is the right granularity for daily weather.
-SITE_LAT = -0.7297
-SITE_LON = 127.9056
+# Coordinates come from the committed road survey
+# (data/haul_road_chainage_public.csv, median 0.5586 N / 127.9647 E). The old
+# value here (-0.7297) was the WRONG HEMISPHERE, ~140 km south of the road —
+# re-run this script to rebuild data/weather_cache.csv at the correct point.
+SITE_LAT = 0.5586
+SITE_LON = 127.9647
 
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
