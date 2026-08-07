@@ -1392,6 +1392,124 @@ def api_simulator_weighbridge_positions():
                     "usageAvailable": bool(usage),
                     "corridorKm": _SIM_CORRIDOR.get("lengthKm", 67.8)})
 
+# WBN-owned endpoint (additive). Links a source→dest PATH to the specific
+# weighbridges that actually weighed that path's trucks — the gap behind the
+# Plan tab's free "weighbridges open" number, which is tied to neither WHICH
+# bridges nor the bridges that lie on the selected haul. Measured from tickets
+# (WB_ID × ORIGIN/DEST) rather than assumed from geometry, matching this repo's
+# "measure, don't assume" rule. No DB exception is caught here: it propagates so
+# _register serves fixtures/weighbridge-by-path.json in no-DB / unreachable mode.
+def api_simulator_weighbridge_by_path():
+    """Weighbridges serving a given ORIGIN→DEST path, by measured ticket count."""
+    src = (request.args.get("source") or request.args.get("src") or "").strip()
+    dst = (request.args.get("dest") or request.args.get("dst") or "").strip()
+    frm = (request.args.get("from") or "").strip()[:10]
+    to = (request.args.get("to") or "").strip()[:10]
+    shift = (request.args.get("shift") or "").strip()   # '1' day, '2' night, else all
+    # Same canonical-label → LIKE patterns the capability query uses (kept local
+    # and minimal). If you extend the capability area maps, mirror them here.
+    area_like = {
+        "TF": ("ORIGIN_AREA LIKE %s OR ORIGIN_AREA LIKE %s OR ORIGIN_AREA LIKE %s",
+               ("%TOFU%", "TF%", "TOS_TF%")),
+        "TOFU": ("ORIGIN_AREA LIKE %s OR ORIGIN_AREA LIKE %s", ("%TOFU%", "TF%")),
+        "KR": ("ORIGIN_AREA LIKE %s OR ORIGIN_AREA LIKE %s", ("%KRENE%", "KR%")),
+    }
+    dest_like = {
+        "FENI KM0": ("DESTINATION_AREA LIKE %s", ("%FENI%",)),
+        "FENI KM15": ("DESTINATION_AREA LIKE %s OR DESTINATION_AREA LIKE %s",
+                      ("%FENI KM15%", "%FENI 15%")),
+        "POS 12": ("DESTINATION_AREA LIKE %s OR DESTINATION_AREA LIKE %s",
+                   ("%POS 12%", "%POS12%")),
+        "POS 10": ("DESTINATION_AREA LIKE %s OR DESTINATION_AREA LIKE %s",
+                   ("%POS 10%", "%POS10%")),
+        "CRUSHER": ("DESTINATION_AREA LIKE %s", ("%CRUSHER%",)),
+        "HUAFEI": ("DESTINATION_AREA LIKE %s", ("%HUAFEI%",)),
+        "BSE": ("DESTINATION_AREA LIKE %s", ("%BSE%",)),
+    }
+    where, params = ["WB_ID<>'' AND WB_ID IS NOT NULL"], []
+    if frm:
+        where.append("CONVERT(date,[DATE]) >= %s"); params.append(frm)
+    if to:
+        where.append("CONVERT(date,[DATE]) <= %s"); params.append(to)
+    if shift in ("1", "2"):
+        where.append("SHIFT=%s"); params.append(shift)
+    if src:
+        spec = area_like.get(src) or area_like.get(src.replace(" ", ""))
+        if spec:
+            where.append("(" + spec[0] + ")"); params.extend(spec[1])
+        else:
+            where.append("UPPER(ORIGIN_AREA) LIKE %s"); params.append("%" + src.upper() + "%")
+    if dst:
+        spec = dest_like.get(dst)
+        if spec:
+            where.append("(" + spec[0] + ")"); params.extend(spec[1])
+        else:
+            where.append("UPPER(DESTINATION_AREA) LIKE %s"); params.append("%" + dst.upper() + "%")
+    conn = _conn('WBN_DATABASE')
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT WB_ID, COUNT(*), SUM(WMT) FROM HAULAGE_IWIP_CLEAN "
+                    "WHERE " + " AND ".join(where) + " GROUP BY WB_ID", tuple(params))
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+    # Join each WB_ID to its corridor chainage, reusing the digit-matching scheme
+    # from api_simulator_weighbridge_positions.
+    import re as _re
+    pos_by_key = {}
+    for p in _wb_corridor_positions():
+        num = str(p.get("wbNum") or '').upper()
+        plain = str(int(num)) if num.isdigit() else num
+        for key in {str(p.get("name") or '').upper(), num, plain,
+                    'T' + num, 'T' + plain, 'WB' + num, 'WB' + plain}:
+            if key:
+                pos_by_key[key] = p
+    bridges, total = [], 0
+    for wb_id, n, wmt in rows:
+        n = int(n or 0); total += n
+        raw = str(wb_id or '').strip().upper()
+        digits = _re.findall(r'\d+', raw)
+        num = str(int(digits[-1])) if digits else raw
+        p = next((pos_by_key[k] for k in (raw, num, 'T' + num, 'WB' + num) if k in pos_by_key), None)
+        # onCorridor is UNKNOWN (null), not False, when we have no position for
+        # the bridge — geofences.json is absent on some deployments, so defaulting
+        # to False would wrongly tag every bridge a "spur".
+        bridges.append({"wb": raw, "wbNum": num, "trips": n, "wmt": float(wmt or 0),
+                        "km": (p or {}).get("km"), "offM": (p or {}).get("offM"),
+                        "onCorridor": None if p is None else (p.get("offM", 999) <= 150)})
+    bridges.sort(key=lambda b: -b["trips"])
+    for b in bridges:
+        b["sharePct"] = round(100.0 * b["trips"] / total, 1) if total else 0.0
+    # A weighbridge only "serves" the route if it handled a MATERIAL share of the
+    # weighs. Tickets scatter a few strays onto almost every bridge (a truck
+    # weighed at the wrong scale, a mis-tagged row): e.g. TF>POS 12 has 7 bridges
+    # with 1-47 tickets out of ~89k — noise, not part of the haul. Keep bridges at
+    # or above MIN_SHARE_PCT of the route's weighs; if that would drop everything
+    # (a very fragmented route), keep the single busiest so the list is never empty.
+    MIN_SHARE_PCT = 1.0
+    material = [b for b in bridges if b["sharePct"] >= MIN_SHARE_PCT]
+    if not material and bridges:
+        material = [bridges[0]]
+    excluded = len(bridges) - len(material)
+    # Capacity ceiling from the bridges that ACTUALLY serve the path — same
+    # ~30 trips/hr assumption plan.js already uses, but multiplied by the
+    # measured on-path bridge count instead of a free number. Labelled as an
+    # assumption so it is never mistaken for a measured ceiling.
+    SHIFT_HRS, PER_BRIDGE_HR = 12, 30
+    n_used = len(material)
+    return jsonify({
+        "ok": True, "source": src or None, "dest": dst or None,
+        "from": frm or None, "to": to or None,
+        "bridges": material, "nBridges": n_used, "totalTrips": total,
+        "excludedMinorBridges": excluded, "minSharePct": MIN_SHARE_PCT,
+        "positionsAvailable": any(b["km"] is not None for b in material),
+        "capacityTripsPerShift": n_used * PER_BRIDGE_HR * SHIFT_HRS,
+        "capacityBasis": "%d on-path bridges x ~%d trips/hr x %dh (assumption)"
+                         % (n_used, PER_BRIDGE_HR, SHIFT_HRS),
+        "servedFrom": "db",
+        "source_table": "WBN_DATABASE.dbo.HAULAGE_IWIP_CLEAN",
+    })
+
 def api_simulator_shift_context():
     """Everything specific to ONE reviewed shift-day: that day's rainfall by mine area (did weather bite?)
     and the per-weighbridge usage split with the busiest = likely congestion point. Weigh data only exists
@@ -1791,6 +1909,7 @@ _register('/api/simulator/capability', api_simulator_capability, 'capability', m
 _register('/api/simulator/path-response', api_simulator_path_response, 'path-response', methods=['GET'])
 _register('/api/simulator/congestion-model', api_simulator_congestion_model, 'congestion-model', methods=['GET'])
 _register('/api/simulator/weighbridge-positions', api_simulator_weighbridge_positions, 'weighbridge-positions', methods=['GET'])
+_register('/api/simulator/weighbridge-by-path', api_simulator_weighbridge_by_path, 'weighbridge-by-path', methods=['GET'])
 _register('/api/simulator/shift-context', api_simulator_shift_context, 'shift-context', methods=['GET'])
 _register('/api/weighbridge-summary', api_weighbridge_summary, 'weighbridge-summary', methods=['GET'])
 _register('/api/simulator/weighbridge', api_simulator_weighbridge, 'weighbridge', methods=['GET'])

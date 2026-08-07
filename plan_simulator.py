@@ -308,6 +308,13 @@ def simulate(payload: dict) -> dict:
     src_plans: dict[str, list] = {}
     dst_plans: dict[str, list] = {}
     for p in plans:
+        # Foreign / road-only plans (IWIP, another mine on our roads) do NOT
+        # contend for OUR loading/dumping points — they belong to a different
+        # operation. They only add congestion on the shared corridor, handled
+        # after the trip resolution below. So they are excluded from the
+        # loading-point demand here.
+        if p.get("foreign"):
+            continue
         s, d = str(p.get("source", "")).upper(), str(p.get("destination", "")).upper()
         n = float(p.get("n_trucks", 0) or 0)
         src_trucks[s] = src_trucks.get(s, 0) + n
@@ -434,13 +441,71 @@ def simulate(payload: dict) -> dict:
             "payload_t": float(hist.get("median_payload_t") or 0),
         })
 
-    # Total trips demanded of each loading point, summed across all plans.
+    # ── Foreign / road-only traffic (IWIP, other mines) ──────────────────────
+    # A plan flagged `foreign` adds NO WMT for us, but its trucks still occupy
+    # the shared FENI corridor and drag our trips/DT down. The coefficient is the
+    # SAME measured one the Capability tab's IWIP-impact panel uses — this is not
+    # a new assumption, it is that measured relationship applied at plan time.
+    # Only foreign traffic applies drag: our own extra trucks do NOT self-congest
+    # (that effect is not identifiable in the data), so the honesty rule holds.
+    OTHER_TRAFFIC_COEF = -0.00035   # trips/DT per extra FENI-corridor trip; mirrors static/js/main.js:239
+
+    def _is_feni(x):
+        return "FENI" in str(x).upper()
+
+    foreign_feni_trips = sum(r["fleet_trips"] for r in resolved
+                             if r["plan"].get("foreign") and _is_feni(r["destination"]))
+    drag_per_dt = OTHER_TRAFFIC_COEF * foreign_feni_trips        # <= 0
+    drag_routes: list = []
+    drag_tonnage_cost = 0.0
+    if drag_per_dt < 0:
+        for r in resolved:
+            if r["plan"].get("foreign") or not _is_feni(r["destination"]):
+                continue
+            if r["trips_per_truck"] <= 0:
+                continue
+            new_tpt = max(0.0, r["trips_per_truck"] + drag_per_dt)
+            lost_trips = (r["trips_per_truck"] - new_tpt) * r["n"]
+            r["trips_per_truck"] = new_tpt
+            r["fleet_trips"] = new_tpt * r["n"]
+            drag_tonnage_cost += lost_trips * r["payload_t"]
+            drag_routes.append(r["route"])
+
+    # Total trips demanded of each loading point, summed across all WBN plans
+    # (foreign plans are a different operation and excluded).
     demand_by_src: dict[str, float] = {}
     for r in resolved:
+        if r["plan"].get("foreign"):
+            continue
         demand_by_src[r["source"]] = (demand_by_src.get(r["source"], 0.0)
                                       + r["fleet_trips"])
 
     for r in resolved:
+        # Foreign / road-only line: report its corridor load, but no WMT. Its
+        # effect on us is the drag already applied to the production routes above.
+        if r["plan"].get("foreign"):
+            fcycle, fload, fdump = r["cycle"], r["load_min"], r["dump_min"]
+            results.append({
+                "route": r["route"], "source": r["source"], "destination": r["destination"],
+                "n_trucks": int(r["n"]), "foreign": True,
+                "predicted_cycle_time_min": round(fcycle, 1) if fcycle else None,
+                "effective_cycle_min": round(r["effective_cycle"], 1) if r["effective_cycle"] else None,
+                "predicted_load_time_min": round(fload, 1) if fload is not None else None,
+                "predicted_dump_time_min": round(fdump, 1) if fdump is not None else None,
+                "implied_travel_time_min": round(max((fcycle or 0) - (fload or 0) - (fdump or 0), 0.0), 1),
+                "trips_per_shift_per_truck": round(r["trips_per_truck"], 2),
+                "total_trips": round(r["fleet_trips"], 1),
+                "avg_payload_t": round(r["payload_t"], 2),
+                "planned_production_t": 0, "achievable_production_t": 0,
+                "trucks_to_roster": None, "roster_availability": None, "roster_basis": None,
+                "capacity_note": "road-only / foreign — adds congestion, no WMT",
+                "capacity_ratio": None,
+                "congestion_note": ("foreign FENI-corridor load — applies the measured drag to shared WBN routes"
+                                    if _is_feni(r["destination"]) else "foreign traffic off the FENI corridor — no measured drag"),
+                "shared_with": [],
+                "basis": {"note": "road-only / foreign traffic: congestion only, excluded from WMT"},
+            })
+            continue
         src, route, n = r["source"], r["route"], r["n"]
         cycle = r["cycle"]
         if not cycle:
@@ -524,13 +589,32 @@ def simulate(payload: dict) -> dict:
         })
 
     ok = [x for x in results if "error" not in x]
+    # Production totals exclude foreign / road-only lines: they add congestion,
+    # not tonnage, so summing their (zero) WMT is fine but their trucks must not
+    # inflate the fleet.
+    prod = [x for x in ok if not x.get("foreign")]
+    foreign_rows = [x for x in ok if x.get("foreign")]
+    foreign_congestion = None
+    if foreign_rows:
+        foreign_congestion = {
+            "feni_trips": round(foreign_feni_trips, 1),
+            "drag_per_dt": round(drag_per_dt, 4),
+            "routes_affected": sorted(set(drag_routes)),
+            "tonnage_cost_t": round(drag_tonnage_cost, 0),
+            "foreign_trucks": int(sum(x["n_trucks"] for x in foreign_rows)),
+            "coef": OTHER_TRAFFIC_COEF,
+            "note": ("foreign/road-only trucks add congestion on the shared FENI "
+                     "corridor (measured coefficient), not WMT; only foreign "
+                     "traffic applies drag — our own trucks do not self-congest"),
+        }
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "results": results,
         "summary": {
-            "total_trucks": int(sum(x["n_trucks"] for x in ok)),
-            "planned_production_t": round(sum(x["planned_production_t"] for x in ok), 0),
-            "achievable_production_t": round(sum(x["achievable_production_t"] for x in ok), 0),
+            "total_trucks": int(sum(x["n_trucks"] for x in prod)),
+            "planned_production_t": round(sum(x["planned_production_t"] for x in prod), 0),
+            "achievable_production_t": round(sum(x["achievable_production_t"] for x in prod), 0),
+            "foreign_congestion": foreign_congestion,
             "shared_loading_points": ["%s (%.0f trucks across %d plans)"
                                       % (k, v, len(src_plans[k]))
                                       for k, v in src_trucks.items()
@@ -564,11 +648,11 @@ def simulate(payload: dict) -> dict:
                          "Primary achievable stays raw; do not re-add availability."),
             },
             "fleet_sizing": {
-                "trucks_hauling": int(sum(x["n_trucks"] for x in ok)),
+                "trucks_hauling": int(sum(x["n_trucks"] for x in prod)),
                 "trucks_to_roster": int(sum(
-                    _roster(x["n_trucks"], x.get("route", ""))[0] for x in ok)),
+                    _roster(x["n_trucks"], x.get("route", ""))[0] for x in prod)),
                 "bases_used": sorted({
-                    _roster(x["n_trucks"], x.get("route", ""))[2] for x in ok}),
+                    _roster(x["n_trucks"], x.get("route", ""))[2] for x in prod}),
                 "measured_availability": MEASURED_MECHANICAL_AVAILABILITY,
                 "fleet_prior": MEASURED_MECHANICAL_AVAILABILITY,
                 "coverage_note": ("availability is measured for trucks carrying "
