@@ -60,10 +60,10 @@
     _excluded = (res && res.excludedMinorBridges) || 0;
     if (res && res.minSharePct != null) _minShare = res.minSharePct;
     _route = { s, d };
-    // SINGLE-SELECT: the planner picks the bridge NUMBER this path will use
-    // (owner: "weighbridge number 8, not 8 weighbridges"). Default = the
-    // route's historical top bridge.
-    _sel = new Set(_bridges.length ? [_bridges[0].wb] : []);
+    // SINGLE-SELECT: the planner picks the bridge NUMBER this path will use.
+    // Default suggestion = the route's historical top bridge (or WB 1 when the
+    // route has no ticket history) — but ANY bridge is selectable.
+    _sel = new Set([_bridges.length ? _bridges[0].wb : '1']);
     syncWbCount();
     renderChips();
   }
@@ -99,26 +99,33 @@
     renderChips();
   }
 
+  // Every bridge number on site is selectable — the USER decides which bridge
+  // this path uses; the system only calculates the consequences. History is
+  // shown as a hint (share % on bridges that served this route), never as a
+  // restriction.
+  const ALL_WBS = ['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18'];
   function renderChips(note){
     const host = el('plan-wb-onpath');
     if (!host) return;
-    if (!_n){
-      host.innerHTML = '<div class="plan-wb-path"><div class="plan-wb-path-h muted">No weighbridge tickets on this route in the window.</div></div>';
-      return;
-    }
-    const chips = _bridges.map(b => {
-      const on = _sel.has(b.wb);
-      return `<button type="button" data-wb="${escH(b.wb)}" class="wb-chip${on ? ' on' : ''}"`
-        + ` title="${escH(b.wb)} — ${pct(b.sharePct)} of this route's weighs · click to toggle">`
-        + `${escH(b.wb)} <span class="wb-chip-pct">${pct(b.sharePct)}</span></button>`;
+    const byWb = {};
+    _bridges.forEach(b => { byWb[b.wb] = b; });
+    if (!_sel.size) _sel = new Set([ALL_WBS[0]]);
+    const chips = ALL_WBS.map(wb => {
+      const on = _sel.has(wb);
+      const hist = byWb[wb];
+      const hint = hist ? ` <span class="wb-chip-pct">${pct(hist.sharePct)}</span>` : '';
+      const t = hist
+        ? `${escH(wb)} — ${pct(hist.sharePct)} of this route's historical weighs · click to use this bridge`
+        : `${escH(wb)} — no history on this route (fine — your choice) · click to use this bridge`;
+      return `<button type="button" data-wb="${escH(wb)}" class="wb-chip${on ? ' on' : ''}${hist ? '' : ' wb-chip-nohist'}"`
+        + ` title="${t}">${escH(wb)}${hint}</button>`;
     }).join('');
     host.innerHTML =
       `<div class="plan-wb-path">`
       + `<div class="plan-wb-path-h">`
       + `<b>${escH(_route.s)} → ${escH(_route.d)}</b>`
-      + `<span class="muted">pick the bridge NUMBER for this path · ${_n} seen on route`
+      + `<span class="muted">choose the weighbridge for this path · % = historical use on this route`
       + (_cached ? ' · sample' : '')
-      + (_excluded > 0 ? ` · ${_excluded} incidental hidden` : '')
       + `</span></div>`
       + `<div class="plan-wb-chips">${chips}</div>`
       + (note ? `<div class="plan-wb-path-note">${note}</div>` : '')
@@ -157,10 +164,15 @@
     let name = '—';
     try { if (typeof planContractor === 'function'){ const c = planContractor(); if (c && c.name) name = c.name; } } catch (e) {}
     const id = name + '|' + s + '>' + d;
-    if (typeof _planDraft !== 'undefined' && _planDraft[id] && _bridges.length){
-      // Carry the bridge NUMBER picked in the top panel for this path.
-      _pathWb[id] = { bridges: _bridges.map(b => ({ wb: b.wb, sharePct: b.sharePct })),
-                      sel: new Set(_sel.size ? _sel : [_bridges[0].wb]), open: false };
+    if (typeof _planDraft !== 'undefined' && _planDraft[id]){
+      // Carry the bridge NUMBER picked in the top panel for this path. The
+      // alternates list is the FULL site grid, annotated with history where
+      // it exists — reassignment is never limited to historical bridges.
+      const byWb = {};
+      _bridges.forEach(b => { byWb[b.wb] = b; });
+      _pathWb[id] = {
+        bridges: ALL_WBS.map(wb => ({ wb, sharePct: byWb[wb] ? byWb[wb].sharePct : null })),
+        sel: new Set(_sel.size ? _sel : ['1']), open: false };
     }
   }
 
@@ -238,12 +250,16 @@
           + (rec.paths.length > 1 ? ' ⚠' : '') + `</span>`;
       }).join('');
       const alternates = pw.open
-        ? pw.bridges.filter(b => !pw.sel.has(b.wb)).map(b =>
-            `<span class="pwb-chip" data-pwid="${escH(mm[1])}" data-wb="${escH(b.wb)}"`
-            + ` title="assign WB ${escH(b.wb)} (${pct(b.sharePct)} of this route's historical weighs)"`
+        ? pw.bridges.filter(b => !pw.sel.has(b.wb)).map(b => {
+            const hint = b.sharePct != null ? ` <span style="opacity:.6">${pct(b.sharePct)}</span>` : '';
+            const t = b.sharePct != null
+              ? `assign WB ${escH(b.wb)} (${pct(b.sharePct)} of this route's historical weighs)`
+              : `assign WB ${escH(b.wb)} (no history on this route — your choice)`;
+            return `<span class="pwb-chip" data-pwid="${escH(mm[1])}" data-wb="${escH(b.wb)}"`
+            + ` title="${t}"`
             + ` style="cursor:pointer;display:inline-block;margin:1px 3px 1px 0;padding:1px 7px;border-radius:11px;`
-            + `border:1px dashed var(--line);color:var(--muted)">+ ${escH(b.wb)} <span style="opacity:.6">${pct(b.sharePct)}</span></span>`
-          ).join('')
+            + `border:1px dashed var(--line);color:var(--muted)">+ ${escH(b.wb)}${hint}</span>`;
+          }).join('')
         : '';
       const toggle = pw.bridges.length > 1
         ? `<span class="pwb-toggle" data-pwid="${escH(mm[1])}"`
