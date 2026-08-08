@@ -91,10 +91,11 @@
     _syncing = false;
   }
 
-  // Radio behaviour: clicking a bridge number selects THAT bridge for the
-  // path being built (one bridge per path).
+  // MULTI-select: a path may use two or more bridges (trucks take whichever
+  // assigned bridge is free). Click toggles; at least one stays selected.
   function toggleChip(wb){
-    _sel = new Set([wb]);
+    if (_sel.has(wb)){ if (_sel.size > 1) _sel.delete(wb); }
+    else _sel.add(wb);
     syncWbCount();
     renderChips();
   }
@@ -195,9 +196,19 @@
     return 0;
   }
 
-  // Per-bridge utilisation across the whole holding plan: each path's trips go
-  // to its assigned bridge(s) (split evenly when >1). Ceiling per bridge =
-  // PLAN_WB_TRIPS_PER_HOUR x shift hours (same basis as the WB-load bar).
+  // Per-bridge load across the whole holding plan.
+  //
+  // SPLIT: a path's trips divide across its assigned bridges by the route's
+  // HISTORICAL share of those bridges (drivers already favour the bridges
+  // that serve their route); even split when no history covers the selection.
+  //
+  // QUEUE MODEL (M/M/1): each bridge is a single server at rate mu =
+  // PLAN_WB_TRIPS_PER_HOUR. With arrivals lambda, utilisation rho = lambda/mu
+  // and steady-state queue wait W = s * rho / (1 - rho), s = 60/mu min. This
+  // matches the measured flat-wait regime below ~70%% and the blow-up above:
+  // rho .70 -> +5 min, .85 -> +11, .95 -> +38, >=1 -> unbounded (queue grows
+  // all shift). The measured wait curve (11.7->12.1 min at 3.6->31 trucks/h)
+  // is the flat part of exactly this curve.
   function bridgeUtil(){
     const hours = Math.max(1, parseFloat((el('plan-hours') || {}).value) || 12);
     const perH = (typeof PLAN_WB_TRIPS_PER_HOUR !== 'undefined') ? PLAN_WB_TRIPS_PER_HOUR : 30;
@@ -206,16 +217,83 @@
     Object.keys(_pathWb).forEach(id => {
       const pw = _pathWb[id];
       if (!pw || !pw.sel.size) return;
-      const t = pathTrips(id) / pw.sel.size;
-      if (!(t > 0)) return;
+      const total = pathTrips(id);
+      if (!(total > 0)) return;
       const label = id.split('|').slice(1).join('|').replace('>', ' → ');
+      // History-weighted split over the selected bridges.
+      const shares = {};
+      let histSum = 0;
       pw.sel.forEach(wb => {
+        const b = pw.bridges.find(x => x.wb === wb);
+        const sh = b && b.sharePct != null ? Math.max(0, b.sharePct) : 0;
+        shares[wb] = sh; histSum += sh;
+      });
+      pw.sel.forEach(wb => {
+        const frac = histSum > 0 ? (shares[wb] / histSum) : (1 / pw.sel.size);
+        const t = total * frac;
         const rec = byWb[wb] || (byWb[wb] = { trips: 0, paths: [] });
         rec.trips += t;
         rec.paths.push(label);
       });
     });
-    return { byWb, cap };
+    // Queue-wait per bridge from the M/M/1 curve.
+    const svc = 60 / perH;   // service minutes per weigh
+    Object.keys(byWb).forEach(wb => {
+      const rec = byWb[wb];
+      const rho = cap ? rec.trips / cap : 0;
+      rec.rho = rho;
+      rec.waitMin = rho >= 1 ? Infinity : svc * rho / (1 - rho);
+    });
+    return { byWb, cap, svc };
+  }
+
+  // Dispatcher auto-balance: assign every path's trips across bridges so the
+  // worst bridge is as lightly loaded as possible. Greedy: paths in trip order;
+  // each path picks its best bridges (history first, then any free bridge)
+  // until its trips fit under the amber line (70%%) where possible.
+  function autoBalance(){
+    const hours = Math.max(1, parseFloat((el('plan-hours') || {}).value) || 12);
+    const perH = (typeof PLAN_WB_TRIPS_PER_HOUR !== 'undefined') ? PLAN_WB_TRIPS_PER_HOUR : 30;
+    const cap = perH * hours, amber = 0.7 * cap;
+    const load = {}; ALL_WBS.forEach(wb => load[wb] = 0);
+    const entries = Object.keys(_pathWb)
+      .map(id => ({ id, pw: _pathWb[id], trips: pathTrips(id) }))
+      .filter(x => x.trips > 0)
+      .sort((a, b) => b.trips - a.trips);
+    entries.forEach(x => {
+      // Candidate order: this route's historical bridges by share desc, then
+      // the rest of the site by current load asc.
+      const hist = x.pw.bridges.filter(b => b.sharePct != null)
+        .sort((a, b) => b.sharePct - a.sharePct).map(b => b.wb);
+      const rest = ALL_WBS.filter(wb => !hist.includes(wb));
+      const order = hist.concat(rest).sort((a, b) => {
+        const ha = hist.indexOf(a), hb = hist.indexOf(b);
+        if (ha !== -1 && hb !== -1) return ha - hb;         // keep history order first
+        if (ha !== -1) return -1;
+        if (hb !== -1) return 1;
+        return load[a] - load[b];
+      });
+      const chosen = [];
+      let remaining = x.trips;
+      for (const wb of order){
+        if (remaining <= 0) break;
+        const room = amber - load[wb];
+        if (room <= 0) continue;
+        const take = Math.min(remaining, room);
+        load[wb] += take; remaining -= take;
+        chosen.push(wb);
+      }
+      if (remaining > 0){
+        // Site genuinely saturated at 70%%: spill onto the least-loaded bridge.
+        const least = ALL_WBS.slice().sort((a, b) => load[a] - load[b])[0];
+        load[least] += remaining;
+        if (!chosen.includes(least)) chosen.push(least);
+      }
+      x.pw.sel = new Set(chosen.length ? chosen : [ALL_WBS[0]]);
+      x.pw.open = false;
+    });
+    syncWbCount();
+    if (typeof computePlan === 'function') computePlan();
   }
 
   function injectPathWb(){
@@ -237,17 +315,21 @@
       const colFor = u => u >= 1 ? '#ef4444' : u >= 0.7 ? '#f59e0b' : '#22c55e';
       const bgFor  = u => u >= 1 ? 'rgba(239,68,68,.16)' : u >= 0.7 ? 'rgba(245,158,11,.16)' : 'rgba(34,197,94,.14)';
       const assigned = [...pw.sel].map(wb => {
-        const rec = byWb[wb] || { trips: 0, paths: [] };
-        const u = cap ? rec.trips / cap : 0;
+        const rec = byWb[wb] || { trips: 0, paths: [], rho: 0, waitMin: 0 };
+        const u = rec.rho || 0;
+        const wait = rec.waitMin;
+        const waitTxt = wait === Infinity ? 'queue grows all shift'
+          : wait > 1 ? `~${Math.round(wait)} min queue` : 'no queue';
         const sharedWith = rec.paths.length > 1
-          ? ` · SHARED with ${rec.paths.length - 1} other path(s) — congested; pick another WB`
-          : '';
+          ? ` · shared by ${rec.paths.length} paths` : '';
+        const advice = u >= 1 ? ' · OVERLOADED — add a second bridge or move trips'
+          : u >= 0.7 ? ' · heavy — consider a second bridge' : '';
         return `<span class="pwb-chip" data-pwid="${escH(mm[1])}" data-wb="${escH(wb)}"`
-          + ` title="WB ${escH(wb)} · ${Math.round(100 * u)}% of its ${Math.round(cap)}-trip shift ceiling${sharedWith} · click to unassign"`
+          + ` title="WB ${escH(wb)} · ${Math.round(rec.trips)} trips assigned (${Math.round(100 * u)}% of ${Math.round(cap)}) · ${waitTxt}${sharedWith}${advice} · click to unassign"`
           + ` style="cursor:pointer;display:inline-block;margin:1px 4px 1px 0;padding:1px 8px;border-radius:11px;font-weight:600;`
           + `border:1px solid ${colFor(u)};background:${bgFor(u)};color:var(--txt)">`
-          + `WB ${escH(wb)} <span style="opacity:.85">${Math.round(100 * u)}%</span>`
-          + (rec.paths.length > 1 ? ' ⚠' : '') + `</span>`;
+          + `WB ${escH(wb)} <span style="opacity:.85">${Math.round(100 * u)}%${wait > 5 && wait !== Infinity ? ' · ' + Math.round(wait) + "'" : wait === Infinity ? ' · ∞' : ''}</span>`
+          + (u >= 1 ? ' ⛔' : u >= 0.7 || rec.paths.length > 1 ? ' ⚠' : '') + `</span>`;
       }).join('');
       const alternates = pw.open
         ? pw.bridges.filter(b => !pw.sel.has(b.wb)).map(b => {
@@ -264,7 +346,7 @@
       const toggle = pw.bridges.length > 1
         ? `<span class="pwb-toggle" data-pwid="${escH(mm[1])}"`
         + ` style="cursor:pointer;font-size:9.5px;color:var(--muted);text-decoration:underline dotted">`
-        + (pw.open ? 'hide' : 'change WB') + `</span>`
+        + (pw.open ? 'hide' : 'add / change WB') + `</span>`
         : '';
       const sub = document.createElement('tr');
       sub.className = 'pwb-row';
@@ -272,6 +354,23 @@
         + `<span class="muted">WB:</span> ${assigned} ${alternates} ${toggle}</td>`;
       tr.parentNode.insertBefore(sub, tr.nextSibling);
     });
+    // One auto-balance strip under the table (once, not per row).
+    const anyOver = Object.values((_lastUtil || {}).byWb || {}).some(r => (r.rho || 0) >= 0.7);
+    let strip = document.getElementById('pwb-balance-strip');
+    if (!strip){
+      strip = document.createElement('tr');
+      strip.id = 'pwb-balance-strip';
+      tbody.appendChild(strip);
+    } else if (strip.parentNode !== tbody){
+      strip.parentNode.removeChild(strip); tbody.appendChild(strip);
+    }
+    strip.innerHTML = Object.keys(_pathWb).length
+      ? `<td></td><td colspan="8" style="font-size:10px;padding:2px 0 8px">`
+        + `<span class="pwb-autobalance" style="cursor:pointer;padding:2px 9px;border:1px solid ${anyOver ? '#f59e0b' : 'var(--line)'};border-radius:10px;${anyOver ? 'background:rgba(245,158,11,.14);font-weight:600' : 'color:var(--muted)'}">`
+        + `⚖ Auto-balance trucks across bridges</span>`
+        + (anyOver ? ` <span style="color:#f59e0b">⚠ a bridge is over 70% — balancing recommended</span>` : '')
+        + `</td>`
+      : '';
   }
   let _lastUtil = null;
 
@@ -308,12 +407,15 @@
       const id = pchip.getAttribute('data-pwid'), wb = pchip.getAttribute('data-wb');
       const pw = _pathWb[id];
       if (pw){
-        if (!pw.sel.has(wb)){ pw.sel = new Set([wb]); pw.open = false; }
+        if (pw.sel.has(wb)){ if (pw.sel.size > 1) pw.sel.delete(wb); }
+        else { pw.sel.add(wb); }
         syncWbCount();
         if (typeof computePlan === 'function') computePlan();
       }
       return;
     }
+    const bal = t && t.closest ? t.closest('.pwb-autobalance') : null;
+    if (bal){ autoBalance(); return; }
     const chip = t && t.closest ? t.closest('.wb-chip') : null;
     if (chip && chip.dataset && chip.dataset.wb){ toggleChip(chip.dataset.wb); return; }
     if (t && t.id === 'tabbtn-plan') setTimeout(wire, 60);
