@@ -77,6 +77,71 @@ function planOtherTrafficDelta(key){
   const excess=feni-typ;
   return excess>0?coef*excess:0;   // drag only
 }
+// ── Shared-section coupling (page 1's combined model, applied to the plan) ──
+// The Capability tab's 3D model measures how a path's trips/DT responds to
+// TOTAL SECTION DT (all paths sharing its corridor span), controlled for the
+// path's own DT (c3PathEffects → effect per +50 section DT). The plan reuses
+// THAT measured, path-specific coefficient: when the holding plan puts more DT
+// on a path's shared span than that path historically saw, its trips/DT takes
+// the measured drag. Drag only; paths with no measured decline stay flat.
+let _planSecFx=null;
+function _planSecFxGet(){
+  if(_planSecFx)return _planSecFx;
+  if(typeof combinedPathDays!=='function'||typeof c3PathEffects!=='function'||!_D)return null;
+  try{
+    const P=combinedPathDays(false);
+    if(!P||P.length<8)return null;
+    const by={};P.forEach(pt=>(by[pt.pathKey]=by[pt.pathKey]||[]).push(pt));
+    const fx={};
+    c3PathEffects(P).forEach(x=>{
+      const g=by[x.key]||[];
+      fx[x.key]={per50:x.effect,lo:x.lo,hi:x.hi,signal:x.signal,
+        meanSection:g.length?g.reduce((n,pt)=>n+pt.section,0)/g.length:null};
+    });
+    _planSecFx=fx;
+    return fx;
+  }catch(_){return null;}
+}
+// Corridor span per node label (km) — from the served corridor geometry.
+function _planNodeKm(name){
+  const nodes=(_D&&_D.corridor&&_D.corridor.nodes)||[];
+  const norm=x=>(x||'').trim().toUpperCase().replace(/\s+/g,' ');
+  const hit=nodes.find(n=>(n.aliases||[n.label]).some(a=>norm(a)===norm(name)));
+  return hit?hit.km:null;
+}
+function _planSpan(key){
+  const [o,d]=key.split('>');
+  const a=_planNodeKm(o),b=_planNodeKm(d);
+  if(!Number.isFinite(a)||!Number.isFinite(b)||a===b)return null;
+  return [Math.min(a,b),Math.max(a,b)];
+}
+// Today's expected section DT for `key`: own dt + draft rows whose corridor
+// spans overlap (foreign road-only rows included — their trucks occupy the road).
+function _planSectionDtNow(key,dt){
+  const span=_planSpan(key);
+  if(!span)return null;
+  let tot=dt;
+  Object.keys(_planDraft||{}).forEach(id=>{
+    const r=_planDraft[id];
+    if(!r||!(r.dt>0)||r.key===key)return;
+    const s2=_planSpan(r.key);
+    if(!s2)return;
+    if(Math.min(span[1],s2[1])-Math.max(span[0],s2[0])>0)tot+=r.dt;
+  });
+  return tot;
+}
+function planSectionDrag(key,dt){
+  const fx=_planSecFxGet();
+  const f=fx&&fx[key];
+  if(!f||!(f.per50<0)||!Number.isFinite(f.meanSection))return {delta:0,excess:0};
+  // Only apply a MEASURED decline (page 1's own signal taxonomy).
+  if(!/^(Clear|Likely)/.test(f.signal||''))return {delta:0,excess:0};
+  const now=_planSectionDtNow(key,dt);
+  if(now==null)return {delta:0,excess:0};
+  const excess=now-f.meanSection;
+  if(excess<=0)return {delta:0,excess:0};   // below typical section load: no credit, no drag
+  return {delta:(f.per50/50)*excess,excess};
+}
 function planTripsPerDT(key,dt,rain,contractor){
   const m=_pathResp&&_pathResp[key];if(!m)return null;
   let tr=m.avgTr;
@@ -88,11 +153,14 @@ function planTripsPerDT(key,dt,rain,contractor){
   // contains the typical load; "never invent a gain").
   const otherDelta=planOtherTrafficDelta(key);
   tr+=otherDelta;
+  // Shared-section coupling: the rest of the HOLDING PLAN on this path's span.
+  const sec=planSectionDrag(key,dt);
+  tr+=sec.delta;
   const scale=planRainScale(key,rain);
   const rainDelta=tr*(scale-1);
   tr=Math.max(.3*m.avgTr,tr*scale)*planContractorFactor(contractor);
   const sf=planShiftFactor();
-  return {daily:tr,shift:tr*sf,rainDelta:rainDelta*sf,otherDelta:otherDelta*sf,slope,m};
+  return {daily:tr,shift:tr*sf,rainDelta:rainDelta*sf,otherDelta:otherDelta*sf,secDelta:sec.delta*sf,secExcess:sec.excess,slope,m};
 }
 // Payload: the contractor's own measured t/trip when we have it, else the path's.
 function planPayload(key,contractor){
@@ -671,6 +739,7 @@ let _planPredictSeq=0, _planPredictTimer=null;
 const PLAN_PREDICT_DEBOUNCE_MS=180;
 function _planModelLabel(v){
   if(v.model==='local')return {cls:'pending', text:'Model · historical average (loading…)'};
+  if(v.model==='roadonly')return {cls:'ok', text:'Road-only \u00b7 measured congestion, no WMT model'};
   if(v.fallback||v.model==='offline')return {cls:'warn', text:'Model · path formula fallback (offline)'};
   const name=PLAN_MODEL_LABELS[v.model]||v.modelLabel||v.model||'model';
   const cv=Number.isFinite(v.cvR2), shown=cv?v.cvR2:v.r2;
@@ -743,8 +812,9 @@ function planPreview(){
   if(Number.isFinite(m.dtMax)&&dt>m.dtMax)warns.push(`⚠ ${fmtExact(dt)} DT is beyond the ${fmtExact(m.dtMax)} DT ever observed on this path`);
   if(e.rainDelta<=-.03)warns.push(`☔ rain −${fmtExact(Math.abs(e.rainDelta),2)} Trips/DT`);
   if(e.otherDelta<=-.02)warns.push(`🚚 other (IWIP/Position) traffic above typical −${fmtExact(Math.abs(e.otherDelta),2)} Trips/DT on the shared corridor`);
+  if(e.secDelta<=-.02)warns.push(`\u{1F6E3}\uFE0F shared-section load \u2212${fmtExact(Math.abs(e.secDelta),2)} Trips/DT (plan adds ${fmtExact(Math.round(e.secExcess))} DT beyond this path's typical section traffic \u2014 page-1 measured effect)`);
   const base={src:s,dst:d,contractor:c?c.name:'—',hours,swapped,warns,foreign,
-    dt,tripsPerDt:e.shift,trips,wmt,payload:pay.tf,payloadSrc:pay.src,model:'local',
+    dt,tripsPerDt:e.shift,trips,wmt,payload:pay.tf,payloadSrc:pay.src,model:foreign?'roadonly':'local',
     contractorFactor:cFactor};
   _planRenderEstimate(base);                       // stage 1 — instant, local
   // Road-only / foreign path: its trucks add congestion but no WMT for us, so there is
