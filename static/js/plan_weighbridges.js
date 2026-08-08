@@ -41,7 +41,7 @@
     if (!s || !d){ host.innerHTML = ''; _lastKey = ''; _bridges = []; _n = 0; _sel.clear(); return; }
     if (key === _lastKey) return;
     _lastKey = key;
-    host.innerHTML = '<span class="muted" style="font-size:10.5px">Checking weighbridges on this route…</span>';
+    host.innerHTML = '<div class="plan-wb-path"><div class="plan-wb-path-h muted">Checking bridges…</div></div>';
     const qs = new URLSearchParams({ source: s, dest: d });
     const frm = (el('f-from') || {}).value, to = (el('f-to') || {}).value;
     if (frm) qs.set('from', frm);
@@ -86,7 +86,7 @@
     _sel = new Set(_bridges.slice(0, k).map(b => b.wb));
     setPlanWb(_sel.size);
     renderChips(clamped
-      ? `Max on this route is ${_n} — only ${_n} weighbridge${_n === 1 ? '' : 's'} have carried ${escH(_route.s)} → ${escH(_route.d)} in the data.`
+      ? `Max ${_n} on this route — only ${_n} bridge${_n === 1 ? '' : 's'} in the data.`
       : '');
   }
 
@@ -105,26 +105,25 @@
     const host = el('plan-wb-onpath');
     if (!host) return;
     if (!_n){
-      host.innerHTML = '<span class="muted" style="font-size:10.5px">No weighbridge tickets found for this route in the selected window.</span>';
+      host.innerHTML = '<div class="plan-wb-path"><div class="plan-wb-path-h muted">No weighbridge tickets on this route in the window.</div></div>';
       return;
     }
     const chips = _bridges.map(b => {
       const on = _sel.has(b.wb);
-      return `<span data-wb="${escH(b.wb)}" class="wb-chip" title="${escH(b.wb)} — ${pct(b.sharePct)} of this route's weighs"`
-        + ` style="cursor:pointer;display:inline-block;margin:2px 4px 2px 0;padding:2px 8px;border-radius:12px;`
-        + `border:1px solid ${on ? '#f59e0b' : 'var(--line)'};background:${on ? 'rgba(245,158,11,.16)' : 'transparent'};`
-        + `color:${on ? 'var(--txt)' : 'var(--muted)'};font-size:10.5px">${escH(b.wb)} <span style="opacity:.7">${pct(b.sharePct)}</span></span>`;
+      return `<button type="button" data-wb="${escH(b.wb)}" class="wb-chip${on ? ' on' : ''}"`
+        + ` title="${escH(b.wb)} — ${pct(b.sharePct)} of this route's weighs · click to toggle">`
+        + `${escH(b.wb)} <span class="wb-chip-pct">${pct(b.sharePct)}</span></button>`;
     }).join('');
     host.innerHTML =
-      `<div style="font-size:10.5px;line-height:1.5">`
-      + `<b style="color:var(--txt)">${_n}</b> weighbridge${_n === 1 ? '' : 's'} used on <b>${escH(_route.s)} → ${escH(_route.d)}</b>`
-      + (_cached ? ' <span class="muted">(sample data)</span>' : '')
-      + ` <span class="muted">· click to choose — the count links to “Weighbridges open”</span>`
-      + `<div style="margin-top:4px">${chips}</div>`
-      + (note ? `<div style="margin-top:3px;color:#f59e0b">${note}</div>` : '')
-      + `<div class="muted" style="margin-top:2px"><b>${_sel.size}</b> selected of ${_n} max on this route`
-      + (_excluded > 0 ? ` · ${_excluded} incidental bridge${_excluded === 1 ? '' : 's'} (&lt;${_minShare}% of weighs) hidden` : '')
-      + `</div>`
+      `<div class="plan-wb-path">`
+      + `<div class="plan-wb-path-h">`
+      + `<b>${escH(_route.s)} → ${escH(_route.d)}</b>`
+      + `<span class="muted">${_sel.size}/${_n} bridges`
+      + (_cached ? ' · sample' : '')
+      + (_excluded > 0 ? ` · ${_excluded} incidental hidden` : '')
+      + `</span></div>`
+      + `<div class="plan-wb-chips">${chips}</div>`
+      + (note ? `<div class="plan-wb-path-note">${note}</div>` : '')
       + `</div>`;
   }
 
@@ -163,13 +162,60 @@
     try { if (typeof planContractor === 'function'){ const c = planContractor(); if (c && c.name) name = c.name; } } catch (e) {}
     const id = name + '|' + s + '>' + d;
     if (typeof _planDraft !== 'undefined' && _planDraft[id] && _bridges.length){
-      _pathWb[id] = { bridges: _bridges.map(b => ({ wb: b.wb, sharePct: b.sharePct })), sel: new Set(_sel) };
+      // ONE bridge per path by default — the route's historical top bridge.
+      // Reassign from the collapsed alternates; utilisation colouring shows
+      // when two paths pile onto the same bridge.
+      _pathWb[id] = { bridges: _bridges.map(b => ({ wb: b.wb, sharePct: b.sharePct })),
+                      sel: new Set([_bridges[0].wb]), open: false };
     }
+  }
+
+  // Trips a path contributes this shift (mirrors plan.js maths).
+  function pathTrips(id){
+    try {
+      const r = typeof _planDraft !== 'undefined' ? _planDraft[id] : null;
+      if (!r || !(r.dt > 0)) return 0;
+      if (r.foreign && Number.isFinite(r.measTrips)){
+        const rate = r.measTrucks ? r.measTrips / r.measTrucks : 0;
+        return r.dt * rate;
+      }
+      if (typeof planTripsPerDT === 'function'){
+        const rain = Math.max(0, parseFloat((el('plan-rain') || {}).value) || 0);
+        const c = typeof planContractor === 'function' ? planContractor(r.contractor) : null;
+        const e = planTripsPerDT(r.key, r.dt, rain, c);
+        if (e) return r.dt * e.shift;
+      }
+    } catch (e) {}
+    return 0;
+  }
+
+  // Per-bridge utilisation across the whole holding plan: each path's trips go
+  // to its assigned bridge(s) (split evenly when >1). Ceiling per bridge =
+  // PLAN_WB_TRIPS_PER_HOUR x shift hours (same basis as the WB-load bar).
+  function bridgeUtil(){
+    const hours = Math.max(1, parseFloat((el('plan-hours') || {}).value) || 12);
+    const perH = (typeof PLAN_WB_TRIPS_PER_HOUR !== 'undefined') ? PLAN_WB_TRIPS_PER_HOUR : 30;
+    const cap = perH * hours;
+    const byWb = {};
+    Object.keys(_pathWb).forEach(id => {
+      const pw = _pathWb[id];
+      if (!pw || !pw.sel.size) return;
+      const t = pathTrips(id) / pw.sel.size;
+      if (!(t > 0)) return;
+      const label = id.split('|').slice(1).join('|').replace('>', ' → ');
+      pw.sel.forEach(wb => {
+        const rec = byWb[wb] || (byWb[wb] = { trips: 0, paths: [] });
+        rec.trips += t;
+        rec.paths.push(label);
+      });
+    });
+    return { byWb, cap };
   }
 
   function injectPathWb(){
     const tbody = el('plan-rows');
     if (!tbody) return;
+    _lastUtil = bridgeUtil();
     if (typeof _planDraft !== 'undefined') Object.keys(_pathWb).forEach(id => { if (!_planDraft[id]) delete _pathWb[id]; });
     Array.prototype.forEach.call(tbody.querySelectorAll('tr'), tr => {
       if (tr.className === 'pwb-row') return;
@@ -181,21 +227,43 @@
       if (!pw || !pw.bridges.length) return;
       const next = tr.nextSibling;
       if (next && next.className === 'pwb-row') return;   // already injected
-      const chips = pw.bridges.map(b => {
-        const on = pw.sel.has(b.wb);
-        return `<span class="pwb-chip" data-pwid="${escH(mm[1])}" data-wb="${escH(b.wb)}"`
-          + ` title="${on ? 'click to remove from this path' : 'click to add back'}"`
-          + ` style="cursor:pointer;display:inline-block;margin:1px 3px 1px 0;padding:1px 7px;border-radius:11px;`
-          + `border:1px solid ${on ? '#f59e0b' : 'var(--line)'};background:${on ? 'rgba(245,158,11,.16)' : 'transparent'};`
-          + `color:${on ? 'var(--txt)' : 'var(--muted)'}">${escH(b.wb)} <span style="opacity:.7">${pct(b.sharePct)}</span> ${on ? '✕' : '+'}</span>`;
+      const { byWb, cap } = _lastUtil || bridgeUtil();
+      const colFor = u => u >= 1 ? '#ef4444' : u >= 0.7 ? '#f59e0b' : '#22c55e';
+      const bgFor  = u => u >= 1 ? 'rgba(239,68,68,.16)' : u >= 0.7 ? 'rgba(245,158,11,.16)' : 'rgba(34,197,94,.14)';
+      const assigned = [...pw.sel].map(wb => {
+        const rec = byWb[wb] || { trips: 0, paths: [] };
+        const u = cap ? rec.trips / cap : 0;
+        const sharedWith = rec.paths.length > 1
+          ? ` · SHARED with ${rec.paths.length - 1} other path(s) — congested; pick another WB`
+          : '';
+        return `<span class="pwb-chip" data-pwid="${escH(mm[1])}" data-wb="${escH(wb)}"`
+          + ` title="WB ${escH(wb)} · ${Math.round(100 * u)}% of its ${Math.round(cap)}-trip shift ceiling${sharedWith} · click to unassign"`
+          + ` style="cursor:pointer;display:inline-block;margin:1px 4px 1px 0;padding:1px 8px;border-radius:11px;font-weight:600;`
+          + `border:1px solid ${colFor(u)};background:${bgFor(u)};color:var(--txt)">`
+          + `WB ${escH(wb)} <span style="opacity:.85">${Math.round(100 * u)}%</span>`
+          + (rec.paths.length > 1 ? ' ⚠' : '') + `</span>`;
       }).join('');
+      const alternates = pw.open
+        ? pw.bridges.filter(b => !pw.sel.has(b.wb)).map(b =>
+            `<span class="pwb-chip" data-pwid="${escH(mm[1])}" data-wb="${escH(b.wb)}"`
+            + ` title="assign WB ${escH(b.wb)} (${pct(b.sharePct)} of this route's historical weighs)"`
+            + ` style="cursor:pointer;display:inline-block;margin:1px 3px 1px 0;padding:1px 7px;border-radius:11px;`
+            + `border:1px dashed var(--line);color:var(--muted)">+ ${escH(b.wb)} <span style="opacity:.6">${pct(b.sharePct)}</span></span>`
+          ).join('')
+        : '';
+      const toggle = pw.bridges.length > pw.sel.size
+        ? `<span class="pwb-toggle" data-pwid="${escH(mm[1])}"`
+        + ` style="cursor:pointer;font-size:9.5px;color:var(--muted);text-decoration:underline dotted">`
+        + (pw.open ? 'hide' : 'change WB') + `</span>`
+        : '';
       const sub = document.createElement('tr');
       sub.className = 'pwb-row';
       sub.innerHTML = `<td></td><td colspan="8" style="font-size:10px;padding:0 0 7px">`
-        + `<span class="muted">Weighbridges (${pw.sel.size} of ${pw.bridges.length}):</span> ${chips}</td>`;
+        + `<span class="muted">WB:</span> ${assigned} ${alternates} ${toggle}</td>`;
       tr.parentNode.insertBefore(sub, tr.nextSibling);
     });
   }
+  let _lastUtil = null;
 
   // Wrap plan.js globals at runtime (source untouched). planAddPath already calls
   // computePlan() before we snapshot, so re-run it after snapshotting.
@@ -219,11 +287,21 @@
   // Delegated clicks: top-panel chips, per-path chips, and re-wire on tab open.
   document.addEventListener('click', function(ev){
     const t = ev.target;
+    const ptog = t && t.closest ? t.closest('.pwb-toggle') : null;
+    if (ptog){
+      const pw = _pathWb[ptog.getAttribute('data-pwid')];
+      if (pw){ pw.open = !pw.open; if (typeof computePlan === 'function') computePlan(); }
+      return;
+    }
     const pchip = t && t.closest ? t.closest('.pwb-chip') : null;
     if (pchip){
       const id = pchip.getAttribute('data-pwid'), wb = pchip.getAttribute('data-wb');
       const pw = _pathWb[id];
-      if (pw){ if (pw.sel.has(wb)) pw.sel.delete(wb); else pw.sel.add(wb); if (typeof computePlan === 'function') computePlan(); }
+      if (pw){
+        if (pw.sel.has(wb)){ if (pw.sel.size > 1) pw.sel.delete(wb); }
+        else { pw.sel.add(wb); pw.open = false; }
+        if (typeof computePlan === 'function') computePlan();
+      }
       return;
     }
     const chip = t && t.closest ? t.closest('.wb-chip') : null;
