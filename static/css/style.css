@@ -789,3 +789,14 @@ svg{display:block;width:100%;height:280px}
 /* WB picker: bridges with no route history render dimmer but stay clickable */
 .wb-chip-nohist{opacity:.55}
 .wb-chip-nohist:hover{opacity:.9}
+
+/* ── Plan: per-bridge stress board ─────────────────────────────────────── */
+.plan-wb-stress{margin:6px 0 4px}
+.wbs-head{font-size:10.5px;margin-bottom:3px;display:flex;gap:8px;align-items:center}
+.wbs-row{display:grid;grid-template-columns:44px 1fr 38px 26px 64px;gap:6px;align-items:center;margin:2px 0;font-size:10.5px}
+.wbs-name{font-weight:600}
+.wbs-bar{height:9px;border:1px solid var(--line-light,#2c3947);border-radius:5px;overflow:hidden;background:rgba(255,255,255,.04)}
+.wbs-bar i{display:block;height:100%;border-radius:5px 0 0 5px;transition:width .25s}
+.wbs-pct{text-align:right;font-weight:600}
+.wbs-wait{text-align:right;color:var(--muted,#8b98a5)}
+.wbs-trips{text-align:right;color:var(--muted,#8b98a5);font-size:9.5px}

@@ -371,8 +371,45 @@
         + (anyOver ? ` <span style="color:#f59e0b">⚠ a bridge is over 70% — balancing recommended</span>` : '')
         + `</td>`
       : '';
+    renderStressBoard();
   }
   let _lastUtil = null;
+
+  // ── Weighbridge stress board ──────────────────────────────────────────────
+  // One glance: every bridge in use, its assigned trips, utilisation and
+  // estimated queue — live DURING planning (re-renders on every plan edit),
+  // and unchanged after Run scenario since it reads the same holding plan.
+  function renderStressBoard(){
+    const host = document.getElementById('plan-wb-stress');
+    if (!host) return;
+    const { byWb, cap, svc } = _lastUtil || bridgeUtil();
+    const used = Object.keys(byWb).filter(wb => byWb[wb].trips > 0.5);
+    if (!used.length){ host.innerHTML = ''; return; }
+    used.sort((a, b) => byWb[b].rho - byWb[a].rho);
+    const worst = byWb[used[0]];
+    const rows = used.map(wb => {
+      const r = byWb[wb];
+      const u = r.rho || 0, pctN = Math.round(100 * u);
+      const col = u >= 1 ? '#ef4444' : u >= 0.7 ? '#f59e0b' : '#22c55e';
+      const wait = r.waitMin === Infinity ? '∞' : r.waitMin > 1 ? Math.round(r.waitMin) + "'" : '—';
+      const paths = r.paths.join(', ');
+      return `<div class="wbs-row" title="WB ${escH(wb)} · ${Math.round(r.trips)} trips (${pctN}% of ${Math.round(cap)}) · est queue ${r.waitMin === Infinity ? 'grows all shift' : Math.round(r.waitMin || 0) + ' min'} · paths: ${escH(paths)}">`
+        + `<span class="wbs-name">WB ${escH(wb)}</span>`
+        + `<span class="wbs-bar"><i style="width:${Math.min(100, pctN)}%;background:${col}"></i></span>`
+        + `<span class="wbs-pct" style="color:${col}">${pctN}%</span>`
+        + `<span class="wbs-wait">${wait}</span>`
+        + `<span class="wbs-trips">${Math.round(r.trips)} tr · ${r.paths.length}p</span>`
+        + `</div>`;
+    }).join('');
+    const worstNote = worst.rho >= 1
+      ? `<span style="color:#ef4444">⛔ WB ${escH(used[0])} overloaded — queue grows all shift</span>`
+      : worst.rho >= 0.7
+        ? `<span style="color:#f59e0b">⚠ WB ${escH(used[0])} heavy (${Math.round(100 * worst.rho)}% · ~${Math.round(worst.waitMin)} min queue)</span>`
+        : `<span class="muted">all bridges comfortable</span>`;
+    host.innerHTML =
+      `<div class="wbs-head muted">Bridge stress <span title="Per-bridge M/M/1 queue model: utilisation = assigned trips ÷ (${Math.round(60 / svc)} weighs/h × shift h); queue = service × ρ/(1−ρ). Columns: utilisation · est queue · trips & paths assigned. Live during planning.">ⓘ</span> ${worstNote}</div>`
+      + rows;
+  }
 
   // Wrap plan.js globals at runtime (source untouched). planAddPath already calls
   // computePlan() before we snapshot, so re-run it after snapshotting.
