@@ -369,73 +369,90 @@
         <div class="plan-step1">
           <div class="plan-inputs-row">
             <div class="card plan-builder">
-              <div class="plan-panel-head">
+              <div class="plan-builder-head">
                 <h3>1 · Add a haul path</h3>
                 <button class="plan-add" type="button" onclick="planAddPath()">+ Add to plan</button>
               </div>
               <div class="plan-builder-fields">
-                <label class="plan-field">Contractor<select id="plan-contractor" onchange="planContractorChange()"></select></label>
-                <label class="plan-field">Source<select id="plan-src" onchange="planSrcChange()"></select></label>
-                <label class="plan-field">Destination<select id="plan-dst" onchange="planDstChange()"></select></label>
-                <label id="plan-input-dt" class="plan-field">Trucks (DT)
+                <label class="plan-field">
+                  <span class="k">Contractor</span>
+                  <select id="plan-contractor" onchange="planContractorChange()"></select>
+                </label>
+                <label class="plan-field">
+                  <span class="k">Source</span>
+                  <select id="plan-src" onchange="planSrcChange()"></select>
+                </label>
+                <label class="plan-field">
+                  <span class="k">Destination</span>
+                  <select id="plan-dst" onchange="planDstChange()"></select>
+                </label>
+                <label id="plan-input-dt" class="plan-field">
+                  <span class="k">Trucks (DT)</span>
                   <span class="plan-dt-row">
                     <input id="plan-dt" type="number" min="1" step="1" value="50" oninput="planMarkFleetEdit()">
                     <button class="ms-btn plan-swap-inline" id="plan-swap-btn" type="button" onclick="planSwapMode()" title="Switch DT / WMT">⇄ WMT</button>
                   </span>
                 </label>
-                <label id="plan-input-wmt" class="plan-field" style="display:none">Target WMT
+                <label id="plan-input-wmt" class="plan-field" style="display:none">
+                  <span class="k">Target WMT</span>
                   <span class="plan-dt-row">
                     <input id="plan-wmt" type="number" min="1" step="100" value="5000" oninput="planMarkFleetEdit()">
                     <button class="ms-btn plan-swap-inline" id="plan-swap-btn-wmt" type="button" onclick="planSwapMode()" title="Switch DT / WMT">⇄ DT</button>
                   </span>
                 </label>
-                <!-- Road-only / foreign (IWIP) traffic (our addition). A path added
-                     with this ticked contributes NO WMT for us but its trucks still
-                     load the shared FENI corridor and drag our trips/DT. Engine logic
-                     in plan_simulator.py; carried on each _planDraft row as `foreign`. -->
-                <label id="plan-input-foreign" class="plan-field plan-field-foreign" title="Road-only / foreign traffic (IWIP or another mine on our roads): its trucks add congestion on the shared FENI corridor but no WMT for us.">
-                  <span class="plan-foreign-check"><input id="plan-foreign" type="checkbox" onchange="computePlan()"> Road-only (foreign / IWIP&nbsp;— no WMT)</span>
-                </label>
               </div>
-              <div id="plan-hint" class="plan-hint"></div>
+              <!-- Road-only / foreign (IWIP): trucks load corridor, no WMT for us. -->
+              <label id="plan-input-foreign" class="plan-foreign-row" title="Road-only / foreign traffic (IWIP or another mine on our roads): trucks add congestion on the shared FENI corridor but no WMT for us.">
+                <input id="plan-foreign" type="checkbox" onchange="computePlan()">
+                <span>Road-only <em>(foreign / IWIP — no WMT)</em></span>
+              </label>
+              <div id="plan-hint" class="plan-hint" aria-live="polite"></div>
             </div>
 
             <div class="card plan-cond-card">
-              <h3>Conditions</h3>
-              <div class="plan-cond-grid">
-                <label class="plan-cond">Rainfall <span><input id="plan-rain" type="number" min="0" step="1" value="0" oninput="planRainManual();computePlan()"> mm</span></label>
-                <label class="plan-cond">Weighbridges <span><input id="plan-wb" type="number" min="1" step="1" value="8" oninput="computePlan()"> / 18</span></label>
-                <label class="plan-cond" title="Non-plan trucks (IWIP / position works) also cross the weighbridges on the way to the dumps and share the road. Prefilled from the last measured shift; edit to test scenarios.">Other trips (non-plan) <span><input id="plan-other-trips" type="number" min="0" step="10" value="0" oninput="planOtherManualEdit()"> <span id="plan-other-src" class="muted" style="font-size:9.5px"></span></span></label>
+              <div class="plan-cond-head">
+                <h3>Conditions</h3>
+                <label class="plan-cond-shift" title="Measured over 538,586 truck-shifts: 98.5% are exactly 12.0 h (720 min). Data supports 8–12 h (480–720).">
+                  <span class="k">Shift</span>
+                  <input id="ps-shift" type="number" min="480" max="720" step="30" value="720" onchange="psShiftChanged()">
+                  <span class="u">min · <b id="plan-hours-display">12</b> h</span>
+                </label>
               </div>
-              <!-- On-path weighbridge linkage (Rudolf; logic in plan_weighbridges.js).
-                   Anchors the count above to the bridges measured on the selected route. -->
-              <div id="plan-wb-onpath" style="margin-top:6px"></div>
-              <!-- Weighbridge load: every path AND the other traffic funnels
-                   through the bridges on the way to the dumps. Utilisation bar
-                   + advice; ceiling assumption is labelled on hover. -->
+              <div class="plan-cond-metrics">
+                <label class="plan-cond-metric">
+                  <span class="k">Rain</span>
+                  <span class="v"><input id="plan-rain" type="number" min="0" step="1" value="0" oninput="planRainManual();computePlan()"><em>mm</em></span>
+                </label>
+                <label class="plan-cond-metric" title="Derived: distinct weighbridge NUMBERS assigned across the holding plan (pick the bridge per path below / in the plan table). Feeds the WB-load ceiling.">
+                  <span class="k">Bridges in use</span>
+                  <span class="v"><input id="plan-wb" type="number" min="1" step="1" value="1" readonly style="pointer-events:none;opacity:.8" oninput="computePlan()"><em>/ 18</em></span>
+                </label>
+                <label class="plan-cond-metric" title="Non-plan trucks (IWIP / position works) also cross the weighbridges and share the road. Prefilled from the last measured shift.">
+                  <span class="k">Other trips</span>
+                  <span class="v"><input id="plan-other-trips" type="number" min="0" step="10" value="0" oninput="planOtherManualEdit()"><em id="plan-other-src" class="plan-other-src"></em></span>
+                </label>
+              </div>
+              <!-- On-path weighbridge chips — count syncs to Weighbridges above. -->
+              <div id="plan-wb-onpath" class="plan-wb-onpath"></div>
               <div id="plan-wb-load" class="plan-wb-load" aria-live="polite"></div>
-              <div id="plan-rain-suggest" class="plan-rain-suggest"></div>
-              <!-- 16-day outlook stays collapsed under Open-Meteo; open to pick a day → fills Rainfall. -->
-              <details class="plan-rain-outlook-details" id="plan-rain-outlook-details">
-                <summary class="plan-rain-outlook-sum">
-                  <span class="plan-ro-sum-label">16-day rain outlook</span>
-                  <span class="muted plan-ro-sum-hint">site forecast · click a day to set Rainfall</span>
-                </summary>
-                <div id="plan-rain-outlook" class="plan-rain-outlook" aria-live="polite"></div>
-              </details>
+              <div class="plan-cond-meteo">
+                <div id="plan-rain-suggest" class="plan-rain-suggest"></div>
+                <details class="plan-rain-outlook-details" id="plan-rain-outlook-details">
+                  <summary class="plan-rain-outlook-sum">
+                    <span class="plan-ro-sum-label">16-day rain outlook</span>
+                    <span class="muted plan-ro-sum-hint">click a day → Rainfall</span>
+                  </summary>
+                  <div id="plan-rain-outlook" class="plan-rain-outlook" aria-live="polite"></div>
+                </details>
+              </div>
               <input id="plan-hours" type="hidden" value="12">
               <select id="ps-weather" style="display:none" aria-hidden="true"><option value="dry" selected>Dry</option><option value="wet">Wet</option></select>
-              <div class="plan-shift-mini muted">Shift <b id="plan-hours-display">12</b> h</div>
-                            <label style="width:170px">
-                <div class="muted" style="font-size:11px;margin-bottom:3px">Shift length (min)
-                  <span title="Measured over 538,586 truck-shifts: 98.5% are exactly 12.0 h (720 min), shortest observed 8.0 h. The effective cycle that trips divide by is itself calibrated at 720, so other values are extrapolations and are labelled as such.">&#9432;</span>
-                </div>
-                <input id="ps-shift" type="number" min="480" max="720" step="30" value="720" style="width:100%" onchange="psShiftChanged()">
-                <div class="muted" style="font-size:10px;margin-top:2px;line-height:1.3">data supports 8&ndash;12 h (480&ndash;720)</div>
-              </label>
               <div class="effkpis" id="plan-kpis" style="display:none"></div>
             </div>
           </div>
+
+          <!-- Running Step 1 WMT / trips (orange tonnage), then Best past days under it -->
+          <div id="plan-preview" class="card plan-estimate plan-estimate-compact plan-estimate-footer"></div>
 
           <div class="card plan-hist-card">
             <div class="plan-panel-head plan-hist-head">
@@ -447,9 +464,6 @@
             </div>
             <div id="plan-hist-list" class="plan-hist-list"></div>
           </div>
-
-          <!-- Running Step 1 WMT / trips — full row under paths & history -->
-          <div id="plan-preview" class="card plan-estimate plan-estimate-compact plan-estimate-footer"></div>
         </div>
 
         <div class="card plan-holding">

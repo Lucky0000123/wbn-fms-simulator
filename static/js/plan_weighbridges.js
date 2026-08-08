@@ -60,11 +60,24 @@
     _excluded = (res && res.excludedMinorBridges) || 0;
     if (res && res.minSharePct != null) _minShare = res.minSharePct;
     _route = { s, d };
-    _sel = new Set(_bridges.map(b => b.wb));   // default: all bridges used on the route
-    const wb = el('plan-wb');
-    if (wb) wb.max = _n || 1;                    // cap the stepper at the historical max
-    setPlanWb(_sel.size);
+    // SINGLE-SELECT: the planner picks the bridge NUMBER this path will use
+    // (owner: "weighbridge number 8, not 8 weighbridges"). Default = the
+    // route's historical top bridge.
+    _sel = new Set(_bridges.length ? [_bridges[0].wb] : []);
+    syncWbCount();
     renderChips();
+  }
+
+  // #plan-wb is now a DERIVED count: distinct bridges assigned across the
+  // holding plan (plus the picker's bridge for the path being built). It still
+  // feeds plan.js's WB-ceiling maths, but nobody types a count any more.
+  function syncWbCount(){
+    const used = new Set(_sel);
+    Object.keys(_pathWb).forEach(id => {
+      const pw = _pathWb[id];
+      if (pw && pw.sel) pw.sel.forEach(wb => used.add(wb));
+    });
+    setPlanWb(Math.max(1, used.size));
   }
 
   // Write the count into #plan-wb and let plan.js's own oninput=computePlan() run,
@@ -78,26 +91,11 @@
     _syncing = false;
   }
 
-  // User asked for k bridges → select the top-k by usage, clamped to the max.
-  function applyCount(k){
-    let clamped = false;
-    if (k > _n){ k = _n; clamped = true; }
-    if (k < 1) k = 1;
-    _sel = new Set(_bridges.slice(0, k).map(b => b.wb));
-    setPlanWb(_sel.size);
-    renderChips(clamped
-      ? `Max ${_n} on this route — only ${_n} bridge${_n === 1 ? '' : 's'} in the data.`
-      : '');
-  }
-
+  // Radio behaviour: clicking a bridge number selects THAT bridge for the
+  // path being built (one bridge per path).
   function toggleChip(wb){
-    if (_sel.has(wb)){
-      if (_sel.size <= 1) return;               // keep at least one selected
-      _sel.delete(wb);
-    } else {
-      _sel.add(wb);
-    }
-    setPlanWb(_sel.size);
+    _sel = new Set([wb]);
+    syncWbCount();
     renderChips();
   }
 
@@ -118,7 +116,7 @@
       `<div class="plan-wb-path">`
       + `<div class="plan-wb-path-h">`
       + `<b>${escH(_route.s)} → ${escH(_route.d)}</b>`
-      + `<span class="muted">${_sel.size}/${_n} bridges`
+      + `<span class="muted">pick the bridge NUMBER for this path · ${_n} seen on route`
       + (_cached ? ' · sample' : '')
       + (_excluded > 0 ? ` · ${_excluded} incidental hidden` : '')
       + `</span></div>`
@@ -129,12 +127,10 @@
 
   function onWbInput(){
     if (_syncing) return;                        // our own programmatic write — ignore
-    if (!_n) return;
-    const wb = el('plan-wb');
-    if (!wb) return;
-    const k = parseInt(wb.value, 10);
-    if (isNaN(k)) return;
-    applyCount(k);
+    // #plan-wb is derived (distinct bridges in use); a manual edit is
+    // immediately re-derived so the ceiling maths can't drift from the
+    // actual assignments.
+    syncWbCount();
   }
 
   function wire(){
@@ -162,11 +158,9 @@
     try { if (typeof planContractor === 'function'){ const c = planContractor(); if (c && c.name) name = c.name; } } catch (e) {}
     const id = name + '|' + s + '>' + d;
     if (typeof _planDraft !== 'undefined' && _planDraft[id] && _bridges.length){
-      // ONE bridge per path by default — the route's historical top bridge.
-      // Reassign from the collapsed alternates; utilisation colouring shows
-      // when two paths pile onto the same bridge.
+      // Carry the bridge NUMBER picked in the top panel for this path.
       _pathWb[id] = { bridges: _bridges.map(b => ({ wb: b.wb, sharePct: b.sharePct })),
-                      sel: new Set([_bridges[0].wb]), open: false };
+                      sel: new Set(_sel.size ? _sel : [_bridges[0].wb]), open: false };
     }
   }
 
@@ -251,7 +245,7 @@
             + `border:1px dashed var(--line);color:var(--muted)">+ ${escH(b.wb)} <span style="opacity:.6">${pct(b.sharePct)}</span></span>`
           ).join('')
         : '';
-      const toggle = pw.bridges.length > pw.sel.size
+      const toggle = pw.bridges.length > 1
         ? `<span class="pwb-toggle" data-pwid="${escH(mm[1])}"`
         + ` style="cursor:pointer;font-size:9.5px;color:var(--muted);text-decoration:underline dotted">`
         + (pw.open ? 'hide' : 'change WB') + `</span>`
@@ -298,8 +292,8 @@
       const id = pchip.getAttribute('data-pwid'), wb = pchip.getAttribute('data-wb');
       const pw = _pathWb[id];
       if (pw){
-        if (pw.sel.has(wb)){ if (pw.sel.size > 1) pw.sel.delete(wb); }
-        else { pw.sel.add(wb); pw.open = false; }
+        if (!pw.sel.has(wb)){ pw.sel = new Set([wb]); pw.open = false; }
+        syncWbCount();
         if (typeof computePlan === 'function') computePlan();
       }
       return;
