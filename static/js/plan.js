@@ -528,7 +528,7 @@ function planEnsureDate(){
 // The bridges are modelled as a THROUGHPUT CEILING, not a delay curve: measured
 // wait is flat (11.7→12.1 min from 3.6→31 trucks/bridge-hour) while single
 // bridges have demonstrated 35–49 trucks/hour peaks. Same doctrine as loaders.
-let _planOtherTrips=0,_planOtherManual=false,_planOtherSrc='',_planOtherSrcTrips=0,_planOtherPaths=[];
+let _planOtherTrips=0,_planOtherManual=false,_planOtherSrc='',_planOtherSrcTrips=0,_planOtherPaths=[],_planOtherWb=[];
 const PLAN_WB_TRIPS_PER_HOUR=30;   // conservative vs measured 35–49 peaks
 function planOtherManualEdit(){
   _planOtherManual=true;
@@ -557,6 +557,13 @@ function planFetchOtherTraffic(){
               _planOtherFeniTrips=Number(res.otherFeniTrips)||0;
               _planOtherFeniTypical=Number(res.otherFeniTypical)||null;
               _planOtherPaths=res.otherPaths||[];   // per-path foreign trucks for road-only prefill
+              // WHERE the other traffic actually weighed: per-bridge share from the
+              // measured shift (trucks × other-contractor %). This pins the other
+              // trips onto THEIR bridges in the stress board instead of smearing
+              // them across the planner's chosen bridges.
+              const _obrs=(res.bridges||[]).map(b=>({wb:String(b.wb),w:(b.trucks||0)*(b.otherPct||0)})).filter(b=>b.w>0);
+              const _osum=_obrs.reduce((a,b)=>a+b.w,0);
+              _planOtherWb=_osum>0?_obrs.map(b=>({wb:b.wb,share:b.w/_osum})):[];
               if(!_planOtherManual){
                 _planOtherTrips=trips;
                 const el=q('plan-other-trips');
@@ -605,49 +612,25 @@ function planAddMeasuredRoadOnly(){
     :'Measured road-only paths have no route history here (or already added).';
 }
 function planRenderWbLoad(totTrips,wb,hours,avgTf){
+  // The old AGGREGATE bar (all trips ÷ bridge-count ceiling) is gone: it pooled
+  // demand over a bridge COUNT and told the planner to "open N bridges", which
+  // contradicted the per-bridge assignments the planner actually makes. The
+  // Bridge stress board (plan_weighbridges.js) is now the ONE capacity model —
+  // per bridge, per the planner's own choices, other traffic included.
+  // This row keeps only what is NOT per-bridge: the corridor-drag readout for
+  // other traffic and the road-only quick-add button.
   const box=q('plan-wb-load');if(!box)return;
   const other=_planOtherTrips||0;
-  const demand=totTrips+other;
-  if(!(demand>0)){box.innerHTML='';return;}
-  const cap=wb*PLAN_WB_TRIPS_PER_HOUR*hours;
-  const util=cap>0?demand/cap:0;
-  const pct=Math.round(100*util);
-  const cls=util>=1?'wbl-red':util>=0.7?'wbl-amber':'wbl-green';
-  let advice;
-  if(util>=1){
-    const excess=Math.round(demand-cap);
-    const tAtRisk=Math.round(excess*(avgTf||0));
-    const needWb=Math.ceil(demand/(PLAN_WB_TRIPS_PER_HOUR*hours));
-    advice=`Over by <b>${fmtExact(excess)}</b> trips`
-      +(avgTf?` (≈${fmtExact(tAtRisk)} t)`:'')
-      +` — open <b>${needWb}</b> bridges`;
-  }else if(util>=0.7){
-    advice=`Busy · ${fmtExact(Math.round(cap-demand))} trips headroom`;
-  }else{
-    advice=`OK · ${fmtExact(Math.round(cap-demand))} trips headroom`;
-  }
-  const planPct=demand>0?Math.round(100*totTrips/demand):0;
-  // Corridor drag from the other traffic (same coefficient as page 1's
-  // IWIP-impact model) — show WHY trips/DT moved, not just that it did.
   const dragProbe=planOtherTrafficDelta('X>FENI KM0');
   const dragTxt=dragProbe<0
-    ?` · corridor drag <b>${fmtExact(dragProbe,2)}</b> trips/DT on FENI routes (IWIP above typical)`
+    ?`corridor drag <b>${fmtExact(dragProbe,2)}</b> trips/DT on FENI routes (IWIP above typical)`
     :'';
   const addBtn=(_planOtherPaths&&_planOtherPaths.length)
     ?` <button type="button" class="ms-btn" style="font-size:10px;padding:1px 7px" onclick="planAddMeasuredRoadOnly()" title="Add the measured IWIP/Position paths (last ticket shift) as ROAD-ONLY rows: congestion counted, no WMT">+ add measured road-only paths</button>`
     :'';
-  const tip=`Ceiling = ${fmtExact(wb)} WB × ${PLAN_WB_TRIPS_PER_HOUR}/h × ${fmtExact(hours)} h ≈ ${fmtExact(Math.round(cap))} trips. Plan ${fmtExact(Math.round(totTrips))} + other ${fmtExact(Math.round(other))}. Conservative vs measured peaks 35–49/h.`;
-  box.innerHTML=`
-    <div class="wbl-row" title="${escH(tip)}">
-      <div class="wbl-head">WB load</div>
-      <div class="wbl-bar" role="img" aria-label="weighbridge utilisation ${pct}%">
-        <div class="wbl-fill ${cls}" style="width:${Math.min(100,pct)}%">
-          <span class="wbl-plan" style="width:${planPct}%"></span>
-        </div>
-      </div>
-      <span class="wbl-pct ${cls}">${pct}%</span>
-    </div>
-    <div class="wbl-note">${advice}${dragTxt}${addBtn}</div>`;
+  box.innerHTML=(other>0||addBtn)
+    ?`<div class="wbl-note">${other>0?`Other traffic: <b>${fmtExact(Math.round(other))}</b> trips on their measured bridges — counted in Bridge stress below`:''}${dragTxt?' · '+dragTxt:''}${addBtn}</div>`
+    :'';
 }
 let _planPathKey='';   // last source>dest — only seed DT when this changes
 let _planUserEditedFleet=false;  // once user types DT/WMT, never auto-overwrite
@@ -1040,13 +1023,12 @@ function computePlan(){
   const names=[...new Set(ids.map(id=>_planDraft[id].contractor))];
   const otherN=Math.round(_planOtherTrips||0);
   if(scope)scope.textContent=`${ids.length} path${ids.length===1?'':'s'} · ${names.join(', ')} · ${rain>0?fmtExact(rain)+' mm':'dry'} · ${fmtExact(wb)} WB`+(otherN>0?` · +${fmtExact(otherN)} other trips`:'');
-  // Weighbridge load: plan trips + other (non-plan) traffic vs bridge ceiling.
+  // Weighbridge capacity verdicts are PER BRIDGE now (Bridge stress board in
+  // plan_weighbridges.js — planner's own assignments + other traffic). The old
+  // pooled trips-vs-bridge-count warning contradicted it, so it is gone.
   const avgTf=totTrips?totWmt/totTrips:0;
   planRenderWbLoad(totTrips,wb,hours,avgTf);
-  const wbCap=wb*PLAN_WB_TRIPS_PER_HOUR*hours;
-  q('plan-warn').innerHTML=(totTrips+otherN)>wbCap
-    ?`<span class="er">⚠ WB limit: ${fmtExact(Math.round(totTrips))} plan + ${fmtExact(otherN)} other trips > ~${fmtExact(Math.round(wbCap))} bridge capacity — see Weighbridge load above</span>`
-    :'';
+  q('plan-warn').innerHTML='';
   if(typeof planSetScenarioBtn==='function')planSetScenarioBtn();
   if(typeof planRefreshSaveButtons==='function')planRefreshSaveButtons();
 }

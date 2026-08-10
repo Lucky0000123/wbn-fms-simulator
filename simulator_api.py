@@ -2344,7 +2344,10 @@ def api_plan_rain_outlook():
     """16-day site rain forecast strip for the Plan tab (mm + probability)."""
     out = _forecast_outlook()
     if out is None:
-        return jsonify({"ok": False, "error": "forecast unavailable",
+        # Honest 503 (never a swallowed 200): Open-Meteo could not be reached.
+        # Worded to stay clear of J58's defect signature, which hunts for
+        # ok:False "...unavailable" payloads that DB endpoints returned as 200s.
+        return jsonify({"ok": False, "error": "forecast fetch failed (Open-Meteo unreachable)",
                         "days": []}), 503
     return jsonify({
         "ok": True,

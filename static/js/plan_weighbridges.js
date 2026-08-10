@@ -209,6 +209,21 @@
   // rho .70 -> +5 min, .85 -> +11, .95 -> +38, >=1 -> unbounded (queue grows
   // all shift). The measured wait curve (11.7->12.1 min at 3.6->31 trucks/h)
   // is the flat part of exactly this curve.
+  // Other (non-plan) traffic per bridge: the measured shift tells us WHERE the
+  // IWIP/Position trucks actually weighed (plan.js exposes _planOtherWb shares
+  // + _planOtherTrips count). They preload those bridges — the planner's paths
+  // then stack on top. This is the SINGLE capacity model: your plan + their
+  // traffic, per bridge number, nothing pooled.
+  function otherPerBridge(){
+    const trips = (typeof _planOtherTrips !== 'undefined' ? _planOtherTrips : 0) || 0;
+    const shares = (typeof _planOtherWb !== 'undefined' ? _planOtherWb : []) || [];
+    if (!(trips > 0) || !shares.length) return {};
+    const src = (typeof _planOtherSrc !== 'undefined' && _planOtherSrc) ? _planOtherSrc.slice(5) : 'last shift';
+    const out = {};
+    shares.forEach(s => { out[s.wb] = { trips: trips * s.share, label: 'other traffic (measured ' + src + ')' }; });
+    return out;
+  }
+
   function bridgeUtil(){
     const hours = Math.max(1, parseFloat((el('plan-hours') || {}).value) || 12);
     const perH = (typeof PLAN_WB_TRIPS_PER_HOUR !== 'undefined') ? PLAN_WB_TRIPS_PER_HOUR : 30;
@@ -236,6 +251,14 @@
         rec.paths.push(label);
       });
     });
+    // Other (non-plan) traffic stacks onto ITS measured bridges.
+    const other = otherPerBridge();
+    Object.keys(other).forEach(wb => {
+      const rec = byWb[wb] || (byWb[wb] = { trips: 0, paths: [] });
+      rec.trips += other[wb].trips;
+      rec.otherTrips = (rec.otherTrips || 0) + other[wb].trips;
+      rec.paths.push(other[wb].label);
+    });
     // Queue-wait per bridge from the M/M/1 curve.
     const svc = 60 / perH;   // service minutes per weigh
     Object.keys(byWb).forEach(wb => {
@@ -256,6 +279,10 @@
     const perH = (typeof PLAN_WB_TRIPS_PER_HOUR !== 'undefined') ? PLAN_WB_TRIPS_PER_HOUR : 30;
     const cap = perH * hours, amber = 0.7 * cap;
     const load = {}; ALL_WBS.forEach(wb => load[wb] = 0);
+    // Other traffic is immovable — it preloads its measured bridges, and the
+    // balancer routes the plan's trucks around it.
+    const other = otherPerBridge();
+    Object.keys(other).forEach(wb => { if (load[wb] != null) load[wb] += other[wb].trips; });
     const entries = Object.keys(_pathWb)
       .map(id => ({ id, pw: _pathWb[id], trips: pathTrips(id) }))
       .filter(x => x.trips > 0)
@@ -393,12 +420,17 @@
       const col = u >= 1 ? '#ef4444' : u >= 0.7 ? '#f59e0b' : '#22c55e';
       const wait = r.waitMin === Infinity ? '∞' : r.waitMin > 1 ? Math.round(r.waitMin) + "'" : '—';
       const paths = r.paths.join(', ');
-      return `<div class="wbs-row" title="WB ${escH(wb)} · ${Math.round(r.trips)} trips (${pctN}% of ${Math.round(cap)}) · est queue ${r.waitMin === Infinity ? 'grows all shift' : Math.round(r.waitMin || 0) + ' min'} · paths: ${escH(paths)}">`
+      const oth = Math.round(r.otherTrips || 0);
+      const mine = Math.round(r.trips) - oth;
+      const tripsTxt = oth > 0
+        ? (mine > 0 ? `${mine}+${oth}o tr` : `${oth}o tr`)
+        : `${Math.round(r.trips)} tr`;
+      return `<div class="wbs-row" title="WB ${escH(wb)} · ${Math.round(r.trips)} trips total${oth > 0 ? ` = ${mine} plan + ${oth} other traffic` : ''} (${pctN}% of ${Math.round(cap)}) · est queue ${r.waitMin === Infinity ? 'grows all shift' : Math.round(r.waitMin || 0) + ' min'} · ${escH(paths)}">`
         + `<span class="wbs-name">WB ${escH(wb)}</span>`
         + `<span class="wbs-bar"><i style="width:${Math.min(100, pctN)}%;background:${col}"></i></span>`
         + `<span class="wbs-pct" style="color:${col}">${pctN}%</span>`
         + `<span class="wbs-wait">${wait}</span>`
-        + `<span class="wbs-trips">${Math.round(r.trips)} tr · ${r.paths.length}p</span>`
+        + `<span class="wbs-trips">${tripsTxt} · ${r.paths.length}p</span>`
         + `</div>`;
     }).join('');
     const worstNote = worst.rho >= 1
@@ -407,7 +439,7 @@
         ? `<span style="color:#f59e0b">⚠ WB ${escH(used[0])} heavy (${Math.round(100 * worst.rho)}% · ~${Math.round(worst.waitMin)} min queue)</span>`
         : `<span class="muted">all bridges comfortable</span>`;
     host.innerHTML =
-      `<div class="wbs-head muted">Bridge stress <span title="Per-bridge M/M/1 queue model: utilisation = assigned trips ÷ (${Math.round(60 / svc)} weighs/h × shift h); queue = service × ρ/(1−ρ). Columns: utilisation · est queue · trips & paths assigned. Live during planning.">ⓘ</span> ${worstNote}</div>`
+      `<div class="wbs-head muted">Bridge stress <span title="Per-bridge M/M/1 queue model: utilisation = assigned trips ÷ (${Math.round(60 / svc)} weighs/h × shift h); queue = service × ρ/(1−ρ). Other (non-plan) traffic is stacked onto the bridges it actually used in the measured shift — 'o' marks its trips. Columns: utilisation · est queue · trips (plan+other) & users. Live during planning.">ⓘ</span> ${worstNote}</div>`
       + rows;
   }
 
