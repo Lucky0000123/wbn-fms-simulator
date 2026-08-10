@@ -218,9 +218,12 @@
     const trips = (typeof _planOtherTrips !== 'undefined' ? _planOtherTrips : 0) || 0;
     const shares = (typeof _planOtherWb !== 'undefined' ? _planOtherWb : []) || [];
     if (!(trips > 0) || !shares.length) return {};
-    const src = (typeof _planOtherSrc !== 'undefined' && _planOtherSrc) ? _planOtherSrc.slice(5) : 'last shift';
+    const typ = (typeof _planOtherTypical !== 'undefined') ? _planOtherTypical : null;
+    const src = typ
+      ? ('30d shares, n=' + (typ.nShifts || '?') + ' shifts')
+      : ((typeof _planOtherSrc !== 'undefined' && _planOtherSrc) ? 'measured ' + _planOtherSrc.slice(5) : 'last shift');
     const out = {};
-    shares.forEach(s => { out[s.wb] = { trips: trips * s.share, label: 'other traffic (measured ' + src + ')' }; });
+    shares.forEach(s => { out[s.wb] = { trips: trips * s.share, label: 'other traffic (' + src + ')' }; });
     return out;
   }
 

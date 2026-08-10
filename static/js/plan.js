@@ -68,10 +68,12 @@ function planOtherTrafficDelta(key){
   const dst=(key.split('>')[1]||'');
   if(!PLAN_FENI_DESTS.test(dst))return 0;
   const coef=typeof OTHER_TRAFFIC_COEF!=='undefined'?OTHER_TRAFFIC_COEF:-0.00035;
-  // Manual edits scale the measured FENI share proportionally.
+  // The FENI share was measured on ONE shift; the input (30-day median or a
+  // manual edit) may differ from that shift's total. Scale proportionally so
+  // the drag always reflects the number in the box.
   let feni=_planOtherFeniTrips,typ=_planOtherFeniTypical;
   if(!Number.isFinite(feni)||!Number.isFinite(typ)||!typ)return 0;
-  if(_planOtherManual&&_planOtherSrcTrips>0){
+  if(_planOtherSrcTrips>0&&Number.isFinite(_planOtherTrips)&&_planOtherTrips!==_planOtherSrcTrips){
     feni=feni*(_planOtherTrips/_planOtherSrcTrips);
   }
   const excess=feni-typ;
@@ -528,7 +530,7 @@ function planEnsureDate(){
 // The bridges are modelled as a THROUGHPUT CEILING, not a delay curve: measured
 // wait is flat (11.7→12.1 min from 3.6→31 trucks/bridge-hour) while single
 // bridges have demonstrated 35–49 trucks/hour peaks. Same doctrine as loaders.
-let _planOtherTrips=0,_planOtherManual=false,_planOtherSrc='',_planOtherSrcTrips=0,_planOtherPaths=[],_planOtherWb=[];
+let _planOtherTrips=0,_planOtherManual=false,_planOtherSrc='',_planOtherSrcTrips=0,_planOtherPaths=[],_planOtherWb=[],_planOtherTypical=null;
 const PLAN_WB_TRIPS_PER_HOUR=30;   // conservative vs measured 35–49 peaks
 function planOtherManualEdit(){
   _planOtherManual=true;
@@ -557,20 +559,31 @@ function planFetchOtherTraffic(){
               _planOtherFeniTrips=Number(res.otherFeniTrips)||0;
               _planOtherFeniTypical=Number(res.otherFeniTypical)||null;
               _planOtherPaths=res.otherPaths||[];   // per-path foreign trucks for road-only prefill
-              // WHERE the other traffic actually weighed: per-bridge share from the
-              // measured shift (trucks × other-contractor %). This pins the other
-              // trips onto THEIR bridges in the stress board instead of smearing
-              // them across the planner's chosen bridges.
-              const _obrs=(res.bridges||[]).map(b=>({wb:String(b.wb),w:(b.trucks||0)*(b.otherPct||0)})).filter(b=>b.w>0);
-              const _osum=_obrs.reduce((a,b)=>a+b.w,0);
-              _planOtherWb=_osum>0?_obrs.map(b=>({wb:b.wb,share:b.w/_osum})):[];
+              // TYPICAL other traffic (30-day median per shift + 30-day bridge
+              // shares) — the owner asked for an average over many days, not one
+              // day's snapshot: single shifts swing 255→894 trips, so the last
+              // shift is a bad default. Median beats mean (surge days skew up).
+              const typ=res.otherTypical||null;
+              _planOtherTypical=typ&&Number(typ.tripsPerShift)>0?typ:null;
+              // Bridge split for the stress board: 30-day shares when we have
+              // them (stable), else the single measured shift (better than nothing).
+              if(_planOtherTypical&&Array.isArray(typ.wbShares)&&typ.wbShares.length){
+                const s=typ.wbShares.reduce((a,b)=>a+(b.sharePct||0),0)||1;
+                _planOtherWb=typ.wbShares.map(b=>({wb:String(b.wb),share:(b.sharePct||0)/s}));
+              }else{
+                const _obrs=(res.bridges||[]).map(b=>({wb:String(b.wb),w:(b.trucks||0)*(b.otherPct||0)})).filter(b=>b.w>0);
+                const _osum=_obrs.reduce((a,b)=>a+b.w,0);
+                _planOtherWb=_osum>0?_obrs.map(b=>({wb:b.wb,share:b.w/_osum})):[];
+              }
               if(!_planOtherManual){
-                _planOtherTrips=trips;
+                _planOtherTrips=_planOtherTypical?Number(_planOtherTypical.tripsPerShift):trips;
                 const el=q('plan-other-trips');
-                if(el)el.value=String(Math.round(trips));
+                if(el)el.value=String(Math.round(_planOtherTrips));
               }
               const src=q('plan-other-src');
-              if(src)src.textContent='· '+_planOtherSrc.slice(5);
+              if(src)src.textContent=_planOtherTypical
+                ?('· 30d median (last shift '+_planOtherSrc.slice(5)+': '+Math.round(trips)+')')
+                :('· '+_planOtherSrc.slice(5));
               computePlan();
               return;
             }
@@ -629,7 +642,7 @@ function planRenderWbLoad(totTrips,wb,hours,avgTf){
     ?` <button type="button" class="ms-btn" style="font-size:10px;padding:1px 7px" onclick="planAddMeasuredRoadOnly()" title="Add the measured IWIP/Position paths (last ticket shift) as ROAD-ONLY rows: congestion counted, no WMT">+ add measured road-only paths</button>`
     :'';
   box.innerHTML=(other>0||addBtn)
-    ?`<div class="wbl-note">${other>0?`Other traffic: <b>${fmtExact(Math.round(other))}</b> trips on their measured bridges — counted in Bridge stress below`:''}${dragTxt?' · '+dragTxt:''}${addBtn}</div>`
+    ?`<div class="wbl-note">${other>0?`Other traffic: <b>${fmtExact(Math.round(other))}</b> trips${_planOtherTypical?' (30-day median — single shifts ranged 255–894)':''} on their usual bridges — counted in Bridge stress below`:''}${dragTxt?' · '+dragTxt:''}${addBtn}</div>`
     :'';
 }
 let _planPathKey='';   // last source>dest — only seed DT when this changes

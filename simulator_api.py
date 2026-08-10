@@ -425,6 +425,7 @@ _WB_RESULT_CACHE = None
 _WB_HOME_CACHE = None
 
 _OTHER_FENI_TYPICAL = None
+_OTHER_TYPICAL = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -930,6 +931,56 @@ def _wb_corridor_positions():
     if out:                              # never cache an empty result from a transient DB/file hiccup
         _WB_POS_CACHE = out
     return out
+
+def _other_typical():
+    """Typical OTHER (non-WBN) trips per shift + their per-bridge shares, from
+    the last 30 data days. One number per concept, measured, cached:
+
+      • tripsPerShift = MEDIAN of per-shift other-trip counts (median, not mean,
+        because ship-arrival surges skew the mean upward; the planner wants the
+        normal day, and can type a bigger number when ops warn of a surge).
+      • wbShares      = each bridge's share of other-traffic weighs over the
+        same 30 days (stability: one day can swing a bridge 3x).
+
+    Why 30 days and not all 195: IWIP's fleet mix trends (monthly shift-1 means
+    ran 1055 -> 536 -> 819 -> 432 Dec–Jul); a 6-month average would plan for a
+    fleet that no longer runs. 30 days tracks the current regime with n=59
+    shifts, still enough to damp single-day noise."""
+    global _OTHER_TYPICAL
+    if _OTHER_TYPICAL is not None:
+        return _OTHER_TYPICAL
+    wbn = "'RIM','PPP','SSS','SMA','STM','HJS','GMG','CKB','HFNC'"
+    try:
+        conn = _conn('WBN_DATABASE')
+        cur = conn.cursor()
+        cur.execute("SELECT CONVERT(date,[DATE]) d, SHIFT, COUNT(*) n FROM HAULAGE_IWIP_CLEAN "
+                    "WHERE CONTRACTOR NOT IN (" + wbn + ") AND [DATE]>='2025-12-01' "
+                    "AND CONVERT(date,[DATE]) >= (SELECT DATEADD(day,-30,MAX(CONVERT(date,[DATE]))) "
+                    "                             FROM HAULAGE_IWIP_CLEAN) "
+                    "GROUP BY CONVERT(date,[DATE]), SHIFT")
+        vals = sorted(int(r[2]) for r in cur.fetchall())
+        cur.execute("SELECT WB_ID, COUNT(*) n FROM HAULAGE_IWIP_CLEAN "
+                    "WHERE CONTRACTOR NOT IN (" + wbn + ") AND WB_ID<>'' AND WB_ID IS NOT NULL "
+                    "AND WB_ID<>'NOT WEIGHED' "
+                    "AND CONVERT(date,[DATE]) >= (SELECT DATEADD(day,-30,MAX(CONVERT(date,[DATE]))) "
+                    "                             FROM HAULAGE_IWIP_CLEAN) "
+                    "GROUP BY WB_ID")
+        wb_rows = [(str(w).strip(), int(n)) for w, n in cur.fetchall()]
+        conn.close()
+        if not vals:
+            return None
+        tot = sum(n for _, n in wb_rows) or 1
+        _OTHER_TYPICAL = {
+            "tripsPerShift": vals[len(vals) // 2],
+            "nShifts": len(vals),
+            "windowDays": 30,
+            "wbShares": [{"wb": w, "sharePct": round(100.0 * n / tot, 1)}
+                         for w, n in sorted(wb_rows, key=lambda x: -x[1]) if n / tot >= 0.003],
+        }
+    except Exception:
+        return None
+    return _OTHER_TYPICAL
+
 
 def _other_feni_typical():
     """Median daily non-WBN trips ending on the FENI corridor (dest FENI/CRUSHER) — the 'normal' shared
@@ -1617,6 +1668,7 @@ def api_simulator_shift_context():
                     "otherFeniTrips": sum(p["trips"] for p in other_paths
                                          if p["dest"] in feni_dests),
                     "otherFeniTypical": _other_feni_typical(),
+                    "otherTypical": _other_typical(),
                     "wbNote": None if bridges else "No weighbridge weigh data before Dec 2025 for this shift."})
 def api_weighbridge_summary():
     """Small home-page status payload. Deliberately avoids the simulator's 90-day wait-curve query.
