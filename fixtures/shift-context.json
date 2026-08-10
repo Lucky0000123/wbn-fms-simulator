@@ -160,6 +160,57 @@
  "otherTrips": 1061,
  "otherTypical": {
   "nShifts": 59,
+  "peak": {
+   "nShifts": 118,
+   "tripsPerShift": 952,
+   "wbShares": [
+    {
+     "sharePct": 32.1,
+     "wb": "11"
+    },
+    {
+     "sharePct": 20.5,
+     "wb": "6"
+    },
+    {
+     "sharePct": 12.2,
+     "wb": "7"
+    },
+    {
+     "sharePct": 12.2,
+     "wb": "12"
+    },
+    {
+     "sharePct": 5.2,
+     "wb": "13"
+    },
+    {
+     "sharePct": 5.2,
+     "wb": "14"
+    },
+    {
+     "sharePct": 3.9,
+     "wb": "17"
+    },
+    {
+     "sharePct": 3.6,
+     "wb": "8"
+    },
+    {
+     "sharePct": 2.8,
+     "wb": "16"
+    },
+    {
+     "sharePct": 1.4,
+     "wb": "15"
+    },
+    {
+     "sharePct": 0.4,
+     "wb": "18"
+    }
+   ],
+   "window": "2026-01-01 \u2192 2026-02-28"
+  },
   "tripsPerShift": 533,
   "wbShares": [
    {

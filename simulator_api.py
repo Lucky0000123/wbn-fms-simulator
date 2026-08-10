@@ -933,49 +933,78 @@ def _wb_corridor_positions():
     return out
 
 def _other_typical():
-    """Typical OTHER (non-WBN) trips per shift + their per-bridge shares, from
-    the last 30 data days. One number per concept, measured, cached:
+    """Typical OTHER (non-WBN) trips per shift + per-bridge shares, TWO regimes:
 
-      • tripsPerShift = MEDIAN of per-shift other-trip counts (median, not mean,
-        because ship-arrival surges skew the mean upward; the planner wants the
-        normal day, and can type a bigger number when ops warn of a surge).
-      • wbShares      = each bridge's share of other-traffic weighs over the
-        same 30 days (stability: one day can swing a bridge 3x).
+      • recent — last 30 data days (median + shares). The site's tempo TODAY.
+      • peak   — the busiest 60-day window in the data (highest median trips
+        per shift), found by scanning, not hardcoded. Today that window is
+        Jan–Feb 2026 (median 952/shift, WB 11 32%, WB 6 21%), which the owner
+        identified as "operation at its best". Self-updating: if a busier
+        stretch ever appears, the scan finds it.
 
-    Why 30 days and not all 195: IWIP's fleet mix trends (monthly shift-1 means
-    ran 1055 -> 536 -> 819 -> 432 Dec–Jul); a 6-month average would plan for a
-    fleet that no longer runs. 30 days tracks the current regime with n=59
-    shifts, still enough to damp single-day noise."""
+    The owner plans for the RAMP-BACK, not for today's quiet site (WBN's own
+    fleet: 988 trips/shift in Jan–Feb vs 151 in the last 30 days), so the UI
+    defaults to peak and offers recent as the alternative. MEDIAN throughout —
+    surge days (ship arrivals, 1447 max) skew means upward."""
     global _OTHER_TYPICAL
     if _OTHER_TYPICAL is not None:
         return _OTHER_TYPICAL
     wbn = "'RIM','PPP','SSS','SMA','STM','HJS','GMG','CKB','HFNC'"
+
+    def _median(vals):
+        s = sorted(vals)
+        return s[len(s) // 2] if s else None
+
     try:
         conn = _conn('WBN_DATABASE')
         cur = conn.cursor()
+        # One query drives both regimes: per-day+shift other-trip counts.
         cur.execute("SELECT CONVERT(date,[DATE]) d, SHIFT, COUNT(*) n FROM HAULAGE_IWIP_CLEAN "
                     "WHERE CONTRACTOR NOT IN (" + wbn + ") AND [DATE]>='2025-12-01' "
-                    "AND CONVERT(date,[DATE]) >= (SELECT DATEADD(day,-30,MAX(CONVERT(date,[DATE]))) "
-                    "                             FROM HAULAGE_IWIP_CLEAN) "
                     "GROUP BY CONVERT(date,[DATE]), SHIFT")
-        vals = sorted(int(r[2]) for r in cur.fetchall())
-        cur.execute("SELECT WB_ID, COUNT(*) n FROM HAULAGE_IWIP_CLEAN "
-                    "WHERE CONTRACTOR NOT IN (" + wbn + ") AND WB_ID<>'' AND WB_ID IS NOT NULL "
-                    "AND WB_ID<>'NOT WEIGHED' "
-                    "AND CONVERT(date,[DATE]) >= (SELECT DATEADD(day,-30,MAX(CONVERT(date,[DATE]))) "
-                    "                             FROM HAULAGE_IWIP_CLEAN) "
-                    "GROUP BY WB_ID")
-        wb_rows = [(str(w).strip(), int(n)) for w, n in cur.fetchall()]
-        conn.close()
-        if not vals:
+        per = {}
+        for d, s, n in cur.fetchall():
+            per.setdefault(str(d), []).append(int(n))
+        days = sorted(per)
+        if not days:
+            conn.close()
             return None
-        tot = sum(n for _, n in wb_rows) or 1
+        # recent = last 30 data days
+        recent_days = days[-30:]
+        recent_vals = [n for d in recent_days for n in per[d]]
+        # peak = busiest 60-consecutive-data-day window by median trips/shift
+        best = None
+        win = 60
+        for i in range(0, max(1, len(days) - win + 1)):
+            wdays = days[i:i + win]
+            vals = [n for d in wdays for n in per[d]]
+            med = _median(vals)
+            if med is not None and (best is None or med > best[0]):
+                best = (med, wdays[0], wdays[-1], len(vals))
+        # per-bridge shares for a date range
+        def shares(d0, d1):
+            cur.execute("SELECT WB_ID, COUNT(*) n FROM HAULAGE_IWIP_CLEAN "
+                        "WHERE CONTRACTOR NOT IN (" + wbn + ") AND WB_ID<>'' AND WB_ID IS NOT NULL "
+                        "AND WB_ID<>'NOT WEIGHED' AND CONVERT(date,[DATE])>=%s AND CONVERT(date,[DATE])<=%s "
+                        "GROUP BY WB_ID", (d0, d1))
+            rows = [(str(w).strip(), int(n)) for w, n in cur.fetchall()]
+            tot = sum(n for _, n in rows) or 1
+            return [{"wb": w, "sharePct": round(100.0 * n / tot, 1)}
+                    for w, n in sorted(rows, key=lambda x: -x[1]) if n / tot >= 0.003]
+        recent_shares = shares(recent_days[0], recent_days[-1])
+        peak_shares = shares(best[1], best[2]) if best else []
+        conn.close()
         _OTHER_TYPICAL = {
-            "tripsPerShift": vals[len(vals) // 2],
-            "nShifts": len(vals),
+            # legacy flat fields = recent regime (existing consumers)
+            "tripsPerShift": _median(recent_vals),
+            "nShifts": len(recent_vals),
             "windowDays": 30,
-            "wbShares": [{"wb": w, "sharePct": round(100.0 * n / tot, 1)}
-                         for w, n in sorted(wb_rows, key=lambda x: -x[1]) if n / tot >= 0.003],
+            "wbShares": recent_shares,
+            "peak": {
+                "tripsPerShift": best[0], "nShifts": best[3],
+                "window": "%s → %s" % (best[1], best[2]),
+                "wbShares": peak_shares,
+            } if best else None,
         }
     except Exception:
         return None

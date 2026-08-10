@@ -530,11 +530,61 @@ function planEnsureDate(){
 // The bridges are modelled as a THROUGHPUT CEILING, not a delay curve: measured
 // wait is flat (11.7→12.1 min from 3.6→31 trucks/bridge-hour) while single
 // bridges have demonstrated 35–49 trucks/hour peaks. Same doctrine as loaders.
-let _planOtherTrips=0,_planOtherManual=false,_planOtherSrc='',_planOtherSrcTrips=0,_planOtherPaths=[],_planOtherWb=[],_planOtherTypical=null;
+let _planOtherTrips=0,_planOtherManual=false,_planOtherSrc='',_planOtherSrcTrips=0,_planOtherPaths=[],_planOtherWb=[],_planOtherTypical=null,_planOtherRegime='peak';
 const PLAN_WB_TRIPS_PER_HOUR=30;   // conservative vs measured 35–49 peaks
 function planOtherManualEdit(){
   _planOtherManual=true;
   _planOtherTrips=Math.max(0,parseFloat((q('plan-other-trips')||{}).value)||0);
+  computePlan();
+}
+// Apply the selected other-traffic regime (peak = best-60-day window, the
+// planning default; recent = last-30-days median). Sets the input value, the
+// per-bridge shares for the stress board, and the source tag. A manual edit
+// keeps the typed number but still uses the regime's bridge shares.
+let _planOtherShiftRes=null;   // last shift-context payload (fallback shares)
+function planOtherApplyRegime(res){
+  if(res)_planOtherShiftRes=res;
+  const typ=_planOtherTypical;
+  const peak=typ&&typ.peak&&Number(typ.peak.tripsPerShift)>0?typ.peak:null;
+  const use=(_planOtherRegime==='peak'&&peak)?peak:typ;
+  const shares=use&&Array.isArray(use.wbShares)&&use.wbShares.length?use.wbShares:null;
+  if(shares){
+    const s=shares.reduce((a,b)=>a+(b.sharePct||0),0)||1;
+    _planOtherWb=shares.map(b=>({wb:String(b.wb),share:(b.sharePct||0)/s}));
+  }else{
+    const r=_planOtherShiftRes||{};
+    const _obrs=(r.bridges||[]).map(b=>({wb:String(b.wb),w:(b.trucks||0)*(b.otherPct||0)})).filter(b=>b.w>0);
+    const _osum=_obrs.reduce((a,b)=>a+b.w,0);
+    _planOtherWb=_osum>0?_obrs.map(b=>({wb:b.wb,share:b.w/_osum})):[];
+  }
+  if(!_planOtherManual){
+    _planOtherTrips=use?Number(use.tripsPerShift):_planOtherSrcTrips;
+    const el=q('plan-other-trips');
+    if(el)el.value=String(Math.round(_planOtherTrips));
+  }
+  const src=q('plan-other-src');
+  if(src){
+    // Keep this tag SHORT — it sits inside the Conditions metric and a long
+    // string overflows the card at 1366px (J56). Full dates live in the title.
+    const mmdd=x=>String(x||'').slice(5);
+    if(use===peak&&peak){
+      const w=(peak.window||'').split(' → ');
+      src.textContent='· best period '+(w.length===2?mmdd(w[0])+'→'+mmdd(w[1]):'');
+      src.title='Busiest measured 60 days: '+(peak.window||'')+' · median '+Math.round(peak.tripsPerShift)
+        +' other trips/shift'+(_planOtherSrcTrips?(' · last measured shift: '+Math.round(_planOtherSrcTrips)):'');
+    }else if(typ){
+      src.textContent='· 30d median';
+      src.title='Median of the last 30 data days'+(_planOtherSrcTrips?(' · last measured shift: '+Math.round(_planOtherSrcTrips)):'');
+    }else{
+      src.textContent='· '+_planOtherSrc.slice(5);
+      src.title='';
+    }
+  }
+}
+function planOtherSetRegime(mode){
+  _planOtherRegime=mode==='recent'?'recent':'peak';
+  _planOtherManual=false;      // switching regime re-derives the number
+  planOtherApplyRegime();
   computePlan();
 }
 function planFetchOtherTraffic(){
@@ -559,31 +609,15 @@ function planFetchOtherTraffic(){
               _planOtherFeniTrips=Number(res.otherFeniTrips)||0;
               _planOtherFeniTypical=Number(res.otherFeniTypical)||null;
               _planOtherPaths=res.otherPaths||[];   // per-path foreign trucks for road-only prefill
-              // TYPICAL other traffic (30-day median per shift + 30-day bridge
-              // shares) — the owner asked for an average over many days, not one
-              // day's snapshot: single shifts swing 255→894 trips, so the last
-              // shift is a bad default. Median beats mean (surge days skew up).
+              // TWO measured regimes for other traffic (owner: "site is quiet
+              // now; Jan–Feb was operation at its best — use the best scenario"):
+              //   peak   = busiest 60-day window in the data (server-scanned)
+              //   recent = last-30-days median
+              // Default = PEAK: plan for the ramp-back, not today's lull.
+              // planOtherApplyRegime() re-derives trips + bridge shares.
               const typ=res.otherTypical||null;
               _planOtherTypical=typ&&Number(typ.tripsPerShift)>0?typ:null;
-              // Bridge split for the stress board: 30-day shares when we have
-              // them (stable), else the single measured shift (better than nothing).
-              if(_planOtherTypical&&Array.isArray(typ.wbShares)&&typ.wbShares.length){
-                const s=typ.wbShares.reduce((a,b)=>a+(b.sharePct||0),0)||1;
-                _planOtherWb=typ.wbShares.map(b=>({wb:String(b.wb),share:(b.sharePct||0)/s}));
-              }else{
-                const _obrs=(res.bridges||[]).map(b=>({wb:String(b.wb),w:(b.trucks||0)*(b.otherPct||0)})).filter(b=>b.w>0);
-                const _osum=_obrs.reduce((a,b)=>a+b.w,0);
-                _planOtherWb=_osum>0?_obrs.map(b=>({wb:b.wb,share:b.w/_osum})):[];
-              }
-              if(!_planOtherManual){
-                _planOtherTrips=_planOtherTypical?Number(_planOtherTypical.tripsPerShift):trips;
-                const el=q('plan-other-trips');
-                if(el)el.value=String(Math.round(_planOtherTrips));
-              }
-              const src=q('plan-other-src');
-              if(src)src.textContent=_planOtherTypical
-                ?('· 30d median (last shift '+_planOtherSrc.slice(5)+': '+Math.round(trips)+')')
-                :('· '+_planOtherSrc.slice(5));
+              planOtherApplyRegime(res);
               computePlan();
               return;
             }
@@ -641,8 +675,22 @@ function planRenderWbLoad(totTrips,wb,hours,avgTf){
   const addBtn=(_planOtherPaths&&_planOtherPaths.length)
     ?` <button type="button" class="ms-btn" style="font-size:10px;padding:1px 7px" onclick="planAddMeasuredRoadOnly()" title="Add the measured IWIP/Position paths (last ticket shift) as ROAD-ONLY rows: congestion counted, no WMT">+ add measured road-only paths</button>`
     :'';
+  // Regime toggle: peak (best 60-day window — the planning default per the
+  // owner: site is quiet now, plan for operation at its best) vs recent
+  // (last-30-days median). Manual typing always wins over either.
+  const peak=_planOtherTypical&&_planOtherTypical.peak;
+  const seg=(mode,label,title)=>{
+    const on=(_planOtherRegime===mode&&!_planOtherManual);
+    return `<button type="button" onclick="planOtherSetRegime('${mode}')" title="${escH(title)}"`
+      +` style="font-size:10px;padding:1px 8px;border-radius:10px;cursor:pointer;border:1px solid ${on?'#f59e0b':'var(--line)'};`
+      +`${on?'background:rgba(245,158,11,.15);font-weight:700;color:var(--txt)':'background:none;color:var(--muted)'}">${label}</button>`;
+  };
+  const regimeCtl=peak
+    ?` ${seg('peak','best period',`Plan against the busiest measured 60 days (${peak.window||'peak'}): median ${fmtExact(peak.tripsPerShift)} other trips/shift. Use when operations ramp back to full tempo.`)}`
+     +`${seg('recent','recent',`Plan against the last 30 data days: median ${fmtExact(_planOtherTypical.tripsPerShift)} other trips/shift. Use for the current quiet tempo.`)}`
+    :'';
   box.innerHTML=(other>0||addBtn)
-    ?`<div class="wbl-note">${other>0?`Other traffic: <b>${fmtExact(Math.round(other))}</b> trips${_planOtherTypical?' (30-day median — single shifts ranged 255–894)':''} on their usual bridges — counted in Bridge stress below`:''}${dragTxt?' · '+dragTxt:''}${addBtn}</div>`
+    ?`<div class="wbl-note">${other>0?`Other traffic: <b>${fmtExact(Math.round(other))}</b> trips/shift${regimeCtl} — on their usual bridges, counted in Bridge stress below`:''}${dragTxt?' · '+dragTxt:''}${addBtn}</div>`
     :'';
 }
 let _planPathKey='';   // last source>dest — only seed DT when this changes

@@ -219,8 +219,9 @@
     const shares = (typeof _planOtherWb !== 'undefined' ? _planOtherWb : []) || [];
     if (!(trips > 0) || !shares.length) return {};
     const typ = (typeof _planOtherTypical !== 'undefined') ? _planOtherTypical : null;
+    const regime = (typeof _planOtherRegime !== 'undefined') ? _planOtherRegime : 'peak';
     const src = typ
-      ? ('30d shares, n=' + (typ.nShifts || '?') + ' shifts')
+      ? ((regime === 'peak' && typ.peak) ? ('best period ' + (typ.peak.window || '')) : '30d median')
       : ((typeof _planOtherSrc !== 'undefined' && _planOtherSrc) ? 'measured ' + _planOtherSrc.slice(5) : 'last shift');
     const out = {};
     shares.forEach(s => { out[s.wb] = { trips: trips * s.share, label: 'other traffic (' + src + ')' }; });

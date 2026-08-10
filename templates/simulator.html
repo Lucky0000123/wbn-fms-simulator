@@ -427,7 +427,7 @@
                   <span class="k">Bridges in use</span>
                   <span class="v"><input id="plan-wb" type="number" min="1" step="1" value="1" readonly style="pointer-events:none;opacity:.8" oninput="computePlan()"><em>/ 18</em></span>
                 </label>
-                <label class="plan-cond-metric" title="Non-plan trucks (IWIP / position works) also cross the weighbridges and share the road. Prefilled with the 30-day MEDIAN trips per shift (single shifts swing 255–894, so one day is a bad default). Type your own number if ops expect a surge or a quiet day.">
+                <label class="plan-cond-metric" title="Non-plan trucks (IWIP / position works) also cross the weighbridges and share the road. Prefilled with the BEST-PERIOD median (busiest measured 60 days — plan for operations at full tempo, not today's quiet site). Toggle to 'recent' below for the last-30-days median, or type your own number.">
                   <span class="k">Other trips</span>
                   <span class="v"><input id="plan-other-trips" type="number" min="0" step="10" value="0" oninput="planOtherManualEdit()"><em id="plan-other-src" class="plan-other-src"></em></span>
                 </label>

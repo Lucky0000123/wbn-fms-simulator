@@ -535,7 +535,7 @@ tbody tr:hover{background:var(--panel-hover)}
 .plan-cond-metric .v{display:flex;align-items:baseline;gap:4px;min-width:0}
 .plan-cond-metric input{width:100%;max-width:72px;padding:3px 6px;text-align:center;font:700 15px/1.2 var(--font-num);font-variant-numeric:tabular-nums;border-color:var(--line)}
 .plan-cond-metric em{font-style:normal;font-size:10.5px;color:var(--txt-muted);white-space:nowrap}
-.plan-other-src{font-size:9.5px!important;color:var(--txt-muted)}
+.plan-other-src{font-size:9.5px!important;color:var(--txt-muted);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom}
 .plan-wb-onpath{min-height:0}
 .plan-wb-onpath:empty{display:none}
 .plan-wb-path{display:flex;flex-direction:column;gap:4px}
