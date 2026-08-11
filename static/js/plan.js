@@ -144,7 +144,7 @@ function planSectionDrag(key,dt){
   if(excess<=0)return {delta:0,excess:0};   // below typical section load: no credit, no drag
   return {delta:(f.per50/50)*excess,excess};
 }
-function planTripsPerDT(key,dt,rain,contractor){
+function planTripsPerDT(key,dt,rain,contractor,opts){
   const m=_pathResp&&_pathResp[key];if(!m)return null;
   let tr=m.avgTr;
   const slope=(Number.isFinite(m.bAdj)&&m.bAdj<0)?m.bAdj:(m.b<0?m.b:0);
@@ -162,7 +162,23 @@ function planTripsPerDT(key,dt,rain,contractor){
   const rainDelta=tr*(scale-1);
   tr=Math.max(.3*m.avgTr,tr*scale)*planContractorFactor(contractor);
   const sf=planShiftFactor();
-  return {daily:tr,shift:tr*sf,rainDelta:rainDelta*sf,otherDelta:otherDelta*sf,secDelta:sec.delta*sf,secExcess:sec.excess,slope,m};
+  // Weighbridge throughput ceiling (doctrine: ceiling, not delay curve). A
+  // bridge weighs at most 30/h; when this path's assigned bridges are pushed
+  // past 100% by the WHOLE plan + other traffic, the excess arrivals cannot
+  // be weighed this shift — served/arrivals caps this path's trips. Penalty
+  // only (served ≤ 1); below capacity nothing changes (measured flat waits).
+  // opts.noWb breaks the recursion when the stress board asks for demand.
+  let wbFactor=1,wbRows=null;
+  if(!(opts&&opts.noWb)&&typeof planWbAssessFor==='function'){
+    const name=contractor&&contractor.name?contractor.name:(contractor||'—');
+    const preTrips=dt*tr*sf;                       // arrivals if fully served
+    const w=planWbAssessFor(String(name),key,preTrips);
+    if(w&&w.factor<1){wbFactor=Math.max(.3,w.factor);wbRows=w.rows;}
+    else if(w)wbRows=w.rows;
+  }
+  const shiftServed=tr*sf*wbFactor;
+  return {daily:tr,shift:shiftServed,shiftFree:tr*sf,rainDelta:rainDelta*sf,otherDelta:otherDelta*sf,
+    secDelta:sec.delta*sf,secExcess:sec.excess,wbFactor,wbRows,slope,m};
 }
 // Payload: the contractor's own measured t/trip when we have it, else the path's.
 function planPayload(key,contractor){
@@ -183,6 +199,70 @@ function planDtForWmt(key,targetWmt,rain,contractor){
     dt=dt+.6*(next-dt);                      // damping keeps the declining-efficiency case stable
   }
   return Math.max(1,Math.ceil(dt));
+}
+// ── Cross-plan interactions panel (the WHY under "Add a haul path") ─────────
+// The estimate above it already prices these effects in; this panel makes each
+// one visible and attributable: shared-road drag from other plan rows, other
+// (IWIP) corridor traffic, rain, and the weighbridge ceiling. Everything here
+// is measured (page-1 coefficients, M/M/1 arrivals, ticket history) — when an
+// effect is zero it says WHY it's zero rather than hiding the concept.
+function planRenderImpacts(key,dt,e,contractor){
+  const box=q('plan-impacts');if(!box)return;
+  if(!e){box.innerHTML='';return;}
+  const rows=[];
+  const dtPct=x=>fmtExact(Math.abs(x),2);
+  // 1 · Shared road with the REST OF THE PLAN (holding-plan rows on this span)
+  const others=Object.keys(_planDraft||{}).map(id=>_planDraft[id])
+    .filter(r=>r&&r.key!==key&&r.dt>0&&(()=>{const a=_planSpan(key),b=_planSpan(r.key);
+      return a&&b&&Math.min(a[1],b[1])-Math.max(a[0],b[0])>0;})());
+  const otherDt=others.reduce((n,r)=>n+r.dt,0);
+  if(e.secDelta<=-.005){
+    const lost=Math.round(Math.abs(e.secDelta)*dt);
+    rows.push({icon:'🛣',cls:'imp-bad',
+      txt:`Shared road: ${others.length} other plan row${others.length===1?'':'s'} (${fmtExact(otherDt)} DT) overlap this span — measured section effect −${dtPct(e.secDelta)} Trips/DT ≈ −${fmtExact(lost)} trips this shift`,
+      tip:`Page-1 combined 3D model: this path's trips/DT declines when TOTAL section DT exceeds its historical typical (excess ${fmtExact(Math.round(e.secExcess))} DT). Paths sharing the span: ${others.map(r=>r.key.replace('>',' → ')+' ('+fmtExact(r.dt)+' DT)').join(', ')}`});
+  }else if(others.length){
+    rows.push({icon:'🛣',cls:'imp-ok',
+      txt:`Shared road: ${others.length} other plan row${others.length===1?'':'s'} (${fmtExact(otherDt)} DT) overlap this span — no measured drag`,
+      tip:`Total section DT stays within what this path historically ran at (mean section ${(()=>{const fx=_planSecFxGet();const f=fx&&fx[key];return f&&Number.isFinite(f.meanSection)?fmtExact(Math.round(f.meanSection))+' DT':'n/a';})()}), or page 1 measured no Clear/Likely decline for this path — only measured effects are applied, never invented.`});
+  }
+  // 2 · Other (IWIP/Position) corridor traffic
+  if(e.otherDelta<=-.005){
+    rows.push({icon:'🚚',cls:'imp-bad',
+      txt:`Other traffic: IWIP above typical on the FENI corridor — −${dtPct(e.otherDelta)} Trips/DT`,
+      tip:'Measured page-1 coefficient × FENI-bound excess over the typical median. Scales with the Other-trips input.'});
+  }else if(/FENI|CRUSHER|HUAFEI|BSE/i.test(key.split('>')[1]||'')){
+    rows.push({icon:'🚚',cls:'imp-ok',
+      txt:'Other traffic: within typical FENI-corridor levels — no extra drag (typical load is already in this path\u2019s history)',
+      tip:'The baseline trips/DT was measured WITH normal IWIP traffic present; drag applies only above-typical (never a credit).'});
+  }
+  // 3 · Weighbridge ceiling / queue for THIS path's assigned bridges
+  if(e.wbRows&&e.wbRows.length){
+    const worst=e.wbRows.reduce((a,b)=>(b.rho>(a?a.rho:-1)?b:a),null);
+    if(e.wbFactor<1){
+      rows.push({icon:'⚖',cls:'imp-bad',
+        txt:`Weighbridge: WB ${worst.wb} over capacity (${fmtExact(Math.round(100*worst.rho))}% of ${fmtExact(Math.round(worst.cap))}/shift) — only ${fmtExact(Math.round(100*e.wbFactor))}% of this path's trips can be weighed`,
+        tip:`Bridges are a throughput ceiling (30 weighs/h measured-conservative). Arrivals at WB ${worst.wb}: ${fmtExact(Math.round(worst.arrivals))} (plan + ${fmtExact(Math.round(worst.otherTrips))} other traffic). Excess arrivals cannot be weighed this shift. Move trips to another bridge or use ⚖ Auto-balance.`});
+    }else if(worst&&worst.rho>=.7){
+      rows.push({icon:'⚖',cls:'imp-warn',
+        txt:`Weighbridge: WB ${worst.wb} heavy (${fmtExact(Math.round(100*worst.rho))}%) — est queue ~${fmtExact(Math.round(worst.waitMin))} min, still under capacity so no trips lost yet`,
+        tip:'M/M/1 estimate at current arrivals. Below 100% the measured waits stay flat (11.7→12.1 min), so trips are not clipped — the queue eats idle margin first.'});
+    }else if(worst){
+      rows.push({icon:'⚖',cls:'imp-ok',
+        txt:`Weighbridge: WB ${e.wbRows.map(r=>r.wb).join(', WB ')} at ${e.wbRows.map(r=>fmtExact(Math.round(100*r.rho))+'%').join(' / ')} — comfortable`,
+        tip:'Utilisation = (plan + other traffic arrivals) ÷ 30/h ceiling. Green under 70%.'});
+    }
+  }
+  // 4 · Rain (when active)
+  if(e.rainDelta<=-.01){
+    rows.push({icon:'☔',cls:'imp-warn',
+      txt:`Rain: −${dtPct(e.rainDelta)} Trips/DT at the entered rainfall`,
+      tip:'Path-specific measured rain response.'});
+  }
+  box.innerHTML=rows.length
+    ?`<div class="imp-head muted">Cross-plan interactions <span title="How the rest of the holding plan, other (IWIP) traffic, rain and the assigned weighbridges act on THIS path. All effects are measured; the estimate above already includes them.">ⓘ</span></div>`
+      +rows.map(r=>`<div class="imp-row ${r.cls}" title="${escH(r.tip)}"><span class="imp-ic">${r.icon}</span><span>${r.txt}</span></div>`).join('')
+    :'';
 }
 function planSwapMode(){
   _planMode=_planMode==='dt'?'wmt':'dt';
@@ -564,20 +644,21 @@ function planOtherApplyRegime(res){
   }
   const src=q('plan-other-src');
   if(src){
-    // Keep this tag SHORT — it sits inside the Conditions metric and a long
-    // string overflows the card at 1366px (J56). Full dates live in the title.
+    // Short unit tag only — regime label lives in the strip below.
     const mmdd=x=>String(x||'').slice(5);
     if(use===peak&&peak){
-      const w=(peak.window||'').split(' → ');
-      src.textContent='· best period '+(w.length===2?mmdd(w[0])+'→'+mmdd(w[1]):'');
-      src.title='Busiest measured 60 days: '+(peak.window||'')+' · median '+Math.round(peak.tripsPerShift)
-        +' other trips/shift'+(_planOtherSrcTrips?(' · last measured shift: '+Math.round(_planOtherSrcTrips)):'');
+      src.textContent='/shift';
+      src.title='Busy period (busiest 60 days: '+(peak.window||'')+') · median '
+        +Math.round(peak.tripsPerShift)+' non-plan trips/shift'
+        +(_planOtherSrcTrips?(' · last measured: '+Math.round(_planOtherSrcTrips)):'');
     }else if(typ){
-      src.textContent='· 30d median';
-      src.title='Median of the last 30 data days'+(_planOtherSrcTrips?(' · last measured shift: '+Math.round(_planOtherSrcTrips)):'');
+      src.textContent='/shift';
+      src.title='Recent (last 30 data days) · median '+Math.round(typ.tripsPerShift||0)
+        +' non-plan trips/shift'
+        +(_planOtherSrcTrips?(' · last measured: '+Math.round(_planOtherSrcTrips)):'');
     }else{
-      src.textContent='· '+_planOtherSrc.slice(5);
-      src.title='';
+      src.textContent='/shift';
+      src.title=_planOtherSrc?('From '+mmdd(_planOtherSrc)):'';
     }
   }
 }
@@ -659,39 +740,37 @@ function planAddMeasuredRoadOnly(){
     :'Measured road-only paths have no route history here (or already added).';
 }
 function planRenderWbLoad(totTrips,wb,hours,avgTf){
-  // The old AGGREGATE bar (all trips ÷ bridge-count ceiling) is gone: it pooled
-  // demand over a bridge COUNT and told the planner to "open N bridges", which
-  // contradicted the per-bridge assignments the planner actually makes. The
-  // Bridge stress board (plan_weighbridges.js) is now the ONE capacity model —
-  // per bridge, per the planner's own choices, other traffic included.
-  // This row keeps only what is NOT per-bridge: the corridor-drag readout for
-  // other traffic and the road-only quick-add button.
+  // Aggregate WB bar removed — Bridge load board is the capacity model.
+  // This strip explains non-plan traffic (IWIP/position) + regime toggle.
   const box=q('plan-wb-load');if(!box)return;
   const other=_planOtherTrips||0;
-  const dragProbe=planOtherTrafficDelta('X>FENI KM0');
+  const dragProbe=typeof planOtherTrafficDelta==='function'?planOtherTrafficDelta('X>FENI KM0'):0;
   const dragTxt=dragProbe<0
-    ?`corridor drag <b>${fmtExact(dragProbe,2)}</b> trips/DT on FENI routes (IWIP above typical)`
+    ?`<span class="plan-other-drag">FENI drag <b>${fmtExact(dragProbe,2)}</b> trips/DT</span>`
     :'';
   const addBtn=(_planOtherPaths&&_planOtherPaths.length)
-    ?` <button type="button" class="ms-btn" style="font-size:10px;padding:1px 7px" onclick="planAddMeasuredRoadOnly()" title="Add the measured IWIP/Position paths (last ticket shift) as ROAD-ONLY rows: congestion counted, no WMT">+ add measured road-only paths</button>`
+    ?`<button type="button" class="plan-other-add" onclick="planAddMeasuredRoadOnly()" title="Add measured IWIP/Position paths as road-only rows (congestion counted, no WMT)">+ Road-only paths</button>`
     :'';
-  // Regime toggle: peak (best 60-day window — the planning default per the
-  // owner: site is quiet now, plan for operation at its best) vs recent
-  // (last-30-days median). Manual typing always wins over either.
   const peak=_planOtherTypical&&_planOtherTypical.peak;
   const seg=(mode,label,title)=>{
     const on=(_planOtherRegime===mode&&!_planOtherManual);
-    return `<button type="button" onclick="planOtherSetRegime('${mode}')" title="${escH(title)}"`
-      +` style="font-size:10px;padding:1px 8px;border-radius:10px;cursor:pointer;border:1px solid ${on?'#f59e0b':'var(--line)'};`
-      +`${on?'background:rgba(245,158,11,.15);font-weight:700;color:var(--txt)':'background:none;color:var(--muted)'}">${label}</button>`;
+    return `<button type="button" class="plan-other-seg${on?' on':''}" onclick="planOtherSetRegime('${mode}')" title="${escH(title)}">${label}</button>`;
   };
   const regimeCtl=peak
-    ?` ${seg('peak','best period',`Plan against the busiest measured 60 days (${peak.window||'peak'}): median ${fmtExact(peak.tripsPerShift)} other trips/shift. Use when operations ramp back to full tempo.`)}`
-     +`${seg('recent','recent',`Plan against the last 30 data days: median ${fmtExact(_planOtherTypical.tripsPerShift)} other trips/shift. Use for the current quiet tempo.`)}`
+    ?`<div class="plan-other-regime" role="group" aria-label="Non-plan trips basis">`
+      +seg('peak','Busy period',`Busiest measured 60 days (${peak.window||'peak'}): median ${fmtExact(peak.tripsPerShift)} non-plan trips/shift. Use when ops run at full tempo.`)
+      +seg('recent','Recent',`Last 30 data days: median ${fmtExact(_planOtherTypical.tripsPerShift)} non-plan trips/shift. Use for today's quieter tempo.`)
+      +`</div>`
     :'';
-  box.innerHTML=(other>0||addBtn)
-    ?`<div class="wbl-note">${other>0?`Other traffic: <b>${fmtExact(Math.round(other))}</b> trips/shift${regimeCtl} — on their usual bridges, counted in Bridge stress below`:''}${dragTxt?' · '+dragTxt:''}${addBtn}</div>`
-    :'';
+  if(!(other>0||addBtn||peak)){box.innerHTML='';return;}
+  box.innerHTML=`<div class="plan-other-strip">
+    <div class="plan-other-strip-main">
+      <span class="plan-other-k">Non-plan traffic</span>
+      <span class="plan-other-v">${other>0?`<b>${fmtExact(Math.round(other))}</b> trips/shift`:'—'}</span>
+      <span class="plan-other-help muted">IWIP / position trucks on the same bridges — counted in Bridge load below</span>
+    </div>
+    <div class="plan-other-strip-actions">${regimeCtl}${dragTxt}${addBtn}</div>
+  </div>`;
 }
 let _planPathKey='';   // last source>dest — only seed DT when this changes
 let _planUserEditedFleet=false;  // once user types DT/WMT, never auto-overwrite
@@ -831,6 +910,7 @@ function planPreview(){
   const box=q('plan-preview');if(!box)return;
   const blank=(msg)=>{box.classList.add('empty');box.classList.remove('is-loading');
     box.innerHTML=`<div class="est-head">Estimated shift output</div><div class="est-body"><div class="est-lines"></div><div class="est-total"><div class="est-total-v">—</div></div></div><div class="est-foot"><div class="est-note">${escH(msg)}</div></div>`;
+    const imp=q('plan-impacts');if(imp)imp.innerHTML='';
     planRenderBestHistory({ok:false,error:msg});};
   const s=(q('plan-src')||{}).value,d=(q('plan-dst')||{}).value,key=s+'>'+d,m=_pathResp&&_pathResp[key];
   if(!m)return blank('Select a source and destination to see the estimate.');
@@ -857,10 +937,12 @@ function planPreview(){
   if(e.rainDelta<=-.03)warns.push(`☔ rain −${fmtExact(Math.abs(e.rainDelta),2)} Trips/DT`);
   if(e.otherDelta<=-.02)warns.push(`🚚 other (IWIP/Position) traffic above typical −${fmtExact(Math.abs(e.otherDelta),2)} Trips/DT on the shared corridor`);
   if(e.secDelta<=-.02)warns.push(`\u{1F6E3}\uFE0F shared-section load \u2212${fmtExact(Math.abs(e.secDelta),2)} Trips/DT (plan adds ${fmtExact(Math.round(e.secExcess))} DT beyond this path's typical section traffic \u2014 page-1 measured effect)`);
+  if(e.wbFactor<1)warns.push(`⚖ weighbridge over capacity − trips capped at ${fmtExact(Math.round(100*e.wbFactor))}% (see interactions below)`);
   const base={src:s,dst:d,contractor:c?c.name:'—',hours,swapped,warns,foreign,
     dt,tripsPerDt:e.shift,trips,wmt,payload:pay.tf,payloadSrc:pay.src,model:foreign?'roadonly':'local',
     contractorFactor:cFactor};
   _planRenderEstimate(base);                       // stage 1 — instant, local
+  planRenderImpacts(key,dt,e,c);                   // WHY panel under the builder
   // Road-only / foreign path: its trucks add congestion but no WMT for us, so there is
   // no tonnage to predict and no WMT history to rank. Stop after the local estimate —
   // do NOT call /api/predict (would re-render a WMT) or the best-past-days search.

@@ -54,7 +54,20 @@
 
   function init(res, s, d){
     const all = (res && res.bridges) || [];
-    _bridges = all.filter(b => b.trips > 0).sort((a, b) => b.trips - a.trips);
+    // NORMALIZE bridge identity to the site NUMBER (server sends wbNum; fall
+    // back to trailing digits). Ticket WB_IDs come in two formats for the SAME
+    // physical bridge ('15' and 'WB_IWIP_T15'); without this merge a route's
+    // load lands on a phantom bridge that matches nothing in the 1–18 grid.
+    const byNum = {};
+    all.forEach(b => {
+      if (!(b.trips > 0)) return;
+      const digits = String(b.wbNum != null ? b.wbNum : b.wb).match(/\d+/);
+      const num = digits ? String(parseInt(digits[0], 10)) : String(b.wb);
+      const rec = byNum[num] || (byNum[num] = { wb: num, trips: 0, sharePct: 0 });
+      rec.trips += b.trips;
+      rec.sharePct += (b.sharePct || 0);
+    });
+    _bridges = Object.values(byNum).sort((a, b) => b.trips - a.trips);
     _n = _bridges.length;
     _cached = !!(res && res.servedFrom === 'fixture');
     _excluded = (res && res.excludedMinorBridges) || 0;
@@ -114,21 +127,22 @@
     const chips = ALL_WBS.map(wb => {
       const on = _sel.has(wb);
       const hist = byWb[wb];
-      const hint = hist ? ` <span class="wb-chip-pct">${pct(hist.sharePct)}</span>` : '';
       const t = hist
-        ? `${escH(wb)} — ${pct(hist.sharePct)} of this route's historical weighs · click to use this bridge`
-        : `${escH(wb)} — no history on this route (fine — your choice) · click to use this bridge`;
+        ? `WB ${escH(wb)} — used for ${pct(hist.sharePct)} of this route historically · click to assign`
+        : `WB ${escH(wb)} — no history on this route · click to assign`;
       return `<button type="button" data-wb="${escH(wb)}" class="wb-chip${on ? ' on' : ''}${hist ? '' : ' wb-chip-nohist'}"`
-        + ` title="${t}">${escH(wb)}${hint}</button>`;
+        + ` title="${t}">${escH(wb)}</button>`;
     }).join('');
+    const selLabel = [..._sel].sort((a, b) => Number(a) - Number(b)).join(', ');
     host.innerHTML =
       `<div class="plan-wb-path">`
       + `<div class="plan-wb-path-h">`
+      + `<span class="plan-wb-path-k">Path bridge</span>`
       + `<b>${escH(_route.s)} → ${escH(_route.d)}</b>`
-      + `<span class="muted">choose the weighbridge for this path · % = historical use on this route`
+      + `<span class="muted">WB ${escH(selLabel || '—')}`
       + (_cached ? ' · sample' : '')
       + `</span></div>`
-      + `<div class="plan-wb-chips">${chips}</div>`
+      + `<div class="plan-wb-chips" role="group" aria-label="Choose weighbridge">${chips}</div>`
       + (note ? `<div class="plan-wb-path-note">${note}</div>` : '')
       + `</div>`;
   }
@@ -178,6 +192,8 @@
   }
 
   // Trips a path contributes this shift (mirrors plan.js maths).
+  // noWb: demand at the bridge = PRE-queue-penalty trips (arrivals), otherwise
+  // bridgeUtil -> planTripsPerDT -> penalty -> bridgeUtil would recurse.
   function pathTrips(id){
     try {
       const r = typeof _planDraft !== 'undefined' ? _planDraft[id] : null;
@@ -189,7 +205,7 @@
       if (typeof planTripsPerDT === 'function'){
         const rain = Math.max(0, parseFloat((el('plan-rain') || {}).value) || 0);
         const c = typeof planContractor === 'function' ? planContractor(r.contractor) : null;
-        const e = planTripsPerDT(r.key, r.dt, rain, c);
+        const e = planTripsPerDT(r.key, r.dt, rain, c, { noWb: true });
         if (e) return r.dt * e.shift;
       }
     } catch (e) {}
@@ -406,6 +422,64 @@
   }
   let _lastUtil = null;
 
+  // ── Cross-plan weighbridge penalty (throughput ceiling) ───────────────────
+  // Doctrine (AGENTS): bridges are a THROUGHPUT CEILING, not a delay curve —
+  // measured wait stays flat (11.7→12.1 min) below capacity, so trips take no
+  // penalty there. But a bridge cannot weigh more than cap = 30/h × shift h.
+  // When plan + other traffic push a bridge past 100%, the excess arrivals
+  // physically do not fit in the shift: every path on that bridge loses its
+  // share. planWbAssessFor() computes that factor for ONE path (added row or
+  // the path being built in the picker) from the live assignments.
+  function wbSelFor(name, key){
+    const id = name + '|' + key;
+    const pw = _pathWb[id];
+    if (pw && pw.sel && pw.sel.size && typeof _planDraft !== 'undefined' && _planDraft[id])
+      return { sel: pw.sel, bridges: pw.bridges, inPlan: true };
+    const r = route();
+    if (r.key === key && _sel.size){
+      const byWb = {};
+      _bridges.forEach(b => { byWb[b.wb] = b; });
+      return { sel: _sel,
+               bridges: ALL_WBS.map(wb => ({ wb, sharePct: byWb[wb] ? byWb[wb].sharePct : null })),
+               inPlan: false };
+    }
+    return null;
+  }
+
+  function planWbAssessForImpl(name, key, previewTrips){
+    const a = wbSelFor(name, key);
+    if (!a) return null;
+    const hours = Math.max(1, parseFloat((el('plan-hours') || {}).value) || 12);
+    const perH = (typeof PLAN_WB_TRIPS_PER_HOUR !== 'undefined') ? PLAN_WB_TRIPS_PER_HOUR : 30;
+    const cap = perH * hours;
+    const { byWb } = bridgeUtil();       // holding-plan + other-traffic arrivals (pre-penalty)
+    // History-weighted split of THIS path over its selected bridges.
+    const shares = {};
+    let histSum = 0;
+    a.sel.forEach(wb => {
+      const b = a.bridges.find(x => x.wb === wb);
+      const sh = b && b.sharePct != null ? Math.max(0, b.sharePct) : 0;
+      shares[wb] = sh; histSum += sh;
+    });
+    const svc = 60 / perH;
+    const rows = [];
+    let factor = 0;
+    a.sel.forEach(wb => {
+      const frac = histSum > 0 ? (shares[wb] / histSum) : (1 / a.sel.size);
+      const already = byWb[wb] ? byWb[wb].trips : 0;
+      // Preview path is not yet in the draft: its arrivals stack on top now.
+      const arrivals = already + (a.inPlan ? 0 : (previewTrips || 0) * frac);
+      const rho = cap ? arrivals / cap : 0;
+      const served = arrivals > cap ? cap / arrivals : 1;   // ceiling: excess does not fit
+      const waitMin = rho >= 1 ? Infinity : svc * rho / (1 - rho);
+      rows.push({ wb, frac, arrivals, cap, rho, served, waitMin,
+                  otherTrips: byWb[wb] ? (byWb[wb].otherTrips || 0) : 0 });
+      factor += frac * served;
+    });
+    return { factor: Math.min(1, factor), rows, cap };
+  }
+  window.planWbAssessFor = planWbAssessForImpl;
+
   // ── Weighbridge stress board ──────────────────────────────────────────────
   // One glance: every bridge in use, its assigned trips, utilisation and
   // estimated queue — live DURING planning (re-renders on every plan edit),
@@ -418,33 +492,42 @@
     if (!used.length){ host.innerHTML = ''; return; }
     used.sort((a, b) => byWb[b].rho - byWb[a].rho);
     const worst = byWb[used[0]];
+    const waitLabel = (r) => {
+      if (r.waitMin === Infinity) return {txt: 'Grows', cls: 'bad'};
+      if (!(r.waitMin > 1)) return {txt: 'OK', cls: 'ok'};
+      return {txt: Math.round(r.waitMin) + ' min', cls: r.waitMin >= 10 ? 'warn' : ''};
+    };
     const rows = used.map(wb => {
       const r = byWb[wb];
       const u = r.rho || 0, pctN = Math.round(100 * u);
-      const col = u >= 1 ? '#ef4444' : u >= 0.7 ? '#f59e0b' : '#22c55e';
-      const wait = r.waitMin === Infinity ? '∞' : r.waitMin > 1 ? Math.round(r.waitMin) + "'" : '—';
+      const tone = u >= 1 ? 'bad' : u >= 0.7 ? 'warn' : 'ok';
+      const w = waitLabel(r);
       const paths = r.paths.join(', ');
       const oth = Math.round(r.otherTrips || 0);
-      const mine = Math.round(r.trips) - oth;
+      const mine = Math.max(0, Math.round(r.trips) - oth);
       const tripsTxt = oth > 0
-        ? (mine > 0 ? `${mine}+${oth}o tr` : `${oth}o tr`)
-        : `${Math.round(r.trips)} tr`;
-      return `<div class="wbs-row" title="WB ${escH(wb)} · ${Math.round(r.trips)} trips total${oth > 0 ? ` = ${mine} plan + ${oth} other traffic` : ''} (${pctN}% of ${Math.round(cap)}) · est queue ${r.waitMin === Infinity ? 'grows all shift' : Math.round(r.waitMin || 0) + ' min'} · ${escH(paths)}">`
+        ? `<b>${mine}</b><span class="u">plan</span> <b>${oth}</b><span class="u">other</span>`
+        : `<b>${Math.round(r.trips)}</b><span class="u">plan</span>`;
+      return `<div class="wbs-row wbs-${tone}" title="WB ${escH(wb)} · ${Math.round(r.trips)} trips total${oth > 0 ? ` = ${mine} plan + ${oth} non-plan` : ''} (${pctN}% of ~${Math.round(cap)} capacity) · wait ${r.waitMin === Infinity ? 'grows all shift' : Math.round(r.waitMin || 0) + ' min'} · paths: ${escH(paths || '—')}">`
         + `<span class="wbs-name">WB ${escH(wb)}</span>`
-        + `<span class="wbs-bar"><i style="width:${Math.min(100, pctN)}%;background:${col}"></i></span>`
-        + `<span class="wbs-pct" style="color:${col}">${pctN}%</span>`
-        + `<span class="wbs-wait">${wait}</span>`
-        + `<span class="wbs-trips">${tripsTxt} · ${r.paths.length}p</span>`
+        + `<span class="wbs-bar"><i style="width:${Math.min(100, pctN)}%"></i></span>`
+        + `<span class="wbs-pct">${pctN}%</span>`
+        + `<span class="wbs-wait wbs-wait-${w.cls || tone}">${w.txt}</span>`
+        + `<span class="wbs-trips">${tripsTxt}</span>`
         + `</div>`;
     }).join('');
     const worstNote = worst.rho >= 1
-      ? `<span style="color:#ef4444">⛔ WB ${escH(used[0])} overloaded — queue grows all shift</span>`
+      ? `<span class="wbs-status bad">WB ${escH(used[0])} overloaded — wait grows all shift</span>`
       : worst.rho >= 0.7
-        ? `<span style="color:#f59e0b">⚠ WB ${escH(used[0])} heavy (${Math.round(100 * worst.rho)}% · ~${Math.round(worst.waitMin)} min queue)</span>`
-        : `<span class="muted">all bridges comfortable</span>`;
+        ? `<span class="wbs-status warn">WB ${escH(used[0])} busy · ~${Math.round(worst.waitMin)} min wait</span>`
+        : `<span class="wbs-status ok">All bridges OK</span>`;
+    const tip = `Per-bridge load: trips ÷ (~${Math.round(60 / svc)} weighs/h × shift). Wait ≈ service × ρ/(1−ρ). Non-plan trips stacked on the bridges they used historically.`;
     host.innerHTML =
-      `<div class="wbs-head muted">Bridge stress <span title="Per-bridge M/M/1 queue model: utilisation = assigned trips ÷ (${Math.round(60 / svc)} weighs/h × shift h); queue = service × ρ/(1−ρ). Other (non-plan) traffic is stacked onto the bridges it actually used in the measured shift — 'o' marks its trips. Columns: utilisation · est queue · trips (plan+other) & users. Live during planning.">ⓘ</span> ${worstNote}</div>`
-      + rows;
+      `<div class="wbs-board">`
+      + `<div class="wbs-head"><span class="wbs-title" title="${escH(tip)}">Bridge load</span>${worstNote}</div>`
+      + `<div class="wbs-cols" aria-hidden="true"><span>Bridge</span><span>Load</span><span>%</span><span>Wait</span><span>Trips</span></div>`
+      + rows
+      + `</div>`;
   }
 
   // Wrap plan.js globals at runtime (source untouched). planAddPath already calls

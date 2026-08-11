@@ -407,6 +407,9 @@
                 <span>Road-only <em>(foreign / IWIP — no WMT)</em></span>
               </label>
               <div id="plan-hint" class="plan-hint" aria-live="polite"></div>
+              <!-- Cross-plan interactions for the path being built: shared road,
+                   other traffic, weighbridge ceiling — the WHY behind the numbers. -->
+              <div id="plan-impacts" class="plan-impacts" aria-live="polite"></div>
             </div>
 
             <div class="card plan-cond-card">
@@ -423,27 +426,27 @@
                   <span class="k">Rain</span>
                   <span class="v"><input id="plan-rain" type="number" min="0" step="1" value="0" oninput="planRainManual();computePlan()"><em>mm</em></span>
                 </label>
-                <label class="plan-cond-metric" title="Derived: distinct weighbridge NUMBERS assigned across the holding plan (pick the bridge per path below / in the plan table). Feeds the WB-load ceiling.">
-                  <span class="k">Bridges in use</span>
+                <label class="plan-cond-metric" title="How many distinct weighbridges your plan is using. Pick a bridge for the path below — this count updates automatically.">
+                  <span class="k">Bridges</span>
                   <span class="v"><input id="plan-wb" type="number" min="1" step="1" value="1" readonly style="pointer-events:none;opacity:.8" oninput="computePlan()"><em>/ 18</em></span>
                 </label>
-                <label class="plan-cond-metric" title="Non-plan trucks (IWIP / position works) also cross the weighbridges and share the road. Prefilled with the BEST-PERIOD median (busiest measured 60 days — plan for operations at full tempo, not today's quiet site). Toggle to 'recent' below for the last-30-days median, or type your own number.">
-                  <span class="k">Other trips</span>
+                <label class="plan-cond-metric" title="Trucks that are NOT in your holding plan (IWIP / position works) but still use the same weighbridges. Busy period = busiest 60 days; Recent = last 30 days. Edit the number to test scenarios.">
+                  <span class="k">Non-plan trips</span>
                   <span class="v"><input id="plan-other-trips" type="number" min="0" step="10" value="0" oninput="planOtherManualEdit()"><em id="plan-other-src" class="plan-other-src"></em></span>
                 </label>
               </div>
-              <!-- On-path weighbridge chips — count syncs to Weighbridges above. -->
-              <div id="plan-wb-onpath" class="plan-wb-onpath"></div>
+              <!-- Other-traffic regime + road-only add (filled by planRenderWbLoad). -->
               <div id="plan-wb-load" class="plan-wb-load" aria-live="polite"></div>
-              <!-- Per-bridge stress board: every assigned bridge's utilisation +
-                   est queue, live during planning (plan_weighbridges.js). -->
+              <!-- Path bridge picker — count syncs to Bridges above. -->
+              <div id="plan-wb-onpath" class="plan-wb-onpath"></div>
+              <!-- Per-bridge load + wait (plan_weighbridges.js). -->
               <div id="plan-wb-stress" class="plan-wb-stress" aria-live="polite"></div>
               <div class="plan-cond-meteo">
                 <div id="plan-rain-suggest" class="plan-rain-suggest"></div>
                 <details class="plan-rain-outlook-details" id="plan-rain-outlook-details">
                   <summary class="plan-rain-outlook-sum">
                     <span class="plan-ro-sum-label">16-day rain outlook</span>
-                    <span class="muted plan-ro-sum-hint">click a day → Rainfall</span>
+                    <span class="muted plan-ro-sum-hint">click a day → Rain</span>
                   </summary>
                   <div id="plan-rain-outlook" class="plan-rain-outlook" aria-live="polite"></div>
                 </details>

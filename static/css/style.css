@@ -486,7 +486,7 @@ tbody tr:hover{background:var(--panel-hover)}
 /* Builder + Conditions side by side — kills the empty column under Conditions */
 .plan-inputs-row{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(260px,0.85fr);gap:12px;align-items:stretch}
 .plan-builder{display:flex;flex-direction:column;gap:8px;min-width:0;padding:12px 14px}
-.plan-cond-card{display:flex;flex-direction:column;gap:8px;min-width:0;padding:12px 14px;justify-content:flex-start}
+.plan-cond-card{display:flex;flex-direction:column;gap:7px;min-width:0;padding:12px 14px;justify-content:flex-start}
 .plan-hist-card{
   display:flex;flex-direction:column;min-width:0;
   max-height:min(42vh,380px);overflow:hidden;
@@ -535,15 +535,15 @@ tbody tr:hover{background:var(--panel-hover)}
 .plan-cond-metric .v{display:flex;align-items:baseline;gap:4px;min-width:0}
 .plan-cond-metric input{width:100%;max-width:72px;padding:3px 6px;text-align:center;font:700 15px/1.2 var(--font-num);font-variant-numeric:tabular-nums;border-color:var(--line)}
 .plan-cond-metric em{font-style:normal;font-size:10.5px;color:var(--txt-muted);white-space:nowrap}
-.plan-other-src{font-size:9.5px!important;color:var(--txt-muted);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom}
+.plan-other-src{font-size:10px!important;color:var(--txt-muted)}
 .plan-wb-onpath{min-height:0}
 .plan-wb-onpath:empty{display:none}
-.plan-wb-path{display:flex;flex-direction:column;gap:4px}
-.plan-wb-path-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;font-size:10.5px;color:var(--txt-secondary);line-height:1.3}
+.plan-wb-path{display:flex;flex-direction:column;gap:5px;padding:7px 8px;border:1px solid var(--line-light);border-radius:8px;background:rgba(0,0,0,.1)}
+.plan-wb-path-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;font-size:11px;color:var(--txt-secondary);line-height:1.3}
+.plan-wb-path-k{font-size:9.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--txt-muted)}
 .plan-wb-path-h b{color:var(--txt);font-weight:700}
-.plan-wb-chips{display:flex;flex-wrap:wrap;gap:4px}
-.wb-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--txt-muted);font-size:10.5px;cursor:pointer;line-height:1.3}
-.wb-chip .wb-chip-pct{opacity:.75}
+.plan-wb-chips{display:flex;flex-wrap:wrap;gap:3px}
+.wb-chip{display:inline-flex;align-items:center;justify-content:center;min-width:26px;padding:3px 6px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--txt-muted);font:600 11px var(--font-num);cursor:pointer;line-height:1.2}
 .wb-chip.on{border-color:var(--accent);background:var(--accent-dim);color:var(--txt)}
 .wb-chip:hover{border-color:var(--txt-muted);color:var(--txt)}
 .plan-wb-path-note{font-size:10.5px;color:var(--amber);line-height:1.3}
@@ -555,6 +555,15 @@ tbody tr:hover{background:var(--panel-hover)}
 .plan-cond-card .plan-cond{margin:0}
 .plan-shift-mini{font-size:11px;margin-top:2px}
 .plan-hint{margin:0;min-width:0}
+/* Cross-plan interactions (the WHY under the path builder) */
+.plan-impacts{margin-top:7px}
+.plan-impacts:empty{display:none}
+.imp-head{font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
+.imp-row{display:flex;gap:7px;align-items:baseline;font-size:11px;line-height:1.45;padding:3px 8px;border-radius:7px;margin-bottom:3px;cursor:default}
+.imp-ic{flex:0 0 auto}
+.imp-bad{background:rgba(239,68,68,.09);border:1px solid rgba(239,68,68,.28)}
+.imp-warn{background:rgba(245,158,11,.09);border:1px solid rgba(245,158,11,.26)}
+.imp-ok{background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.18);color:var(--txt-muted)}
 .plan-hint:empty{display:none}
 .plan-hint-path{display:flex;flex-direction:column;gap:5px;padding:7px 8px;border:1px solid var(--line-light);border-radius:8px;background:rgba(0,0,0,.12)}
 .plan-hint-route{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;font-size:12px;color:var(--txt)}
@@ -768,35 +777,60 @@ svg{display:block;width:100%;height:280px}
 .plan-ro-chip.on{outline:2px solid var(--accent,#22c55e)}
 .plan-ro-chip:hover{background:rgba(255,255,255,.09)}
 
-/* ── Plan: weighbridge load bar ────────────────────────────────────────── */
+/* ── Plan: non-plan traffic strip ──────────────────────────────────────── */
 .plan-wb-load{margin:0}
 .plan-wb-load:empty{display:none}
-.wbl-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:center}
-.wbl-head{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--txt-muted);margin:0;white-space:nowrap}
-.wbl-bar{position:relative;height:12px;border:1px solid var(--line-light,#2c3947);border-radius:6px;overflow:hidden;background:rgba(255,255,255,.04);min-width:0}
-.wbl-fill{height:100%;border-radius:5px 0 0 5px;position:relative;transition:width .3s}
-.wbl-fill.wbl-green{background:rgba(34,197,94,.45)}
-.wbl-fill.wbl-amber{background:rgba(245,158,11,.5)}
-.wbl-fill.wbl-red{background:rgba(239,68,68,.55)}
-.wbl-plan{display:block;height:100%;background:rgba(255,255,255,.18);border-right:1px solid rgba(255,255,255,.4)}
-.wbl-pct{font:700 11px var(--font-num);font-variant-numeric:tabular-nums;color:var(--txt);white-space:nowrap}
-.wbl-pct.wbl-green{color:var(--good)}
-.wbl-pct.wbl-amber{color:var(--amber)}
-.wbl-pct.wbl-red{color:var(--halt)}
-.wbl-note{font-size:10px;margin-top:3px;line-height:1.35;color:var(--txt-muted)}
-.wbl-note b{color:var(--txt);font-weight:600}
+.plan-other-strip{display:flex;flex-direction:column;gap:5px;padding:7px 8px;border:1px solid var(--line-light);border-radius:8px;background:rgba(0,0,0,.1)}
+.plan-other-strip-main{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px}
+.plan-other-k{font-size:9.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--txt-muted)}
+.plan-other-v{font-size:12px;color:var(--txt)}
+.plan-other-v b{font:700 13px var(--font-num);font-variant-numeric:tabular-nums}
+.plan-other-help{font-size:10.5px;line-height:1.3}
+.plan-other-strip-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.plan-other-regime{display:inline-flex;gap:3px;padding:2px;border:1px solid var(--line-light);border-radius:7px;background:rgba(0,0,0,.15)}
+.plan-other-seg{appearance:none;border:0;background:transparent;color:var(--txt-muted);font-size:10.5px;font-weight:600;padding:3px 8px;border-radius:5px;cursor:pointer;line-height:1.2}
+.plan-other-seg.on{background:var(--accent-dim);color:var(--txt)}
+.plan-other-seg:hover{color:var(--txt)}
+.plan-other-drag{font-size:10.5px;color:var(--txt-secondary)}
+.plan-other-drag b{color:var(--amber);font-weight:700}
+.plan-other-add{appearance:none;border:1px solid var(--line);background:transparent;color:var(--txt-secondary);font-size:10.5px;padding:3px 8px;border-radius:6px;cursor:pointer}
+.plan-other-add:hover{border-color:var(--accent);color:var(--txt)}
 
 /* WB picker: bridges with no route history render dimmer but stay clickable */
-.wb-chip-nohist{opacity:.55}
-.wb-chip-nohist:hover{opacity:.9}
+.wb-chip-nohist{opacity:.45}
+.wb-chip-nohist:hover{opacity:.85}
 
-/* ── Plan: per-bridge stress board ─────────────────────────────────────── */
-.plan-wb-stress{margin:6px 0 4px}
-.wbs-head{font-size:10.5px;margin-bottom:3px;display:flex;gap:8px;align-items:center}
-.wbs-row{display:grid;grid-template-columns:44px 1fr 38px 26px 64px;gap:6px;align-items:center;margin:2px 0;font-size:10.5px}
-.wbs-name{font-weight:600}
-.wbs-bar{height:9px;border:1px solid var(--line-light,#2c3947);border-radius:5px;overflow:hidden;background:rgba(255,255,255,.04)}
-.wbs-bar i{display:block;height:100%;border-radius:5px 0 0 5px;transition:width .25s}
-.wbs-pct{text-align:right;font-weight:600}
-.wbs-wait{text-align:right;color:var(--muted,#8b98a5)}
-.wbs-trips{text-align:right;color:var(--muted,#8b98a5);font-size:9.5px}
+/* ── Plan: per-bridge load board ───────────────────────────────────────── */
+.plan-wb-stress{margin:0}
+.plan-wb-stress:empty{display:none}
+.wbs-board{padding:7px 8px;border:1px solid var(--line-light);border-radius:8px;background:rgba(0,0,0,.1)}
+.wbs-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 10px;margin-bottom:5px}
+.wbs-title{font-size:9.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--txt-muted)}
+.wbs-status{font-size:11px;font-weight:600}
+.wbs-status.ok{color:var(--good)}
+.wbs-status.warn{color:var(--amber)}
+.wbs-status.bad{color:var(--halt)}
+.wbs-cols,.wbs-row{display:grid;grid-template-columns:48px minmax(0,1fr) 36px 52px minmax(88px,1.1fr);gap:6px;align-items:center}
+.wbs-cols{font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--txt-muted);margin-bottom:2px;padding:0 0 3px;border-bottom:1px solid var(--line-light)}
+.wbs-cols span:nth-child(3),.wbs-cols span:nth-child(4),.wbs-cols span:nth-child(5){text-align:right}
+.wbs-row{margin:3px 0;font-size:11px}
+.wbs-name{font-weight:700;font-variant-numeric:tabular-nums;color:var(--txt)}
+.wbs-bar{height:8px;border:1px solid var(--line-light);border-radius:4px;overflow:hidden;background:rgba(255,255,255,.04)}
+.wbs-bar i{display:block;height:100%;border-radius:3px 0 0 3px;transition:width .25s;background:rgba(34,197,94,.55)}
+.wbs-row.wbs-warn .wbs-bar i{background:rgba(245,158,11,.6)}
+.wbs-row.wbs-bad .wbs-bar i{background:rgba(239,68,68,.65)}
+.wbs-pct{text-align:right;font:700 11px var(--font-num);font-variant-numeric:tabular-nums}
+.wbs-row.wbs-ok .wbs-pct{color:var(--good)}
+.wbs-row.wbs-warn .wbs-pct{color:var(--amber)}
+.wbs-row.wbs-bad .wbs-pct{color:var(--halt)}
+.wbs-wait{text-align:right;font:600 11px var(--font-num);font-variant-numeric:tabular-nums;color:var(--txt-secondary)}
+.wbs-wait-ok{color:var(--good)}
+.wbs-wait-warn,.wbs-wait-bad{color:var(--amber)}
+.wbs-row.wbs-bad .wbs-wait{color:var(--halt)}
+.wbs-trips{text-align:right;font-size:10.5px;color:var(--txt-secondary);white-space:nowrap}
+.wbs-trips b{font:700 11px var(--font-num);color:var(--txt);font-variant-numeric:tabular-nums}
+.wbs-trips .u{margin:0 2px 0 1px;font-size:9.5px;color:var(--txt-muted)}
+@media(max-width:640px){
+  .wbs-cols,.wbs-row{grid-template-columns:40px minmax(0,1fr) 32px 48px}
+  .wbs-cols span:nth-child(5),.wbs-trips{display:none}
+}

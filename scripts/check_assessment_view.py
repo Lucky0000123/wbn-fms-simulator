@@ -103,6 +103,18 @@ def main():
                 " return b && b.querySelectorAll('tr').length > 0;}", timeout=30000)
         except Exception:                                          # noqa: BLE001
             pass
+        # Sections 4 and 7 render only after /api/plan/analogues resolves —
+        # measured 18 s cold over the site VPN. Wait for the CONDITION (their
+        # tables having rows), not a fixed sleep (AGENTS: fixed sleeps under
+        # VPN latency are how this gate went flaky on 2026-08-11).
+        try:
+            pg.wait_for_function(
+                "() => {const s=document.getElementById('pa-shared-rows');"
+                " const h=document.getElementById('pa-analogues-rows');"
+                " return s && s.querySelectorAll('tr').length > 0"
+                "     && h && h.querySelectorAll('tr').length > 0;}", timeout=45000)
+        except Exception:                                          # noqa: BLE001
+            pass
         pg.wait_for_timeout(2500)
 
         # --- section presence and, more importantly, population ---
