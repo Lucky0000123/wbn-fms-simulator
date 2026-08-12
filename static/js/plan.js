@@ -166,10 +166,17 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
   //     is: trips = rate·DT, saturating smoothly at the proven ceiling —
   //     trips/DT never crashes to a floor, it declines hyperbolically as
   //     cap/DT once the ceiling binds (the "1.15/shift at 150 DT" regime).
-  // Saturation: soft-min (harmonic) between linear demand and the cap, so the
-  // curve bends smoothly instead of kinking: trips = 1/(1/(r·DT) + 1/cap).
-  // Below ~60% of the cap this is within 3% of pure linear (measured days
-  // confirm: MAPE identical to linear at observed fleets).
+  // Saturation: a HARD min between linear demand and the cap —
+  // trips = min(r·DT, cap). This comment used to describe a harmonic soft-min
+  // (trips = 1/(1/(r·DT) + 1/cap)) "so the curve bends smoothly instead of
+  // kinking". The code never did that, and the CODE IS RIGHT: harmonic would
+  // put TF→FENI KM0 at 51% of its rate by 180 DT (1.12/day), while the largest
+  // day ever run — 180 DT → 410 trips — measured 2.28/day, ABOVE the 2.194
+  // average. A soft-min would invent a decline the data denies.
+  // So the kink at DT = cap/rate is real and load-bearing: below it the next
+  // truck adds a full rate of trips, above it the cap is fixed and it adds
+  // almost nothing. Section C's Efficiency view marks it for that reason.
+  // (Checked 2026-08-12 against dayTripsCap/dayRate on both TF paths.)
   const hasDay=Number.isFinite(m.dayRate)&&m.dayRate>0;
   let tr=hasDay?m.dayRate:m.avgTr;
   // Day-level measured drag only (dayB<0); flat/positive slopes stay flat.
@@ -198,9 +205,25 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
   // until the site proves more, extra trucks divide the SAME demonstrated
   // trips — trips = min(rate·DT, cap), so trips/DT declines hyperbolically
   // (cap/DT), never crashes to zero and never uses an arbitrary floor.
+  //
+  // THE CAP IS A PATH PROPERTY, SHARED ACROSS PLANS (owner 2026-08-12: two
+  // contractors on TF→FENI KM0 each showed the full 205-trip ceiling —
+  // 410/shift combined on a road that has never done more than 205/shift).
+  // Saturation is computed on the COMBINED fleet on this path (this row +
+  // every other holding-plan row with the same key); each row then keeps its
+  // proportional share. opts.selfId excludes the row being priced from the
+  // "others" sum so it is not counted twice.
   let satFactor=1;
   if(Number.isFinite(m.dayTripsCap)&&m.dayTripsCap>0&&tr>0&&dt>0){
-    const linear=tr*dt;
+    let otherDt=0;
+    if(typeof _planDraft!=='undefined'){
+      Object.keys(_planDraft).forEach(id=>{
+        if(opts&&opts.selfId&&id===opts.selfId)return;
+        const r2=_planDraft[id];
+        if(r2&&r2.key===key&&r2.dt>0&&!r2.foreign)otherDt+=r2.dt;
+      });
+    }
+    const linear=tr*(dt+otherDt);
     if(linear>m.dayTripsCap){
       satFactor=m.dayTripsCap/linear;
       tr*=satFactor;
@@ -1562,7 +1585,7 @@ function computePlan(){
       return `<tr style="opacity:.72"><td><b>${escH(r.key.replace('>',' \u2192 '))}</b>${tag}</td><td>${escH(r.contractor)}</td><td class="r"><input type="number" min="0" step="1" value="${Math.round(r.dt)}" onchange="planSet('${escH(id)}',this.value)" style="width:56px;text-align:center"></td><td class="r">${fmtExact(rate,2)}</td><td class="r">${fmtExact(Math.round(ftrips))}</td><td class="r muted">\u2014</td><td class="r muted" title="foreign traffic adds no WMT">\u2014</td><td></td><td><a onclick="planRemove('${escH(id)}')" style="cursor:pointer;color:#f87171" title="remove">\u2715</a></td></tr>`;
     }
     if(!m)return '';
-    const c=planContractor(r.contractor),e=planTripsPerDT(r.key,r.dt,rain,c),pay=planPayload(r.key,c);
+    const c=planContractor(r.contractor),e=planTripsPerDT(r.key,r.dt,rain,c,{selfId:id}),pay=planPayload(r.key,c);
     if(!e)return '';
     const trips=r.dt*e.shift,wmt=trips*pay.tf;
     // Road-only / foreign lines add congestion but no WMT for us, so they are

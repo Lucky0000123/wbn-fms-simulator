@@ -51,7 +51,7 @@ function planPredictTotals(){
   let trips=0,wmt=0,dt=0;
   planDraftEntries().forEach(r=>{
     const c=typeof planContractor==='function'?planContractor(r.contractor):null;
-    const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rain,c):null;
+    const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rain,c,{selfId:r.id}):null;
     const pay=typeof planPayload==='function'?planPayload(r.key,c):{tf:0};
     if(!e)return;
     const t=r.dt*e.shift;trips+=t;wmt+=t*(pay.tf||0);dt+=r.dt;
@@ -74,7 +74,7 @@ function planSetScenarioBtn(){
   if(!btn)return;
   const n=planDraftEntries().length;
   btn.disabled=n<1;
-  btn.title=n<1?'Add at least one path in Step 1':'Run simulate for A · outcomes and B · capacity (GPS ▶ Run opens C · road illustration)';
+  btn.title=n<1?'Add at least one path in Step 1':'Run simulate for A · production & capacity (GPS ▶ Run opens C · road crowding)';
 }
 
 /** Hide C · road crowding until the user presses ▶ Run on the GPS corridor. */
@@ -150,7 +150,7 @@ function planPredictByRoute(){
   planDraftEntries().forEach(r=>{
     const route=r.source+'>'+r.dest;
     const c=typeof planContractor==='function'?planContractor(r.contractor):null;
-    const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rain,c):null;
+    const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rain,c,{selfId:r.id}):null;
     const pay=typeof planPayload==='function'?planPayload(r.key,c):{tf:0};
     const g=by[route]||(by[route]={dt:0,trips:0,wmt:0});
     g.dt+=r.dt;
@@ -161,6 +161,31 @@ function planPredictByRoute(){
     }
   });
   return by;
+}
+
+function planCapStatusBadge(note){
+  const s=String(note||'');
+  if(/OVER CAPACITY/i.test(s))return{cls:'over',label:'Over capacity'};
+  if(/road-only|foreign/i.test(s))return{cls:'road',label:'Road-only'};
+  if(/under|headroom|ok|within|comfortable/i.test(s))return{cls:'ok',label:'OK'};
+  const head=(s.split(':')[0]||'').trim();
+  return{cls:'muted',label:head||'—'};
+}
+/** Collapse duplicate OVER CAPACITY lines (same loader/ceiling, different route tonnes). */
+function planCapWarnCards(warnings){
+  const raw=(warnings||[]).map(w=>typeof w==='string'?w:(w&&w.message)||String(w||''));
+  const groups=new Map();
+  const other=[];
+  raw.forEach(t=>{
+    const m=String(t).match(/OVER CAPACITY:\s*(\S+)\s+is asked for\s+([\d.,]+)\s+trips\/shift against a demonstrated ceiling of\s+([\d.,]+)\s*\((\d+)%\)[^.]*\.\s*Excess trucks will queue;\s*~?([\d.,]+)\s*t of the planned\s*([\d.,]+)/i);
+    if(!m){if(t)other.push(t);return;}
+    const loader=m[1],asked=+String(m[2]).replace(/,/g,''),ceiling=+String(m[3]).replace(/,/g,''),
+      pct=+m[4],lost=+String(m[5]).replace(/,/g,''),planned=+String(m[6]).replace(/,/g,'');
+    const key=loader+'|'+asked+'|'+ceiling;
+    const g=groups.get(key)||{loader,asked,ceiling,pct,lost:0,planned:0};
+    g.lost+=lost;g.planned+=planned;groups.set(key,g);
+  });
+  return{overs:[...groups.values()],other};
 }
 
 function planRenderEstimateColumn(sim,predict){
@@ -185,13 +210,7 @@ function planRenderEstimateColumn(sim,predict){
     return Number.isFinite(env)&&r.n_trucks>env;
   });
   const beyondEnv=beyondRows.length>0;
-  const achvLabel=beyondEnv?'Achievable (simulate · extrapolated)':'Achievable (simulate)';
-  const beyondNote=beyondEnv
-    ?`<p class="plan-scenario-warn" style="margin:8px 0 0;font-size:11px;color:#f59e0b">⚠ ${beyondRows.map(r=>{
-        const mm=(_pathResp&&_pathResp[(r.route||'').trim()])||{};
-        return `${escH(r.route)}: ${r.n_trucks} DT vs ${typeof planDtEnvelope==='function'?planDtEnvelope(mm):Math.round(mm.dtMax)} DT ever observed`;
-      }).join(' · ')} — the engine assumes cycle time does not degrade with fleet size, so this achievable is untested extrapolation. The path model (with the measured declining-efficiency slope) is the honest planning number out here.</p>`
-    :'';
+  const achvLabel=beyondEnv?'Achievable · extrapolated':'Achievable';
   // Two DIFFERENT gaps, and the label must not conflate them:
   //  - capacity clipping: simulate-unconstrained > achievable (a loader ceiling
   //    actually removed tonnes) — a real physical constraint;
@@ -201,32 +220,93 @@ function planRenderEstimateColumn(sim,predict){
   const unconADJ=s.planned_production_t;
   const capClip=(unconADJ!=null&&achv!=null)?Math.round(unconADJ-achv):null;
   const gapLabel=gap==null?'—'
-    :(capClip!=null&&capClip>200?`Capacity clips ${fmtN(capClip)} t (loader ceiling)`
-    :(gap>200?`Path model +${fmtN(gap)} t vs engine — models differ, no capacity limit`
-    :(gap<-200?`Path model ${fmtN(Math.abs(gap))} t below engine`:'Path model ≈ engine')));
+    :(capClip!=null&&capClip>200?`Clips ${fmtN(capClip)} t`
+    :(gap>200?`Path +${fmtN(gap)} t`
+    :(gap<-200?`Path −${fmtN(Math.abs(gap))} t`:'≈ matched')));
+  const gapTip=gap==null?''
+    :(capClip!=null&&capClip>200?'Loader/point ceiling removed tonnes from unconstrained simulate'
+    :(gap>200?'Path model above engine — models differ, no capacity limit binding'
+    :(gap<-200?'Path model below engine':'Path model ≈ engine')));
   const fin=_planOptFinalized
-    ?`<p class="plan-b-finalized" role="status">Finalized plan · B uses the DT you accepted (${fmtN(s.total_trucks)} DT · path model ${fmtN(plannedPath)} t).</p>`
+    ?`<p class="plan-b-finalized" role="status">Finalized · A uses accepted DT (${fmtN(s.total_trucks)} DT · path ${fmtN(plannedPath)} t)</p>`
     :'';
+
+  const routeRows=rows.length?rows.map(r=>{
+    if(r.error){
+      return `<tr class="plan-cap-row plan-cap-row--err"><td class="plan-cap-route">${escH(r.route)}</td><td colspan="4" class="muted">${escH(r.error)}</td></tr>`;
+    }
+    const pm=(byRoute[r.route]&&byRoute[r.route].wmt)!=null?byRoute[r.route].wmt:null;
+    const badge=planCapStatusBadge(r.capacity_note);
+    const mm=(_pathResp&&_pathResp[(r.route||'').trim()])||{};
+    const env=typeof planDtEnvelope==='function'?planDtEnvelope(mm):mm.dtMax;
+    const beyond=Number.isFinite(env)&&r.n_trucks>env;
+    const routeLabel=escH(String(r.route||'').replace('>',' → '));
+    return `<tr class="plan-cap-row${beyond?' plan-cap-row--beyond':''}${badge.cls==='over'?' plan-cap-row--over':''}">
+      <td class="plan-cap-route"><b>${routeLabel}</b>${beyond?`<span class="plan-cap-mini" title="Fleet above measured history">beyond data</span>`:''}</td>
+      <td class="r plan-cap-num">${fmtN(r.n_trucks)}</td>
+      <td class="r plan-cap-num">${fmtN(pm)}</td>
+      <td class="r plan-cap-num">${fmtN(r.achievable_production_t)}</td>
+      <td><span class="plan-cap-badge plan-cap-badge--${badge.cls}" title="${escH(r.capacity_note||'')}">${escH(badge.label)}</span></td>
+    </tr>`;
+  }).join(''):'<tr><td colspan="5" class="muted">No simulate rows</td></tr>';
+
+  const beyondHtml=beyondEnv
+    ?`<div class="plan-cap-callout plan-cap-callout--amber" role="status">
+        <div class="plan-cap-callout-h">Outside measured fleet</div>
+        <div class="plan-cap-chips">${beyondRows.map(r=>{
+          const mm=(_pathResp&&_pathResp[(r.route||'').trim()])||{};
+          const env=typeof planDtEnvelope==='function'?planDtEnvelope(mm):mm.dtMax;
+          return `<span class="plan-cap-chip"><b>${escH(String(r.route||'').replace('>',' → '))}</b> ${fmtN(r.n_trucks)} DT · max seen ${fmtN(env)}</span>`;
+        }).join('')}</div>
+        <p class="plan-cap-callout-p">Engine achievable ignores crowding at this scale — use <b>path model</b> tonnes for planning.</p>
+      </div>`
+    :'';
+
+  const parsed=planCapWarnCards(warnings);
+  const overHtml=parsed.overs.length
+    ?`<div class="plan-cap-callout plan-cap-callout--bad" role="status">
+        <div class="plan-cap-callout-h">Loader over capacity</div>
+        <div class="plan-cap-over-list">${parsed.overs.map(g=>`
+          <div class="plan-cap-over-row">
+            <div class="plan-cap-over-main"><b>${escH(g.loader)}</b>
+              <span class="plan-cap-over-meta">${fmtN(g.asked)} trips asked · ceiling ${fmtN(g.ceiling)} · ${fmtN(g.pct)}%</span>
+            </div>
+            <div class="plan-cap-over-lost"><b>−${fmtN(g.lost)} t</b><span>won’t materialise</span></div>
+          </div>`).join('')}</div>
+        <p class="plan-cap-callout-p">Excess trucks queue at the loader — plan below the ceiling.</p>
+      </div>`
+    :'';
+  const otherWarn=parsed.other.length
+    ?`<ul class="plan-cap-other">${parsed.other.map(t=>`<li>${escH(t)}</li>`).join('')}</ul>`
+    :'';
+
   box.innerHTML=`
-    <div class="plan-engine-block">
+    <div class="plan-engine-block plan-cap-block">
       ${fin}
-      <div class="plan-scenario-kpis">
-        <div class="effkpi"><div class="v">${fmtN(s.total_trucks)}</div><div class="l">Trucks (DT)</div></div>
-        <div class="effkpi"><div class="v">${fmtN(plannedPath)} t</div><div class="l">Planned (path model)</div></div>
-        <div class="effkpi"><div class="v">${fmtN(achv)} t</div><div class="l">${achvLabel}</div></div>
-        <div class="effkpi"><div class="v">${ratio!=null?Math.round(100*ratio)+'%':'—'}</div><div class="l">Achievable / planned</div></div>
-        <div class="effkpi"><div class="v">${fmtN(s.planned_production_t)} t</div><div class="l">Simulate unconstrained</div></div>
-        <div class="effkpi"><div class="v" style="font-size:13px">${escH(gapLabel)}</div><div class="l">Model vs capacity</div></div>
+      <div class="plan-scenario-kpis plan-cap-kpis">
+        <div class="effkpi plan-cap-kpi"><div class="v">${fmtN(s.total_trucks)}</div><div class="l">Trucks</div></div>
+        <div class="effkpi plan-cap-kpi"><div class="v">${fmtN(plannedPath)}</div><div class="l">Planned t</div></div>
+        <div class="effkpi plan-cap-kpi"><div class="v">${fmtN(achv)}</div><div class="l">${achvLabel}</div></div>
+        <div class="effkpi plan-cap-kpi"><div class="v">${ratio!=null?Math.round(100*ratio)+'%':'—'}</div><div class="l">Achievable / planned</div></div>
+        <div class="effkpi plan-cap-kpi"><div class="v">${fmtN(s.planned_production_t)}</div><div class="l">Unconstrained t</div></div>
+        <div class="effkpi plan-cap-kpi" title="${escH(gapTip)}"><div class="v plan-cap-kpi-gap">${escH(gapLabel)}</div><div class="l">Model vs capacity</div></div>
       </div>
-      <div class="rain-table" style="margin-top:10px"><table><thead><tr><th>Route</th><th class="r">DT</th><th class="r">Path model t</th><th class="r">Achievable t</th><th>Capacity</th></tr></thead>
-      <tbody>${rows.length?rows.map(r=>{
-        if(r.error)return `<tr><td>${escH(r.route)}</td><td colspan="4" class="muted">${escH(r.error)}</td></tr>`;
-        const pm=(byRoute[r.route]&&byRoute[r.route].wmt)!=null?byRoute[r.route].wmt:null;
-        return `<tr><td><b>${escH(r.route)}</b></td><td class="r">${r.n_trucks}</td><td class="r">${fmtN(pm)}</td><td class="r">${fmtN(r.achievable_production_t)}</td><td class="muted" style="font-size:10px">${escH((r.capacity_note||'').split(':')[0])}</td></tr>`;
-      }).join(''):'<tr><td colspan="5" class="muted">No simulate rows</td></tr>'}</tbody></table></div>
-      ${beyondNote}
-      ${warnings.length?`<ul class="plan-scenario-warn">${warnings.map(w=>`<li>${escH(typeof w==='string'?w:(w.message||JSON.stringify(w)))}</li>`).join('')}</ul>`:''}
-      <p class="muted" style="font-size:11px;margin:8px 0 0"><b>Planned (path model)</b> is your Step‑1 haul estimate. <b>Achievable</b> is loader/point capacity — trust this for “can we deliver?”. Simulate unconstrained is the engine’s cycle×payload before capacity share (often ≈ achievable when under ceiling).</p>
+      <div class="plan-cap-table-wrap">
+        <table class="plan-cap-table">
+          <thead><tr>
+            <th>Route</th><th class="r">DT</th><th class="r">Path model</th><th class="r">Achievable</th><th>Status</th>
+          </tr></thead>
+          <tbody>${routeRows}</tbody>
+        </table>
+      </div>
+      ${beyondHtml}
+      ${overHtml}
+      ${otherWarn}
+      <div class="plan-cap-legend">
+        <span><b>Planned</b> · Step‑1 path estimate</span>
+        <span><b>Achievable</b> · loader / point capacity</span>
+        <span><b>Unconstrained</b> · cycle × payload before share</span>
+      </div>
     </div>`;
 }
 
@@ -431,7 +511,7 @@ function planPredictTotalsForDraft(draftObj){
   Object.keys(draftObj||{}).forEach(id=>{
     const r=draftObj[id];if(!r||!(r.dt>0)||!r.key)return;
     const c=typeof planContractor==='function'?planContractor(r.contractor):null;
-    const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rain,c):null;
+    const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rain,c,{selfId:id}):null;
     const pay=typeof planPayload==='function'?planPayload(r.key,c):{tf:0};
     if(!e)return;
     const t=r.dt*e.shift;trips+=t;wmt+=t*(pay.tf||0);dt+=r.dt;
@@ -469,6 +549,7 @@ function planUnlockOptimize(){
 }
 
 function planRenderOutcomes(sim,predict){
+  // A · Shift outcomes UI removed (2026-08-12) — capacity lives in A · Production & capacity.
   const box=q('plan-scenario-outcomes');if(!box)return;
   const s=(sim&&sim.summary)||{};
   const achv=s.achievable_production_t||0;
@@ -1059,13 +1140,10 @@ function planFetchAnalogues(){
   });
 }
 
-/** Busy overlay on A+B while simulate recalculates productivity & capacity. */
+/** Busy overlay on A · Production & capacity while simulate recalculates. */
 function planSetCalcBusy(on){
-  ['plan-outcomes-busy','plan-estimate-busy'].forEach(id=>{
-    const el=q(id);if(el)el.classList.toggle('is-busy',!!on);
-  });
-  const finBtn=q('plan-finalize-opt');
-  if(finBtn)finBtn.disabled=!!on;
+  const el=q('plan-estimate-busy');
+  if(el)el.classList.toggle('is-busy',!!on);
   const runBtn=q('plan-run-scenario');
   if(runBtn&&on){runBtn.disabled=true;runBtn.textContent='Running…';}
 }
@@ -1111,12 +1189,8 @@ function planRunScenario(opts){
   if(panel)panel.style.display='block';
   const est=q('plan-scenario-estimate');
   if(est)est.innerHTML='<p class="muted">Calculating productivity &amp; capacity…</p>';
-  const out=q('plan-scenario-outcomes');
-  if(out&&!out.querySelector('.plan-decision-card')){
-    out.innerHTML='<p class="muted">Calculating productivity &amp; capacity…</p>';
-  }
 
-  // A + B only here. C · road illustration waits for GPS corridor ▶ Run.
+  // A · Production & capacity here. C · road crowding waits for GPS corridor ▶ Run.
   const simP=fetch('/api/simulate',{
     method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({plans,weather:planWeatherForSimulate(),shift_minutes:shiftMin}),
@@ -1139,19 +1213,16 @@ function planRunScenario(opts){
     const predict=planPredictTotals();
     planRenderEstimateColumn(sim,predict);
     planSeedFlowAnimation();
-    // Re-paint D before outcomes so realism/shared-road feed into A
     if(_planLastAnalogues)planRenderAnalogues(_planLastAnalogues);
-    planRenderOutcomes(sim,predict);
-    // C · Fleet sensitivity: sweep the SAME path model across DT per plan.
+    // B · Fleet sensitivity: sweep the SAME path model across DT per plan.
     if(typeof planSensRefresh==='function'){try{planSensRefresh();}catch(_){}}
     const open=q('plan-open-assessment');
     if(open)open.disabled=false;
     planRefreshSaveButtons();
-    // Keep viewport on A · Shift outcomes — GPS ▶ Run opens C below.
-    const stage=q('plan-scenario-outcomes');
-    if(stage&&typeof stage.scrollIntoView==='function'){
-      try{stage.scrollIntoView({behavior:'smooth',block:'nearest'});}
-      catch(_){stage.scrollIntoView(true);}
+    // Keep viewport on A · Production & capacity — GPS ▶ Run opens C below.
+    if(est&&typeof est.scrollIntoView==='function'){
+      try{est.scrollIntoView({behavior:'smooth',block:'nearest'});}
+      catch(_){est.scrollIntoView(true);}
     }
   }).catch(e=>{
     if(gen!==_planScenarioGen||_planScenarioQueued)return;

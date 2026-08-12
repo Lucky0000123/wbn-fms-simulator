@@ -1,4 +1,4 @@
-// ── C · Fleet sensitivity — nonlinear DT sweep per plan ──────────────────────
+// ── B · Fleet sensitivity — nonlinear DT sweep per plan ──────────────────────
 // Owner (2026-08-12): after Run scenario, a smooth ECharts line chart showing
 // how tonnage (WMT) and trips/DT bend as the fleet grows, one colour per plan;
 // a side panel lists the plans (click = isolate, eye = hide) and a granularity
@@ -19,6 +19,18 @@
   let _sel=null;            // isolated plan id, or null = all
   let _hidden={};           // id → true (eye toggle)
   let _gran='shift';        // hour | shift | day
+  // Y-metric. 'output' = tonnage + trips/DT (the original dual axis).
+  // 'efficiency' = what fraction of this path's own free rate each truck still
+  // gets, 0-100%, all plans on ONE axis because the ratio is dimensionless.
+  //
+  // WHY A RATIO IS SAFE HERE ONLY IF THE RATE IS SHOWN WITH IT: efficiency is
+  // measured against each path's OWN baseline, so it does not rank paths. KM15
+  // at 41% still moves 1.06 trips/truck/day while KM0 at 100% moves 2.19. A
+  // planner optimising the percentage would pick the wrong haul. Every place
+  // efficiency is displayed also carries the absolute trips/DT -- see the
+  // capacity-card defect in AGENTS.md for what happens when a ratio is left to
+  // be read as a verdict.
+  let _metric='output';     // output | efficiency
   // No local ECharts instance: paChart() owns the registry (_paCharts) and
   // paResizeAll() owns resize, so a second cache here could only drift from it.
   let _curves=[];           // [{id,label,color,curve:[{dt,tripsPerDt,trips,wmt}],currentDt,foreign,capDt}]
@@ -54,17 +66,39 @@
       const step=cap<=40?2:(cap<=100?4:(cap<=300?8:Math.ceil(cap/40)));
       const curve=[];
       for(let dt=1;dt<=cap;dt+=step){
-        let tpd=null,trips=null,wmt=null;
+        let tpd=null,trips=null,wmt=null,eff=null,sat=null,wb=null,rateF=null,dg=null;
         if(isForeign&&Number.isFinite(r.measTrips)){
           const rate=r.measTrucks?r.measTrips/r.measTrucks:0;
           tpd=rate;trips=dt*rate;wmt=null;
+          // Foreign rows are a flat measured rate, not the path model: there is
+          // no free baseline to divide by, so they get no efficiency curve
+          // rather than a fabricated 100%.
         }else{
-          const e=planTripsPerDT(r.key,dt,rain,c);
+          const e=planTripsPerDT(r.key,dt,rain,c,{selfId:r.id});
           if(!e)continue;
           tpd=e.shift;trips=dt*e.shift;wmt=trips*(pay.tf||0);
+          // Efficiency = served rate / this path's UNCONSTRAINED rate, i.e. what
+          // one truck would get with no ceiling and no drags. Every factor below
+          // is returned by planTripsPerDT itself -- nothing is re-derived here.
+          //   shiftFree = daily*sf (post-saturation, pre-weighbridge), so
+          //   sf = shiftFree/daily recovers the day→shift factor without
+          //   reaching into planShiftFactor() and risking a second convention.
+          const sf=e.daily>0?e.shiftFree/e.daily:null;
+          const rawRate=e.dayBasis?(e.m&&e.m.dayRate):(e.m&&e.m.avgTr);
+          const base=(sf&&Number.isFinite(rawRate)&&rawRate>0)?rawRate*sf:null;
+          if(base>0){
+            eff=e.shift/base;
+            sat=Number.isFinite(e.satFactor)?e.satFactor:1;
+            wb=Number.isFinite(e.wbFactor)?e.wbFactor:1;
+            // Everything that is not a ceiling: rain, other/IWIP traffic,
+            // shared-section coupling, contractor factor, measured slope.
+            rateF=(sat>0&&wb>0)?eff/(sat*wb):null;
+            dg={rain:e.rainDelta,other:e.otherDelta,sec:e.secDelta};
+          }
         }
         curve.push({dt,tripsPerDt:+tpd.toFixed(3),trips:Math.round(trips),
-          wmt:wmt==null?null:Math.round(wmt)});
+          wmt:wmt==null?null:Math.round(wmt),
+          eff,sat,wb,rateF,dg});
       }
       if(!curve.length)return;
       // OPTIMAL DT — calculated, not just historical. Objective: most TRIPS
@@ -98,9 +132,18 @@
           }
         }
       }
+      // Saturation kink: the first fleet size at which the demonstrated day
+      // ceiling starts dividing a FIXED number of trips. Below it the next truck
+      // adds a full path-rate of trips; above it it adds ~nothing, because
+      // dayTripsCap does not move. That boundary is the actual decision, so it
+      // is marked rather than smoothed -- and it is measured (no day has ever
+      // produced more than dayTripsCap), not a modelled congestion threshold.
+      const kink=curve.find(pt=>pt.sat!=null&&pt.sat<0.999);
       out.push({id:r.id,label:r.key.replace('>',' → ')+' · '+(r.contractor||'—'),
         color:PALETTE[i%PALETTE.length],curve,currentDt:Math.round(r.dt),
         foreign:isForeign,capDt:cap,tf:pay.tf||0,
+        kinkDt:kink?kink.dt:null,
+        dayCap:Number.isFinite(m.dayTripsCap)?m.dayTripsCap:null,
         opt,optNote,
         slopeFlat:!(Number.isFinite(m.bAdj)?m.bAdj<0:(m.b!=null&&m.b<0)),
         dtMax:envMax});
@@ -142,7 +185,35 @@
     const {f,unit}=granFactor();
     const vis=visibleCurves();
     const series=[];const legend=[];
-    vis.forEach(p=>{
+    const isEff=_metric==='efficiency';
+    if(isEff)vis.forEach(p=>{
+      const pts=p.curve.filter(pt=>pt.eff!=null);
+      if(!pts.length)return;            // road-only rows: no baseline, no curve
+      const name=p.label;
+      legend.push(name);
+      const marks=[];
+      const at=p.curve.reduce((a,b)=>Math.abs(b.dt-p.currentDt)<Math.abs((a?a.dt:1e9)-p.currentDt)?b:a,null);
+      if(at&&at.eff!=null){
+        marks.push({coord:[at.dt,+(at.eff*100).toFixed(1)],name:'your plan',symbol:'circle',
+          symbolSize:9,itemStyle:{color:p.color,borderColor:'#fff',borderWidth:1.5},label:{show:false}});
+      }
+      series.push({name,type:'line',smooth:false,yAxisIndex:0,showSymbol:false,
+        color:p.color,lineStyle:{width:2.2},
+        data:pts.map(pt=>[pt.dt,+(pt.eff*100).toFixed(1)]),
+        markPoint:marks.length?{data:marks}:undefined,
+        // The kink is a real boundary, not a rendering artifact: smooth:false so
+        // it is not rounded away, and a vertical rule so it can be read off.
+        markLine:p.kinkDt?{silent:true,symbol:'none',
+          lineStyle:{color:p.color,type:'dotted',width:1.2,opacity:.75},
+          label:{show:!!_sel,formatter:'ceiling binds\n'+p.kinkDt+' DT',fontSize:9,color:'#8b98a5'},
+          data:[{xAxis:p.kinkDt}]}:undefined,
+        markArea:(p.dtMax&&p.capDt>p.dtMax&&(!_sel||_sel===p.id))?{
+          silent:true,itemStyle:{color:'rgba(239,68,68,.05)'},
+          label:{show:!!_sel,position:'insideTop',color:'#8b98a5',fontSize:9,
+            formatter:'beyond measured data (> '+p.dtMax+' DT)'},
+          data:[[{xAxis:p.dtMax},{xAxis:p.capDt}]]}:undefined});
+    });
+    if(!isEff)vis.forEach(p=>{
       if(!p.foreign){
         const name=p.label+' — tonnage';
         legend.push(name);
@@ -177,7 +248,9 @@
         data:p.curve.map(pt=>[pt.dt,pt.tripsPerDt])});
     });
     paChart('plan-sens-chart',{
-      title:{text:_sel?('Fleet sensitivity — '+(vis[0]?vis[0].label:'')):'Fleet sensitivity — all plans',
+      title:{text:(isEff?'Fleet efficiency — ':'Fleet sensitivity — ')
+          +(_sel?(vis[0]?vis[0].label:''):'all plans')
+          +(isEff?'  (share of this path’s own free rate)':''),
         left:8,top:2,textStyle:{fontSize:12.5,color:'#cbd5e1'}},
       legend:{type:'scroll',top:24,textStyle:{fontSize:10,color:'#8b98a5'}},
       grid:{left:58,right:56,top:58,bottom:34},
@@ -186,6 +259,34 @@
           if(!params||!params.length)return '';
           const dt=params[0].value[0];
           planSensReadout(dt);                       // live side readout while hovering
+          if(isEff){
+            // Attribution, not just a number: efficiency is multiplicative
+            // (rate drags x ceiling x weighbridge), so each term is reported as
+            // the percentage points it costs. The absolute trips/DT rides along
+            // because the ratio alone does not say whether a path is any good.
+            let h='<b>'+dt+' trucks</b>';
+            params.forEach(s=>{
+              const cv=_curves.find(p=>p.label===s.seriesName);
+              if(!cv)return;
+              const pt=cv.curve.reduce((a,b)=>Math.abs(b.dt-dt)<Math.abs((a?a.dt:1e9)-dt)?b:a,null);
+              if(!pt||pt.eff==null)return;
+              const pct=v=>Math.round(v*100);
+              h+='<br><span style="color:'+s.color+'">■</span> '+esc(cv.label)
+                +' · <b>'+pct(pt.eff)+'%</b>'
+                +' <span style="opacity:.75">('+pt.tripsPerDt+' trips/DT'
+                +(pt.wmt!=null?(' · '+Math.round(pt.wmt*f).toLocaleString()+' t'+unit):'')+')</span>';
+              const lost=[];
+              if(pt.sat!=null&&pt.sat<0.999)lost.push('day ceiling'
+                +(cv.dayCap?(' ('+cv.dayCap+' trips)'):'')+' −'+(100-pct(pt.sat))+'%');
+              if(pt.wb!=null&&pt.wb<0.999)lost.push('weighbridge −'+(100-pct(pt.wb))+'%');
+              if(pt.rateF!=null&&pt.rateF<0.999)lost.push('rain / other traffic / shared section −'
+                +(100-pct(pt.rateF))+'%');
+              h+=lost.length
+                ?('<br><span style="opacity:.6;font-size:10px">&nbsp;&nbsp;lost to: '+lost.join(' · ')+'</span>')
+                :'<br><span style="opacity:.6;font-size:10px">&nbsp;&nbsp;no measured loss at this fleet</span>';
+            });
+            return h;
+          }
           const byPlan={};
           params.forEach(s=>{
             const plan=s.seriesName.replace(/ — (tonnage|trips\/DT)$/,'');
@@ -207,7 +308,13 @@
         }},
       xAxis:{type:'value',name:'Trucks (DT)',nameGap:22,nameLocation:'middle',
         minInterval:1,axisLabel:{color:'#8b98a5'},splitLine:{lineStyle:{color:'rgba(148,163,184,.09)'}}},
-      yAxis:[
+      yAxis:isEff?[
+        // Fixed 0-100: an auto-scaled percentage axis makes a 97%-vs-99%
+        // difference look like a cliff, which is how a ratio gets over-read.
+        {type:'value',name:'Efficiency (%)',min:0,max:100,
+         axisLabel:{color:'#8b98a5',formatter:'{value}%'},
+         splitLine:{lineStyle:{color:'rgba(148,163,184,.09)'}}},
+      ]:[
         {type:'value',name:'Tonnage (t'+unit+')',axisLabel:{color:'#8b98a5'},
          splitLine:{lineStyle:{color:'rgba(148,163,184,.09)'}}},
         {type:'value',name:'Trips/DT',axisLabel:{color:'#8b98a5'},splitLine:{show:false}},
@@ -262,9 +369,28 @@
   };
   window.planSensGran=function(g){
     _gran=(g==='hour'||g==='day')?g:'shift';
-    document.querySelectorAll('.plan-sens-gran button').forEach(b=>{
+    // Scoped to [data-g]: the metric group reuses .plan-sens-gran for styling,
+    // and an unscoped selector would strip its .on class on every scale click.
+    document.querySelectorAll('.plan-sens-gran button[data-g]').forEach(b=>{
       b.classList.toggle('on',b.getAttribute('data-g')===_gran);
     });
+    renderChart();
+  };
+  window.planSensMetric=function(mm){
+    _metric=(mm==='efficiency')?'efficiency':'output';
+    document.querySelectorAll('.plan-sens-gran button[data-m]').forEach(b=>{
+      b.classList.toggle('on',b.getAttribute('data-m')===_metric);
+    });
+    const cap=el('plan-sens-caption');
+    if(cap)cap.innerHTML=_metric==='efficiency'
+      ? 'Share of each path’s own free rate that a truck still gets — <b>not</b> a ranking between '
+        +'paths: a path at 100% can still be the slower haul, so the trips/DT is in every tooltip. '
+        +'Dotted rule = where the demonstrated day ceiling starts dividing a fixed number of trips; '
+        +'below it the next truck adds a full rate, above it it adds almost nothing. ● marks your current DT.'
+      : 'Solid = tonnage (left axis) · dashed = trips/DT (right axis) · ● your current DT · '
+        +'★ calculated optimal (most trips before diminishing returns, within measured data) · '
+        +'shaded = beyond measured data. Same path model as the plan table. '
+        +'Road-only plans show trips only.';
     renderChart();
   };
   /** Called after Run scenario resolves (planRunScenario paint). */

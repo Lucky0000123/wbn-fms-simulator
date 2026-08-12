@@ -205,7 +205,7 @@
       if (typeof planTripsPerDT === 'function'){
         const rain = Math.max(0, parseFloat((el('plan-rain') || {}).value) || 0);
         const c = typeof planContractor === 'function' ? planContractor(r.contractor) : null;
-        const e = planTripsPerDT(r.key, r.dt, rain, c, { noWb: true });
+        const e = planTripsPerDT(r.key, r.dt, rain, c, { noWb: true, selfId: id });
         if (e) return r.dt * e.shift;
       }
     } catch (e) {}
