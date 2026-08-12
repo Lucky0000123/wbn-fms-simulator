@@ -1231,6 +1231,24 @@ def api_simulator_path_response():
     a = request.args
     frm = (a.get("from") or "").strip()[:10]
     to = (a.get("to") or "").strip()[:10]
+    # FULL-HISTORY fleet envelope, computed BEFORE the date filter (owner
+    # 2026-08-12: the plan claimed "67 DT ever observed" on TF→FENI KM0 while
+    # best-past-days showed 158-DT days — the 67 was only the max within the
+    # Capability tab's peak-window filter. The envelope must be the whole
+    # snapshot: max single row (one contractor's fleet) and max day total
+    # (all contractors on the path that day).
+    from collections import defaultdict as _dd
+    _env_row = _dd(float)
+    _env_day = _dd(float)
+    for r in rows:
+        k = (r["o"], r["dd"])
+        if r["dt"] > _env_row[k]:
+            _env_row[k] = r["dt"]
+        _env_day[(k, r["d"])] += r["dt"]
+    _env_daymax = _dd(float)
+    for (k, _d), s in _env_day.items():
+        if s > _env_daymax[k]:
+            _env_daymax[k] = s
     if frm or to:
         rows = [r for r in rows
                 if (not frm or r["d"] >= frm) and (not to or r["d"] <= to)]
@@ -1294,6 +1312,12 @@ def api_simulator_path_response():
         tf = (sum(x[2] for x in v) / srit) if srit else 0.0
         rec = {"a": round(a, 4), "b": round(b, 5), "r2": round(r2, 3), "n": n,
                "dtMin": round(min(dt)), "dtMax": round(max(dt)), "avgDt": round(mx),
+               # Whole-history envelope (ignores the peak-window date filter):
+               # dtMaxAll = largest single contractor-day fleet ever on this
+               # path; dtMaxDayAll = largest COMBINED fleet (all contractors)
+               # in one day. Guards/sweeps use these, not the filtered dtMax.
+               "dtMaxAll": round(_env_row.get((o, de), max(dt))),
+               "dtMaxDayAll": round(_env_daymax.get((o, de), max(dt))),
                "avgTr": round(avg_tr, 3), "meanTr": round(my, 3),
                "trP25": round(tr_p25, 3) if tr_p25 is not None else None,
                "trMed": round(tr_med, 3) if tr_med is not None else None,
@@ -2452,10 +2476,14 @@ def api_plan_ai_advise():
         "numbers provided; never invent capacity or gains; trips/DT declines "
         "with fleet size per the given slope; weighbridges are a throughput "
         "ceiling (30/h per bridge) — above 100% excess trips cannot be "
-        "weighed. Answer in at most 4 short lines, no markdown, plain "
-        "language for a mining ops manager: (1) verdict with the key number, "
-        "(2) the binding constraint, (3) one concrete action (specific DT / "
-        "bridge / timing). Be direct and specific; no filler."
+        "weighed. Write in simple plain language a mining ops supervisor "
+        "understands — no jargon like 'extrapolate', 'regression', 'guard', "
+        "or 'utilisation'. If fleet size is far above path_history.max_dt_ever, "
+        "say clearly that this many trucks is outside what was run before and "
+        "the number is cautious/unproven. Answer in at most 4 short lines, no "
+        "markdown: (1) verdict with the key number, (2) the binding constraint, "
+        "(3) one concrete action (specific DT / bridge / timing). Be direct; "
+        "no filler; never name the AI model."
     )
     prompt = "Live plan context (JSON):\n" + json.dumps(ctx, indent=1)[:6000] \
         + "\n\nGive the planning read."

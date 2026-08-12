@@ -19,7 +19,8 @@
   let _sel=null;            // isolated plan id, or null = all
   let _hidden={};           // id → true (eye toggle)
   let _gran='shift';        // hour | shift | day
-  let _chart=null;
+  // No local ECharts instance: paChart() owns the registry (_paCharts) and
+  // paResizeAll() owns resize, so a second cache here could only drift from it.
   let _curves=[];           // [{id,label,color,curve:[{dt,tripsPerDt,trips,wmt}],currentDt,foreign,capDt}]
 
   const el=id=>document.getElementById(id);
@@ -47,7 +48,8 @@
       const isForeign=!!r.foreign;
       // Sweep must COVER the assigned DT (owner: "not limited to 2× only") —
       // extend past the envelope so the planner sees where their fleet sits.
-      const histCap=Number.isFinite(m.dtMax)?Math.max(20,Math.round(m.dtMax*2)):100;
+      const envMax=typeof planDtEnvelope==='function'?planDtEnvelope(m):(Number.isFinite(m.dtMax)?Math.round(m.dtMax):null);
+      const histCap=envMax!=null?Math.max(20,Math.round(envMax*2)):100;
       const cap=Math.min(2000,Math.max(histCap,Math.ceil((r.dt||1)*1.25)));
       const step=cap<=40?2:(cap<=100?4:(cap<=300?8:Math.ceil(cap/40)));
       const curve=[];
@@ -74,7 +76,7 @@
       // else take the in-envelope trips peak.
       let opt=null,optNote='';
       if(!isForeign){
-        const env=curve.filter(pt=>!Number.isFinite(m.dtMax)||pt.dt<=m.dtMax);
+        const env=curve.filter(pt=>envMax==null||pt.dt<=envMax);
         if(env.length>=3){
           const margEarly=(env[1].trips-env[0].trips)/(env[1].dt-env[0].dt);
           let peak=env[0],marg=null;
@@ -86,7 +88,7 @@
           const slopeNeg=Number.isFinite(m.bAdj)?m.bAdj<0:(m.b!=null&&m.b<0);
           if(!slopeNeg){
             opt=env[env.length-1];
-            optNote='No measured decline on this path (slope ≥ 0 up to '+(Number.isFinite(m.dtMax)?Math.round(m.dtMax):'?')+' DT) — every observed fleet size kept its rate, so the data-backed best is the largest proven fleet. Beyond it is untested.';
+            optNote='No measured decline on this path (slope ≥ 0 up to '+(envMax!=null?envMax:'?')+' DT) — every observed fleet size kept its rate, so the data-backed best is the largest proven fleet. Beyond it is untested.';
           }else if(marg&&marg.dt<peak.dt){
             opt=marg;
             optNote='Diminishing-returns point: past ~'+marg.dt+' DT each added truck contributes under 25% of what a truck adds in a small fleet (measured decline '+(Number.isFinite(m.bAdj)?m.bAdj.toFixed(4):'')+'/DT). The trips peak is later ('+peak.dt+' DT) but the extra trucks mostly queue.';
@@ -101,7 +103,7 @@
         foreign:isForeign,capDt:cap,tf:pay.tf||0,
         opt,optNote,
         slopeFlat:!(Number.isFinite(m.bAdj)?m.bAdj<0:(m.b!=null&&m.b<0)),
-        dtMax:Number.isFinite(m.dtMax)?Math.round(m.dtMax):null});
+        dtMax:envMax});
     });
     return out;
   }
@@ -129,8 +131,14 @@
 
   function renderChart(){
     const host=el('plan-sens-chart');
-    if(!host||typeof echarts==='undefined')return;
-    if(!_chart)_chart=echarts.init(host);
+    if(!host)return;
+    // Goes through paChart() like every other chart here (AGENTS.md). Direct
+    // echarts.init() used to return silently when the CDN was unreachable,
+    // leaving this section as a heading, an empty 340px gap and a caption
+    // describing solid/dashed lines that were never drawn -- and this tool is
+    // demoed on site connections without internet. paChart() also owns the
+    // stale-instance check (getDom()===el && isConnected) that blanked every
+    // gauge, and registers in _paCharts so paResizeAll() handles resize.
     const {f,unit}=granFactor();
     const vis=visibleCurves();
     const series=[];const legend=[];
@@ -168,7 +176,7 @@
         color:p.color,lineStyle:{width:1.6,type:'dashed'},
         data:p.curve.map(pt=>[pt.dt,pt.tripsPerDt])});
     });
-    _chart.setOption({
+    paChart('plan-sens-chart',{
       title:{text:_sel?('Fleet sensitivity — '+(vis[0]?vis[0].label:'')):'Fleet sensitivity — all plans',
         left:8,top:2,textStyle:{fontSize:12.5,color:'#cbd5e1'}},
       legend:{type:'scroll',top:24,textStyle:{fontSize:10,color:'#8b98a5'}},
@@ -205,7 +213,9 @@
         {type:'value',name:'Trips/DT',axisLabel:{color:'#8b98a5'},splitLine:{show:false}},
       ],
       series,
-    },true);
+    },'This section is a chart only — there is no table behind it, so the '
+      +'tonnage/trips-per-DT curves cannot be shown while the library is '
+      +'unavailable. The plan table above still carries your current DT figures.');
     renderOptStrip();
   }
 
@@ -284,5 +294,6 @@
       window.planSensIsolate(_sel===id?null:id);
     }
   });
-  window.addEventListener('resize',()=>{if(_chart)_chart.resize();});
+  // Resize is handled by paResizeAll() in plan_assessment.js, which iterates the
+  // shared _paCharts registry this chart is now part of.
 })();

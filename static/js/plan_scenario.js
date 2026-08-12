@@ -181,14 +181,15 @@ function planRenderEstimateColumn(sim,predict){
   // achievable is a linear extrapolation, not a capacity fact. Mark it.
   const beyondRows=rows.filter(r=>{
     const mm=(_pathResp&&_pathResp[(r.route||'').trim()])||{};
-    return Number.isFinite(mm.dtMax)&&r.n_trucks>mm.dtMax;
+    const env=typeof planDtEnvelope==='function'?planDtEnvelope(mm):mm.dtMax;
+    return Number.isFinite(env)&&r.n_trucks>env;
   });
   const beyondEnv=beyondRows.length>0;
   const achvLabel=beyondEnv?'Achievable (simulate · extrapolated)':'Achievable (simulate)';
   const beyondNote=beyondEnv
     ?`<p class="plan-scenario-warn" style="margin:8px 0 0;font-size:11px;color:#f59e0b">⚠ ${beyondRows.map(r=>{
         const mm=(_pathResp&&_pathResp[(r.route||'').trim()])||{};
-        return `${escH(r.route)}: ${r.n_trucks} DT vs ${Math.round(mm.dtMax)} DT ever observed`;
+        return `${escH(r.route)}: ${r.n_trucks} DT vs ${typeof planDtEnvelope==='function'?planDtEnvelope(mm):Math.round(mm.dtMax)} DT ever observed`;
       }).join(' · ')} — the engine assumes cycle time does not degrade with fleet size, so this achievable is untested extrapolation. The path model (with the measured declining-efficiency slope) is the honest planning number out here.</p>`
     :'';
   // Two DIFFERENT gaps, and the label must not conflate them:
@@ -345,7 +346,7 @@ function planSuggestOptimize(sim,predict){
     // so its "achievable" inflates and this suggester advised RAISING an
     // already-absurd fleet (800 → 937). Beyond dtMax the only honest advice
     // is DOWN toward the observed envelope — never up.
-    const dtMax=Number.isFinite(m.dtMax)?Math.max(1,Math.round(m.dtMax)):null;
+    const dtMax=typeof planDtEnvelope==='function'?planDtEnvelope(m):(Number.isFinite(m.dtMax)?Math.max(1,Math.round(m.dtMax)):null);
     if(dtMax!=null&&cur>dtMax){
       sug=dtMax;
       reasons.push('Beyond the '+dtMax+' DT ever observed on this path — the engine\u2019s cycle assumes no crowding out here, so its headroom is not real. Suggest the observed maximum; raise only with site evidence.');
@@ -471,17 +472,31 @@ function planRenderOutcomes(sim,predict){
   const box=q('plan-scenario-outcomes');if(!box)return;
   const s=(sim&&sim.summary)||{};
   const achv=s.achievable_production_t||0;
-  // Capacity “planned” = path-model WMT. Achievable = raw simulate (same figure as B).
-  // Ticket lens (−5.5%) is companion-only — never replace the primary Achievable KPI.
-  const plannedPath=(predict&&Number.isFinite(predict.wmt)&&predict.wmt>0)
-    ?predict.wmt
-    :(s.planned_production_t||0);
+  // Capacity “planned” = THE ENGINE's planned_production_t. Achievable = raw simulate
+  // (same figure as B). Ticket lens (−5.5%) is companion-only — never replace the
+  // primary Achievable KPI.
+  //
+  // 2026-08-12 — this card used to divide by predict.wmt (the Step 1 path model), which
+  // made it lie in exactly the regime it exists to warn about. At 1360 DT on TF the
+  // engine clips 16,012 t and raises two capacity_warnings (1478 trips asked against a
+  // demonstrated 1140/shift ceiling), yet the card read "Shortfall 0 t · vs planned
+  // 120%". The path model declines sub-linearly with DT while the engine's planned grows
+  // linearly, so the ratio IMPROVED as the plan got more absurd. A capacity card must be
+  // denominated in the engine's own planned tonnage; the path-model comparison already
+  // has its own home in the REALISM card below. See AGENTS.md, the availability override
+  // (J55): the UI must not overrule the engine.
+  const plannedEngine=s.planned_production_t||0;
+  const plannedPath=(predict&&Number.isFinite(predict.wmt)&&predict.wmt>0)?predict.wmt:null;
+  const capWarn=s.capacity_warnings||[];
   const lens=planBiasAdjustedAchievable(achv);
   const showAchv=achv; // always match B · Production & capacity
-  const ratio=plannedPath>0?showAchv/plannedPath:1;
+  const ratio=plannedEngine>0?showAchv/plannedEngine:1;
   const vc=_flowSim&&Number.isFinite(_flowSim.vc)?_flowSim.vc:null;
-  const shortfall=Math.max(0,plannedPath-showAchv);
-  const planned=plannedPath;
+  // No max(0,…) clamp: a clamped difference cannot report that it went negative, which
+  // is how the 0 t read survived. Engine achievable is planned-minus-clipping, so this
+  // is >= 0 in normal operation; a negative here is a real inconsistency worth seeing.
+  const shortfall=plannedEngine-showAchv;
+  const planned=plannedEngine;
   const ens=(_planLastAnalogues&&_planLastAnalogues.ensemble)||{};
   const ambition=planAmbitionLabel(predict,ens);
 
@@ -566,7 +581,8 @@ function planRenderOutcomes(sim,predict){
   // extrapolation with no crowding term — say so instead of praising headroom.
   const beyondEnv=planDraftEntries().some(r=>{
     const mm=(_pathResp&&_pathResp[r.key])||{};
-    return Number.isFinite(mm.dtMax)&&r.dt>mm.dtMax;
+    const env2=typeof planDtEnvelope==='function'?planDtEnvelope(mm):mm.dtMax;
+    return Number.isFinite(env2)&&r.dt>env2;
   });
   const status=beyondEnv?'Fleet beyond observed range — engine capacity untested out here'
     :ratio<0.85?'Simulate shortfall — capacity limiting'
@@ -592,10 +608,11 @@ function planRenderOutcomes(sim,predict){
           <div class="plan-signal-h">Capacity <span class="muted">(simulate · effective cycle)</span></div>
           <div class="plan-outcomes-strip plan-outcomes-strip-3">
             <div><span class="muted">Achievable</span><b>${Math.round(showAchv).toLocaleString('en-GB')} t</b></div>
-            <div><span class="muted">Shortfall</span><b>${Math.round(shortfall).toLocaleString('en-GB')} t</b></div>
+            <div><span class="muted">Shortfall</span><b${shortfall>1?' style="color:var(--bad,#e5534b)"':''}>${Math.round(shortfall).toLocaleString('en-GB')} t</b></div>
             <div><span class="muted">vs planned</span><b>${planned?Math.round(100*ratio)+'%':'—'}</b></div>
           </div>
-          <p class="muted" style="font-size:10.5px;margin:6px 0 0">Same achievable as B (raw simulate). Planned = path-model WMT ${Math.round(plannedPath).toLocaleString('en-GB')} t.${lens.on
+          ${capWarn.length?`<ul class="plan-cap-warn">${capWarn.map(w=>`<li>${escH(w)}</li>`).join('')}</ul>`:''}
+          <p class="muted" style="font-size:10.5px;margin:6px 0 0">Same achievable as B (raw simulate). Planned = engine ${Math.round(plannedEngine).toLocaleString('en-GB')} t — what this fleet moves before point ceilings clip it.${plannedPath!=null?(' Path-model WMT '+Math.round(plannedPath).toLocaleString('en-GB')+' t is the REALISM card, not this one.'):''}${lens.on
             ?(' Ticket lens companion ~'+Math.round(lens.adj).toLocaleString('en-GB')+' t (÷1.055) — not used in these KPIs.')
             :''}</p>
         </div>

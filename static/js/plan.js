@@ -144,6 +144,15 @@ function planSectionDrag(key,dt){
   if(excess<=0)return {delta:0,excess:0};   // below typical section load: no credit, no drag
   return {delta:(f.per50/50)*excess,excess};
 }
+// Fleet envelope for a path: FULL-history max (dtMaxAll ignores the peak-window
+// date filter; dtMax is only the max inside the current filter window). The
+// owner's 2026-08-12 audit: plan said "67 DT ever observed" while history held
+// 158-DT days — 67 was the filtered max. Always guard against the full data.
+function planDtEnvelope(m){
+  if(!m)return null;
+  const cands=[m.dtMaxAll,m.dtMaxDayAll,m.dtMax].filter(Number.isFinite);
+  return cands.length?Math.round(Math.max.apply(null,cands)):null;
+}
 function planTripsPerDT(key,dt,rain,contractor,opts){
   const m=_pathResp&&_pathResp[key];if(!m)return null;
   let tr=m.avgTr;
@@ -211,45 +220,41 @@ function planRenderImpacts(key,dt,e,contractor){
   if(!e){box.innerHTML='';return;}
   const rows=[];
   const dtPct=x=>fmtExact(Math.abs(x),2);
-  // 0 · Fleet size vs this path's own history (owner: "0.91/shift from TF to
-  // FENI — how did it become 0.29? Explain it in the box"). The baseline rate
-  // is measured at the TYPICAL fleet; the regression slope prices what each
-  // added truck does to everyone (loader queue, one road, fixed cycle). This
-  // row does that arithmetic in the open.
+  // 0 · Fleet size (plain language). Hidden once the ✦ AI answer is on screen —
+  // AI covers the same point; keep the AI, drop this duplicate.
+  const prevAiHtml=(box.querySelector('#plan-ai-out')||{}).innerHTML||'';
+  const aiHasAnswer=/plan-ai-answer/.test(prevAiHtml);
   const m0=e.m||{};
   const sf=typeof planShiftFactor==='function'?planShiftFactor():0.5;
   const baseShift=Number.isFinite(m0.avgTr)?m0.avgTr*sf:null;
   const avgDt=Number.isFinite(m0.avgDt)?Math.round(m0.avgDt):null;
   const slope=Number.isFinite(e.slope)?e.slope:0;
-  if(baseShift!=null&&avgDt!=null&&dt>0){
+  if(!aiHasAnswer&&baseShift!=null&&avgDt!=null&&dt>0){
     const fleetDelta=(slope<0)?slope*(dt-m0.avgDt)*sf:0;
-    const linShift=baseShift+fleetDelta;                    // raw extrapolation
-    const floorShift=.3*m0.avgTr*sf;                        // 30% guard
+    const linShift=baseShift+fleetDelta;
+    const floorShift=.3*m0.avgTr*sf;
     const floored=slope<0&&linShift<floorShift;
-    const dtMax0=Number.isFinite(m0.dtMax)?Math.round(m0.dtMax):null;
+    const dtMax0=planDtEnvelope(m0);
     if(dt>avgDt*1.5&&slope<0){
       if(floored){
-        // Beyond the measured envelope the line goes below the guard (or
-        // negative): give the honest RANGE instead of one false-precision
-        // number — floor estimate up to the hard WB ceiling for this fleet.
         const cf=typeof planContractorFactor==='function'?planContractorFactor(contractor):1;
         const lowTrips=Math.round(dt*Math.max(floorShift*cf,0));
         const hours=Math.max(1,parseFloat((q('plan-hours')||{}).value)||12);
         const nWb=(e.wbRows&&e.wbRows.length)?e.wbRows.length:1;
         const wbCap=Math.round(nWb*PLAN_WB_TRIPS_PER_HOUR*hours);
-        const hiTrips=Math.min(wbCap,Math.round(dt*1.0));   // can't exceed bridge throughput
-        rows.push({icon:'📉',cls:'imp-bad',
-          txt:`Fleet size: the ${fmtExact(baseShift,2)}/shift rate is the measured average at this path's average fleet (~${fmtExact(avgDt)} DT; data covers up to ${dtMax0!=null?fmtExact(dtMax0):'?'} DT). ${fmtExact(dt)} DT is far beyond that data — the measured decline (${fmtExact(slope*sf,4)}/truck) extrapolates below zero, so the estimate is HELD at the 30% guard: ~${fmtExact(Math.max(floorShift*cf,0),2)}/DT ≈ ${fmtExact(lowTrips)} trips. Physical ceiling check: ${fmtExact(nWb)} bridge${nWb===1?'':'s'} can weigh at most ${fmtExact(wbCap)} trips/shift — the true outcome sits between ~${fmtExact(lowTrips)} and ${fmtExact(hiTrips)} trips, unproven either way`,
-          tip:`Average ${fmtExact(baseShift,2)}/shift is computed over all measured days at this path's average fleet (~${fmtExact(avgDt)} DT). The decline per added truck is fitted only on fleets up to ${dtMax0!=null?fmtExact(dtMax0):'?'} DT. Beyond that, extrapolation predicts negative trips (impossible), so a conservative 30% floor holds the estimate. The weighbridge throughput ceiling (${PLAN_WB_TRIPS_PER_HOUR}/h per bridge) is the only hard physical bound out here. Plan inside the data (≤ ${dtMax0!=null?fmtExact(dtMax0):'?'} DT) for numbers you can defend.`});
+        const hiTrips=Math.min(wbCap,Math.round(dt*1.0));
+        rows.push({kind:'fleet',icon:'📉',cls:'imp-bad',
+          txt:`Too many trucks for this path’s history. We usually run ~${fmtExact(avgDt)} DT (up to ${dtMax0!=null?fmtExact(dtMax0):'?'} DT in the data). At ${fmtExact(dt)} DT each truck does much less — estimate held at ~${fmtExact(lowTrips)} trips (bridge max ~${fmtExact(hiTrips)}). Real result is unproven this high.`,
+          tip:`Typical rate ~${fmtExact(baseShift,2)} trips/DT per shift at ~${fmtExact(avgDt)} DT. Beyond measured fleets we do not invent gains — we hold a conservative floor. Prefer planning ≤ ${dtMax0!=null?fmtExact(dtMax0):'?'} DT.`});
       }else{
-        rows.push({icon:'📉',cls:'imp-bad',
-          txt:`Fleet size: the ${fmtExact(baseShift,2)}/shift rate is the measured average at this path's average fleet (~${fmtExact(avgDt)} DT). At ${fmtExact(dt)} DT the measured decline (${fmtExact(slope*sf,4)}/truck) prices trips/DT at ${fmtExact(e.shiftFree!=null?e.shiftFree:e.shift,2)}`,
-          tip:`Regression on this path's own history: trips/DT declines as the fleet grows (loader queue, shared road, ~fixed cycle). Within the measured envelope (≤ ${dtMax0!=null?fmtExact(dtMax0):'?'} DT). More trucks still add total trips, but each truck does less.`});
+        rows.push({kind:'fleet',icon:'📉',cls:'imp-bad',
+          txt:`Bigger fleet than usual (~${fmtExact(avgDt)} DT typical). At ${fmtExact(dt)} DT each truck does less: about ${fmtExact(e.shiftFree!=null?e.shiftFree:e.shift,2)} trips per truck this shift (was ~${fmtExact(baseShift,2)} at the usual fleet).`,
+          tip:'More trucks share the same loader and road, so trips per truck fall. Still within measured history.'});
       }
     }else if(dt<avgDt*0.6&&slope<0){
-      rows.push({icon:'📈',cls:'imp-ok',
-        txt:`Fleet size: ${fmtExact(dt)} DT is below this path's average fleet (~${fmtExact(avgDt)} DT) — each truck runs slightly better than the average rate (${fmtExact(e.shiftFree!=null?e.shiftFree:e.shift,2)}/shift vs ${fmtExact(baseShift,2)} average)`,
-        tip:'Small fleets queue less at the loader; the same measured slope, applied downward.'});
+      rows.push({kind:'fleet',icon:'📈',cls:'imp-ok',
+        txt:`Smaller fleet than usual (~${fmtExact(avgDt)} DT typical). At ${fmtExact(dt)} DT each truck runs a bit better (~${fmtExact(e.shiftFree!=null?e.shiftFree:e.shift,2)} trips/truck vs ~${fmtExact(baseShift,2)} average).`,
+        tip:'Fewer trucks means less queueing at the loader.'});
     }
   }
   // 1 · Shared road with the REST OF THE PLAN (holding-plan rows on this span)
@@ -277,39 +282,28 @@ function planRenderImpacts(key,dt,e,contractor){
       txt:'Other traffic: within typical FENI-corridor levels — no extra drag (typical load is already in this path\u2019s history)',
       tip:'The baseline trips/DT was measured WITH normal IWIP traffic present; drag applies only above-typical (never a credit).'});
   }
-  // 3 · Weighbridge ceiling / queue for THIS path's assigned bridges
-  if(e.wbRows&&e.wbRows.length){
-    const worst=e.wbRows.reduce((a,b)=>(b.rho>(a?a.rho:-1)?b:a),null);
-    if(e.wbFactor<1){
-      rows.push({icon:'⚖',cls:'imp-bad',
-        txt:`Weighbridge: WB ${worst.wb} over capacity (${fmtExact(Math.round(100*worst.rho))}% of ${fmtExact(Math.round(worst.cap))}/shift) — only ${fmtExact(Math.round(100*e.wbFactor))}% of this path's trips can be weighed`,
-        tip:`Bridges are a throughput ceiling (30 weighs/h measured-conservative). Arrivals at WB ${worst.wb}: ${fmtExact(Math.round(worst.arrivals))} (plan + ${fmtExact(Math.round(worst.otherTrips))} other traffic). Excess arrivals cannot be weighed this shift. Move trips to another bridge or use ⚖ Auto-balance.`});
-    }else if(worst&&worst.rho>=.7){
-      rows.push({icon:'⚖',cls:'imp-warn',
-        txt:`Weighbridge: WB ${worst.wb} heavy (${fmtExact(Math.round(100*worst.rho))}%) — est queue ~${fmtExact(Math.round(worst.waitMin))} min, still under capacity so no trips lost yet`,
-        tip:'M/M/1 estimate at current arrivals. Below 100% the measured waits stay flat (11.7→12.1 min), so trips are not clipped — the queue eats idle margin first.'});
-    }else if(worst){
-      rows.push({icon:'⚖',cls:'imp-ok',
-        txt:`Weighbridge: WB ${e.wbRows.map(r=>r.wb).join(', WB ')} at ${e.wbRows.map(r=>fmtExact(Math.round(100*r.rho))+'%').join(' / ')} — comfortable`,
-        tip:'Utilisation = (plan + other traffic arrivals) ÷ 30/h ceiling. Green under 70%.'});
-    }
-  }
+  // Weighbridge status lives on the Bridge load board — not duplicated here.
   // 4 · Rain (when active)
   if(e.rainDelta<=-.01){
     rows.push({icon:'☔',cls:'imp-warn',
       txt:`Rain: −${dtPct(e.rainDelta)} Trips/DT at the entered rainfall`,
       tip:'Path-specific measured rain response.'});
   }
-  // Preserve the AI advisor's answer across re-renders (this panel repaints on
-  // every input edit; the auto-advise below replaces it when the plan settles).
-  const prevAi=(box.querySelector('#plan-ai-out')||{}).innerHTML||'';
-  box.innerHTML=rows.length
-    ?`<div class="imp-head muted">Plan updates <span title="Everything acting on THIS path right now: fleet-size response, the rest of the holding plan on shared road, other (IWIP) traffic, rain and the assigned weighbridges. All effects are measured; the estimate above already includes them. The ✦ line is a live AI read over these exact numbers.">ⓘ</span></div>`
-      +rows.map(r=>`<div class="imp-row ${r.cls}" title="${escH(r.tip)}"><span class="imp-ic">${r.icon}</span><span>${r.txt}</span></div>`).join('')
-      +`<div id="plan-ai-out" class="plan-ai-out">${prevAi}</div>`
-    :'';
-  // AUTO AI: fires by itself when the inputs settle (no button — owner ask).
-  if(rows.length)planAiSchedule();
+  // Keep AI analysis across re-renders; do not show which model produced it.
+  box.innerHTML=(rows.length
+    ?`<div class="imp-head muted">Plan updates <span title="Shared-road load, other (IWIP) traffic, and rain on THIS path. Fleet-size detail is in the ✦ AI read when available. Weighbridge detail is on the Bridge load board.">ⓘ</span></div>`
+      +rows.map(r=>`<div class="imp-row ${r.cls}" data-imp="${escH(r.kind||'')}" title="${escH(r.tip)}"><span class="imp-ic">${r.icon}</span><span>${r.txt}</span></div>`).join('')
+    :`<div class="imp-head muted">Plan updates</div>`)
+    +`<div id="plan-ai-out" class="plan-ai-out">${prevAiHtml}</div>`;
+  planAiSchedule();
+}
+function planAiDropFleetDup(){
+  // Once ✦ AI has answered, remove the short fleet-size row — same story twice.
+  const box=q('plan-impacts');if(!box)return;
+  box.querySelectorAll('.imp-row[data-imp="fleet"]').forEach(el=>el.remove());
+  const head=box.querySelector('.imp-head');
+  const rows=box.querySelectorAll('.imp-row');
+  if(head&&!rows.length){/* keep head + AI */}
 }
 // ── AI advisor (owner 2026-08-12: "an AI that reads what we have in
 // historicals, our thresholds, and gives real info instead of prewritten
@@ -352,7 +346,7 @@ function planAiContext(){
     building:{path:key,contractor:c?c.name:null,dt,rain_mm:rain},
     path_history:{
       typical_dt:m.avgDt!=null?Math.round(m.avgDt):null,
-      max_dt_ever:m.dtMax!=null?Math.round(m.dtMax):null,
+      max_dt_ever:planDtEnvelope(m),
       trips_per_dt_day_at_typical:m.avgTr!=null?+m.avgTr.toFixed(2):null,
       trips_per_dt_shift_at_typical:m.avgTr!=null?+(m.avgTr*sf).toFixed(2):null,
       trips_per_dt_p25_p75_day:[m.trP25,m.trP75].map(x=>x!=null?+x.toFixed(2):null),
@@ -396,8 +390,10 @@ function planAiAdvise(ctx){
       o.innerHTML='<div class="plan-ai-err">✦ AI advisor unavailable: '+escH((res&&res.error)||'no response')+'</div>';
       return;
     }
-    o.innerHTML='<div class="plan-ai-answer"><span class="plan-ai-star">✦</span> '+escH(res.advice||'').replace(/\n/g,'<br>')+'</div>'
-      +'<div class="muted" style="font-size:9.5px;margin-top:3px">'+escH(res.model||'AI')+' · live read of this plan\u2019s data · advisory — the measured numbers above stay authoritative</div>';
+    // Analysis only — never name the model in the UI.
+    o.innerHTML='<div class="plan-ai-answer"><span class="plan-ai-star">✦</span> '+escH(res.advice||'').replace(/\n/g,'<br>')+'</div>';
+    // Drop the plain fleet-size row when AI covers the same ground.
+    if(typeof planAiDropFleetDup==='function')planAiDropFleetDup();
   }).catch(e=>{
     if(seq!==_planAiSeq)return;
     const o=q('plan-ai-out');
@@ -1213,14 +1209,10 @@ function _planRenderEstimate(v){
   const totalInner=v.foreign
     ?`<div class="est-total-v est-total-road">Road-only <span class="u">no WMT</span></div>`
     :`<div class="est-total-v">${v.swapped?fmtExact(v.dt):fmtExact(Math.round(v.wmt))} <span class="u">${v.swapped?'DT':'t'}</span></div>`;
-  const warnHtml=(v.warns&&v.warns.length)
-    ?`<div class="est-warn" role="status">${v.warns.map(w=>`<div class="est-warn-item">${escH(w)}</div>`).join('')}</div>`
-    :'';
-  box.classList.remove('empty');
+  box.classList.remove('empty','has-warns');
   box.classList.toggle('is-loading', v.model==='local');
-  box.classList.toggle('has-warns', !!(v.warns&&v.warns.length));
-  // Column layout: hero strip (metrics + tonnage) stays intact; notes/warnings
-  // sit full-width underneath so long text never squeezes the WMT number.
+  // Column layout: hero strip (metrics + tonnage) stays intact; path/model under it.
+  // Beyond-data / model-extrapolation notes are not shown here (Plan updates ✦ covers that).
   box.innerHTML=`<div class="est-head">Estimated shift output <span class="muted" style="font-weight:400;font-size:10.5px">· ONE shift (${escH((q('plan-hours')||{}).value||12)} h)</span></div>`
     +`<div class="est-main">`
     +`<div class="est-body">`
@@ -1231,8 +1223,7 @@ function _planRenderEstimate(v){
     +`<div class="est-note" title="${note}">${note}</div>`
     +`<div class="est-attr"><span class="est-model ${mod.cls}">${mod.text}</span></div>`
     +`</div>`
-    +`</div>`
-    +warnHtml;
+    +`</div>`;
 }
 function planPreview(){
   const box=q('plan-preview');if(!box)return;
@@ -1286,14 +1277,15 @@ function planPreview(){
   const swapped=_planMode==='wmt';
   const cFactor=planContractorFactor(c);
   const warns=[];
-  if(Number.isFinite(m.dtMax)&&dt>m.dtMax)warns.push(`⚠ ${fmtExact(dt)} DT is beyond the ${fmtExact(m.dtMax)} DT ever observed on this path`);
+  const _envW=planDtEnvelope(m);
+  if(_envW!=null&&dt>_envW)warns.push(`⚠ ${fmtExact(dt)} DT is beyond the ${fmtExact(_envW)} DT ever observed on this path`);
   if(e.rainDelta<=-.03)warns.push(`☔ rain −${fmtExact(Math.abs(e.rainDelta),2)} Trips/DT`);
   if(e.otherDelta<=-.02)warns.push(`🚚 other (IWIP/Position) traffic above typical −${fmtExact(Math.abs(e.otherDelta),2)} Trips/DT on the shared corridor`);
   if(e.secDelta<=-.02)warns.push(`\u{1F6E3}\uFE0F shared-section load \u2212${fmtExact(Math.abs(e.secDelta),2)} Trips/DT (plan adds ${fmtExact(Math.round(e.secExcess))} DT beyond this path's typical section traffic \u2014 page-1 measured effect)`);
   if(e.wbFactor<1)warns.push(`⚖ weighbridge over capacity − trips capped at ${fmtExact(Math.round(100*e.wbFactor))}% (see interactions below)`);
   const base={src:s,dst:d,contractor:c?c.name:'—',hours,swapped,warns,foreign:false,
     dt,tripsPerDt:e.shift,trips,wmt,payload:pay.tf,payloadSrc:pay.src,model:'local',
-    dtMax:Number.isFinite(m.dtMax)?m.dtMax:null,
+    dtMax:planDtEnvelope(m),
     contractorFactor:cFactor};
   _planRenderEstimate(base);                       // stage 1 — instant, local
   planRenderImpacts(key,dt,e,c);                   // WHY panel under the builder
