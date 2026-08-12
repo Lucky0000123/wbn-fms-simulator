@@ -177,6 +177,20 @@ function planRenderEstimateColumn(sim,predict){
   const byRoute=planPredictByRoute();
   const fmtN=n=>n==null?'—':Math.round(n).toLocaleString('en-GB');
   const gap=(achv!=null&&plannedPath!=null)?Math.round(plannedPath-achv):null;
+  // Beyond the observed fleet the engine's cycle has NO crowding term — its
+  // achievable is a linear extrapolation, not a capacity fact. Mark it.
+  const beyondRows=rows.filter(r=>{
+    const mm=(_pathResp&&_pathResp[(r.route||'').trim()])||{};
+    return Number.isFinite(mm.dtMax)&&r.n_trucks>mm.dtMax;
+  });
+  const beyondEnv=beyondRows.length>0;
+  const achvLabel=beyondEnv?'Achievable (simulate · extrapolated)':'Achievable (simulate)';
+  const beyondNote=beyondEnv
+    ?`<p class="plan-scenario-warn" style="margin:8px 0 0;font-size:11px;color:#f59e0b">⚠ ${beyondRows.map(r=>{
+        const mm=(_pathResp&&_pathResp[(r.route||'').trim()])||{};
+        return `${escH(r.route)}: ${r.n_trucks} DT vs ${Math.round(mm.dtMax)} DT ever observed`;
+      }).join(' · ')} — the engine assumes cycle time does not degrade with fleet size, so this achievable is untested extrapolation. The path model (with the measured declining-efficiency slope) is the honest planning number out here.</p>`
+    :'';
   // Two DIFFERENT gaps, and the label must not conflate them:
   //  - capacity clipping: simulate-unconstrained > achievable (a loader ceiling
   //    actually removed tonnes) — a real physical constraint;
@@ -198,7 +212,7 @@ function planRenderEstimateColumn(sim,predict){
       <div class="plan-scenario-kpis">
         <div class="effkpi"><div class="v">${fmtN(s.total_trucks)}</div><div class="l">Trucks (DT)</div></div>
         <div class="effkpi"><div class="v">${fmtN(plannedPath)} t</div><div class="l">Planned (path model)</div></div>
-        <div class="effkpi"><div class="v">${fmtN(achv)} t</div><div class="l">Achievable (simulate)</div></div>
+        <div class="effkpi"><div class="v">${fmtN(achv)} t</div><div class="l">${achvLabel}</div></div>
         <div class="effkpi"><div class="v">${ratio!=null?Math.round(100*ratio)+'%':'—'}</div><div class="l">Achievable / planned</div></div>
         <div class="effkpi"><div class="v">${fmtN(s.planned_production_t)} t</div><div class="l">Simulate unconstrained</div></div>
         <div class="effkpi"><div class="v" style="font-size:13px">${escH(gapLabel)}</div><div class="l">Model vs capacity</div></div>
@@ -209,6 +223,7 @@ function planRenderEstimateColumn(sim,predict){
         const pm=(byRoute[r.route]&&byRoute[r.route].wmt)!=null?byRoute[r.route].wmt:null;
         return `<tr><td><b>${escH(r.route)}</b></td><td class="r">${r.n_trucks}</td><td class="r">${fmtN(pm)}</td><td class="r">${fmtN(r.achievable_production_t)}</td><td class="muted" style="font-size:10px">${escH((r.capacity_note||'').split(':')[0])}</td></tr>`;
       }).join(''):'<tr><td colspan="5" class="muted">No simulate rows</td></tr>'}</tbody></table></div>
+      ${beyondNote}
       ${warnings.length?`<ul class="plan-scenario-warn">${warnings.map(w=>`<li>${escH(typeof w==='string'?w:(w.message||JSON.stringify(w)))}</li>`).join('')}</ul>`:''}
       <p class="muted" style="font-size:11px;margin:8px 0 0"><b>Planned (path model)</b> is your Step‑1 haul estimate. <b>Achievable</b> is loader/point capacity — trust this for “can we deliver?”. Simulate unconstrained is the engine’s cycle×payload before capacity share (often ≈ achievable when under ceiling).</p>
     </div>`;
@@ -324,6 +339,21 @@ function planSuggestOptimize(sim,predict){
     const feniBound=destU.indexOf('FENI')>=0;
     const cr=cap&&cap.capacity_ratio!=null?cap.capacity_ratio:null;
     const pct=cr!=null?Math.round(100*cr)+'%':'—';
+
+    // GUARD (owner 2026-08-12, 800 DT test): beyond the observed DT range the
+    // simulate engine has no truck-crowding term (constant cycle × N trucks),
+    // so its "achievable" inflates and this suggester advised RAISING an
+    // already-absurd fleet (800 → 937). Beyond dtMax the only honest advice
+    // is DOWN toward the observed envelope — never up.
+    const dtMax=Number.isFinite(m.dtMax)?Math.max(1,Math.round(m.dtMax)):null;
+    if(dtMax!=null&&cur>dtMax){
+      sug=dtMax;
+      reasons.push('Beyond the '+dtMax+' DT ever observed on this path — the engine\u2019s cycle assumes no crowding out here, so its headroom is not real. Suggest the observed maximum; raise only with site evidence.');
+      rows.push({id:r.id,key:r.key,contractor:r.contractor,
+        label:r.key.replace('>',' \u2192 '),currentDt:cur,suggestedDt:sug,
+        reason:reasons.join(' '),changed:sug!==cur});
+      return;
+    }
 
     if(cap&&cap.short){
       reasons.push('Simulate below planned — keep DT (loader/point ceiling)');
@@ -532,13 +562,20 @@ function planRenderOutcomes(sim,predict){
       <button class="ms-btn" type="button" onclick="planOpenFullAssessment()">Open full assessment</button>`;
   }
 
-  const status=ratio<0.85?'Simulate shortfall — capacity limiting'
+  // Any path beyond its observed DT max: the engine's achievable is an
+  // extrapolation with no crowding term — say so instead of praising headroom.
+  const beyondEnv=planDraftEntries().some(r=>{
+    const mm=(_pathResp&&_pathResp[r.key])||{};
+    return Number.isFinite(mm.dtMax)&&r.dt>mm.dtMax;
+  });
+  const status=beyondEnv?'Fleet beyond observed range — engine capacity untested out here'
+    :ratio<0.85?'Simulate shortfall — capacity limiting'
     :ratio<0.98?'Simulate below planned — review loaders'
     :(ambition.cls==='plan-ambition-low')?'Under history — capacity headroom to raise DT'
     :(ambition.cls==='plan-ambition-high')?'Capacity OK — ambitious vs history'
     :(vc!=null&&vc>=1)?'High road load — tonnes still from simulate'
     :'Plan clears simulate capacity';
-  const statusIcon=ratio<0.98||ambition.cls==='plan-ambition-low'||ambition.cls==='plan-ambition-high'||(vc!=null&&vc>=1)?'🟠':'🟢';
+  const statusIcon=beyondEnv||ratio<0.98||ambition.cls==='plan-ambition-low'||ambition.cls==='plan-ambition-high'||(vc!=null&&vc>=1)?'🟠':'🟢';
 
   const planWmt=Math.round(predict.wmt||0);
   const p25=ens.wmt_p25,p75=ens.wmt_p75;
