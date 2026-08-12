@@ -1233,6 +1233,7 @@ let _planPredictSeq=0, _planPredictTimer=null;
 const PLAN_PREDICT_DEBOUNCE_MS=180;
 function _planModelLabel(v){
   if(v.model==='local')return {cls:'pending', text:'Model · historical average (loading…)'};
+  if(v.model==='localfinal')return {cls:'ok', text:'Model · measured path history (day-level cluster + ceiling)'};
   if(v.model==='roadonly')return {cls:'ok', text:'Road-only \u00b7 measured congestion, no WMT model'};
   if(v.fallback||v.model==='offline')return {cls:'warn', text:'Model · path formula fallback (offline)'};
   const name=PLAN_MODEL_LABELS[v.model]||v.modelLabel||v.model||'model';
@@ -1392,7 +1393,7 @@ function planPreview(){
           const warns=(base.warns||[]).concat([
             `📐 Model extrapolated ${fmtExact(Math.round(p.total_wmt))} t at ${fmtExact(showDt)} DT (beyond ${fmtExact(base.dtMax)} DT ever run) — keeping measured ${fmtExact(Math.round(base.wmt))} t (matches plan table)`,
           ]);
-          _planRenderEstimate({...base, warns, cycle:res.cycle, contractorFactor:cFactor});
+          _planRenderEstimate({...base, model:'localfinal', warns, cycle:res.cycle, contractorFactor:cFactor});
           return;
         }
         _planRenderEstimate({...base, swapped:stillSwapped, dt:showDt,

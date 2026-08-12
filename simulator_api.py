@@ -2221,7 +2221,36 @@ def api_simulate_options():
                              "observed at that point, not a design figure")})
 
 
+_ANA_CORPUS_CACHE = {"at": 0.0, "corpus": None, "src": None}
+_ANA_CORPUS_TTL = 600.0   # 10 min — day-KPI memory changes at most daily
+_ANA_CORPUS_LOCK = threading.Lock()
+
+
 def _analogues_corpus():
+    """Build retrieval corpus: FMS memory → capability snapshot → fixture.
+
+    PRECOMPUTED (owner 2026-08-12: "the model keeps loading — precalculate the
+    historicals"): the corpus read used to hit FMS_DB (~200k day-KPI rows over
+    the site VPN, ~9 s cold) on EVERY analogues call — every DT edit in the
+    plan builder. The corpus only changes when the memory table is rebuilt
+    (daily), so it is cached in-process for 10 min; per-edit calls then only
+    pay the in-memory ranking (~ms)."""
+    now = time.time()
+    c = _ANA_CORPUS_CACHE
+    if c["corpus"] is not None and (now - c["at"]) < _ANA_CORPUS_TTL:
+        return c["corpus"], c["src"]
+    with _ANA_CORPUS_LOCK:
+        if c["corpus"] is not None and (time.time() - c["at"]) < _ANA_CORPUS_TTL:
+            return c["corpus"], c["src"]
+        corpus, src = _analogues_corpus_uncached()
+        # Only cache non-fixture results long-term; fixture may mean the VPN
+        # was down for a moment — retry sooner (60 s) so live data returns.
+        c["corpus"], c["src"] = corpus, src
+        c["at"] = time.time() if src != "fixture" else (time.time() - _ANA_CORPUS_TTL + 60)
+    return corpus, src
+
+
+def _analogues_corpus_uncached():
     """Build retrieval corpus: FMS memory → capability snapshot → fixture."""
     import plan_analogues as pa
     import plan_memory as pm

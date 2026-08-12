@@ -273,6 +273,17 @@ if __name__ == "__main__":
             except Exception as exc:                      # noqa: BLE001
                 print("  path-response warm-up failed: %s" % str(exc)[:120],
                       flush=True)
+            # Analogues corpus (day-KPI memory, ~200k rows over VPN): the plan
+            # builder queries it on every DT edit — warm it once at boot so the
+            # first "Best past days" is instant instead of ~9 s.
+            try:
+                t0 = time.time()
+                corpus, src = simulator_api._analogues_corpus()
+                print("  analogues corpus warm (%d days, %s, %.1fs)"
+                      % (len(corpus or []), src, time.time() - t0), flush=True)
+            except Exception as exc:                      # noqa: BLE001
+                print("  analogues corpus warm-up failed: %s" % str(exc)[:120],
+                      flush=True)
         threading.Thread(target=_warm, daemon=True).start()
 
     mode = "REAL DB" if simulator_api._db_ready() else "sample fixtures"
