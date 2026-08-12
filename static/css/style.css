@@ -574,6 +574,11 @@ tbody tr:hover{background:var(--panel-hover)}
 /* Cross-plan interactions (the WHY under the path builder) */
 .plan-impacts{margin-top:7px}
 .plan-impacts:empty{display:none}
+/* Engine capacity_warnings under the A · Capacity KPIs. These name the tonnage the
+   point ceiling clips; before 2026-08-12 they were returned by /api/simulate and
+   never rendered, while the card above them read "Shortfall 0 t". */
+.plan-cap-warn{margin:7px 0 0;padding:0 0 0 15px;list-style:disc}
+.plan-cap-warn li{font-size:10.5px;line-height:1.45;color:var(--bad,#e5534b)}
 /* C · Fleet sensitivity (plan_sensitivity.js) */
 .plan-sens-wrap{display:flex;gap:14px;align-items:flex-start}
 .plan-sens-side{flex:0 0 220px;min-width:0}
@@ -592,6 +597,13 @@ tbody tr:hover{background:var(--panel-hover)}
 .plan-sens-gran button{flex:1;font-size:10.5px;padding:3px 0;border-radius:9px;border:1px solid var(--line);background:none;color:var(--txt-muted);cursor:pointer}
 .plan-sens-gran button.on{border-color:#f59e0b;background:rgba(245,158,11,.13);color:var(--txt);font-weight:600}
 @media (max-width:900px){.plan-sens-wrap{flex-direction:column}.plan-sens-side{flex:none;width:100%}}
+.plan-sens-readout{margin-top:10px}
+.plan-sens-readout:empty{display:none}
+.plan-sens-ro{display:flex;align-items:baseline;gap:6px;font-size:10.5px;margin-bottom:3px}
+.plan-sens-ro-v{min-width:0}
+.plan-sens-opt{margin-top:6px}
+.plan-sens-opt:empty{display:none}
+.plan-sens-opt-row{display:flex;align-items:baseline;gap:7px;font-size:11px;padding:3px 8px;border:1px solid rgba(250,204,21,.3);background:rgba(250,204,21,.06);border-radius:7px;margin-bottom:3px;cursor:default}
 .plan-ai-out:empty{display:none}
 .plan-ai-out{margin-top:6px}
 .plan-ai-busy{font-size:11px;color:#a78bfa}

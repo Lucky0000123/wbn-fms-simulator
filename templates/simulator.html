@@ -536,10 +536,13 @@
                     <button type="button" data-g="shift" class="on" onclick="planSensGran('shift')">Per shift</button>
                     <button type="button" data-g="day" onclick="planSensGran('day')">Per day</button>
                   </div>
+                  <!-- Live values at the hovered truck count (mirrors the tooltip). -->
+                  <div id="plan-sens-readout" class="plan-sens-readout"></div>
                 </div>
                 <div class="plan-sens-main">
                   <div id="plan-sens-chart" style="height:340px"></div>
-                  <p class="muted" style="font-size:10.5px;margin:6px 0 0">Solid = tonnage (left axis) · dashed = trips/DT (right axis) · ● marks your current DT. Same path model as the plan table (measured decline, 30% floor, WB ceiling at current assignments). Road-only plans show trips only.</p>
+                  <div id="plan-sens-opt" class="plan-sens-opt"></div>
+                  <p class="muted" style="font-size:10.5px;margin:6px 0 0">Solid = tonnage (left axis) · dashed = trips/DT (right axis) · ● your current DT · ★ calculated optimal (most trips before diminishing returns, within measured data) · shaded = beyond measured data. Same path model as the plan table. Road-only plans show trips only.</p>
                 </div>
               </div>
             </section>

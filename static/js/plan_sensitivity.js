@@ -45,8 +45,11 @@
       const c=typeof planContractor==='function'?planContractor(r.contractor):null;
       const pay=typeof planPayload==='function'?planPayload(r.key,c):{tf:0};
       const isForeign=!!r.foreign;
-      const cap=Math.min(150,Number.isFinite(m.dtMax)?Math.max(20,Math.round(m.dtMax*2)):100);
-      const step=cap<=40?2:(cap<=100?4:6);
+      // Sweep must COVER the assigned DT (owner: "not limited to 2× only") —
+      // extend past the envelope so the planner sees where their fleet sits.
+      const histCap=Number.isFinite(m.dtMax)?Math.max(20,Math.round(m.dtMax*2)):100;
+      const cap=Math.min(2000,Math.max(histCap,Math.ceil((r.dt||1)*1.25)));
+      const step=cap<=40?2:(cap<=100?4:(cap<=300?8:Math.ceil(cap/40)));
       const curve=[];
       for(let dt=1;dt<=cap;dt+=step){
         let tpd=null,trips=null,wmt=null;
@@ -62,9 +65,42 @@
           wmt:wmt==null?null:Math.round(wmt)});
       }
       if(!curve.length)return;
+      // OPTIMAL DT — calculated, not just historical. Objective: most TRIPS
+      // for the fewest trucks that the DATA can defend. Search only inside the
+      // measured envelope (≤ dtMax): beyond it the model is guarded/floored,
+      // so any "optimum" out there would be invented. Marginal-trips rule —
+      // stop where the next step of trucks adds <25% of what a truck adds at
+      // the small-fleet end (queueing has eaten 3/4 of the marginal truck),
+      // else take the in-envelope trips peak.
+      let opt=null,optNote='';
+      if(!isForeign){
+        const env=curve.filter(pt=>!Number.isFinite(m.dtMax)||pt.dt<=m.dtMax);
+        if(env.length>=3){
+          const margEarly=(env[1].trips-env[0].trips)/(env[1].dt-env[0].dt);
+          let peak=env[0],marg=null;
+          for(let k=1;k<env.length;k++){
+            if(env[k].trips>peak.trips)peak=env[k];
+            const mg=(env[k].trips-env[k-1].trips)/(env[k].dt-env[k-1].dt);
+            if(marg==null&&margEarly>0&&mg<0.25*margEarly)marg=env[k-1];
+          }
+          const slopeNeg=Number.isFinite(m.bAdj)?m.bAdj<0:(m.b!=null&&m.b<0);
+          if(!slopeNeg){
+            opt=env[env.length-1];
+            optNote='No measured decline on this path (slope ≥ 0 up to '+(Number.isFinite(m.dtMax)?Math.round(m.dtMax):'?')+' DT) — every observed fleet size kept its rate, so the data-backed best is the largest proven fleet. Beyond it is untested.';
+          }else if(marg&&marg.dt<peak.dt){
+            opt=marg;
+            optNote='Diminishing-returns point: past ~'+marg.dt+' DT each added truck contributes under 25% of what a truck adds in a small fleet (measured decline '+(Number.isFinite(m.bAdj)?m.bAdj.toFixed(4):'')+'/DT). The trips peak is later ('+peak.dt+' DT) but the extra trucks mostly queue.';
+          }else{
+            opt=peak;
+            optNote='In-envelope trips peak at '+peak.dt+' DT (measured decline applied).';
+          }
+        }
+      }
       out.push({id:r.id,label:r.key.replace('>',' → ')+' · '+(r.contractor||'—'),
         color:PALETTE[i%PALETTE.length],curve,currentDt:Math.round(r.dt),
-        foreign:isForeign,capDt:cap,
+        foreign:isForeign,capDt:cap,tf:pay.tf||0,
+        opt,optNote,
+        slopeFlat:!(Number.isFinite(m.bAdj)?m.bAdj<0:(m.b!=null&&m.b<0)),
         dtMax:Number.isFinite(m.dtMax)?Math.round(m.dtMax):null});
     });
     return out;
@@ -102,12 +138,29 @@
       if(!p.foreign){
         const name=p.label+' — tonnage';
         legend.push(name);
+        const markData=[];
+        // ● your plan
+        if(p.currentDt<=p.capDt){
+          const pt=p.curve.reduce((a,b)=>Math.abs(b.dt-p.currentDt)<Math.abs((a?a.dt:1e9)-p.currentDt)?b:a,null);
+          if(pt&&pt.wmt!=null)markData.push({coord:[pt.dt,Math.round(pt.wmt*f)],name:'your plan',
+            symbol:'circle',symbolSize:9,itemStyle:{color:p.color,borderColor:'#fff',borderWidth:1.5},label:{show:false}});
+        }
+        // ★ calculated optimal
+        if(p.opt&&p.opt.wmt!=null){
+          markData.push({coord:[p.opt.dt,Math.round(p.opt.wmt*f)],name:'optimal',
+            symbol:'pin',symbolSize:26,itemStyle:{color:'#facc15'},
+            label:{show:true,formatter:'★',fontSize:11,color:'#1a1d24'}});
+        }
         series.push({name,type:'line',smooth:true,yAxisIndex:0,showSymbol:false,
           color:p.color,lineStyle:{width:2.2},
           data:p.curve.filter(pt=>pt.wmt!=null).map(pt=>[pt.dt,Math.round(pt.wmt*f)]),
-          markPoint:(p.currentDt<=p.capDt)?{symbol:'circle',symbolSize:9,
-            label:{show:false},itemStyle:{color:p.color,borderColor:'#fff',borderWidth:1.5},
-            data:[{coord:[p.currentDt,(()=>{const pt=p.curve.reduce((a,b)=>Math.abs(b.dt-p.currentDt)<Math.abs((a?a.dt:1e9)-p.currentDt)?b:a,null);return pt&&pt.wmt!=null?Math.round(pt.wmt*f):0;})()],name:'your plan'}]}:undefined});
+          markPoint:markData.length?{data:markData}:undefined,
+          // Shade beyond the measured envelope: model guarded out there.
+          markArea:(p.dtMax&&p.capDt>p.dtMax&&(!_sel||_sel===p.id))?{
+            silent:true,itemStyle:{color:'rgba(239,68,68,.05)'},
+            label:{show:!!_sel,position:'insideTop',color:'#8b98a5',fontSize:9,
+              formatter:'beyond measured data (> '+p.dtMax+' DT)'},
+            data:[[{xAxis:p.dtMax},{xAxis:p.capDt}]]}:undefined});
       }
       const name2=p.label+' — trips/DT';
       legend.push(name2);
@@ -124,6 +177,7 @@
         formatter:params=>{
           if(!params||!params.length)return '';
           const dt=params[0].value[0];
+          planSensReadout(dt);                       // live side readout while hovering
           const byPlan={};
           params.forEach(s=>{
             const plan=s.seriesName.replace(/ — (tonnage|trips\/DT)$/,'');
@@ -152,6 +206,43 @@
       ],
       series,
     },true);
+    renderOptStrip();
+  }
+
+  // Live readout under the plan cards while hovering the chart (owner: "when I
+  // hover, show how the tonnage keeps changing on the side").
+  function planSensReadout(dt){
+    const host=el('plan-sens-readout');if(!host)return;
+    const {f,unit}=granFactor();
+    const vis=visibleCurves();
+    host.innerHTML='<div class="plan-sens-side-h muted">At '+dt+' trucks</div>'
+      +vis.map(p=>{
+        const pt=p.curve.reduce((a,b)=>Math.abs(b.dt-dt)<Math.abs((a?a.dt:1e9)-dt)?b:a,null);
+        if(!pt)return '';
+        return '<div class="plan-sens-ro"><span class="plan-sens-dot" style="background:'+p.color+'"></span>'
+          +'<span class="plan-sens-ro-v">'+(pt.wmt!=null?('<b>'+Math.round(pt.wmt*f).toLocaleString()+'</b> t'+unit):'road-only')
+          +' · '+pt.tripsPerDt+' /DT · '+Math.round(pt.trips*f)+' trips'+unit+'</span></div>';
+      }).join('');
+  }
+
+  // Optimal-DT strip under the chart: the calculated answer, with its basis.
+  function renderOptStrip(){
+    const host=el('plan-sens-opt');if(!host)return;
+    const vis=visibleCurves().filter(p=>p.opt);
+    host.innerHTML=vis.length
+      ?vis.map(p=>{
+          const gain=p.currentDt&&p.opt.dt!==p.currentDt
+            ?(p.currentDt>p.opt.dt
+              ?(' — you planned '+p.currentDt+' DT: ~'+Math.max(0,p.currentDt-p.opt.dt)+' trucks mostly queue')
+              :(' — you planned '+p.currentDt+' DT: room for +'+(p.opt.dt-p.currentDt)+' before returns die'))
+            :' — your plan sits at the optimum';
+          return '<div class="plan-sens-opt-row" title="'+esc(p.optNote)+'">'
+            +'<span class="plan-sens-dot" style="background:'+p.color+'"></span>'
+            +'<span>★ optimal ~<b>'+p.opt.dt+' DT</b> → '+Math.round(p.opt.trips)+' trips'
+            +(p.opt.wmt!=null?(' · '+Math.round(p.opt.wmt).toLocaleString()+' t/shift'):'')
+            +esc(gain)+'</span></div>';
+        }).join('')
+      :'';
   }
 
   // ── Public hooks ───────────────────────────────────────────────────────────
