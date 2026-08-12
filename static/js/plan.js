@@ -699,7 +699,9 @@ function planFetchOtherTraffic(){
               const typ=res.otherTypical||null;
               _planOtherTypical=typ&&Number(typ.tripsPerShift)>0?typ:null;
               planOtherApplyRegime(res);
-              computePlan();
+              // Road-only mode reads locations from otherPaths — rebuild when they land.
+              if(typeof planForeignOn==='function'&&planForeignOn())renderPlanBuilder();
+              else computePlan();
               return;
             }
             const prev=new Date(dateS+'T00:00:00Z');prev.setUTCDate(prev.getUTCDate()-1);
@@ -723,11 +725,12 @@ function planAddMeasuredRoadOnly(){
     const sKey=(pth.origin||'').trim(),dKey=(pth.dest||'').trim();
     if(!sKey||!dKey)return;
     const key=sKey+'>'+dKey;
-    const id='IWIP|'+key+'|road';
+    const cont=planNormalizeForeignContractor(pth.contractor);
+    const id=cont+'|'+key+'|road';
     if(_planDraft[id])return;                     // don't duplicate
     // FOREIGN paths usually have no WBN route history — carry their MEASURED
     // trips/trucks from the tickets so the row renders honest numbers.
-    _planDraft[id]={key,dt:Math.max(1,Math.round(pth.trucks||1)),contractor:'IWIP',
+    _planDraft[id]={key,dt:Math.max(1,Math.round(pth.trucks||1)),contractor:cont,
       source:sKey,dest:dKey,foreign:true,
       measTrips:Math.max(0,Math.round(pth.trips||0)),
       measTrucks:Math.max(1,Math.round(pth.trucks||1))};
@@ -736,8 +739,8 @@ function planAddMeasuredRoadOnly(){
   if(added){computePlan();}
   const st=q('plan-save-status');
   if(st)st.textContent=added
-    ?('Added '+added+' road-only path(s) from measured '+(_planOtherSrc||'last')+' shift — edit DT to test scenarios.')
-    :'Measured road-only paths have no route history here (or already added).';
+    ?('Added '+added+' average road-only path(s) from '+(_planOtherSrc||'last')+' shift — counted in weighbridges + road congestion (no WMT). Edit DT if needed.')
+    :'Measured road-only paths already in the plan (or none available).';
 }
 function planRenderWbLoad(totTrips,wb,hours,avgTf){
   // Aggregate WB bar removed — Bridge load board is the capacity model.
@@ -748,8 +751,12 @@ function planRenderWbLoad(totTrips,wb,hours,avgTf){
   const dragTxt=dragProbe<0
     ?`<span class="plan-other-drag">FENI drag <b>${fmtExact(dragProbe,2)}</b> trips/DT</span>`
     :'';
+  const addTip='Click to add the average road-only (IWIP / Position) truck paths as rows in your plan — used for weighbridge load and road congestion. No WMT for us.';
   const addBtn=(_planOtherPaths&&_planOtherPaths.length)
-    ?`<button type="button" class="plan-other-add" onclick="planAddMeasuredRoadOnly()" title="Add measured IWIP/Position paths as road-only rows (congestion counted, no WMT)">+ Road-only paths</button>`
+    ?`<div class="plan-other-add-wrap">
+        <button type="button" class="plan-other-add" onclick="planAddMeasuredRoadOnly()" title="${escH(addTip)}">+ Add road-only paths to plan</button>
+        <span class="plan-other-add-tip">${escH(addTip)}</span>
+      </div>`
     :'';
   const peak=_planOtherTypical&&_planOtherTypical.peak;
   const seg=(mode,label,title)=>{
@@ -777,39 +784,178 @@ let _planUserEditedFleet=false;  // once user types DT/WMT, never auto-overwrite
 
 function planMarkFleetEdit(){ _planUserEditedFleet=true; planPreview(); }
 
-function renderPlanBuilder(){
+/** Default haul path in Step 1 builder (owner preference). */
+const PLAN_DEFAULT_SRC='TF';
+const PLAN_DEFAULT_DST='FENI KM0';
+/** Road-only contractors (non-WBN): IWIP haulers vs Position relocation trucks. */
+const PLAN_FOREIGN_CONTRACTORS=['IWIP','POSITION'];
+/** Remember WBN contractor/src/dst while Road-only is checked so we can restore. */
+let _planWbnKeep=null;
+
+function planForeignOn(){
+  return !!(q('plan-foreign')&&q('plan-foreign').checked);
+}
+function planNormalizeForeignContractor(c){
+  return String(c||'').trim().toUpperCase()==='POSITION'?'POSITION':'IWIP';
+}
+/** Measured non-plan paths from shift-context, optionally filtered by IWIP/POSITION. */
+function planForeignPaths(contractor){
+  const all=_planOtherPaths||[];
+  const want=contractor?planNormalizeForeignContractor(contractor):null;
+  return all.filter(p=>{
+    if(!p)return false;
+    const o=String(p.origin||'').trim(),d=String(p.dest||'').trim();
+    if(!o||!d||o===d)return false;
+    if(!want)return true;
+    return planNormalizeForeignContractor(p.contractor)===want;
+  });
+}
+function planForeignContractors(){
+  const have=new Set(planForeignPaths().map(p=>planNormalizeForeignContractor(p.contractor)));
+  return PLAN_FOREIGN_CONTRACTORS.map(name=>({name,tripsPerDT:null,tf:null,t:0,hasPaths:have.has(name)}));
+}
+function planForeignPath(contractor,src,dst){
+  return planForeignPaths(contractor).find(p=>p.origin===src&&p.dest===dst)||null;
+}
+function planSetForeignUi(on){
+  const swap=q('plan-swap-btn'),swapW=q('plan-swap-btn-wmt');
+  if(swap)swap.style.visibility=on?'hidden':'';
+  if(swapW)swapW.style.visibility=on?'hidden':'';
+  // Road-only has no WMT — force DT entry without running planSwapMode (avoids preview race).
+  if(on&&_planMode==='wmt'){
+    _planMode='dt';
+    const dtBox=q('plan-input-dt'),wmtBox=q('plan-input-wmt');
+    if(dtBox)dtBox.style.display='';
+    if(wmtBox)wmtBox.style.display='none';
+  }
+}
+/** Checkbox: Road-only → contractor becomes IWIP/POSITION; locations from measured paths. */
+function planForeignToggle(){
+  const on=planForeignOn();
+  const cs=q('plan-contractor'),src=q('plan-src'),dst=q('plan-dst');
+  if(on){
+    if(!_planWbnKeep){
+      _planWbnKeep={c:cs?cs.value:'',s:src?src.value:'',d:dst?dst.value:''};
+    }
+    planSetForeignUi(true);
+    if(!_planOtherSrc&&!_planOtherManual)planFetchOtherTraffic();
+  }else{
+    planSetForeignUi(false);
+  }
+  _planUserEditedFleet=false;
+  _planPathKey='';
+  const restore=(!on&&_planWbnKeep)?_planWbnKeep:null;
+  renderPlanBuilder(restore);
+  if(!on)_planWbnKeep=null;
+}
+
+function renderPlanBuilder(restore){
   const src=q('plan-src');if(!src)return;
   planEnsureDate();
   if(!_planRainOutlook)planFetchRainOutlook();   // 16-day site forecast strip
   if(!_planOtherSrc&&!_planOtherManual)planFetchOtherTraffic(); // non-plan trucks
+  const foreign=planForeignOn();
+  planSetForeignUi(foreign);
   const cs=q('plan-contractor');
-  const keepC=cs?cs.value:'';
-  const keepS=src.value;
-  const keepD=(q('plan-dst')||{}).value;
+  const keepC=(restore&&restore.c)||(cs?cs.value:'');
+  const keepS=(restore&&restore.s)||src.value;
+  const keepD=(restore&&restore.d)||((q('plan-dst')||{}).value);
+
+  if(foreign){
+    if(cs){
+      const fcs=planForeignContractors();
+      let cVal=PLAN_FOREIGN_CONTRACTORS.includes(keepC)?keepC:'IWIP';
+      // Prefer a contractor that actually has measured paths this shift.
+      if(!fcs.find(c=>c.name===cVal&&c.hasPaths)){
+        const withP=fcs.slice().sort((a,b)=>{
+          const ta=planForeignPaths(a.name).reduce((n,p)=>n+(p.trips||0),0);
+          const tb=planForeignPaths(b.name).reduce((n,p)=>n+(p.trips||0),0);
+          return tb-ta;
+        }).find(c=>c.hasPaths);
+        if(withP)cVal=withP.name;
+      }
+      cs.innerHTML=fcs.map(c=>`<option value="${escH(c.name)}"${c.name===cVal?' selected':''}>${escH(c.name)}${c.hasPaths?'':' (no measured paths)'}</option>`).join('');
+    }
+    const cont=planNormalizeForeignContractor((cs&&cs.value)||'IWIP');
+    const paths=planForeignPaths(cont);
+    if(!paths.length){
+      src.innerHTML='<option value="">No measured paths yet</option>';
+      const dst=q('plan-dst');if(dst)dst.innerHTML='';
+      planUpdatePathMeta();
+      planPreview();
+      computePlan();
+      return;
+    }
+    // Prefer busiest source for this contractor when current pick is invalid.
+    const bySrc={};
+    paths.forEach(p=>{bySrc[p.origin]=(bySrc[p.origin]||0)+(p.trips||0);});
+    const sources=Object.keys(bySrc).sort((a,b)=>bySrc[b]-bySrc[a]||a.localeCompare(b));
+    const srcVal=sources.includes(keepS)?keepS:sources[0];
+    src.innerHTML=sources.map(s=>`<option${s===srcVal?' selected':''}>${escH(s)}</option>`).join('');
+    planSrcChange(keepD, /*fromBuilder*/true);
+    computePlan();
+    return;
+  }
+
   if(cs){
     cs.innerHTML=planContractors().map(c=>`<option value="${escH(c.name)}"${c.name===keepC?' selected':''}>${escH(c.name)}${Number.isFinite(c.tripsPerDT)?'':' (no history)'}</option>`).join('');
   }
   const keys=_planValidKeys();
   if(!keys.length){src.innerHTML='<option>loading…</option>';return;}
   const sources=[...new Set(keys.map(k=>k.split('>')[0].trim()))].sort();
-  const srcVal=sources.includes(keepS)?keepS:sources[0];
+  // Keep user's selection when present; otherwise land on TF → FENI KM0.
+  const srcVal=sources.includes(keepS)?keepS
+    :(sources.includes(PLAN_DEFAULT_SRC)?PLAN_DEFAULT_SRC:sources[0]);
   src.innerHTML=sources.map(s=>`<option${s===srcVal?' selected':''}>${escH(s)}</option>`).join('');
   // Rebuild dest list without forcing a DT reset unless the path key actually changes.
-  planSrcChange(keepD, /*fromBuilder*/true);
+  planSrcChange(keepD||PLAN_DEFAULT_DST, /*fromBuilder*/true);
   computePlan();
 }
-function planContractorChange(){ planUpdatePathMeta(); planPreview(); computePlan(); }
+function planContractorChange(){
+  if(planForeignOn()){
+    _planUserEditedFleet=false;
+    _planPathKey='';
+    const src=q('plan-src'),dst=q('plan-dst');
+    const cont=planNormalizeForeignContractor((q('plan-contractor')||{}).value);
+    const paths=planForeignPaths(cont);
+    if(!src)return;
+    if(!paths.length){
+      src.innerHTML='<option value="">No measured paths yet</option>';
+      if(dst)dst.innerHTML='';
+      planUpdatePathMeta();planPreview();computePlan();
+      return;
+    }
+    const bySrc={};
+    paths.forEach(p=>{bySrc[p.origin]=(bySrc[p.origin]||0)+(p.trips||0);});
+    const sources=Object.keys(bySrc).sort((a,b)=>bySrc[b]-bySrc[a]||a.localeCompare(b));
+    src.innerHTML=sources.map(s=>`<option>${escH(s)}</option>`).join('');
+    planSrcChange(null, true);
+    computePlan();
+    return;
+  }
+  planUpdatePathMeta(); planPreview(); computePlan();
+}
 function planSrcChange(preferredDest, fromBuilder){
   const s=(q('plan-src')||{}).value,dst=q('plan-dst');if(!dst)return;
-  const dests=[...new Set(_planValidKeys().filter(k=>k.split('>')[0].trim()===s).map(k=>k.split('>')[1].trim()))].sort();
+  let dests;
+  if(planForeignOn()){
+    const cont=planNormalizeForeignContractor((q('plan-contractor')||{}).value);
+    dests=[...new Set(planForeignPaths(cont).filter(p=>p.origin===s).map(p=>p.dest))].sort();
+  }else{
+    dests=[...new Set(_planValidKeys().filter(k=>k.split('>')[0].trim()===s).map(k=>k.split('>')[1].trim()))].sort();
+  }
+  if(!dests.length){dst.innerHTML='';planUpdatePathMeta();planPreview();return;}
   const want=preferredDest||dst.value;
-  const dVal=dests.includes(want)?want:dests[0];
+  const dVal=dests.includes(want)?want
+    :(!planForeignOn()&&dests.includes(PLAN_DEFAULT_DST)?PLAN_DEFAULT_DST:dests[0]);
   dst.innerHTML=dests.map(d=>`<option${d===dVal?' selected':''}>${escH(d)}</option>`).join('');
   planDstChange(!!fromBuilder);
 }
 function planDstChange(_fromBuilder){
   const s=(q('plan-src')||{}).value,d=(q('plan-dst')||{}).value;
   const key=s+'>'+d, m=_pathResp&&_pathResp[key], dt=q('plan-dt');
+  const foreign=planForeignOn();
+  const fPath=foreign?planForeignPath((q('plan-contractor')||{}).value,s,d):null;
   const pathChanged=key!==_planPathKey;
   if(pathChanged){
     const prevKey=_planPathKey;
@@ -819,17 +965,35 @@ function planDstChange(_fromBuilder){
     // (same path) or after the user has edited DT/WMT.
     const realSwitch=!!prevKey&&prevKey!==key;
     if(realSwitch)_planUserEditedFleet=false;
-    if(dt&&m&&_planMode==='dt'&&!_planUserEditedFleet){
-      dt.value=Math.round(m.avgDt||50);
+    if(dt&&_planMode==='dt'&&!_planUserEditedFleet){
+      if(foreign&&fPath)dt.value=Math.max(1,Math.round(fPath.trucks||1));
+      else if(m)dt.value=Math.round(m.avgDt||50);
     }
   }
   planUpdatePathMeta();
   planPreview();
 }
 function planUpdatePathMeta(){
-  const s=(q('plan-src')||{}).value,d=(q('plan-dst')||{}).value,m=_pathResp&&_pathResp[s+'>'+d],hint=q('plan-hint');
-  const c=planContractor(),f=planContractorFactor(c);
+  const s=(q('plan-src')||{}).value,d=(q('plan-dst')||{}).value,hint=q('plan-hint');
   if(!hint)return;
+  if(planForeignOn()){
+    const cont=planNormalizeForeignContractor((q('plan-contractor')||{}).value);
+    const p=planForeignPath(cont,s,d);
+    if(!p){hint.innerHTML='<div class="plan-hint-path"><div class="plan-hint-route muted">No measured road-only path for this pick — wait for non-plan traffic, or uncheck Road-only.</div></div>';return;}
+    const rate=p.trucks?p.trips/p.trucks:0;
+    const chips=[];
+    chips.push(`<span class="plan-hint-chip" title="Measured trips on the last ticket shift"><b>${fmtExact(Math.round(p.trips||0))}</b><span class="u">trips · shift</span></span>`);
+    chips.push(`<span class="plan-hint-chip" title="Distinct trucks on that path"><b>${fmtExact(Math.round(p.trucks||0))}</b><span class="u">DT measured</span></span>`);
+    chips.push(`<span class="plan-hint-chip" title="Measured trips ÷ trucks"><b>${fmtExact(rate,2)}</b><span class="u">trips/DT</span></span>`);
+    chips.push(`<span class="plan-hint-chip"><b>${escH(cont)}</b><span class="u">road-only</span></span>`);
+    hint.innerHTML=`<div class="plan-hint-path">
+      <div class="plan-hint-route"><b>${escH(s)} → ${escH(d)}</b><span class="muted">measured non-plan · ${_planOtherSrc?escH(_planOtherSrc):'last shift'}</span></div>
+      <div class="plan-hint-metrics">${chips.join('')}</div>
+    </div>`;
+    return;
+  }
+  const m=_pathResp&&_pathResp[s+'>'+d];
+  const c=planContractor(),f=planContractorFactor(c);
   if(!m){ hint.innerHTML=''; return; }
   const chips=[];
   chips.push(`<span class="plan-hint-chip" title="Main-cluster trips/DT per day (≈ half per 12h shift)"><b>${fmt(m.avgTr,2)}</b><span class="u">trips/DT · day</span></span>`);
@@ -901,7 +1065,7 @@ function _planRenderEstimate(v){
     +`</div>`
     +`<div class="est-foot">`
     +`<div class="est-note">${escH(v.src)} → ${escH(v.dst)} · ${escH(v.contractor||'—')}`
-    +(v.foreign?` · road-only (foreign / IWIP — no WMT for us)`:(v.swapped?` · ${fmtExact(Math.round(v.wmt))} t`:''))+`</div>`
+    +(v.foreign?` · road-only (IWIP / Position — no WMT for us)`:(v.swapped?` · ${fmtExact(Math.round(v.wmt))} t`:''))+`</div>`
     +`<div class="est-attr"><span class="est-model ${mod.cls}">${mod.text}</span></div>`
     +`</div>`
     +(v.warns&&v.warns.length?`<div class="est-warn">${v.warns.map(escH).join('<br>')}</div>`:'');
@@ -913,11 +1077,33 @@ function planPreview(){
     const imp=q('plan-impacts');if(imp)imp.innerHTML='';
     planRenderBestHistory({ok:false,error:msg});};
   const s=(q('plan-src')||{}).value,d=(q('plan-dst')||{}).value,key=s+'>'+d,m=_pathResp&&_pathResp[key];
+  const foreign=planForeignOn();   // road-only: IWIP / POSITION trucks, no WMT for us
+  const hours=Math.max(1,parseFloat((q('plan-hours')||{}).value)||12);
+  const wbOpen=Math.max(1,parseFloat((q('plan-wb')||{}).value)||8);
+
+  // Road-only uses measured non-plan paths — no WBN path-response required.
+  if(foreign){
+    const cont=planNormalizeForeignContractor((q('plan-contractor')||{}).value);
+    const fp=planForeignPath(cont,s,d);
+    if(!s||!d||!fp)return blank('Select IWIP or POSITION and a measured location pair.');
+    const dt=Math.max(1,parseFloat((q('plan-dt')||{}).value)||1);
+    const rate=fp.trucks?fp.trips/fp.trucks:0;
+    const trips=dt*rate;
+    const base={src:s,dst:d,contractor:cont,hours,swapped:false,warns:[],foreign:true,
+      dt,tripsPerDt:rate,trips,wmt:0,payload:0,payloadSrc:'road-only',model:'roadonly',
+      contractorFactor:1};
+    _planRenderEstimate(base);
+    const imp=q('plan-impacts');
+    if(imp){
+      imp.innerHTML=`<div class="imp-head muted">Road-only · measured congestion</div>`
+        +`<div class="imp-row imp-ok"><span class="imp-ic">🚚</span><span>${escH(cont)} ${escH(s)} → ${escH(d)}: ${fmtExact(Math.round(fp.trips||0))} trips / ${fmtExact(Math.round(fp.trucks||0))} DT on ${_planOtherSrc?escH(_planOtherSrc):'last'} shift — adds corridor load, no WMT for us</span></div>`;
+    }
+    planRenderBestHistory({ok:false,error:'Road-only path — adds congestion, no WMT for us, so there is no tonnage history to compare.'});
+    return;
+  }
+
   if(!m)return blank('Select a source and destination to see the estimate.');
-  const rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0),c=planContractor(),pay=planPayload(key,c),
-    hours=Math.max(1,parseFloat((q('plan-hours')||{}).value)||12),
-    wbOpen=Math.max(1,parseFloat((q('plan-wb')||{}).value)||8),
-    foreign=!!(q('plan-foreign')&&q('plan-foreign').checked);   // road-only / IWIP: trucks run, but no WMT for us
+  const rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0),c=planContractor(),pay=planPayload(key,c);
   let dt,trips,wmt,e;
   if(_planMode==='wmt'){
     const target=Math.max(0,parseFloat((q('plan-wmt')||{}).value)||0);
@@ -938,15 +1124,12 @@ function planPreview(){
   if(e.otherDelta<=-.02)warns.push(`🚚 other (IWIP/Position) traffic above typical −${fmtExact(Math.abs(e.otherDelta),2)} Trips/DT on the shared corridor`);
   if(e.secDelta<=-.02)warns.push(`\u{1F6E3}\uFE0F shared-section load \u2212${fmtExact(Math.abs(e.secDelta),2)} Trips/DT (plan adds ${fmtExact(Math.round(e.secExcess))} DT beyond this path's typical section traffic \u2014 page-1 measured effect)`);
   if(e.wbFactor<1)warns.push(`⚖ weighbridge over capacity − trips capped at ${fmtExact(Math.round(100*e.wbFactor))}% (see interactions below)`);
-  const base={src:s,dst:d,contractor:c?c.name:'—',hours,swapped,warns,foreign,
-    dt,tripsPerDt:e.shift,trips,wmt,payload:pay.tf,payloadSrc:pay.src,model:foreign?'roadonly':'local',
+  const base={src:s,dst:d,contractor:c?c.name:'—',hours,swapped,warns,foreign:false,
+    dt,tripsPerDt:e.shift,trips,wmt,payload:pay.tf,payloadSrc:pay.src,model:'local',
+    dtMax:Number.isFinite(m.dtMax)?m.dtMax:null,
     contractorFactor:cFactor};
   _planRenderEstimate(base);                       // stage 1 — instant, local
   planRenderImpacts(key,dt,e,c);                   // WHY panel under the builder
-  // Road-only / foreign path: its trucks add congestion but no WMT for us, so there is
-  // no tonnage to predict and no WMT history to rank. Stop after the local estimate —
-  // do NOT call /api/predict (would re-render a WMT) or the best-past-days search.
-  if(foreign){planRenderBestHistory({ok:false,error:'Road-only / foreign path — adds congestion, no WMT for us, so there is no tonnage history to compare.'});return;}
   planFetchBestHistory(s,d,dt,c?c.name:null,rain); // side panel: best past days at this fleet
   // stage 2 — trained model (/api/predict). Never writes back into the DT/WMT inputs.
   const seq=++_planPredictSeq;
@@ -979,6 +1162,24 @@ function planPreview(){
         // Estimate panel only — do NOT touch #plan-dt / #plan-wmt.
         const showDt=stillSwapped?p.trucks_needed:trucksNow;
         _planPredictLast=res;
+        // GUARD (owner 2026-08-12: "200 DT showed 9,993 t, plan table said
+        // 5,098 — what happened?"): the trained model's fallback tiers
+        // (per-route average, rain-blind) do NOT model fleet size — they
+        // multiply avg trips/DT by N trucks, so at N far beyond the observed
+        // fleet they extrapolate linearly into fantasy (206 trips on a path
+        // whose measured best is ~43/day). The LOCAL path model carries the
+        // measured declining-efficiency slope, so beyond the observed DT
+        // range the smaller (honest) number wins the headline; the naive
+        // figure moves into the warning so the disagreement stays visible.
+        const beyond=Number.isFinite(base.dtMax)&&showDt>base.dtMax;
+        const naiveHigher=Number.isFinite(p.total_wmt)&&Number.isFinite(base.wmt)&&p.total_wmt>base.wmt*1.15;
+        if(!stillSwapped&&beyond&&naiveHigher){
+          const warns=(base.warns||[]).concat([
+            `📐 trained-model fallback ignores fleet size: it extrapolates ${fmtExact(Math.round(p.total_wmt))} t (${fmtExact(Math.round(p.total_trips))} trips) at ${fmtExact(showDt)} DT — beyond the ${fmtExact(base.dtMax)} DT ever run here the measured declining-efficiency estimate (${fmtExact(Math.round(base.wmt))} t) is the honest one and matches the plan table`,
+          ]);
+          _planRenderEstimate({...base, warns, cycle:res.cycle, contractorFactor:cFactor});
+          return;
+        }
         _planRenderEstimate({...base, swapped:stillSwapped, dt:showDt,
           tripsPerDt:p.trips_per_dt, trips:p.total_trips,
           wmt:p.total_wmt, payload:p.payload_per_trip, payloadSrc:p.payload_source||base.payloadSrc,
@@ -1107,9 +1308,32 @@ function planFetchBestHistory(source,dest,dt,contractor,rain){
 // A plan row is one contractor on one path, so two contractors can share the same path.
 function planAddPath(){
   const s=(q('plan-src')||{}).value,d=(q('plan-dst')||{}).value,key=s+'>'+d;
-  if(!s||!d||!_pathResp[key])return;
+  if(!s||!d)return;
+  const foreign=planForeignOn();
+  // WBN production rows need path-response history; road-only uses measured otherPaths.
+  if(!foreign&&!(_pathResp&&_pathResp[key]))return;
   const btn=document.querySelector('.plan-add');
   if(btn){btn.classList.add('is-busy');btn.disabled=true;}
+
+  if(foreign){
+    const name=planNormalizeForeignContractor((q('plan-contractor')||{}).value);
+    const fp=planForeignPath(name,s,d);
+    if(!fp){
+      const b=q('plan-preview');
+      if(b)b.innerHTML='<span class="er">No measured road-only path for that contractor / locations.</span>';
+      if(btn){btn.classList.remove('is-busy');btn.disabled=false;}
+      return;
+    }
+    const dt=Math.max(1,parseFloat((q('plan-dt')||{}).value)||1);
+    // |road suffix keeps foreign rows separate from production on the same route.
+    _planDraft[name+'|'+key+'|road']={key,dt,contractor:name,source:s,dest:d,foreign:true,
+      measTrips:Math.max(0,Math.round(fp.trips||0)),
+      measTrucks:Math.max(1,Math.round(fp.trucks||1))};
+    computePlan();
+    setTimeout(()=>{if(btn){btn.classList.remove('is-busy');btn.disabled=false;}},320);
+    return;
+  }
+
   const c=planContractor(),name=c?c.name:'—',rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0);
   let dt;
   if(_planMode==='wmt'){
@@ -1120,12 +1344,7 @@ function planAddPath(){
       return;
     }
   }else dt=Math.max(1,parseFloat((q('plan-dt')||{}).value)||50);
-  // Road-only / foreign (IWIP) haul: no WMT for us, but its trucks load the
-  // shared corridor. Kept as a SEPARATE draft row (|road suffix) so it never
-  // merges with a production path on the same route; the engine applies its
-  // congestion drag and excludes it from production. See plan_simulator.py.
-  const foreign=!!(q('plan-foreign')&&q('plan-foreign').checked);
-  _planDraft[name+'|'+key+(foreign?'|road':'')]={key,dt,contractor:name,source:s,dest:d,foreign};
+  _planDraft[name+'|'+key]={key,dt,contractor:name,source:s,dest:d,foreign:false};
   computePlan();
   // Brief busy flash so “Add to plan” feels acknowledged while tables refresh
   setTimeout(()=>{if(btn){btn.classList.remove('is-busy');btn.disabled=false;}},320);
