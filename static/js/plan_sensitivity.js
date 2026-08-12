@@ -85,7 +85,16 @@
           //   reaching into planShiftFactor() and risking a second convention.
           const sf=e.daily>0?e.shiftFree/e.daily:null;
           const rawRate=e.dayBasis?(e.m&&e.m.dayRate):(e.m&&e.m.avgTr);
-          const base=(sf&&Number.isFinite(rawRate)&&rawRate>0)?rawRate*sf:null;
+          // The baseline must include the CONTRACTOR factor, because the served
+          // rate does. Without it, RIM (factor 1.085) read 108.5% at every low
+          // DT and the pinned 0-100 axis clipped the line flat against the top,
+          // so the error was invisible rather than obvious. Efficiency answers
+          // "how much of what THIS plan could do is it getting", so the
+          // reference is this contractor on this path with no ceilings and no
+          // drags -- not the path average.
+          const cf=(typeof planContractorFactor==='function')?planContractorFactor(c):1;
+          const base=(sf&&Number.isFinite(rawRate)&&rawRate>0)
+            ?rawRate*sf*(Number.isFinite(cf)&&cf>0?cf:1):null;
           if(base>0){
             eff=e.shift/base;
             sat=Number.isFinite(e.satFactor)?e.satFactor:1;
@@ -214,9 +223,13 @@
           data:[[{xAxis:p.dtMax},{xAxis:p.capDt}]]}:undefined});
     });
     if(!isEff)vis.forEach(p=>{
+      // TWO STACKED PANELS (owner 2026-08-12: "split tonnage and trips/DT into
+      // two graphs aligned underneath each other — clearer for anyone").
+      // grid 0 = tonnage, grid 1 = trips/DT, same x scale, linked cursor.
+      // Both series carry the SAME name, so one legend chip toggles the pair.
+      const name=p.label;
+      legend.push(name);
       if(!p.foreign){
-        const name=p.label+' — tonnage';
-        legend.push(name);
         const markData=[];
         // ● your plan
         if(p.currentDt<=p.capDt){
@@ -230,7 +243,7 @@
             symbol:'pin',symbolSize:26,itemStyle:{color:'#facc15'},
             label:{show:true,formatter:'★',fontSize:11,color:'#1a1d24'}});
         }
-        series.push({name,type:'line',smooth:true,yAxisIndex:0,showSymbol:false,
+        series.push({name,type:'line',smooth:true,xAxisIndex:0,yAxisIndex:0,showSymbol:false,
           color:p.color,lineStyle:{width:2.2},
           data:p.curve.filter(pt=>pt.wmt!=null).map(pt=>[pt.dt,Math.round(pt.wmt*f)]),
           markPoint:markData.length?{data:markData}:undefined,
@@ -241,19 +254,38 @@
               formatter:'beyond measured data (> '+p.dtMax+' DT)'},
             data:[[{xAxis:p.dtMax},{xAxis:p.capDt}]]}:undefined});
       }
-      const name2=p.label+' — trips/DT';
-      legend.push(name2);
-      series.push({name:name2,type:'line',smooth:true,yAxisIndex:1,showSymbol:false,
-        color:p.color,lineStyle:{width:1.6,type:'dashed'},
-        data:p.curve.map(pt=>[pt.dt,pt.tripsPerDt])});
+      // Bottom panel: trips/DT, solid, same colour/name (legend pairs them).
+      const marks2=[];
+      const at2=p.curve.reduce((a,b)=>Math.abs(b.dt-p.currentDt)<Math.abs((a?a.dt:1e9)-p.currentDt)?b:a,null);
+      if(at2)marks2.push({coord:[at2.dt,at2.tripsPerDt],name:'your plan',symbol:'circle',
+        symbolSize:8,itemStyle:{color:p.color,borderColor:'#fff',borderWidth:1.5},label:{show:false}});
+      series.push({name,type:'line',smooth:true,xAxisIndex:1,yAxisIndex:1,showSymbol:false,
+        color:p.color,lineStyle:{width:1.8},
+        data:p.curve.map(pt=>[pt.dt,pt.tripsPerDt]),
+        markPoint:marks2.length?{data:marks2}:undefined,
+        markLine:p.kinkDt?{silent:true,symbol:'none',
+          lineStyle:{color:p.color,type:'dotted',width:1.1,opacity:.7},
+          label:{show:false},
+          data:[{xAxis:p.kinkDt}]}:undefined});
     });
     paChart('plan-sens-chart',{
-      title:{text:(isEff?'Fleet efficiency — ':'Fleet sensitivity — ')
-          +(_sel?(vis[0]?vis[0].label:''):'all plans')
-          +(isEff?'  (share of this path’s own free rate)':''),
-        left:8,top:2,textStyle:{fontSize:12.5,color:'#cbd5e1'}},
-      legend:{type:'scroll',top:24,textStyle:{fontSize:10,color:'#8b98a5'}},
-      grid:{left:58,right:56,top:58,bottom:34},
+      title:isEff
+        ?{text:'Fleet efficiency — '+(_sel?(vis[0]?vis[0].label:''):'all plans')
+            +'  (share of this path’s own free rate)',
+          left:8,top:2,textStyle:{fontSize:12.5,color:'#cbd5e1'}}
+        :[{text:'Tonnage'+(_sel?(' — '+(vis[0]?vis[0].label:'')):' — all plans'),
+           left:8,top:2,textStyle:{fontSize:12,color:'#cbd5e1'}},
+          {text:'Trips per DT',left:8,top:'56%',
+           textStyle:{fontSize:12,color:'#cbd5e1'}}],
+      legend:{type:'scroll',top:isEff?24:22,left:120,right:20,
+        textStyle:{fontSize:10,color:'#8b98a5'}},
+      // Output mode: two aligned grids sharing the x scale (owner: clearer than
+      // dual-axis). axisPointer link keeps one hover cursor across both panels.
+      grid:isEff
+        ?{left:58,right:56,top:58,bottom:34}
+        :[{left:58,right:24,top:48,height:'34%'},
+          {left:58,right:24,top:'62%',height:'27%'}],
+      axisPointer:{link:[{xAxisIndex:'all'}]},
       tooltip:{trigger:'axis',axisPointer:{type:'line'},
         formatter:params=>{
           if(!params||!params.length)return '';
@@ -287,37 +319,56 @@
             });
             return h;
           }
-          const byPlan={};
-          params.forEach(s=>{
-            const plan=s.seriesName.replace(/ — (tonnage|trips\/DT)$/,'');
-            (byPlan[plan]=byPlan[plan]||{}).c=s.color;
-            if(/tonnage$/.test(s.seriesName))byPlan[plan].wmt=s.value[1];
-            else byPlan[plan].tpd=s.value[1];
-          });
+          // Two stacked grids share series NAMES (one per plan) — dedupe by
+          // plan and read both values from the curve itself.
+          const seen={};
           let h='<b>'+dt+' trucks</b>';
-          Object.keys(byPlan).forEach(pl=>{
-            const v=byPlan[pl];
+          params.forEach(s=>{
+            const pl=s.seriesName;
+            if(seen[pl])return;seen[pl]=1;
             const cv=_curves.find(p=>p.label===pl);
             const pt=cv?cv.curve.reduce((a,b)=>Math.abs(b.dt-dt)<Math.abs((a?a.dt:1e9)-dt)?b:a,null):null;
-            h+='<br><span style="color:'+v.c+'">■</span> '+esc(pl)
-              +(v.wmt!=null?(' · <b>'+Number(v.wmt).toLocaleString()+' t'+granFactor().unit+'</b>'):' · road-only')
-              +(v.tpd!=null?(' · '+v.tpd+' trips/DT'):'')
-              +(pt?(' · '+Math.round(pt.trips*granFactor().f)+' trips'+granFactor().unit):'');
+            if(!pt)return;
+            h+='<br><span style="color:'+s.color+'">■</span> '+esc(pl)
+              +(pt.wmt!=null?(' · <b>'+Math.round(pt.wmt*granFactor().f).toLocaleString()+' t'+granFactor().unit+'</b>'):' · road-only')
+              +' · '+pt.tripsPerDt+' trips/DT'
+              +' · '+Math.round(pt.trips*granFactor().f)+' trips'+granFactor().unit;
           });
           return h;
         }},
-      xAxis:{type:'value',name:'Trucks (DT)',nameGap:22,nameLocation:'middle',
-        minInterval:1,axisLabel:{color:'#8b98a5'},splitLine:{lineStyle:{color:'rgba(148,163,184,.09)'}}},
+      xAxis:isEff
+        ?{type:'value',name:'Trucks (DT)',nameGap:22,nameLocation:'middle',
+          minInterval:1,axisLabel:{color:'#8b98a5'},splitLine:{lineStyle:{color:'rgba(148,163,184,.09)'}}}
+        :(()=>{
+          // Both panels MUST share the exact x extent or the curves misalign:
+          // the top grid drops road-only plans, so left to auto-scale the two
+          // axes could span different DT ranges.
+          const xmax=vis.reduce((m,p)=>Math.max(m,p.capDt||0,
+            p.curve.length?p.curve[p.curve.length-1].dt:0),0)||10;
+          return [
+            // Top panel: labels hidden (the bottom axis carries them); same scale.
+            {type:'value',gridIndex:0,min:0,max:xmax,minInterval:1,axisLabel:{show:false},
+             axisTick:{show:false},splitLine:{lineStyle:{color:'rgba(148,163,184,.09)'}}},
+            {type:'value',gridIndex:1,min:0,max:xmax,name:'Trucks (DT)',nameGap:22,nameLocation:'middle',
+             minInterval:1,axisLabel:{color:'#8b98a5'},
+             splitLine:{lineStyle:{color:'rgba(148,163,184,.09)'}}},
+          ];
+        })(),
       yAxis:isEff?[
-        // Fixed 0-100: an auto-scaled percentage axis makes a 97%-vs-99%
-        // difference look like a cliff, which is how a ratio gets over-read.
-        {type:'value',name:'Efficiency (%)',min:0,max:100,
+        // Pinned to 0-100 so a 97-vs-99% difference does not look like a cliff,
+        // but the max GROWS if any point exceeds 100. A hard max:100 silently
+        // clipped a 108.5% curve flat against the ceiling on 2026-08-12 --
+        // never let an axis hide an out-of-range value it was meant to bound.
+        {type:'value',name:'Efficiency (%)',min:0,
+         max:Math.max(100,Math.ceil(vis.reduce((mx,p)=>Math.max(mx,
+           p.curve.reduce((m2,pt)=>Math.max(m2,pt.eff!=null?pt.eff*100:0),0)),0))),
          axisLabel:{color:'#8b98a5',formatter:'{value}%'},
          splitLine:{lineStyle:{color:'rgba(148,163,184,.09)'}}},
       ]:[
-        {type:'value',name:'Tonnage (t'+unit+')',axisLabel:{color:'#8b98a5'},
+        {type:'value',gridIndex:0,name:'t'+unit,axisLabel:{color:'#8b98a5'},
          splitLine:{lineStyle:{color:'rgba(148,163,184,.09)'}}},
-        {type:'value',name:'Trips/DT',axisLabel:{color:'#8b98a5'},splitLine:{show:false}},
+        {type:'value',gridIndex:1,name:'trips/DT',axisLabel:{color:'#8b98a5'},
+         splitLine:{lineStyle:{color:'rgba(148,163,184,.07)'}}},
       ],
       series,
     },'This section is a chart only — there is no table behind it, so the '
@@ -387,10 +438,11 @@
         +'paths: a path at 100% can still be the slower haul, so the trips/DT is in every tooltip. '
         +'Dotted rule = where the demonstrated day ceiling starts dividing a fixed number of trips; '
         +'below it the next truck adds a full rate, above it it adds almost nothing. ● marks your current DT.'
-      : 'Solid = tonnage (left axis) · dashed = trips/DT (right axis) · ● your current DT · '
-        +'★ calculated optimal (most trips before diminishing returns, within measured data) · '
+      : 'Top graph = tonnage, bottom graph = trips per truck, same fleet-size scale so they '
+        +'read together. ● your current DT · ★ calculated optimal (most trips before diminishing '
+        +'returns, within measured data) · dotted rule = where the day ceiling starts binding · '
         +'shaded = beyond measured data. Same path model as the plan table. '
-        +'Road-only plans show trips only.';
+        +'Road-only plans appear in the bottom graph only.';
     renderChart();
   };
   /** Called after Run scenario resolves (planRunScenario paint). */
