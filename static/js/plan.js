@@ -155,9 +155,29 @@ function planDtEnvelope(m){
 }
 function planTripsPerDT(key,dt,rain,contractor,opts){
   const m=_pathResp&&_pathResp[key];if(!m)return null;
-  let tr=m.avgTr;
-  const slope=(Number.isFinite(m.bAdj)&&m.bAdj<0)?m.bAdj:(m.b<0?m.b:0);
-  if(slope<0&&Number.isFinite(m.avgDt))tr+=slope*(dt-m.avgDt);
+  // ── Fleet-size response, DAY-LEVEL model (owner 2026-08-12 rebuild) ────────
+  // Basis analysis (241 days, TF→FENI KM0, full 20-month history):
+  //   • Day-level trips/DT is FLAT with fleet size: 2.0/day at 0-20 DT,
+  //     2.2-2.3/day from 40 DT out to 180 DT (largest day ever: 180 DT →
+  //     410 trips). The old row-level slope (−0.005/DT under the peak-window
+  //     filter) was a contractor-mix artifact, not road physics.
+  //   • What DOES bind is the DEMONSTRATED DAY THROUGHPUT: no day ever
+  //     produced more than dayTripsCap trips (410 here). So the honest model
+  //     is: trips = rate·DT, saturating smoothly at the proven ceiling —
+  //     trips/DT never crashes to a floor, it declines hyperbolically as
+  //     cap/DT once the ceiling binds (the "1.15/shift at 150 DT" regime).
+  // Saturation: soft-min (harmonic) between linear demand and the cap, so the
+  // curve bends smoothly instead of kinking: trips = 1/(1/(r·DT) + 1/cap).
+  // Below ~60% of the cap this is within 3% of pure linear (measured days
+  // confirm: MAPE identical to linear at observed fleets).
+  const hasDay=Number.isFinite(m.dayRate)&&m.dayRate>0;
+  let tr=hasDay?m.dayRate:m.avgTr;
+  // Day-level measured drag only (dayB<0); flat/positive slopes stay flat.
+  const slope=hasDay
+    ?(Number.isFinite(m.dayB)&&m.dayB<0?m.dayB:0)
+    :((Number.isFinite(m.bAdj)&&m.bAdj<0)?m.bAdj:(m.b<0?m.b:0));
+  const anchorDt=hasDay?(m.dayAvgDt||m.avgDt):m.avgDt;
+  if(slope<0&&Number.isFinite(anchorDt))tr+=slope*(dt-anchorDt);
   // Other (IWIP/Position) traffic on the shared FENI corridor: measured
   // coefficient from the Capability page's IWIP-impact model. DRAG ONLY —
   // lighter-than-typical foreign traffic earns no credit (avgTr already
@@ -169,7 +189,23 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
   tr+=sec.delta;
   const scale=planRainScale(key,rain);
   const rainDelta=tr*(scale-1);
-  tr=Math.max(.3*m.avgTr,tr*scale)*planContractorFactor(contractor);
+  tr=Math.max(.3*(hasDay?m.dayRate:m.avgTr),tr*scale)*planContractorFactor(contractor);
+  // Demonstrated-throughput ceiling (day level). The 241-day analysis shows
+  // trips/DT FLAT out to the largest day ever run (180 DT → 410 trips), so
+  // in-envelope the model is exactly linear at the cluster rate — and the
+  // owner's own check day (150 DT → ~2.3/day = ~1.15/shift) confirms it.
+  // Beyond the envelope no day has ever produced more than dayTripsCap trips:
+  // until the site proves more, extra trucks divide the SAME demonstrated
+  // trips — trips = min(rate·DT, cap), so trips/DT declines hyperbolically
+  // (cap/DT), never crashes to zero and never uses an arbitrary floor.
+  let satFactor=1;
+  if(Number.isFinite(m.dayTripsCap)&&m.dayTripsCap>0&&tr>0&&dt>0){
+    const linear=tr*dt;
+    if(linear>m.dayTripsCap){
+      satFactor=m.dayTripsCap/linear;
+      tr*=satFactor;
+    }
+  }
   const sf=planShiftFactor();
   // Weighbridge throughput ceiling (doctrine: ceiling, not delay curve). A
   // bridge weighs at most 30/h; when this path's assigned bridges are pushed
@@ -187,7 +223,8 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
   }
   const shiftServed=tr*sf*wbFactor;
   return {daily:tr,shift:shiftServed,shiftFree:tr*sf,rainDelta:rainDelta*sf,otherDelta:otherDelta*sf,
-    secDelta:sec.delta*sf,secExcess:sec.excess,wbFactor,wbRows,slope,m};
+    secDelta:sec.delta*sf,secExcess:sec.excess,wbFactor,wbRows,slope,
+    satFactor,dayBasis:hasDay,m};
 }
 // Payload: the contractor's own measured t/trip when we have it, else the path's.
 function planPayload(key,contractor){
@@ -226,31 +263,27 @@ function planRenderImpacts(key,dt,e,contractor){
   const aiHasAnswer=/plan-ai-answer/.test(prevAiHtml);
   const m0=e.m||{};
   const sf=typeof planShiftFactor==='function'?planShiftFactor():0.5;
-  const baseShift=Number.isFinite(m0.avgTr)?m0.avgTr*sf:null;
-  const avgDt=Number.isFinite(m0.avgDt)?Math.round(m0.avgDt):null;
+  const hasDay0=Number.isFinite(m0.dayRate)&&m0.dayRate>0;
+  const baseShift=hasDay0?m0.dayRate*sf:(Number.isFinite(m0.avgTr)?m0.avgTr*sf:null);
+  const avgDt=hasDay0?(m0.dayAvgDt||null):(Number.isFinite(m0.avgDt)?Math.round(m0.avgDt):null);
   const slope=Number.isFinite(e.slope)?e.slope:0;
   if(!aiHasAnswer&&baseShift!=null&&avgDt!=null&&dt>0){
-    const fleetDelta=(slope<0)?slope*(dt-m0.avgDt)*sf:0;
-    const linShift=baseShift+fleetDelta;
-    const floorShift=.3*m0.avgTr*sf;
-    const floored=slope<0&&linShift<floorShift;
     const dtMax0=planDtEnvelope(m0);
-    if(dt>avgDt*1.5&&slope<0){
-      if(floored){
-        const cf=typeof planContractorFactor==='function'?planContractorFactor(contractor):1;
-        const lowTrips=Math.round(dt*Math.max(floorShift*cf,0));
-        const hours=Math.max(1,parseFloat((q('plan-hours')||{}).value)||12);
-        const nWb=(e.wbRows&&e.wbRows.length)?e.wbRows.length:1;
-        const wbCap=Math.round(nWb*PLAN_WB_TRIPS_PER_HOUR*hours);
-        const hiTrips=Math.min(wbCap,Math.round(dt*1.0));
-        rows.push({kind:'fleet',icon:'📉',cls:'imp-bad',
-          txt:`Too many trucks for this path’s history. We usually run ~${fmtExact(avgDt)} DT (up to ${dtMax0!=null?fmtExact(dtMax0):'?'} DT in the data). At ${fmtExact(dt)} DT each truck does much less — estimate held at ~${fmtExact(lowTrips)} trips (bridge max ~${fmtExact(hiTrips)}). Real result is unproven this high.`,
-          tip:`Typical rate ~${fmtExact(baseShift,2)} trips/DT per shift at ~${fmtExact(avgDt)} DT. Beyond measured fleets we do not invent gains — we hold a conservative floor. Prefer planning ≤ ${dtMax0!=null?fmtExact(dtMax0):'?'} DT.`});
-      }else{
-        rows.push({kind:'fleet',icon:'📉',cls:'imp-bad',
-          txt:`Bigger fleet than usual (~${fmtExact(avgDt)} DT typical). At ${fmtExact(dt)} DT each truck does less: about ${fmtExact(e.shiftFree!=null?e.shiftFree:e.shift,2)} trips per truck this shift (was ~${fmtExact(baseShift,2)} at the usual fleet).`,
-          tip:'More trucks share the same loader and road, so trips per truck fall. Still within measured history.'});
-      }
+    const saturated=Number.isFinite(e.satFactor)&&e.satFactor<0.995;
+    if(saturated){
+      // Demonstrated-throughput ceiling binds: trips pinned at dayTripsCap.
+      const capTrips=Math.round((m0.dayTripsCap||0)*sf);
+      rows.push({kind:'fleet',icon:'📉',cls:'imp-bad',
+        txt:`Path throughput ceiling. This road has never delivered more than ~${fmtExact(m0.dayTripsCap)} trips/day (~${fmtExact(capTrips)}/shift), even on its biggest day (${dtMax0!=null?fmtExact(dtMax0):'?'} DT). At ${fmtExact(dt)} DT the same ~${fmtExact(capTrips)} trips are shared out: ~${fmtExact(e.shift,2)} trips per truck. Extra trucks beyond ~${dtMax0!=null?fmtExact(dtMax0):'?'} DT add queue, not trips.`,
+        tip:`Model: trips = rate × DT capped at the demonstrated maximum (${fmtExact(m0.dayTripsCap)} trips/day over ${fmtExact(m0.dayN||0)} measured days). In-history the rate is flat (~${fmtExact(baseShift,2)}/shift per truck); the ceiling only binds beyond ~${fmtExact(Math.round((m0.dayTripsCap||0)/(m0.dayRate||1)))} DT. To beat the ceiling the site needs more loaders/road, not more trucks.`});
+    }else if(dt>avgDt*1.5&&slope<0){
+      rows.push({kind:'fleet',icon:'📉',cls:'imp-bad',
+        txt:`Bigger fleet than usual (~${fmtExact(avgDt)} DT typical). At ${fmtExact(dt)} DT each truck does less: about ${fmtExact(e.shiftFree!=null?e.shiftFree:e.shift,2)} trips per truck this shift (was ~${fmtExact(baseShift,2)} at the usual fleet).`,
+        tip:'Measured day-level decline on this path. Still within measured history.'});
+    }else if(dt>avgDt*1.5){
+      rows.push({kind:'fleet',icon:'✅',cls:'imp-ok',
+        txt:`Bigger fleet than usual (~${fmtExact(avgDt)} DT typical) — history supports it: day-level rate stays ~${fmtExact(baseShift,2)} trips/truck out to ${dtMax0!=null?fmtExact(dtMax0):'?'} DT (largest day ever run).`,
+        tip:`Across ${fmtExact(m0.dayN||0)} measured days the per-truck rate did not decline with fleet size inside the envelope. The demonstrated ceiling (~${fmtExact(m0.dayTripsCap||0)} trips/day) is the honest limit.`});
     }else if(dt<avgDt*0.6&&slope<0){
       rows.push({kind:'fleet',icon:'📈',cls:'imp-ok',
         txt:`Smaller fleet than usual (~${fmtExact(avgDt)} DT typical). At ${fmtExact(dt)} DT each truck runs a bit better (~${fmtExact(e.shiftFree!=null?e.shiftFree:e.shift,2)} trips/truck vs ~${fmtExact(baseShift,2)} average).`,

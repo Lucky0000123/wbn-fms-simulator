@@ -1240,15 +1240,50 @@ def api_simulator_path_response():
     from collections import defaultdict as _dd
     _env_row = _dd(float)
     _env_day = _dd(float)
+    _day_agg = _dd(lambda: [0.0, 0.0])   # (path, date) -> [dt_sum, trips_sum]
     for r in rows:
         k = (r["o"], r["dd"])
         if r["dt"] > _env_row[k]:
             _env_row[k] = r["dt"]
         _env_day[(k, r["d"])] += r["dt"]
+        _da = _day_agg[(k, r["d"])]
+        _da[0] += r["dt"]; _da[1] += r["trips"]
     _env_daymax = _dd(float)
     for (k, _d), s in _env_day.items():
         if s > _env_daymax[k]:
             _env_daymax[k] = s
+    # DAY-LEVEL model basis (owner 2026-08-12: "recalculate trips/DT from the
+    # cluster where the data mass is; a 150-DT day gave ~1.15/shift, the model
+    # must not crash to zero"). Row-level fits mix contractors and, under the
+    # peak-window filter, produced a phantom decline (e.g. TF→FENI KM0 row
+    # slope −0.005 while the 241-day day-level rate is FLAT ~2.2/day out to
+    # 180 DT). Per path, over the FULL snapshot:
+    #   dayRate     mid-60% trimmed mean of day-level trips/DT (cluster rate)
+    #   dayB        day-level OLS slope of trips/DT vs day DT (drag only if <0)
+    #   dayAvgDt    mean day fleet, dayTripsCap = max trips ever done in a day
+    # The plan model uses rate (+ measured day drag) with a hyperbolic
+    # saturation at dayTripsCap — the demonstrated system ceiling.
+    _day_stats = {}
+    _day_pts = _dd(list)
+    for (k, _d), (sdt, str_) in _day_agg.items():
+        if sdt > 0:
+            _day_pts[k].append((sdt, str_))
+    for k, pts in _day_pts.items():
+        if len(pts) < 8:
+            continue
+        effs = sorted(t / dtv for dtv, t in pts)
+        n = len(effs)
+        drop = int(n * 0.2)
+        core = effs[drop:n - drop] if n - 2 * drop > 0 else effs
+        rate = sum(core) / len(core)
+        dts = [p[0] for p in pts]
+        mx = sum(dts) / n
+        my = sum(t / dtv for dtv, t in pts) / n
+        den = sum((x - mx) ** 2 for x in dts)
+        db = (sum((dtv - mx) * (t / dtv - my) for dtv, t in pts) / den) if den else 0.0
+        _day_stats[k] = {"dayRate": round(rate, 3), "dayB": round(db, 5),
+                         "dayAvgDt": round(mx), "dayN": n,
+                         "dayTripsCap": round(max(t for _dtv, t in pts))}
     if frm or to:
         rows = [r for r in rows
                 if (not frm or r["d"] >= frm) and (not to or r["d"] <= to)]
@@ -1318,6 +1353,7 @@ def api_simulator_path_response():
                # in one day. Guards/sweeps use these, not the filtered dtMax.
                "dtMaxAll": round(_env_row.get((o, de), max(dt))),
                "dtMaxDayAll": round(_env_daymax.get((o, de), max(dt))),
+               **(_day_stats.get((o, de)) or {}),
                "avgTr": round(avg_tr, 3), "meanTr": round(my, 3),
                "trP25": round(tr_p25, 3) if tr_p25 is not None else None,
                "trMed": round(tr_med, 3) if tr_med is not None else None,
