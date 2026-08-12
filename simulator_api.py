@@ -2603,6 +2603,97 @@ def api_plan_rain_outlook():
     })
 
 
+# ── Material quality (label only — owner 2026-08-12: "add the material quality
+#    ... it doesn't matter like it affect model in any ways") ─────────────────
+# Codes come straight from HAULAGE.MATERIAL; long names from ASSAY_CLASS where
+# they exist, hand-filled for the waste/aggregate codes that assay never sees.
+_MATERIAL_NAMES = {
+    "SAP": "Saprolite", "LIM": "Limonite", "WCO": "Waste Conservation Ore",
+    "BOULDER": "Boulder", "RS": "Road Spoil", "BASALT": "Basalt",
+    "SLAG": "Slag", "RSAP": "Rehandled Saprolite", "SS": "Soft Spoil",
+    "CS": "Crushed Stone", "QUARRY": "Quarry",
+}
+_MATERIAL_MIX_CACHE = {}          # (src,dst) -> {"ts":…, "data":…}
+_MATERIAL_MIX_TTL = 6 * 3600      # material mix of a route barely moves
+
+
+@bp.route('/api/plan/material-mix', methods=['GET'])
+def api_plan_material_mix():
+    """Measured material mix for one route (and the site-wide code list).
+
+    Purely descriptive: the plan model never reads material. The dropdown it
+    feeds defaults to the majority material actually weighed on the route so
+    the label is honest without the user having to know the codes.
+    """
+    src = (request.args.get("src") or "").strip()
+    dst = (request.args.get("dst") or "").strip()
+    ck = (src.upper(), dst.upper())
+    hit = _MATERIAL_MIX_CACHE.get(ck)
+    if hit and time.time() - hit["ts"] < _MATERIAL_MIX_TTL:
+        return jsonify(hit["data"])
+    if not _db_ready():
+        # Fixture fallback: full code list, no route mix (sample DB has no HAULAGE).
+        out = {"ok": True, "fixture": True, "route": [],
+               "materials": [{"code": c, "name": n} for c, n in _MATERIAL_NAMES.items()]}
+        return jsonify(_served_from_fixture(out, "no database"))
+    # Same canonical-label → LIKE patterns the weighbridge queries use.
+    area_like = {
+        "TF": ("ORIGIN_AREA LIKE %s OR ORIGIN_AREA LIKE %s OR ORIGIN_AREA LIKE %s",
+               ("%TOFU%", "TF%", "TOS_TF%")),
+        "TOFU": ("ORIGIN_AREA LIKE %s OR ORIGIN_AREA LIKE %s", ("%TOFU%", "TF%")),
+        "KR": ("ORIGIN_AREA LIKE %s OR ORIGIN_AREA LIKE %s", ("%KRENE%", "KR%")),
+        "KRENE": ("ORIGIN_AREA LIKE %s OR ORIGIN_AREA LIKE %s", ("%KRENE%", "KR%")),
+    }
+    dest_like = {
+        "FENI KM0": ("DESTINATION_AREA LIKE %s", ("%FENI%",)),
+        "FENI KM15": ("DESTINATION_AREA LIKE %s OR DESTINATION_AREA LIKE %s",
+                      ("%FENI KM15%", "%FENI 15%")),
+        "HUAFEI": ("DESTINATION_AREA LIKE %s", ("%HUAFEI%",)),
+        "BSE": ("DESTINATION_AREA LIKE %s", ("%BSE%",)),
+        "CRUSHER": ("DESTINATION_AREA LIKE %s", ("%CRUSHER%",)),
+        "POS 12": ("DESTINATION_AREA LIKE %s OR DESTINATION_AREA LIKE %s",
+                   ("%POS 12%", "%POS12%")),
+        "POS 10": ("DESTINATION_AREA LIKE %s OR DESTINATION_AREA LIKE %s",
+                   ("%POS 10%", "%POS10%")),
+    }
+    where, params = [], []
+    spec = area_like.get(src.upper()) or area_like.get(src.upper().replace(" ", ""))
+    if spec:
+        where.append("(" + spec[0] + ")"); params.extend(spec[1])
+    elif src:
+        where.append("UPPER(ORIGIN_AREA) LIKE %s"); params.append("%" + src.upper() + "%")
+    dspec = dest_like.get(dst.upper())
+    if dspec:
+        where.append("(" + dspec[0] + ")"); params.extend(dspec[1])
+    elif dst:
+        where.append("UPPER(DESTINATION_AREA) LIKE %s"); params.append("%" + dst.upper() + "%")
+    route = []
+    try:
+        conn = _conn(); cur = conn.cursor()
+        if where:
+            cur.execute("SELECT MATERIAL, COUNT(*) n FROM HAULAGE WHERE "
+                        + " AND ".join(where)
+                        + " AND MATERIAL IS NOT NULL AND MATERIAL<>''"
+                        + " GROUP BY MATERIAL ORDER BY n DESC", tuple(params))
+            total = 0
+            rows = cur.fetchall()
+            total = sum(int(r[1]) for r in rows) or 1
+            route = [{"code": str(r[0]).strip().upper(),
+                      "name": _MATERIAL_NAMES.get(str(r[0]).strip().upper(), str(r[0]).strip()),
+                      "trips": int(r[1]),
+                      "sharePct": round(100.0 * int(r[1]) / total, 1)} for r in rows]
+        conn.close()
+    except Exception as e:
+        return jsonify({"ok": False, "error": "material query failed: %s" % e}), 503
+    out = {"ok": True, "route": route,
+           "materials": [{"code": c, "name": n} for c, n in _MATERIAL_NAMES.items()],
+           "source": "WBN_DATABASE.dbo.HAULAGE (MATERIAL column, all history)",
+           "note": "Label only — material never changes the trips/tonnage model."}
+    _MATERIAL_MIX_CACHE[ck] = {"ts": time.time(), "data": out}
+    return jsonify(out)
+
+
+
 # ── Saved holding plans (local disk; keyed by plan date) ─────────────────────
 _SAVED_PLANS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "saved_plans")
 

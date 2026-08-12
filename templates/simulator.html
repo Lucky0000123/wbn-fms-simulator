@@ -386,6 +386,10 @@
                   <span class="k">Destination</span>
                   <select id="plan-dst" onchange="planDstChange()"></select>
                 </label>
+                <label class="plan-field" title="Label only — the trips/tonnage model does not change with material. Default = the material most weighed on this route in the tickets.">
+                  <span class="k">Material</span>
+                  <select id="plan-material" onchange="planMaterialManual()"></select>
+                </label>
                 <label id="plan-input-dt" class="plan-field">
                   <span class="k">Trucks (DT)</span>
                   <span class="plan-dt-row">
@@ -879,6 +883,7 @@
 <script src="/static/js/plan_assessment.js"></script>
 <script src="/static/js/plan_scenario.js"></script>
 <script src="/static/js/plan_sensitivity.js"></script>
+<script src="/static/js/plan_material.js"></script>
 <script src="/static/js/plan_weighbridges.js"></script>
 <script src="/static/js/main.js"></script>
 </body>
