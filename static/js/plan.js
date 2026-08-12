@@ -233,10 +233,15 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
     }
     const nComb=dt+otherDt;
     const linear=tr*nComb;
-    if(linear>m.dayTripsCap){
-      const nStar=m.dayTripsCap/tr;              // critical combined fleet
+    // Rain scales the CEILING too (harsh-test 2026-08-12: with a fixed cap,
+    // wet beat dry at over-saturation because rain lowered demand and thus
+    // the BPR penalty — physically wrong). The demonstrated cap is a road
+    // property; mud degrades the road, so capEff = cap × rain scale.
+    const capEff=m.dayTripsCap*Math.min(1,scale);
+    if(capEff>0&&linear>capEff){
+      const nStar=capEff/tr;                     // critical combined fleet
       const over=(nComb-nStar)/nStar;            // over-saturation ratio
-      const served=m.dayTripsCap/(1+0.15*over*over);
+      const served=capEff/(1+0.15*over*over);
       satFactor=served/linear;
       tr*=satFactor;
     }
@@ -272,6 +277,22 @@ function planPayload(key,contractor){
 function planDtForWmt(key,targetWmt,rain,contractor){
   const pay=planPayload(key,contractor).tf;if(!(pay>0)||!(targetWmt>0))return null;
   const m=_pathResp&&_pathResp[key];let dt=Math.max(1,(m&&m.avgDt)||30);
+  // UNREACHABLE TARGET (harsh-test 2026-08-12): with the demonstrated
+  // throughput ceiling, tonnage MAXES OUT near N* — a target above that peak
+  // has no fixed point and the solver used to fail with a generic message.
+  // Detect it up front and report the ceiling so the planner learns the
+  // actual limit instead of "could not size".
+  if(m&&Number.isFinite(m.dayTripsCap)&&m.dayTripsCap>0){
+    const sf=typeof planShiftFactor==='function'?planShiftFactor():0.5;
+    const scale=typeof planRainScale==='function'?planRainScale(key,rain):1;
+    const cf=typeof planContractorFactor==='function'?planContractorFactor(contractor):1;
+    const maxT=m.dayTripsCap*Math.min(1,scale)*sf*cf*pay;   // peak achievable/shift
+    if(targetWmt>maxT*0.999){
+      planDtForWmt._lastCeiling={maxT:Math.round(maxT),cap:m.dayTripsCap};
+      return null;
+    }
+  }
+  planDtForWmt._lastCeiling=null;
   for(let i=0;i<60;i++){
     const e=planTripsPerDT(key,dt,rain,contractor);if(!e||!(e.shift>0))return null;
     const next=targetWmt/(e.shift*pay);
@@ -1336,7 +1357,12 @@ function planPreview(){
     const target=Math.max(0,parseFloat((q('plan-wmt')||{}).value)||0);
     if(!(target>0))return blank('Enter a target tonnage to size the fleet.');
     dt=planDtForWmt(key,target,rain,c);
-    if(!dt)return blank('Could not size a fleet for that target on this path.');
+    if(!dt){
+      const ceil=planDtForWmt._lastCeiling;
+      return blank(ceil
+        ?('Target above this path\u2019s demonstrated ceiling: best ever is ~'+fmtExact(ceil.maxT)+' t/shift ('+fmtExact(ceil.cap)+' trips/day). Lower the target or split across paths.')
+        :'Could not size a fleet for that target on this path.');
+    }
   }else{
     dt=Math.max(1,parseFloat((q('plan-dt')||{}).value)||1);
   }
