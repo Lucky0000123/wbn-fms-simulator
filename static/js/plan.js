@@ -197,22 +197,30 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
   const scale=planRainScale(key,rain);
   const rainDelta=tr*(scale-1);
   tr=Math.max(.3*(hasDay?m.dayRate:m.avgTr),tr*scale)*planContractorFactor(contractor);
-  // Demonstrated-throughput ceiling (day level). The 241-day analysis shows
-  // trips/DT FLAT out to the largest day ever run (180 DT → 410 trips), so
-  // in-envelope the model is exactly linear at the cluster rate — and the
-  // owner's own check day (150 DT → ~2.3/day = ~1.15/shift) confirms it.
-  // Beyond the envelope no day has ever produced more than dayTripsCap trips:
-  // until the site proves more, extra trucks divide the SAME demonstrated
-  // trips — trips = min(rate·DT, cap), so trips/DT declines hyperbolically
-  // (cap/DT), never crashes to zero and never uses an arbitrary floor.
+  // Demonstrated-throughput ceiling + OVER-SATURATION DECAY (day level).
   //
-  // THE CAP IS A PATH PROPERTY, SHARED ACROSS PLANS (owner 2026-08-12: two
-  // contractors on TF→FENI KM0 each showed the full 205-trip ceiling —
-  // 410/shift combined on a road that has never done more than 205/shift).
-  // Saturation is computed on the COMBINED fleet on this path (this row +
-  // every other holding-plan row with the same key); each row then keeps its
-  // proportional share. opts.selfId excludes the row being priced from the
-  // "others" sum so it is not counted twice.
+  // Owner 2026-08-12: "if trips/DT keeps falling while trucks keep rising,
+  // tonnage can NOT stay flat — act like a prediction model." Correct: a flat
+  // plateau is closed-queue theory; real traffic PREDICTION models (BPR
+  // volume-delay, the standard in transport demand modelling; fundamental
+  // diagram of traffic flow) have throughput DECLINE beyond the critical
+  // density because cycle time inflates faster than trucks are added.
+  //
+  // Three regimes, anchored to measurement:
+  //   1. N ≤ N*        linear at the cluster rate (measured FLAT to 180 DT).
+  //      N* = dayTripsCap/rate — the fleet where demand meets the proven cap.
+  //   2. N ≈ N*        trips pinned at dayTripsCap (demonstrated maximum).
+  //   3. N > N*        BPR-style decay: trips = cap / (1 + α·((N−N*)/N*)²),
+  //      α = 0.15 (the standard BPR coefficient). Quadratic (not BPR's ^4)
+  //      because there is NO measurement out there — mild, defensible decline.
+  //      At 2×N* → 87% of cap; at 3.7×N* (700 DT) → ~47% of cap. Tonnage now
+  //      FALLS past the ceiling instead of lying flat; trips/DT falls even
+  //      faster; nothing crashes to zero.
+  //
+  // THE CAP IS A PATH PROPERTY, SHARED ACROSS PLANS: saturation is computed
+  // on the COMBINED WBN fleet on this route key (this row + other non-foreign
+  // rows); each row keeps its proportional share. opts.selfId excludes the
+  // row being priced from the "others" sum.
   let satFactor=1;
   if(Number.isFinite(m.dayTripsCap)&&m.dayTripsCap>0&&tr>0&&dt>0){
     let otherDt=0;
@@ -223,9 +231,13 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
         if(r2&&r2.key===key&&r2.dt>0&&!r2.foreign)otherDt+=r2.dt;
       });
     }
-    const linear=tr*(dt+otherDt);
+    const nComb=dt+otherDt;
+    const linear=tr*nComb;
     if(linear>m.dayTripsCap){
-      satFactor=m.dayTripsCap/linear;
+      const nStar=m.dayTripsCap/tr;              // critical combined fleet
+      const over=(nComb-nStar)/nStar;            // over-saturation ratio
+      const served=m.dayTripsCap/(1+0.15*over*over);
+      satFactor=served/linear;
       tr*=satFactor;
     }
   }
