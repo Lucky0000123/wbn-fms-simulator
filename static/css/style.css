@@ -574,6 +574,24 @@ tbody tr:hover{background:var(--panel-hover)}
 /* Cross-plan interactions (the WHY under the path builder) */
 .plan-impacts{margin-top:7px}
 .plan-impacts:empty{display:none}
+/* C · Fleet sensitivity (plan_sensitivity.js) */
+.plan-sens-wrap{display:flex;gap:14px;align-items:flex-start}
+.plan-sens-side{flex:0 0 220px;min-width:0}
+.plan-sens-main{flex:1;min-width:0}
+.plan-sens-side-h{font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px}
+.plan-sens-card{display:flex;align-items:center;gap:7px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;margin-bottom:5px;cursor:pointer;font-size:11px}
+.plan-sens-card:hover{border-color:#64748b}
+.plan-sens-card.on{border-color:#f59e0b;background:rgba(245,158,11,.08)}
+.plan-sens-card.off{opacity:.42}
+.plan-sens-dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+.plan-sens-lbl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.plan-sens-dt{flex:0 0 auto;font-size:10px}
+.plan-sens-eye{flex:0 0 auto;background:none;border:none;cursor:pointer;font-size:11px;padding:0 2px;color:var(--txt-muted)}
+.plan-sens-back{margin:2px 0 4px;font-size:10.5px}
+.plan-sens-gran{display:flex;gap:4px}
+.plan-sens-gran button{flex:1;font-size:10.5px;padding:3px 0;border-radius:9px;border:1px solid var(--line);background:none;color:var(--txt-muted);cursor:pointer}
+.plan-sens-gran button.on{border-color:#f59e0b;background:rgba(245,158,11,.13);color:var(--txt);font-weight:600}
+@media (max-width:900px){.plan-sens-wrap{flex-direction:column}.plan-sens-side{flex:none;width:100%}}
 .plan-ai-out:empty{display:none}
 .plan-ai-out{margin-top:6px}
 .plan-ai-busy{font-size:11px;color:#a78bfa}

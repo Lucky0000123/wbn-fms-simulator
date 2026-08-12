@@ -485,7 +485,7 @@
           <div class="plan-step2-head">
             <div>
               <h3>2 · Run scenario</h3>
-              <p class="muted plan-step2-lead">Run scenario loads A · outcomes and B · capacity first. Press ▶ Run on the GPS corridor to open C · road crowding by hour (this plan + optional IWIP), then review history.</p>
+              <p class="muted plan-step2-lead">Run scenario loads A · outcomes and B · capacity first. Press ▶ Run on the GPS corridor to open D · road crowding by hour (this plan + optional IWIP), then review history.</p>
             </div>
             <div class="plan-step2-actions">
               <button class="btn" type="button" id="plan-run-scenario" onclick="planRunScenario()" disabled>Run simulated scenario</button>
@@ -517,6 +517,30 @@
                   <div class="ph-load-sub">Loader ceilings and path-model vs achievable</div>
                 </div>
                 <div id="plan-scenario-estimate"></div>
+              </div>
+            </section>
+
+            <!-- B2 · Fleet sensitivity — nonlinear DT sweep per plan (ECharts).
+                 Owner 2026-08-12: after Run scenario, show how WMT and
+                 trips/DT bend as trucks change, per plan and combined. -->
+            <section class="plan-s2-block" id="plan-s2-sensitivity" style="display:none">
+              <div class="plan-s2-label">C · Fleet sensitivity <span class="muted">(path model · how tonnage &amp; trips/DT bend with fleet size)</span></div>
+              <div class="plan-sens-wrap">
+                <div class="plan-sens-side">
+                  <div class="plan-sens-side-h muted">Plans</div>
+                  <div id="plan-sens-cards"></div>
+                  <button type="button" class="ms-btn plan-sens-back" id="plan-sens-back" style="display:none" onclick="planSensIsolate(null)">← All plans</button>
+                  <div class="plan-sens-side-h muted" style="margin-top:10px">Scale</div>
+                  <div class="plan-sens-gran" role="group" aria-label="Time granularity">
+                    <button type="button" data-g="hour" onclick="planSensGran('hour')">Per hour</button>
+                    <button type="button" data-g="shift" class="on" onclick="planSensGran('shift')">Per shift</button>
+                    <button type="button" data-g="day" onclick="planSensGran('day')">Per day</button>
+                  </div>
+                </div>
+                <div class="plan-sens-main">
+                  <div id="plan-sens-chart" style="height:340px"></div>
+                  <p class="muted" style="font-size:10.5px;margin:6px 0 0">Solid = tonnage (left axis) · dashed = trips/DT (right axis) · ● marks your current DT. Same path model as the plan table (measured decline, 30% floor, WB ceiling at current assignments). Road-only plans show trips only.</p>
+                </div>
               </div>
             </section>
 
@@ -575,7 +599,7 @@
                     <svg id="plan-c3-flow-svg" viewBox="0 0 1000 390" role="img" aria-label="Plan illustration stick"></svg>
                   </div>
                 </div>
-                <p class="muted plan-corridor-hint" id="plan-corridor-hint">After A and B finish, press <b>▶ Run</b> to load C · road crowding by hour (this plan's trucks, IWIP optional).</p>
+                <p class="muted plan-corridor-hint" id="plan-corridor-hint">After A and B finish, press <b>▶ Run</b> to load D · road crowding by hour (this plan's trucks, IWIP optional).</p>
               </div>
             </section>
 
@@ -585,7 +609,7 @@
                  what A/B/E already report. This section answers ONE question:
                  which hours will OUR haul roads be crowded, given the plan. -->
             <section class="plan-s2-block plan-s2-illust" id="plan-s2-illust" style="display:none" hidden>
-              <div class="plan-s2-label">C · Road crowding by hour <span class="muted">(this plan · advisory — not tonnes)</span></div>
+              <div class="plan-s2-label">D · Road crowding by hour <span class="muted">(this plan · advisory — not tonnes)</span></div>
               <div class="plan-calc-busy" id="plan-illust-busy">
                 <div class="plan-calc-overlay" role="status" aria-live="polite">
                   <div class="ph-spin" aria-hidden="true"></div>
@@ -851,6 +875,7 @@
 <script src="/static/js/plan_simulator.js"></script>
 <script src="/static/js/plan_assessment.js"></script>
 <script src="/static/js/plan_scenario.js"></script>
+<script src="/static/js/plan_sensitivity.js"></script>
 <script src="/static/js/plan_weighbridges.js"></script>
 <script src="/static/js/main.js"></script>
 </body>

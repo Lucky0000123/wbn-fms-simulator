@@ -1125,6 +1125,8 @@ function planRunScenario(opts){
     // Re-paint D before outcomes so realism/shared-road feed into A
     if(_planLastAnalogues)planRenderAnalogues(_planLastAnalogues);
     planRenderOutcomes(sim,predict);
+    // C · Fleet sensitivity: sweep the SAME path model across DT per plan.
+    if(typeof planSensRefresh==='function'){try{planSensRefresh();}catch(_){}}
     const open=q('plan-open-assessment');
     if(open)open.disabled=false;
     planRefreshSaveButtons();
