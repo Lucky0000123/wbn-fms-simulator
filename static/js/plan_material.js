@@ -15,7 +15,18 @@
   const q=id=>document.getElementById(id);
   const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 
-  let _all=[];          // [{code,name}] site-wide list
+  // Seeded with the codes measured in HAULAGE.MATERIAL (2026-08-12 census:
+  // SAP 2.84M · LIM 490k · WCO 148k · rest <20k) so the dropdown still offers
+  // the real options if the first fetch lands during a DB/VPN outage. A
+  // successful fetch replaces this with the server's list.
+  let _all=[
+    {code:'SAP',name:'Saprolite'},{code:'LIM',name:'Limonite'},
+    {code:'WCO',name:'Waste Conservation Ore'},{code:'BOULDER',name:'Boulder'},
+    {code:'RS',name:'Road Spoil'},{code:'BASALT',name:'Basalt'},
+    {code:'SLAG',name:'Slag'},{code:'RSAP',name:'Rehandled Saprolite'},
+    {code:'SS',name:'Soft Spoil'},{code:'CS',name:'Crushed Stone'},
+    {code:'QUARRY',name:'Quarry'},
+  ];
   let _route=[];        // [{code,name,trips,sharePct}] for the current path
   let _manual=false;    // user picked a material by hand → stop auto-defaulting
   let _seq=0;
@@ -49,12 +60,22 @@
     const seq=++_seq;
     fetch('/api/plan/material-mix?src='+encodeURIComponent(s)+'&dst='+encodeURIComponent(d))
       .then(r=>r.json()).then(res=>{
-        if(seq!==_seq||!res||!res.ok)return;
+        if(seq!==_seq)return;
+        if(!res||!res.ok){
+          // DB unreachable: DROP the old route's shares rather than keep them.
+          // Caught live 2026-08-12: VPN fell over mid-session and a TF→POS 12
+          // pick kept showing "Saprolite · 99.2% of route" measured on
+          // TF→FENI KM0 — a stale label is worse than no label.
+          _route=[];renderSelect();decorateRows();return;
+        }
         _all=res.materials||[];
         _route=res.route||[];
         renderSelect();
         decorateRows();
-      }).catch(()=>{});
+      }).catch(()=>{
+        if(seq!==_seq)return;
+        _route=[];renderSelect();decorateRows();
+      });
   }
 
   window.planMaterialManual=function(){_manual=true;};
