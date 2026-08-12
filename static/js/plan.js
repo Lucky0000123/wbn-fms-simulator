@@ -211,6 +211,47 @@ function planRenderImpacts(key,dt,e,contractor){
   if(!e){box.innerHTML='';return;}
   const rows=[];
   const dtPct=x=>fmtExact(Math.abs(x),2);
+  // 0 · Fleet size vs this path's own history (owner: "0.91/shift from TF to
+  // FENI — how did it become 0.29? Explain it in the box"). The baseline rate
+  // is measured at the TYPICAL fleet; the regression slope prices what each
+  // added truck does to everyone (loader queue, one road, fixed cycle). This
+  // row does that arithmetic in the open.
+  const m0=e.m||{};
+  const sf=typeof planShiftFactor==='function'?planShiftFactor():0.5;
+  const baseShift=Number.isFinite(m0.avgTr)?m0.avgTr*sf:null;
+  const avgDt=Number.isFinite(m0.avgDt)?Math.round(m0.avgDt):null;
+  const slope=Number.isFinite(e.slope)?e.slope:0;
+  if(baseShift!=null&&avgDt!=null&&dt>0){
+    const fleetDelta=(slope<0)?slope*(dt-m0.avgDt)*sf:0;
+    const linShift=baseShift+fleetDelta;                    // raw extrapolation
+    const floorShift=.3*m0.avgTr*sf;                        // 30% guard
+    const floored=slope<0&&linShift<floorShift;
+    const dtMax0=Number.isFinite(m0.dtMax)?Math.round(m0.dtMax):null;
+    if(dt>avgDt*1.5&&slope<0){
+      if(floored){
+        // Beyond the measured envelope the line goes below the guard (or
+        // negative): give the honest RANGE instead of one false-precision
+        // number — floor estimate up to the hard WB ceiling for this fleet.
+        const cf=typeof planContractorFactor==='function'?planContractorFactor(contractor):1;
+        const lowTrips=Math.round(dt*Math.max(floorShift*cf,0));
+        const hours=Math.max(1,parseFloat((q('plan-hours')||{}).value)||12);
+        const nWb=(e.wbRows&&e.wbRows.length)?e.wbRows.length:1;
+        const wbCap=Math.round(nWb*PLAN_WB_TRIPS_PER_HOUR*hours);
+        const hiTrips=Math.min(wbCap,Math.round(dt*1.0));   // can't exceed bridge throughput
+        rows.push({icon:'📉',cls:'imp-bad',
+          txt:`Fleet size: the ${fmtExact(baseShift,2)}/shift rate is the measured average at this path's average fleet (~${fmtExact(avgDt)} DT; data covers up to ${dtMax0!=null?fmtExact(dtMax0):'?'} DT). ${fmtExact(dt)} DT is far beyond that data — the measured decline (${fmtExact(slope*sf,4)}/truck) extrapolates below zero, so the estimate is HELD at the 30% guard: ~${fmtExact(Math.max(floorShift*cf,0),2)}/DT ≈ ${fmtExact(lowTrips)} trips. Physical ceiling check: ${fmtExact(nWb)} bridge${nWb===1?'':'s'} can weigh at most ${fmtExact(wbCap)} trips/shift — the true outcome sits between ~${fmtExact(lowTrips)} and ${fmtExact(hiTrips)} trips, unproven either way`,
+          tip:`Average ${fmtExact(baseShift,2)}/shift is computed over all measured days at this path's average fleet (~${fmtExact(avgDt)} DT). The decline per added truck is fitted only on fleets up to ${dtMax0!=null?fmtExact(dtMax0):'?'} DT. Beyond that, extrapolation predicts negative trips (impossible), so a conservative 30% floor holds the estimate. The weighbridge throughput ceiling (${PLAN_WB_TRIPS_PER_HOUR}/h per bridge) is the only hard physical bound out here. Plan inside the data (≤ ${dtMax0!=null?fmtExact(dtMax0):'?'} DT) for numbers you can defend.`});
+      }else{
+        rows.push({icon:'📉',cls:'imp-bad',
+          txt:`Fleet size: the ${fmtExact(baseShift,2)}/shift rate is the measured average at this path's average fleet (~${fmtExact(avgDt)} DT). At ${fmtExact(dt)} DT the measured decline (${fmtExact(slope*sf,4)}/truck) prices trips/DT at ${fmtExact(e.shiftFree!=null?e.shiftFree:e.shift,2)}`,
+          tip:`Regression on this path's own history: trips/DT declines as the fleet grows (loader queue, shared road, ~fixed cycle). Within the measured envelope (≤ ${dtMax0!=null?fmtExact(dtMax0):'?'} DT). More trucks still add total trips, but each truck does less.`});
+      }
+    }else if(dt<avgDt*0.6&&slope<0){
+      rows.push({icon:'📈',cls:'imp-ok',
+        txt:`Fleet size: ${fmtExact(dt)} DT is below this path's average fleet (~${fmtExact(avgDt)} DT) — each truck runs slightly better than the average rate (${fmtExact(e.shiftFree!=null?e.shiftFree:e.shift,2)}/shift vs ${fmtExact(baseShift,2)} average)`,
+        tip:'Small fleets queue less at the loader; the same measured slope, applied downward.'});
+    }
+  }
   // 1 · Shared road with the REST OF THE PLAN (holding-plan rows on this span)
   const others=Object.keys(_planDraft||{}).map(id=>_planDraft[id])
     .filter(r=>r&&r.key!==key&&r.dt>0&&(()=>{const a=_planSpan(key),b=_planSpan(r.key);
@@ -259,10 +300,109 @@ function planRenderImpacts(key,dt,e,contractor){
       txt:`Rain: −${dtPct(e.rainDelta)} Trips/DT at the entered rainfall`,
       tip:'Path-specific measured rain response.'});
   }
+  // Preserve the AI advisor's answer across re-renders (this panel repaints on
+  // every input edit; the auto-advise below replaces it when the plan settles).
+  const prevAi=(box.querySelector('#plan-ai-out')||{}).innerHTML||'';
   box.innerHTML=rows.length
-    ?`<div class="imp-head muted">Cross-plan interactions <span title="How the rest of the holding plan, other (IWIP) traffic, rain and the assigned weighbridges act on THIS path. All effects are measured; the estimate above already includes them.">ⓘ</span></div>`
+    ?`<div class="imp-head muted">Plan updates <span title="Everything acting on THIS path right now: fleet-size response, the rest of the holding plan on shared road, other (IWIP) traffic, rain and the assigned weighbridges. All effects are measured; the estimate above already includes them. The ✦ line is a live AI read over these exact numbers.">ⓘ</span></div>`
       +rows.map(r=>`<div class="imp-row ${r.cls}" title="${escH(r.tip)}"><span class="imp-ic">${r.icon}</span><span>${r.txt}</span></div>`).join('')
+      +`<div id="plan-ai-out" class="plan-ai-out">${prevAi}</div>`
     :'';
+  // AUTO AI: fires by itself when the inputs settle (no button — owner ask).
+  if(rows.length)planAiSchedule();
+}
+// ── AI advisor (owner 2026-08-12: "an AI that reads what we have in
+// historicals, our thresholds, and gives real info instead of prewritten
+// text"). The BROWSER packs the live numbers (path history, thresholds,
+// fleet-size math, WB stress, whole holding plan, non-plan traffic) and the
+// SERVER relays them to a local LLM (Ollama). The model sees only real
+// figures, so its answer is grounded; if the LLM is unreachable the panel
+// says so instead of pretending.
+let _planAiBusy=false;
+let _planAiTimer=null,_planAiLastKey='',_planAiSeq=0;
+// AUTO-advise: debounce until the planner stops editing (1.2 s), skip when the
+// situation hasn't changed, and drop stale responses. deepseek-v4-pro:cloud
+// answers in ~1.5–3 s (fastest of the four local-relay models benchmarked
+// 2026-08-12; glm 4 s, kimi 1.7 s but weaker read, minimax erroring).
+function planAiSchedule(){
+  if(_planAiTimer)clearTimeout(_planAiTimer);
+  _planAiTimer=setTimeout(()=>{
+    const ctx=planAiContext();
+    // Situation key: path + DT + rain + WB + plan rows + non-plan traffic.
+    const sitKey=JSON.stringify([ctx.building,ctx.holding_plan,ctx.non_plan_traffic.trips_per_shift,
+      (ctx.weighbridges.assigned||[]).map(w=>w.wb)]);
+    if(sitKey===_planAiLastKey)return;          // nothing changed — keep the read
+    _planAiLastKey=sitKey;
+    planAiAdvise(ctx);
+  },1200);
+}
+function planAiContext(){
+  const s=(q('plan-src')||{}).value,d=(q('plan-dst')||{}).value,key=s+'>'+d;
+  const dt=Math.max(1,parseFloat((q('plan-dt')||{}).value)||1);
+  const rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0);
+  const c=planContractor();
+  const m=(_pathResp&&_pathResp[key])||{};
+  const e=planTripsPerDT(key,dt,rain,c);
+  const pay=planPayload(key,c);
+  const sf=typeof planShiftFactor==='function'?planShiftFactor():0.5;
+  const plan=Object.keys(_planDraft||{}).map(id=>{const r=_planDraft[id];
+    return {path:r.key,contractor:r.contractor,dt:r.dt,foreign:!!r.foreign};});
+  const wb=(e&&e.wbRows)?e.wbRows.map(r=>({wb:r.wb,arrivals:Math.round(r.arrivals),cap:Math.round(r.cap),util:+(r.rho||0).toFixed(2)})):[];
+  return {
+    building:{path:key,contractor:c?c.name:null,dt,rain_mm:rain},
+    path_history:{
+      typical_dt:m.avgDt!=null?Math.round(m.avgDt):null,
+      max_dt_ever:m.dtMax!=null?Math.round(m.dtMax):null,
+      trips_per_dt_day_at_typical:m.avgTr!=null?+m.avgTr.toFixed(2):null,
+      trips_per_dt_shift_at_typical:m.avgTr!=null?+(m.avgTr*sf).toFixed(2):null,
+      trips_per_dt_p25_p75_day:[m.trP25,m.trP75].map(x=>x!=null?+x.toFixed(2):null),
+      tonnes_per_trip:pay.tf?+pay.tf.toFixed(1):null,
+      fleet_size_slope_per_dt_day:Number.isFinite(m.bAdj)?+m.bAdj.toFixed(4):(Number.isFinite(m.b)?+m.b.toFixed(4):null),
+    },
+    this_estimate:e?{
+      trips_per_dt_shift:+e.shift.toFixed(3),
+      trips:Math.round(dt*e.shift),
+      wmt:Math.round(dt*e.shift*(pay.tf||0)),
+      wb_capacity_factor:+(e.wbFactor||1).toFixed(3),
+      rain_delta:+(e.rainDelta||0).toFixed(3),
+      section_drag:+(e.secDelta||0).toFixed(3),
+      other_traffic_drag:+(e.otherDelta||0).toFixed(3),
+      floor_applied:e.shiftFree!=null&&Math.abs(e.shiftFree-Math.max(.3*(m.avgTr||0)*sf,0))<1e-6,
+    }:null,
+    weighbridges:{assigned:wb,ceiling_per_bridge_per_hour:PLAN_WB_TRIPS_PER_HOUR,
+      shift_hours:Math.max(1,parseFloat((q('plan-hours')||{}).value)||12)},
+    holding_plan:plan,
+    non_plan_traffic:{trips_per_shift:Math.round(_planOtherTrips||0),
+      basis:_planOtherManual?'manual':_planOtherRegime,
+      busy_period_median:_planOtherTypical&&_planOtherTypical.peak?_planOtherTypical.peak.tripsPerShift:null,
+      recent_30d_median:_planOtherTypical?_planOtherTypical.tripsPerShift:null},
+    thresholds:{wb_amber:0.7,wb_red:1.0,trips_per_dt_floor:'30% of typical baseline',
+      beyond_data:'estimates beyond max_dt_ever are guarded; engine capacity untested there'},
+  };
+}
+function planAiAdvise(ctx){
+  const out=q('plan-ai-out');if(!out)return;
+  const seq=++_planAiSeq;
+  // Keep the previous read visible while the new one loads (less flicker).
+  if(!out.querySelector('.plan-ai-answer'))out.innerHTML='<div class="plan-ai-busy">✦ AI reading the live plan…</div>';
+  else out.insertAdjacentHTML('afterbegin','<div class="plan-ai-busy">✦ updating…</div>');
+  fetch('/api/plan/ai-advise',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({context:ctx||planAiContext()}),
+  }).then(r=>r.json()).then(res=>{
+    if(seq!==_planAiSeq)return;                  // superseded by a newer edit
+    const o=q('plan-ai-out');if(!o)return;
+    if(!res||!res.ok){
+      o.innerHTML='<div class="plan-ai-err">✦ AI advisor unavailable: '+escH((res&&res.error)||'no response')+'</div>';
+      return;
+    }
+    o.innerHTML='<div class="plan-ai-answer"><span class="plan-ai-star">✦</span> '+escH(res.advice||'').replace(/\n/g,'<br>')+'</div>'
+      +'<div class="muted" style="font-size:9.5px;margin-top:3px">'+escH(res.model||'AI')+' · live read of this plan\u2019s data · advisory — the measured numbers above stay authoritative</div>';
+  }).catch(e=>{
+    if(seq!==_planAiSeq)return;
+    const o=q('plan-ai-out');
+    if(o)o.innerHTML='<div class="plan-ai-err">✦ AI advisor unreachable ('+escH(String(e))+')</div>';
+  });
 }
 function planSwapMode(){
   _planMode=_planMode==='dt'?'wmt':'dt';
@@ -610,7 +750,7 @@ function planEnsureDate(){
 // The bridges are modelled as a THROUGHPUT CEILING, not a delay curve: measured
 // wait is flat (11.7→12.1 min from 3.6→31 trucks/bridge-hour) while single
 // bridges have demonstrated 35–49 trucks/hour peaks. Same doctrine as loaders.
-let _planOtherTrips=0,_planOtherManual=false,_planOtherSrc='',_planOtherSrcTrips=0,_planOtherPaths=[],_planOtherWb=[],_planOtherTypical=null,_planOtherRegime='peak';
+let _planOtherTrips=0,_planOtherManual=false,_planOtherSrc='',_planOtherSrcTrips=0,_planOtherPaths=[],_planOtherWb=[],_planOtherTypical=null,_planOtherRegime='off';
 const PLAN_WB_TRIPS_PER_HOUR=30;   // conservative vs measured 35–49 peaks
 function planOtherManualEdit(){
   _planOtherManual=true;
@@ -626,19 +766,27 @@ function planOtherApplyRegime(res){
   if(res)_planOtherShiftRes=res;
   const typ=_planOtherTypical;
   const peak=typ&&typ.peak&&Number(typ.peak.tripsPerShift)>0?typ.peak:null;
-  const use=(_planOtherRegime==='peak'&&peak)?peak:typ;
+  // OFF (default per owner 2026-08-12): plan starts with ZERO non-plan trips.
+  // The planner opts into busy-period / recent medians, or types a number.
+  const use=_planOtherRegime==='off'?null:((_planOtherRegime==='peak'&&peak)?peak:typ);
   const shares=use&&Array.isArray(use.wbShares)&&use.wbShares.length?use.wbShares:null;
   if(shares){
     const s=shares.reduce((a,b)=>a+(b.sharePct||0),0)||1;
     _planOtherWb=shares.map(b=>({wb:String(b.wb),share:(b.sharePct||0)/s}));
   }else{
+    // Manual number (or fallback): spread over the measured last-shift bridges,
+    // else the recent 30d shares — the trucks must weigh SOMEWHERE real.
     const r=_planOtherShiftRes||{};
     const _obrs=(r.bridges||[]).map(b=>({wb:String(b.wb),w:(b.trucks||0)*(b.otherPct||0)})).filter(b=>b.w>0);
     const _osum=_obrs.reduce((a,b)=>a+b.w,0);
-    _planOtherWb=_osum>0?_obrs.map(b=>({wb:b.wb,share:b.w/_osum})):[];
+    if(_osum>0)_planOtherWb=_obrs.map(b=>({wb:b.wb,share:b.w/_osum}));
+    else if(typ&&Array.isArray(typ.wbShares)&&typ.wbShares.length){
+      const s2=typ.wbShares.reduce((a,b)=>a+(b.sharePct||0),0)||1;
+      _planOtherWb=typ.wbShares.map(b=>({wb:String(b.wb),share:(b.sharePct||0)/s2}));
+    }else _planOtherWb=[];
   }
   if(!_planOtherManual){
-    _planOtherTrips=use?Number(use.tripsPerShift):_planOtherSrcTrips;
+    _planOtherTrips=_planOtherRegime==='off'?0:(use?Number(use.tripsPerShift):0);
     const el=q('plan-other-trips');
     if(el)el.value=String(Math.round(_planOtherTrips));
   }
@@ -646,7 +794,10 @@ function planOtherApplyRegime(res){
   if(src){
     // Short unit tag only — regime label lives in the strip below.
     const mmdd=x=>String(x||'').slice(5);
-    if(use===peak&&peak){
+    if(_planOtherRegime==='off'&&!_planOtherManual){
+      src.textContent='/shift';
+      src.title='No non-plan traffic assumed. Pick Busy period / Recent below, or type the trucks you expect.';
+    }else if(use===peak&&peak){
       src.textContent='/shift';
       src.title='Busy period (busiest 60 days: '+(peak.window||'')+') · median '
         +Math.round(peak.tripsPerShift)+' non-plan trips/shift'
@@ -663,7 +814,7 @@ function planOtherApplyRegime(res){
   }
 }
 function planOtherSetRegime(mode){
-  _planOtherRegime=mode==='recent'?'recent':'peak';
+  _planOtherRegime=(mode==='recent'||mode==='peak'||mode==='off')?mode:'off';
   _planOtherManual=false;      // switching regime re-derives the number
   planOtherApplyRegime();
   computePlan();
@@ -765,16 +916,20 @@ function planRenderWbLoad(totTrips,wb,hours,avgTf){
   };
   const regimeCtl=peak
     ?`<div class="plan-other-regime" role="group" aria-label="Non-plan trips basis">`
+      +seg('off','None',`Zero non-plan trips (default). Add them only when you expect IWIP / position trucks on your shift.`)
       +seg('peak','Busy period',`Busiest measured 60 days (${peak.window||'peak'}): median ${fmtExact(peak.tripsPerShift)} non-plan trips/shift. Use when ops run at full tempo.`)
       +seg('recent','Recent',`Last 30 data days: median ${fmtExact(_planOtherTypical.tripsPerShift)} non-plan trips/shift. Use for today's quieter tempo.`)
       +`</div>`
     :'';
   if(!(other>0||addBtn||peak)){box.innerHTML='';return;}
+  const helpTxt=other>0
+    ?'IWIP / position trucks on the same bridges — counted in Bridge load below'
+    :'None assumed — pick Busy period / Recent, or type trucks in the Conditions box';
   box.innerHTML=`<div class="plan-other-strip">
     <div class="plan-other-strip-main">
       <span class="plan-other-k">Non-plan traffic</span>
-      <span class="plan-other-v">${other>0?`<b>${fmtExact(Math.round(other))}</b> trips/shift`:'—'}</span>
-      <span class="plan-other-help muted">IWIP / position trucks on the same bridges — counted in Bridge load below</span>
+      <span class="plan-other-v">${other>0?`<b>${fmtExact(Math.round(other))}</b> trips/shift`:'<b>0</b>'}</span>
+      <span class="plan-other-help muted">${escH(helpTxt)}</span>
     </div>
     <div class="plan-other-strip-actions">${regimeCtl}${dragTxt}${addBtn}</div>
   </div>`;
@@ -1053,27 +1208,39 @@ function _planRenderEstimate(v){
     lines.push(['Cycle',fmtExact(v.cycle.cycle_time_min,0)+' min']);
   }
   const mod=_planModelLabel(v);
+  const note=`${escH(v.src)} → ${escH(v.dst)} · ${escH(v.contractor||'—')}`
+    +(v.foreign?' · road-only (no WMT)':(v.swapped?` · ${fmtExact(Math.round(v.wmt))} t`:''));
+  const totalInner=v.foreign
+    ?`<div class="est-total-v est-total-road">Road-only <span class="u">no WMT</span></div>`
+    :`<div class="est-total-v">${v.swapped?fmtExact(v.dt):fmtExact(Math.round(v.wmt))} <span class="u">${v.swapped?'DT':'t'}</span></div>`;
+  const warnHtml=(v.warns&&v.warns.length)
+    ?`<div class="est-warn" role="status">${v.warns.map(w=>`<div class="est-warn-item">${escH(w)}</div>`).join('')}</div>`
+    :'';
   box.classList.remove('empty');
   box.classList.toggle('is-loading', v.model==='local');
-  box.innerHTML=`<div class="est-head">Estimated shift output <span class="muted" style="font-weight:400;font-size:10.5px">· ONE shift (${escH((q('plan-hours')||{}).value||12)} h), not per day — Capability tab quotes per-day (2 shifts)</span></div>`
+  box.classList.toggle('has-warns', !!(v.warns&&v.warns.length));
+  // Column layout: hero strip (metrics + tonnage) stays intact; notes/warnings
+  // sit full-width underneath so long text never squeezes the WMT number.
+  box.innerHTML=`<div class="est-head">Estimated shift output <span class="muted" style="font-weight:400;font-size:10.5px">· ONE shift (${escH((q('plan-hours')||{}).value||12)} h)</span></div>`
+    +`<div class="est-main">`
     +`<div class="est-body">`
     +`<div class="est-lines">${lines.map(l=>`<div class="est-line"><span>${escH(l[0])}</span><b>${l[1]}</b></div>`).join('')}</div>`
-    +`<div class="est-total"><div class="est-total-l">${v.foreign?'WMT':(v.swapped?'Trucks needed':'WMT')}</div>`
-    +(v.foreign
-       ?`<div class="est-total-v" style="font-size:15px;color:var(--muted,#8b98a5)">Road-only · <span class="u">no WMT</span></div></div>`
-       :`<div class="est-total-v">${v.swapped?fmtExact(v.dt):fmtExact(Math.round(v.wmt))} <span class="u">${v.swapped?'DT':'t'}</span></div></div>`)
+    +`<div class="est-total"><div class="est-total-l">${v.foreign?'WMT':(v.swapped?'Trucks needed':'WMT')}</div>${totalInner}</div>`
     +`</div>`
     +`<div class="est-foot">`
-    +`<div class="est-note">${escH(v.src)} → ${escH(v.dst)} · ${escH(v.contractor||'—')}`
-    +(v.foreign?` · road-only (IWIP / Position — no WMT for us)`:(v.swapped?` · ${fmtExact(Math.round(v.wmt))} t`:''))+`</div>`
+    +`<div class="est-note" title="${note}">${note}</div>`
     +`<div class="est-attr"><span class="est-model ${mod.cls}">${mod.text}</span></div>`
     +`</div>`
-    +(v.warns&&v.warns.length?`<div class="est-warn">${v.warns.map(escH).join('<br>')}</div>`:'');
+    +`</div>`
+    +warnHtml;
 }
 function planPreview(){
   const box=q('plan-preview');if(!box)return;
-  const blank=(msg)=>{box.classList.add('empty');box.classList.remove('is-loading');
-    box.innerHTML=`<div class="est-head">Estimated shift output</div><div class="est-body"><div class="est-lines"></div><div class="est-total"><div class="est-total-v">—</div></div></div><div class="est-foot"><div class="est-note">${escH(msg)}</div></div>`;
+  const blank=(msg)=>{box.classList.add('empty');box.classList.remove('is-loading','has-warns');
+    box.innerHTML=`<div class="est-head">Estimated shift output</div>`
+      +`<div class="est-main"><div class="est-body"><div class="est-lines"></div>`
+      +`<div class="est-total"><div class="est-total-v">—</div></div></div>`
+      +`<div class="est-foot"><div class="est-note">${escH(msg)}</div></div></div>`;
     const imp=q('plan-impacts');if(imp)imp.innerHTML='';
     planRenderBestHistory({ok:false,error:msg});};
   const s=(q('plan-src')||{}).value,d=(q('plan-dst')||{}).value,key=s+'>'+d,m=_pathResp&&_pathResp[key];
@@ -1175,7 +1342,7 @@ function planPreview(){
         const naiveHigher=Number.isFinite(p.total_wmt)&&Number.isFinite(base.wmt)&&p.total_wmt>base.wmt*1.15;
         if(!stillSwapped&&beyond&&naiveHigher){
           const warns=(base.warns||[]).concat([
-            `📐 trained-model fallback ignores fleet size: it extrapolates ${fmtExact(Math.round(p.total_wmt))} t (${fmtExact(Math.round(p.total_trips))} trips) at ${fmtExact(showDt)} DT — beyond the ${fmtExact(base.dtMax)} DT ever run here the measured declining-efficiency estimate (${fmtExact(Math.round(base.wmt))} t) is the honest one and matches the plan table`,
+            `📐 Model extrapolated ${fmtExact(Math.round(p.total_wmt))} t at ${fmtExact(showDt)} DT (beyond ${fmtExact(base.dtMax)} DT ever run) — keeping measured ${fmtExact(Math.round(base.wmt))} t (matches plan table)`,
           ]);
           _planRenderEstimate({...base, warns, cycle:res.cycle, contractorFactor:cFactor});
           return;

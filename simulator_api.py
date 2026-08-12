@@ -1640,9 +1640,14 @@ def api_simulator_shift_context():
                     "WHEN UPPER(COL) LIKE '%%BSE%%' THEN 'BSE' "
                     "WHEN UPPER(COL) LIKE '%%BLB%%' THEN 'BLB' ELSE 'OTHER' END").replace("COL", col)
         ocase, dcase = _case("ORIGIN_AREA"), _case("DESTINATION_AREA")
-        cur.execute("SELECT " + ocase + " og, " + dcase + " dg, COUNT(*) trips, COUNT(DISTINCT TRUCK_ID) trucks "
+        # Bucket non-WBN into IWIP vs POSITION for Plan road-only picker.
+        ccase = ("CASE WHEN UPPER(ISNULL(CONTRACTOR,'')) LIKE '%POSITION%' "
+                 "THEN 'POSITION' ELSE 'IWIP' END")
+        cur.execute("SELECT " + ocase + " og, " + dcase + " dg, " + ccase + " bucket, "
+                    "COUNT(*) trips, COUNT(DISTINCT TRUCK_ID) trucks "
                     "FROM HAULAGE_IWIP_CLEAN WHERE CONVERT(date,[DATE])=%s" + shift_sql +
-                    " AND CONTRACTOR NOT IN (" + wbn_in + ") GROUP BY " + ocase + ", " + dcase, wb_params)
+                    " AND CONTRACTOR NOT IN (" + wbn_in + ") "
+                    "GROUP BY " + ocase + ", " + dcase + ", " + ccase, wb_params)
         grp_rows = cur.fetchall()
         cur.execute("SELECT COUNT(DISTINCT TRUCK_ID), COUNT(*) FROM HAULAGE_IWIP_CLEAN "
                     "WHERE CONVERT(date,[DATE])=%s" + shift_sql + " AND CONTRACTOR NOT IN (" + wbn_in + ")",
@@ -1652,15 +1657,18 @@ def api_simulator_shift_context():
 
         # Keys MUST match the SQL CASE labels above (FENI KM0, not FENI) or
         # other-paths that end at the smelter are dropped and otherFeniTrips=0.
-        NODE_KM = {"TF": 67.8, "KR": 39.0, "POS 12": 27.0, "POS 10": 17.0,
+        NODE_KM = {"TF": 67.8, "TOFU": 67.8, "BLB": 67.8, "KR": 39.0, "KRENE": 39.0,
+                   "POS 12": 27.0, "POS 10": 17.0,
                    "FENI KM0": 0.0, "FENI KM15": 15.0, "CRUSHER": 3.0,
-                   "HUAFEI": 0.0, "BSE": 0.0, "BLB": 67.8}
+                   "HUAFEI": 0.0, "BSE": 0.0}
         other_paths = []
-        for og, dg, trips, trucks in grp_rows:
+        for og, dg, bucket, trips, trucks in grp_rows:
+            # Keep unknown-chainage pairs (e.g. POS CBB / POS 11) for the road-only
+            # picker; section attribution below skips them when km is missing.
             ok, dk = NODE_KM.get(og), NODE_KM.get(dg)
-            if ok is None or dk is None:
-                continue
+            cont = "POSITION" if str(bucket or "").strip().upper() == "POSITION" else "IWIP"
             other_paths.append({"origin": og, "dest": dg, "label": "%s → %s" % (og, dg),
+                                "contractor": cont,
                                 "trips": int(trips or 0), "trucks": int(trucks or 0),
                                 "oKm": ok, "dKm": dk})
         other_paths.sort(key=lambda p: -p["trips"])
@@ -1669,6 +1677,8 @@ def api_simulator_shift_context():
                 ("POS 12–POS 10", 17.0, 27.0), ("POS 10–FENI", 0.0, 17.0)]
         sec_trips = {s[0]: 0 for s in SECS}
         for p in other_paths:
+            if p["oKm"] is None or p["dKm"] is None:
+                continue
             lo, hi = min(p["oKm"], p["dKm"]), max(p["oKm"], p["dKm"])
             for label, slo, shi in SECS:
                 if hi > slo and lo < shi:
@@ -2418,6 +2428,65 @@ def _forecast_outlook():
     except Exception as e:  # noqa: BLE001
         print("[sim_api] rain outlook fetch failed: %s" % e)
         return None
+
+
+@bp.route('/api/plan/ai-advise', methods=['POST'])
+def api_plan_ai_advise():
+    """Ground an LLM in the LIVE plan context and return a short planning read.
+
+    The browser sends the real numbers (path history, thresholds, fleet-size
+    maths, WB stress, holding plan, non-plan traffic) — the model reasons over
+    those figures only, so the answer is data-grounded, not canned. Served by
+    the local Ollama daemon (no data leaves the machine beyond Ollama's own
+    cloud-model relay); if it is unreachable we say so honestly.
+    """
+    import urllib.request
+    body = request.get_json(force=True, silent=True) or {}
+    ctx = body.get("context")
+    if not isinstance(ctx, dict):
+        return jsonify({"ok": False, "error": "no context supplied"}), 400
+    system = (
+        "You are the planning advisor inside the WBN haulage FMS simulator "
+        "(nickel mine, Weda Bay). You are given LIVE measured data for the "
+        "haul path a production planner is building. Rules: use ONLY the "
+        "numbers provided; never invent capacity or gains; trips/DT declines "
+        "with fleet size per the given slope; weighbridges are a throughput "
+        "ceiling (30/h per bridge) — above 100% excess trips cannot be "
+        "weighed. Answer in at most 4 short lines, no markdown, plain "
+        "language for a mining ops manager: (1) verdict with the key number, "
+        "(2) the binding constraint, (3) one concrete action (specific DT / "
+        "bridge / timing). Be direct and specific; no filler."
+    )
+    prompt = "Live plan context (JSON):\n" + json.dumps(ctx, indent=1)[:6000] \
+        + "\n\nGive the planning read."
+    model = os.environ.get("PLAN_AI_MODEL", "deepseek-v4-pro:cloud")
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:11434/api/chat",
+            data=json.dumps({
+                "model": model,
+                "think": False,   # answer directly; thinking burns the token budget
+                "messages": [{"role": "system", "content": system},
+                             {"role": "user", "content": prompt}],
+                "stream": False,
+                "options": {"temperature": 0.2, "num_predict": 1400},
+            }).encode(),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=90) as r:
+            data = json.loads(r.read().decode())
+        msg = data.get("message") or {}
+        advice = (msg.get("content") or "").strip()
+        if not advice:
+            # Reasoning models can burn the whole budget "thinking"; salvage the
+            # end of the thinking trace rather than returning nothing.
+            think = (msg.get("thinking") or "").strip()
+            advice = think[-700:] if think else ""
+        if not advice:
+            return jsonify({"ok": False, "error": "model returned empty answer"}), 502
+        return jsonify({"ok": True, "advice": advice, "model": model})
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"ok": False,
+                        "error": "local AI not reachable (%s)" % str(e)[:80]}), 503
 
 
 @bp.route('/api/plan/rain-outlook', methods=['GET'])

@@ -290,59 +290,6 @@
     return { byWb, cap, svc };
   }
 
-  // Dispatcher auto-balance: assign every path's trips across bridges so the
-  // worst bridge is as lightly loaded as possible. Greedy: paths in trip order;
-  // each path picks its best bridges (history first, then any free bridge)
-  // until its trips fit under the amber line (70%%) where possible.
-  function autoBalance(){
-    const hours = Math.max(1, parseFloat((el('plan-hours') || {}).value) || 12);
-    const perH = (typeof PLAN_WB_TRIPS_PER_HOUR !== 'undefined') ? PLAN_WB_TRIPS_PER_HOUR : 30;
-    const cap = perH * hours, amber = 0.7 * cap;
-    const load = {}; ALL_WBS.forEach(wb => load[wb] = 0);
-    // Other traffic is immovable — it preloads its measured bridges, and the
-    // balancer routes the plan's trucks around it.
-    const other = otherPerBridge();
-    Object.keys(other).forEach(wb => { if (load[wb] != null) load[wb] += other[wb].trips; });
-    const entries = Object.keys(_pathWb)
-      .map(id => ({ id, pw: _pathWb[id], trips: pathTrips(id) }))
-      .filter(x => x.trips > 0)
-      .sort((a, b) => b.trips - a.trips);
-    entries.forEach(x => {
-      // Candidate order: this route's historical bridges by share desc, then
-      // the rest of the site by current load asc.
-      const hist = x.pw.bridges.filter(b => b.sharePct != null)
-        .sort((a, b) => b.sharePct - a.sharePct).map(b => b.wb);
-      const rest = ALL_WBS.filter(wb => !hist.includes(wb));
-      const order = hist.concat(rest).sort((a, b) => {
-        const ha = hist.indexOf(a), hb = hist.indexOf(b);
-        if (ha !== -1 && hb !== -1) return ha - hb;         // keep history order first
-        if (ha !== -1) return -1;
-        if (hb !== -1) return 1;
-        return load[a] - load[b];
-      });
-      const chosen = [];
-      let remaining = x.trips;
-      for (const wb of order){
-        if (remaining <= 0) break;
-        const room = amber - load[wb];
-        if (room <= 0) continue;
-        const take = Math.min(remaining, room);
-        load[wb] += take; remaining -= take;
-        chosen.push(wb);
-      }
-      if (remaining > 0){
-        // Site genuinely saturated at 70%%: spill onto the least-loaded bridge.
-        const least = ALL_WBS.slice().sort((a, b) => load[a] - load[b])[0];
-        load[least] += remaining;
-        if (!chosen.includes(least)) chosen.push(least);
-      }
-      x.pw.sel = new Set(chosen.length ? chosen : [ALL_WBS[0]]);
-      x.pw.open = false;
-    });
-    syncWbCount();
-    if (typeof computePlan === 'function') computePlan();
-  }
-
   function injectPathWb(){
     const tbody = el('plan-rows');
     if (!tbody) return;
@@ -390,34 +337,24 @@
             + `border:1px dashed var(--line);color:var(--muted)">+ ${escH(b.wb)}${hint}</span>`;
           }).join('')
         : '';
+      const pathHeavy = [...pw.sel].some(wb => ((byWb[wb] || {}).rho || 0) >= 0.7);
       const toggle = pw.bridges.length > 1
         ? `<span class="pwb-toggle" data-pwid="${escH(mm[1])}"`
         + ` style="cursor:pointer;font-size:9.5px;color:var(--muted);text-decoration:underline dotted">`
         + (pw.open ? 'hide' : 'add / change WB') + `</span>`
         : '';
+      const heavyWarn = pathHeavy
+        ? ` <span class="pwb-heavy-warn" style="color:#f59e0b;font-size:9.5px">⚠ a bridge is over 70% — balancing recommended</span>`
+        : '';
       const sub = document.createElement('tr');
       sub.className = 'pwb-row';
       sub.innerHTML = `<td></td><td colspan="8" style="font-size:10px;padding:0 0 7px">`
-        + `<span class="muted">WB:</span> ${assigned} ${alternates} ${toggle}</td>`;
+        + `<span class="muted">WB:</span> ${assigned} ${alternates} ${toggle}${heavyWarn}</td>`;
       tr.parentNode.insertBefore(sub, tr.nextSibling);
     });
-    // One auto-balance strip under the table (once, not per row).
-    const anyOver = Object.values((_lastUtil || {}).byWb || {}).some(r => (r.rho || 0) >= 0.7);
-    let strip = document.getElementById('pwb-balance-strip');
-    if (!strip){
-      strip = document.createElement('tr');
-      strip.id = 'pwb-balance-strip';
-      tbody.appendChild(strip);
-    } else if (strip.parentNode !== tbody){
-      strip.parentNode.removeChild(strip); tbody.appendChild(strip);
-    }
-    strip.innerHTML = Object.keys(_pathWb).length
-      ? `<td></td><td colspan="8" style="font-size:10px;padding:2px 0 8px">`
-        + `<span class="pwb-autobalance" style="cursor:pointer;padding:2px 9px;border:1px solid ${anyOver ? '#f59e0b' : 'var(--line)'};border-radius:10px;${anyOver ? 'background:rgba(245,158,11,.14);font-weight:600' : 'color:var(--muted)'}">`
-        + `⚖ Auto-balance trucks across bridges</span>`
-        + (anyOver ? ` <span style="color:#f59e0b">⚠ a bridge is over 70% — balancing recommended</span>` : '')
-        + `</td>`
-      : '';
+    // Remove legacy Auto-balance strip if a previous session left it in the DOM.
+    const strip = document.getElementById('pwb-balance-strip');
+    if (strip && strip.parentNode) strip.parentNode.removeChild(strip);
     renderStressBoard();
   }
   let _lastUtil = null;
@@ -570,8 +507,6 @@
       }
       return;
     }
-    const bal = t && t.closest ? t.closest('.pwb-autobalance') : null;
-    if (bal){ autoBalance(); return; }
     const chip = t && t.closest ? t.closest('.wb-chip') : null;
     if (chip && chip.dataset && chip.dataset.wb){ toggleChip(chip.dataset.wb); return; }
     if (t && t.id === 'tabbtn-plan') setTimeout(wire, 60);

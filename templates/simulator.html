@@ -401,10 +401,11 @@
                   </span>
                 </label>
               </div>
-              <!-- Road-only / foreign (IWIP): trucks load corridor, no WMT for us. -->
-              <label id="plan-input-foreign" class="plan-foreign-row" title="Road-only / foreign traffic (IWIP or another mine on our roads): trucks add congestion on the shared FENI corridor but no WMT for us.">
-                <input id="plan-foreign" type="checkbox" onchange="computePlan()">
-                <span>Road-only <em>(foreign / IWIP — no WMT)</em></span>
+              <!-- Road-only / foreign (IWIP or Position): trucks load corridor, no WMT for us.
+                   When checked, contractor + source/dest switch to measured non-plan paths. -->
+              <label id="plan-input-foreign" class="plan-foreign-row" title="Road-only traffic (IWIP or Position trucks moving between site locations): adds congestion on shared roads, no WMT for us. Turns contractor into IWIP / POSITION and locations into their measured paths.">
+                <input id="plan-foreign" type="checkbox" onchange="planForeignToggle()">
+                <span>Road-only <em>(IWIP / Position — no WMT)</em></span>
               </label>
               <div id="plan-hint" class="plan-hint" aria-live="polite"></div>
               <!-- Cross-plan interactions for the path being built: shared road,
@@ -430,7 +431,7 @@
                   <span class="k">Bridges</span>
                   <span class="v"><input id="plan-wb" type="number" min="1" step="1" value="1" readonly style="pointer-events:none;opacity:.8" oninput="computePlan()"><em>/ 18</em></span>
                 </label>
-                <label class="plan-cond-metric" title="Trucks that are NOT in your holding plan (IWIP / position works) but still use the same weighbridges. Busy period = busiest 60 days; Recent = last 30 days. Edit the number to test scenarios.">
+                <label class="plan-cond-metric" title="Trucks that are NOT in your holding plan (IWIP / position works) but still use the same weighbridges. Default 0 — none assumed. Pick Busy period (busiest 60 days) or Recent (last 30 days) below, or type the trucks you expect; they are distributed across bridges by measured shares.">
                   <span class="k">Non-plan trips</span>
                   <span class="v"><input id="plan-other-trips" type="number" min="0" step="10" value="0" oninput="planOtherManualEdit()"><em id="plan-other-src" class="plan-other-src"></em></span>
                 </label>
