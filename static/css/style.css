@@ -555,6 +555,22 @@ tbody tr:hover{background:var(--panel-hover)}
 .plan-cond-card .plan-cond{margin:0}
 .plan-shift-mini{font-size:11px;margin-top:2px}
 .plan-hint{margin:0;min-width:0}
+/* C · Road crowding by hour (plan-driven) */
+.plan-road-crowding:empty{display:none}
+.plan-rc-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:7px}
+.plan-rc-verdict{font-size:12px}
+.plan-rc-iwip{font-size:11px;color:var(--txt-muted);cursor:pointer;white-space:nowrap}
+.plan-rc-iwip input{vertical-align:-2px;margin-right:4px}
+.plan-rc-grid{display:flex;flex-direction:column;gap:2px}
+.rc-row{display:flex;align-items:center;gap:8px}
+.rc-sec{flex:0 0 150px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rc-cells{display:flex;gap:2px;flex:1;min-width:0}
+.rc-cell{flex:1;min-width:0;height:22px;border-radius:4px;font-size:10px;font-weight:600;display:flex;align-items:center;justify-content:center;color:var(--txt)}
+.rc-idle{background:rgba(148,163,184,.06)}
+.rc-open{background:rgba(34,197,94,.22)}
+.rc-watch{background:rgba(245,158,11,.34)}
+.rc-high{background:rgba(239,68,68,.42)}
+.rc-axis .rc-cell{height:14px;background:none;color:var(--txt-muted);font-weight:400;font-size:9px}
 /* Cross-plan interactions (the WHY under the path builder) */
 .plan-impacts{margin-top:7px}
 .plan-impacts:empty{display:none}

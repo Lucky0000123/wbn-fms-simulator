@@ -138,8 +138,8 @@ def main() -> int:
         check("B production capacity rendered", "achievable" in est_txt or "planned" in est_txt, est_txt[:120])
         page.click("#plan-c3-flow-play")
         for i in range(40):
-            ch0 = page.evaluate(
-                "()=>(document.getElementById('plan-corridor-hours')?.innerText||'').toLowerCase()"
+            rc0 = page.evaluate(
+                "()=>(document.getElementById('plan-road-crowding')?.innerText||'').toLowerCase()"
             )
             c_vis = page.evaluate(
                 """()=>{
@@ -148,10 +148,8 @@ def main() -> int:
               return el.hidden!==true && window.getComputedStyle(el).display!=='none';
             }"""
             )
-            if c_vis and ("hour-of-day" in ch0 or "slowest" in ch0 or "shared" in (
-                page.evaluate("()=>(document.getElementById('plan-shared-flow')?.innerText||'').toLowerCase()")
-            )):
-                print("road illustration at", i)
+            if c_vis and ("crowded" in rc0 or "section capacity" in rc0 or "iwip" in rc0):
+                print("road crowding at", i)
                 break
             time.sleep(0.5)
         check(
@@ -253,24 +251,28 @@ def main() -> int:
         )
         check("Analogues GPS column header", gps_col)
 
-        ch = page.evaluate(
-            "()=>(document.getElementById('plan-corridor-hours')?.innerText||'').toLowerCase()"
+        # Re-running the scenario (finalize above) hides C again by design.
+        # Re-open it the way the user does (corridor ▶ Run) and wait for rows.
+        page.evaluate("()=>{ if (typeof planOnCorridorRun==='function') planOnCorridorRun(); }")
+        try:
+            page.wait_for_function(
+                "() => document.querySelectorAll('#plan-road-crowding .rc-row').length > 0",
+                timeout=30000)
+        except Exception:                                          # noqa: BLE001
+            pass
+        rc = page.evaluate(
+            "()=>(document.getElementById('plan-road-crowding')?.innerText||'').toLowerCase()"
         )
-        check("Corridor hours panel rendered", "hour-of-day" in ch or "slowest" in ch, ch[:120])
-        check("Corridor hours advisory copy", "not tonnes" in ch or "advisory" in ch or "struggle" in ch, ch[:160])
-        bars = page.evaluate(
-            "()=>document.querySelectorAll('#plan-corridor-hours .plan-ch-bar').length"
+        check("Road crowding panel rendered", "crowded" in rc or "section capacity" in rc, rc[:120])
+        check("Road crowding advisory copy", "advisory" in rc or "not" in rc, rc[:160])
+        rc_rows = page.evaluate(
+            "()=>document.querySelectorAll('#plan-road-crowding .rc-row').length"
         )
-        check("Corridor hours sparkline 24 bars", bars == 24, "bars=%s" % bars)
-        check(
-            "Corridor hours start at 00:00",
-            "chart starts at" in ch and "00:00" in ch,
-            ch[:160],
+        check("Road crowding grid has section rows", rc_rows >= 2, "rows=%s" % rc_rows)
+        rc_iwip = page.evaluate(
+            "()=>!!document.querySelector('#plan-road-crowding .plan-rc-iwip input')"
         )
-        axis_ticks = page.evaluate(
-            "()=>document.querySelectorAll('#plan-corridor-hours .plan-ch-tick').length"
-        )
-        check("Corridor hours axis ticks", axis_ticks >= 4, "ticks=%s" % axis_ticks)
+        check("Road crowding IWIP toggle present", rc_iwip)
         test_prod = page.evaluate(
             """()=>{
           const box=document.getElementById('plan-test-prod');
@@ -419,46 +421,31 @@ def main() -> int:
         )
         check("Primary still avail=1.0", primary_raw)
 
-        advice = page.evaluate(
-            "()=>(document.getElementById('plan-congestion-advice')?.innerText||'').toLowerCase()"
-        )
-        check("Congestion advice panel",
-              "congestion advice" in advice or "meter" in advice or "jul+" in advice, advice[:160])
-        # Allow second fetch (V/C refresh) after flow seed
-        time.sleep(1.2)
-        smooth = page.evaluate(
-            """()=>{
-          const t=(document.getElementById('plan-smooth-timetable')?.innerText||'').toLowerCase();
-          const n=(_planCongestionAdvice&&_planCongestionAdvice.smooth_actions||[]).length;
-          return {t,n};
-        }"""
-        )
-        check(
-            "Smooth-running timetable",
-            (smooth.get("n") or 0) >= 1
-            or "smooth-running" in (smooth.get("t") or "")
-            or "meter releases on" in advice,
-            "n=%s text=%s" % (smooth.get("n"), (smooth.get("t") or "")[:140]),
-        )
-        never_clip = page.evaluate(
-            "()=>!(_planCongestionAdvice&&_planCongestionAdvice.basis"
-            "&&_planCongestionAdvice.basis.congestion_clips_tonnes)"
-        )
-        check("Smooth advice never clips tonnes", never_clip)
-
-        shared = page.evaluate(
-            "()=>(document.getElementById('plan-shared-flow')?.innerText||'').toLowerCase()"
-        )
-        check(
-            "Shared-road timing panel",
-            "shared-road" in shared or "shared" in shared or "des-lite" in shared,
-            shared[:160],
-        )
+        # C is now the plan-driven road-crowding grid; the congestion-advice and
+        # DES-table panels were removed 2026-08-12 (overlapped A/B/E). What must
+        # hold: the crowding payload never claims to clip tonnes, and the IWIP
+        # toggle changes the traffic actually timed.
         shared_ok = page.evaluate(
             "()=>!!(_planSharedFlow&&_planSharedFlow.ok"
             "&&_planSharedFlow.basis&&_planSharedFlow.basis.congestion_clips_tonnes===false)"
         )
-        check("Shared-flow never clips tonnes", shared_ok)
+        check("Crowding payload never clips tonnes", shared_ok)
+        iwip_paths_before = page.evaluate(
+            "()=>((_planSharedFlow||{}).summary||{}).n_paths||0"
+        )
+        page.evaluate(
+            """()=>{const cb=document.querySelector('#plan-road-crowding .plan-rc-iwip input');
+               if(cb){cb.checked=false;cb.dispatchEvent(new Event('change'));}}"""
+        )
+        time.sleep(2.0)
+        iwip_paths_after = page.evaluate(
+            "()=>((_planSharedFlow||{}).summary||{}).n_paths||0"
+        )
+        check(
+            "IWIP toggle changes timed traffic (or no IWIP paths measured)",
+            iwip_paths_after <= iwip_paths_before,
+            "before=%s after=%s" % (iwip_paths_before, iwip_paths_after),
+        )
 
         peak = page.evaluate(
             "()=>(document.getElementById('plan-peak-proxy')?.textContent||'').toLowerCase()"

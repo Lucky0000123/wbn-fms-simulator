@@ -484,7 +484,7 @@
           <div class="plan-step2-head">
             <div>
               <h3>2 · Run scenario</h3>
-              <p class="muted plan-step2-lead">Run scenario loads A · outcomes and B · capacity first. Press ▶ Run on the GPS corridor to open C · road illustration (motion / V/C — not tonnes), then review history.</p>
+              <p class="muted plan-step2-lead">Run scenario loads A · outcomes and B · capacity first. Press ▶ Run on the GPS corridor to open C · road crowding by hour (this plan + optional IWIP), then review history.</p>
             </div>
             <div class="plan-step2-actions">
               <button class="btn" type="button" id="plan-run-scenario" onclick="planRunScenario()" disabled>Run simulated scenario</button>
@@ -574,28 +574,34 @@
                     <svg id="plan-c3-flow-svg" viewBox="0 0 1000 390" role="img" aria-label="Plan illustration stick"></svg>
                   </div>
                 </div>
-                <p class="muted plan-corridor-hint" id="plan-corridor-hint">After A and B finish, press <b>▶ Run</b> to load C · road illustration (hour profile · shared-road timing · congestion advice).</p>
+                <p class="muted plan-corridor-hint" id="plan-corridor-hint">After A and B finish, press <b>▶ Run</b> to load C · road crowding by hour (this plan's trucks, IWIP optional).</p>
               </div>
             </section>
 
-            <!-- C · Road illustration — revealed after GPS corridor ▶ Run -->
+            <!-- C · Road crowding by hour — driven by THIS plan (+ IWIP option).
+                 Replaced the old road-illustration block (Jul+ hour bars,
+                 DES table, congestion advice) 2026-08-12: those overlapped
+                 what A/B/E already report. This section answers ONE question:
+                 which hours will OUR haul roads be crowded, given the plan. -->
             <section class="plan-s2-block plan-s2-illust" id="plan-s2-illust" style="display:none" hidden>
-              <div class="plan-s2-label">C · Road illustration <span class="muted">(motion / V/C only — not production)</span></div>
+              <div class="plan-s2-label">C · Road crowding by hour <span class="muted">(this plan · advisory — not tonnes)</span></div>
               <div class="plan-calc-busy" id="plan-illust-busy">
                 <div class="plan-calc-overlay" role="status" aria-live="polite">
                   <div class="ph-spin" aria-hidden="true"></div>
-                  <div class="ph-load-text">Loading road illustration…</div>
-                  <div class="ph-load-sub">Jul+ hour profile · shared-road timing · congestion advice</div>
+                  <div class="ph-load-text">Timing the plan's road occupancy…</div>
+                  <div class="ph-load-sub">measured dwell + section speeds · staggered releases</div>
                 </div>
-                <div id="plan-corridor-hours" class="plan-corridor-hours" aria-live="polite"></div>
-                <div id="plan-shared-flow" class="plan-shared-flow" aria-live="polite"></div>
-                <div id="plan-congestion-advice" class="plan-congestion-advice" aria-live="polite"></div>
-                <div class="flow-outcomes" id="plan-flow-outcomes">
-                  <div class="c3-flow-alert" id="plan-flow-alert"></div>
-                  <div class="flow-verdict" id="plan-flow-verdict" style="display:none"></div>
-                  <div class="flow-hotspots" id="plan-flow-hotspots"></div>
-                  <div class="c3-flow-routes" id="plan-flow-routes"></div>
-                  <p class="c3-flow-note" id="plan-flow-note"></p>
+                <div id="plan-road-crowding" class="plan-road-crowding" aria-live="polite"></div>
+                <!-- Hidden stubs: flow_sim.js writes plan-host readouts via
+                     flowQ('flow-…'), which FALLS BACK to the Capability page's
+                     elements when the plan-prefixed ones are missing. Removing
+                     these would bleed plan text into the Capability tab. -->
+                <div style="display:none" aria-hidden="true">
+                  <div id="plan-flow-alert"></div>
+                  <div id="plan-flow-verdict"></div>
+                  <div id="plan-flow-hotspots"></div>
+                  <div id="plan-flow-routes"></div>
+                  <p id="plan-flow-note"></p>
                 </div>
               </div>
             </section>

@@ -77,18 +77,15 @@ function planSetScenarioBtn(){
   btn.title=n<1?'Add at least one path in Step 1':'Run simulate for A · outcomes and B · capacity (GPS ▶ Run opens C · road illustration)';
 }
 
-/** Hide C · road illustration until the user presses ▶ Run on the GPS corridor. */
+/** Hide C · road crowding until the user presses ▶ Run on the GPS corridor. */
 function planHideRoadIllustration(){
   _planRoadIllustReady=false;
   const illust=q('plan-s2-illust');
   if(illust){illust.style.display='none';illust.hidden=true;}
   const hint=q('plan-corridor-hint');
   if(hint)hint.style.display='';
-  ['plan-corridor-hours','plan-shared-flow','plan-congestion-advice'].forEach(id=>{
-    const el=q(id);if(el)el.innerHTML='';
-  });
-  _planCorridorHours=null;
-  _planCongestionAdvice=null;
+  const box=q('plan-road-crowding');
+  if(box)box.innerHTML='';
   _planSharedFlow=null;
 }
 
@@ -99,7 +96,7 @@ function planSetIllustBusy(on){
 
 /**
  * Called when Plan host starts ▶ Run on the GPS corridor.
- * Reveals C and loads hour profile / shared-flow / congestion advice.
+ * Reveals C and times THIS PLAN's road occupancy by hour (+ IWIP option).
  */
 function planOnCorridorRun(){
   const illust=q('plan-s2-illust');
@@ -107,17 +104,11 @@ function planOnCorridorRun(){
   const hint=q('plan-corridor-hint');
   if(hint)hint.style.display='none';
   if(_planRoadIllustReady){
-    // Refresh advice once V/C exists from the animation.
-    planFetchCongestionAdvice();
-    return Promise.resolve();
+    return planFetchRoadCrowding();
   }
   planSetIllustBusy(true);
-  const hrsP=planFetchCorridorHours();
-  const advP=planFetchCongestionAdvice();
-  const flowP=planFetchSharedFlow();
-  return Promise.all([hrsP,advP,flowP]).then(()=>{
+  return planFetchRoadCrowding().then(()=>{
     _planRoadIllustReady=true;
-    // Re-paint A so slow-hour / road signals pick up Jul+ profile.
     if(_planLastSim)planRenderOutcomes(_planLastSim,planPredictTotals());
     if(illust&&typeof illust.scrollIntoView==='function'){
       try{illust.scrollIntoView({behavior:'smooth',block:'nearest'});}
@@ -229,12 +220,12 @@ let _planScenarioGen=0;
 /** Latest opts waiting to run after the current calculate finishes (coalesced). */
 let _planScenarioQueued=null;
 let _planLastSuggestions=null; // [{id,key,currentDt,suggestedDt,reason,changed}]
-let _planCorridorHours=null;   // Jul+ hour profile (advisory)
 let _planDaySegments=null;     // click-through for one GPS-window analogue day
 let _planDaySegmentsDate=null;
-let _planCongestionAdvice=null;
-let _planSharedFlow=null;
-let _planRoadIllustReady=false; // C · road illustration loaded after GPS ▶ Run
+// Kept for the e2e contract: gates assert the payload's basis flags. Legacy
+// _planCongestionAdvice removed with the old road-illustration block.
+let _planSharedFlow=null;      // /api/plan/shared-flow payload (crowding source)
+let _planRoadIllustReady=false; // C · road crowding loaded after GPS ▶ Run
 /** Per-path optimize choice: id → 'suggested' | 'current'. */
 let _planOptChoice={};
 /** After user finalizes keep/apply (all or per-row) — B reflects that plan. */
@@ -632,255 +623,117 @@ function planFmtN(n,d){
   return x.toLocaleString('en-GB',{maximumFractionDigits:d,minimumFractionDigits:0});
 }
 
-function planRenderCorridorHours(data){
-  _planCorridorHours=data;
-  const box=q('plan-corridor-hours');if(!box)return;
-  if(!data||!data.ok){
-    box.innerHTML='<p class="muted" style="margin:0;font-size:12px">'
-      +escH((data&&data.error)||'Jul+ hour profile unavailable')+'</p>';
-    return;
-  }
-  const hours=data.hours||[];
-  const spds=hours.map(h=>h.speed_kmh).filter(v=>v!=null&&Number.isFinite(v));
-  const lo=spds.length?Math.min.apply(null,spds):0;
-  const hi=spds.length?Math.max.apply(null,spds):1;
-  const span=Math.max(0.5,hi-lo);
-  const slowSet={};
-  (data.slow_hours||[]).forEach(s=>{if(s&&s.h!=null)slowSet[s.h]=1;});
-  const bars=hours.map(h=>{
-    const v=h.speed_kmh;
-    const pct=v==null?8:Math.max(12,Math.round(18+70*((v-lo)/span)));
-    const cls=slowSet[h.h]?'plan-ch-bar slow':'plan-ch-bar';
-    const tip=v==null?(h.h+':00 — no fixes')
-      :(String(h.h).padStart(2,'0')+':00 · '+v+' km/h · ~'+(h.truck_n!=null?h.truck_n:'?')+' trucks');
-    return `<div class="${cls}" style="height:${pct}%" title="${escH(tip)}" data-hour="${escH(String(h.h))}"></div>`;
-  }).join('');
-  const win=data.window||{};
-  const slowH=(data.slow_hours||[]).map(s=>String(s.h).padStart(2,'0')+':00 ('+s.speed_kmh+' km/h)').join(' · ')||'—';
-  const slowS=(data.slow_sections||[]).map(s=>s.section+' ~'+s.speed_kmh+' km/h').join(' · ')||'—';
-  // Bars are always hour 0…23 left→right; label the axis so the start hour is obvious.
-  const axisTicks=[0,6,12,18,23].map(h=>{
-    const label=(h===0||h===23)
-      ?(String(h).padStart(2,'0')+':00')
-      :String(h).padStart(2,'0');
-    return `<span class="plan-ch-tick" style="left:${(h/23)*100}%">${escH(label)}</span>`;
-  }).join('');
-  box.innerHTML=`
-    <h4>Hour-of-day corridor <span class="muted">(Jul+ haul GPS · not tonnes)</span></h4>
-    <p class="plan-ch-start" id="plan-ch-start">Chart starts at <b>00:00</b> (local hour-of-day) · ends <b>23:00</b></p>
-    <div class="plan-ch-spark" role="img" aria-label="Hourly loaded speed from 00:00 to 23:00">${bars}</div>
-    <div class="plan-ch-axis" aria-hidden="true">${axisTicks}</div>
-    <div class="plan-ch-meta">Window ${escH(win.from||'?')} → ${escH(win.to||'?')} · ${escH(data.source||'')} · dir ${escH(data.dir||'down')} · ${escH(String(data.days_n||0))} days</div>
-    <div class="plan-ch-slow"><b>Slowest hours</b> — ${escH(slowH)}</div>
-    <div class="plan-ch-slow"><b>Slowest stick sections</b> — ${escH(slowS)}</div>
-    <p class="muted" style="font-size:10.5px;margin:6px 0 0">${escH(win.note||'Struggle-season illustration. Advisory only.')}</p>`;
+// ── C · Road crowding by hour (plan-driven, replaces the old illustration) ──
+// One question, answered from THIS plan: at which hours of the shift will each
+// haul-road section be crowded? Occupancy comes from /api/plan/shared-flow
+// (measured load/dump dwell + Jul+ section speeds + staggered releases) for
+// OUR planned trucks; the IWIP toggle adds the measured other-traffic paths
+// (foreign rows from the last ticket shift, scaled to the Other-trips input)
+// so the corridor shows combined crowding. Advisory only — never touches
+// simulate tonnes (basis.congestion_clips_tonnes stays false, J53).
+let _planCrowdIncludeIwip=true;
+function planCrowdIwipPlans(){
+  // Measured IWIP paths (from planFetchOtherTraffic) scaled to the Other-trips
+  // input: trips in the box ÷ trips measured that shift. Trucks scale the same
+  // way; occupancy needs truck counts, not ticket counts.
+  const paths=(typeof _planOtherPaths!=='undefined'?_planOtherPaths:[])||[];
+  if(!paths.length)return [];
+  const meas=(typeof _planOtherSrcTrips!=='undefined'?_planOtherSrcTrips:0)||0;
+  const want=(typeof _planOtherTrips!=='undefined'?_planOtherTrips:0)||0;
+  const k=meas>0&&want>0?want/meas:1;
+  return paths.map((p,i)=>({
+    source:p.origin,destination:p.dest,
+    n_trucks:Math.max(1,Math.round((p.trucks||1)*k)),
+    contractor:'IWIP',id:'iwip'+i,
+  }));
 }
-
-/** Illustration V/C by named section from plan-host flow hotspots (after seed). */
-function planVcBySection(){
-  const hs=(typeof _flowSim!=='undefined'&&_flowSim&&_flowSim.hotspots)||[];
-  const out={};
-  hs.forEach(z=>{
-    if(z&&z.label&&Number.isFinite(z.ratio))out[z.label]=Math.round(z.ratio*1000)/1000;
-  });
-  return out;
+function planCrowdToggleIwip(el){
+  _planCrowdIncludeIwip=!!(el&&el.checked);
+  planFetchRoadCrowding();
 }
-
-/** Posted limit vs Jul+ GPS median per named section (capability corridor payload). */
-function planLimitGapBySection(){
-  const corr=(typeof _D!=='undefined'&&_D&&_D.corridor)||{};
-  const measured=corr.measuredSpeeds||[];
-  const posted=(corr.speedLimits||[]).filter(x=>x&&Number(x.limit)>0);
-  const out={};
-  (PLAN_SECTIONS||[]).forEach(row=>{
-    const label=row[0], lo=Math.min(row[1],row[2]), hi=Math.max(row[1],row[2]);
-    const gps=[];
-    measured.forEach(b=>{
-      const a=Number(b.fromKm), b2=Number(b.toKm);
-      const mid=(a+b2)/2;
-      const spd=Number(b.loadedKmh!=null?b.loadedKmh:(b.speedKmh!=null?b.speedKmh:b.speed_kmh));
-      if(!Number.isFinite(mid)||!Number.isFinite(spd))return;
-      if(mid>lo&&mid<=hi)gps.push(spd);
-    });
-    const lims=[];
-    posted.forEach(z=>{
-      const a=Number(z.fromKm), b2=Number(z.toKm), lim=Number(z.limit);
-      if(!Number.isFinite(lim)||!Number.isFinite(a)||!Number.isFinite(b2))return;
-      const zlo=Math.min(a,b2), zhi=Math.max(a,b2);
-      if(!(zhi<=lo||zlo>=hi))lims.push(lim);
-    });
-    if(!gps.length||!lims.length)return;
-    gps.sort((a,b)=>a-b);lims.sort((a,b)=>a-b);
-    const gpsMed=gps[Math.floor(gps.length/2)];
-    const postedMed=lims[Math.floor(lims.length/2)];
-    out[label]={
-      gps_kmh:Math.round(gpsMed*10)/10,
-      posted_kmh:Math.round(postedMed*10)/10,
-      gap_kmh:Math.round((postedMed-gpsMed)*10)/10,
-    };
-  });
-  return out;
-}
-
-function planRenderCongestionAdvice(data){
-  _planCongestionAdvice=data;
-  const box=q('plan-congestion-advice');if(!box)return;
-  if(!data||!data.ok){
-    box.innerHTML='<p class="muted" style="margin:0;font-size:12px">'
-      +escH((data&&data.error)||'Congestion advice unavailable')+'</p>';
-    return;
-  }
-  const m=data.model||{};
-  const items=(data.advice||[]).map(a=>{
-    const pri=a.priority==='high'?'pri-high':'';
-    return `<li class="${pri}">${escH(a.text||'')}</li>`;
-  }).join('');
-  const saved=data.saved_plans||{};
-  const smooth=data.smooth_actions||[];
-  const smoothRows=smooth.map(a=>{
-    const pri=a.priority==='high'?'pri-high':(a.priority==='low'?'muted':'');
-    const vc=a.vc!=null?` · V/C ${Number(a.vc).toFixed(2)}`:'';
-    const gap=a.limit_gap&&a.limit_gap.gap_kmh!=null&&a.limit_gap.gap_kmh>2
-      ?` · GPS ${a.limit_gap.gps_kmh} vs posted ${a.limit_gap.posted_kmh}`
-      :'';
-    return `<li class="plan-smooth-item ${pri}">
-      <b>${escH(a.section||'?')}</b>
-      <span class="plan-smooth-win">${escH(a.window||'')}</span>
-      <span class="muted">· ~${escH(String(Math.round(a.plan_dt||0)))} DT · ~${escH(String(a.speed_kmh??'—'))} km/h${escH(vc)}${escH(gap)}</span>
-      <div class="plan-smooth-why">${escH(a.text||'')}</div>
-    </li>`;
-  }).join('');
-  const smoothBlock=smooth.length
-    ?`<div class="plan-smooth-timetable" id="plan-smooth-timetable">
-        <h5>Smooth-running timetable <span class="muted">(plan DT × Jul+ hour × section · not tonnes)</span></h5>
-        <ol>${smoothRows}</ol>
-      </div>`
-    :'';
-  box.innerHTML=`
-    <h4>Congestion advice <span class="muted">(Jul+ fit · not tonnes)</span></h4>
-    <div class="muted" style="font-size:11px;margin:0 0 6px">
-      Model: ${escH(m.type||'hour_of_day')} · free ~${escH(String(m.free_flow_kmh??'—'))} km/h
-      · ${escH(m.source||'')} · saved plans ${escH(String(saved.n_plans||0))}
-      ${(data.basis&&data.basis.uses_illustration_vc)?' · includes illustration V/C':''}
-    </div>
-    <ul>${items||'<li class="muted">No advice rows</li>'}</ul>
-    ${smoothBlock}
-    <p class="muted" style="font-size:10.5px;margin:6px 0 0">${escH(m.note||'Advisory only.')}</p>`;
-}
-
-function planFetchCongestionAdvice(){
-  const secs=new Set();
-  const planDt={};
-  planDraftEntries().forEach(r=>{
-    planRouteSections(r.source,r.dest).forEach(s=>{
-      secs.add(s);
-      planDt[s]=(planDt[s]||0)+Math.round(r.dt||0);
-    });
-  });
-  const vc=planVcBySection();
-  const gaps=planLimitGapBySection();
-  const box=q('plan-congestion-advice');
-  if(box&&!box.querySelector('.plan-smooth-timetable')){
-    box.innerHTML='<p class="muted" style="margin:0;font-size:12px">Fitting Jul+ congestion advice…</p>';
-  }
-  const body={sections:[...secs],plan_dt_by_section:planDt};
-  if(Object.keys(vc).length)body.vc_by_section=vc;
-  if(Object.keys(gaps).length)body.limit_gap_by_section=gaps;
-  return fetch('/api/plan/congestion-advice',{
-    method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(body),
-  }).then(r=>r.json()).then(data=>{
-    planRenderCongestionAdvice(data);
-    return data;
-  }).catch(e=>{
-    planRenderCongestionAdvice({ok:false,error:String(e)});
-    return null;
-  });
-}
-
-function planRenderSharedFlow(data){
-  _planSharedFlow=data;
-  const box=q('plan-shared-flow');if(!box)return;
-  if(!data||!data.ok){
-    box.innerHTML='<p class="muted" style="margin:0;font-size:12px">'
-      +escH((data&&data.error)||'Shared-road flow unavailable')+'</p>';
-    return;
-  }
-  const secs=data.sections||[];
-  const hours=data.congestion_hours||[];
-  const hint=data.meter_hint;
-  const sum=data.summary||{};
-  const rows=secs.map(s=>{
-    const st=s.status==='High'?'er':(s.status==='Watch'?'plan-ambition-mid':'');
-    return `<tr class="${st}">
-      <td><b>${escH(s.section)}</b>${s.shared?' <span class="muted">shared</span>':''}</td>
-      <td class="muted" style="font-size:10.5px">${escH((s.plans||[]).join(' · ')||'—')}</td>
-      <td class="r">${s.peak_trucks}</td>
-      <td class="r">${escH(String(s.cap_trucks_bin??'—'))}</td>
-      <td class="r">${s.ratio!=null?fmt(s.ratio,2):'—'}</td>
-      <td>${escH(s.status||'—')}</td>
-    </tr>`;
-  }).join('');
-  const hourBits=hours.length
-    ?hours.slice(0,6).map(h=>`<span class="plan-sf-hour ${h.status==='High'?'high':''}">${escH(h.label||'')} · ${h.peak_trucks} DT</span>`).join(' ')
-    :'<span class="muted">No Watch/High hours in this shift window</span>';
-  const dwellBits=(data.paths||[]).slice(0,4).map(p=>
-    `${escH(p.label)}: load ${escH(String(p.load_min))} min (${escH((p.load_basis||'').split('(')[0].trim())}) · dump ${escH(String(p.dump_min))} min`
-  ).join('<br>');
-  box.innerHTML=`
-    <h4>Shared-road timing <span class="muted">(DES-lite · not tonnes)</span></h4>
-    <div class="muted" style="font-size:11px;margin:0 0 6px">
-      ${escH(String(sum.n_paths||0))} paths · ${escH(String(sum.n_shared_sections||0))} shared sections
-      · ${escH(String(sum.n_high_sections||0))} High
-      · measured load/dump dwell + section travel · staggered releases
-    </div>
-    <div class="rain-table plan-sf-table"><table>
-      <thead><tr>
-        <th>Section</th><th>Plans</th><th class="r">Peak trucks</th>
-        <th class="r">Cap / bin</th><th class="r">Occ/Cap</th><th>Status</th>
-      </tr></thead>
-      <tbody>${rows||'<tr><td colspan="6" class="muted">No sections</td></tr>'}</tbody>
-    </table></div>
-    <div class="plan-sf-hours"><b>Congestion hours</b> — ${hourBits}</div>
-    ${hint?`<p class="plan-sf-hint">${escH(hint.text||'')}</p>`:''}
-    <div class="muted plan-sf-dwell" style="font-size:10.5px;margin-top:6px">${dwellBits||''}</div>
-    <p class="muted" style="font-size:10.5px;margin:6px 0 0">${escH(data.note||'Advisory only — never clips simulate tonnes.')}</p>`;
-}
-
-function planFetchSharedFlow(){
+function planFetchRoadCrowding(){
   const plans=planDraftEntries().map(r=>({
     source:r.source,destination:r.dest,n_trucks:Math.round(r.dt||0),
     contractor:r.contractor||null,id:r.id,
   })).filter(p=>p.n_trucks>0&&p.source&&p.destination);
-  const box=q('plan-shared-flow');
-  if(box)box.innerHTML='<p class="muted" style="margin:0;font-size:12px">Timing shared-road occupancy…</p>';
+  const iwip=_planCrowdIncludeIwip?planCrowdIwipPlans():[];
+  const box=q('plan-road-crowding');
+  if(box&&!box.querySelector('.plan-rc-grid')){
+    box.innerHTML='<p class="muted" style="margin:0;font-size:12px">Timing the plan\u2019s road occupancy\u2026</p>';
+  }
   const shiftH=parseFloat((q('plan-hours')||{}).value)||12;
   const rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0);
   return fetch('/api/plan/shared-flow',{
     method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({plans,shift_hours:shiftH,rain_mm:rain,start_hour:7}),
+    body:JSON.stringify({plans:plans.concat(iwip),shift_hours:shiftH,rain_mm:rain,start_hour:7}),
   }).then(r=>r.json()).then(data=>{
-    planRenderSharedFlow(data);
+    _planSharedFlow=data;
+    planRenderRoadCrowding(data,{nPlan:plans.length,nIwip:iwip.length,nIwipAvail:planCrowdIwipPlans().length});
     return data;
   }).catch(e=>{
-    planRenderSharedFlow({ok:false,error:String(e)});
+    _planSharedFlow=null;
+    planRenderRoadCrowding({ok:false,error:String(e)},{nPlan:plans.length,nIwip:iwip.length,nIwipAvail:planCrowdIwipPlans().length});
     return null;
   });
 }
-
-function planFetchCorridorHours(){
-  const secs=new Set();
-  planDraftEntries().forEach(r=>planRouteSections(r.source,r.dest).forEach(s=>secs.add(s)));
-  const qs=secs.size?('?sections='+encodeURIComponent([...secs].join(','))+'&dir=down'):'?dir=down';
-  const box=q('plan-corridor-hours');
-  if(box)box.innerHTML='<p class="muted" style="margin:0;font-size:12px">Loading Jul+ hour profile…</p>';
-  return fetch('/api/plan/corridor-hours'+qs).then(r=>r.json()).then(data=>{
-    planRenderCorridorHours(data);
-    return data;
-  }).catch(e=>{
-    planRenderCorridorHours({ok:false,error:String(e)});
-    return null;
-  });
+function planRenderRoadCrowding(data,meta){
+  const box=q('plan-road-crowding');if(!box)return;
+  meta=meta||{};
+  const iwipChk=`<label class="plan-rc-iwip" title="Add the measured IWIP/Position trucks (their last-shift paths, scaled to the Other-trips input) to the road occupancy. They share POS 12\u2013FENI with our hauls.">
+      <input type="checkbox" ${_planCrowdIncludeIwip?'checked':''} onchange="planCrowdToggleIwip(this)"> include IWIP trucks
+      ${meta.nIwipAvail?`<span class="muted">(${meta.nIwipAvail} measured path${meta.nIwipAvail===1?'':'s'})</span>`:'<span class="muted">(no measured paths)</span>'}
+    </label>`;
+  if(!data||!data.ok){
+    box.innerHTML=`<div class="plan-rc-head">${iwipChk}</div>
+      <p class="muted" style="margin:6px 0 0;font-size:12px">${escH((data&&data.error)||'Road-crowding timing unavailable')}</p>`;
+    return;
+  }
+  const secs=data.sections||[];
+  const startH=Number.isFinite(data.start_hour)?data.start_hour:7;
+  const binH=data.bin_hours||1;
+  const nBins=Math.max.apply(null,secs.map(s=>(s.occupancy||[]).length).concat([0]));
+  // Hour labels across the shift
+  const hourLbls=[];
+  for(let b=0;b<nBins;b++)hourLbls.push(((startH+Math.round(b*binH))%24));
+  // Grid: one row per section, one cell per hour, colour by occupancy/capacity.
+  const rows=secs.map(s=>{
+    const cap=s.cap_trucks_bin||1;
+    const cells=(s.occupancy||[]).map((c,b)=>{
+      const r=cap>0?c/cap:0;
+      const cls=r>=1?'rc-high':r>=0.7?'rc-watch':c>0?'rc-open':'rc-idle';
+      const tip=`${escH(s.section)} · ${String(hourLbls[b]).padStart(2,'0')}:00 · ${c} truck${c===1?'':'s'} on section (cap ~${Math.round(cap)}/bin${cap?` · ${Math.round(100*r)}%`:''})`;
+      return `<div class="rc-cell ${cls}" title="${tip}">${c>0?c:''}</div>`;
+    }).join('');
+    const who=(s.plans||[]).join(' · ');
+    const shared=s.shared?` <span class="muted">· shared${who.includes('IWIP')?' incl. IWIP':''}</span>`:'';
+    return `<div class="rc-row" title="${escH(s.section)} — used by: ${escH(who||'—')}">
+      <div class="rc-sec"><b>${escH(s.section)}</b>${shared}</div>
+      <div class="rc-cells">${cells}</div>
+    </div>`;
+  }).join('');
+  const axis=`<div class="rc-row rc-axis"><div class="rc-sec"></div><div class="rc-cells">${
+    hourLbls.map(h=>`<div class="rc-cell rc-hour">${String(h).padStart(2,'0')}</div>`).join('')
+  }</div></div>`;
+  // Verdict: worst crowded hours across sections.
+  const chours=data.congestion_hours||[];
+  const verdict=chours.length
+    ?`\u26a0 Crowded: ${chours.slice(0,4).map(h=>`<b>${escH(h.label)}</b> ${escH((h.sections||[]).join(', '))} (${h.peak_trucks} trucks${h.ratio!=null?` · ${Math.round(100*h.ratio)}%`:''})`).join(' · ')}`
+    :`\u2713 No hour reaches 70% of section capacity — releases stay smooth all shift`;
+  const iwipNote=meta.nIwip&&_planCrowdIncludeIwip
+    ?` · IWIP ${meta.nIwip} path(s) scaled to the Other-trips input`
+    :(_planCrowdIncludeIwip?'':' · IWIP excluded (toggle to include)');
+  box.innerHTML=`
+    <div class="plan-rc-head">
+      <span class="plan-rc-verdict">${verdict}</span>
+      ${iwipChk}
+    </div>
+    <div class="plan-rc-grid">${axis}${rows}</div>
+    <div class="muted" style="font-size:10.5px;margin-top:6px">
+      Trucks on each section per hour \u2014 our ${meta.nPlan||0} plan path(s)${iwipNote}.
+      Cell colour: green &lt;70% of section capacity · amber \u226570% · red \u2265100%.
+      Measured load/dump dwell + Jul+ section speeds, staggered releases.
+      Advisory only \u2014 never changes simulate tonnes.
+    </div>`;
 }
 
 function planRenderDaySegments(data,dateS){
