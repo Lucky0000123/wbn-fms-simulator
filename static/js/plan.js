@@ -235,15 +235,38 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
     const linear=tr*nComb;
     // Rain scales the CEILING too (harsh-test 2026-08-12: with a fixed cap,
     // wet beat dry at over-saturation because rain lowered demand and thus
-    // the BPR penalty — physically wrong). The demonstrated cap is a road
+    // the penalty — physically wrong). The demonstrated cap is a road
     // property; mud degrades the road, so capEff = cap × rain scale.
     const capEff=m.dayTripsCap*Math.min(1,scale);
+    // HARD MIN, deliberately. A BPR volume-delay penalty lived here briefly on
+    // 2026-08-12 — served = capEff/(1 + 0.15·over²) — and it had to come out:
+    //   • It made output COLLAPSE, not plateau. Measured on TF>FENI KM0:
+    //     172 DT → 205 trips, 800 DT → 68, 2000 DT → 11. A 2,000-truck fleet
+    //     produced 5% of what 172 trucks produced, and it fell without bound.
+    //   • It disagreed with /api/simulate, which correctly clips, by up to 94×
+    //     on the same plan (2000 DT: 572 t here vs 53,819 t there). Two models
+    //     answering one question is the defect class this repo has already paid
+    //     for twice — see the availability override and the capacity card.
+    //   • The 0.15 and the quadratic were not measured. Four independent tests
+    //     here failed to find a queueing effect at all, and the within-segment
+    //     density effect is −4.8% across the extremes.
+    // The ceiling IS measured (no day ever exceeded dayTripsCap); the shape of
+    // any decay past it is not. So saturate at the proven ceiling and stay
+    // silent about what nobody has measured: extra trucks divide the same
+    // demonstrated trips, they do not destroy them.
     if(capEff>0&&linear>capEff){
-      const nStar=capEff/tr;                     // critical combined fleet
-      const over=(nComb-nStar)/nStar;            // over-saturation ratio
-      const served=capEff/(1+0.15*over*over);
-      satFactor=served/linear;
+      satFactor=capEff/linear;
       tr*=satFactor;
+    }
+    // 30% FLOOR (owner 2026-08-12: "700 DT showed 0.12 trips/DT — impossible,
+    // we need the 0.30 threshold"). Drivers do not sit at 12% output: past the
+    // point where the ceiling division would price a truck below 30% of the
+    // path's measured rate, the floor holds. This is the same guard the model
+    // always had; it also bounds how far beyond data the estimate can fall.
+    const floorTr=.3*(hasDay?m.dayRate:m.avgTr)*Math.min(1,scale)*planContractorFactor(contractor);
+    if(tr<floorTr){
+      satFactor=satFactor*(floorTr/tr);
+      tr=floorTr;
     }
   }
   const sf=planShiftFactor();
@@ -330,7 +353,7 @@ function planRenderImpacts(key,dt,e,contractor){
       // Demonstrated-throughput ceiling binds: trips pinned at dayTripsCap.
       const capTrips=Math.round((m0.dayTripsCap||0)*sf);
       rows.push({kind:'fleet',icon:'📉',cls:'imp-bad',
-        txt:`Path throughput ceiling. This road has never delivered more than ~${fmtExact(m0.dayTripsCap)} trips/day (~${fmtExact(capTrips)}/shift), even on its biggest day (${dtMax0!=null?fmtExact(dtMax0):'?'} DT). At ${fmtExact(dt)} DT the same ~${fmtExact(capTrips)} trips are shared out: ~${fmtExact(e.shift,2)} trips per truck. Extra trucks beyond ~${dtMax0!=null?fmtExact(dtMax0):'?'} DT add queue, not trips.`,
+        txt:`Path throughput ceiling. This road has never delivered more than ~${fmtExact(m0.dayTripsCap)} trips/day (~${fmtExact(capTrips)}/shift), even on its biggest day (${dtMax0!=null?fmtExact(dtMax0):'?'} DT). At ${fmtExact(dt)} DT each truck is priced at ~${fmtExact(e.shift,2)} trips (30% floor — trucks never model below 30% of the measured rate). Trips shown above the ceiling are floor-driven and UNPROVEN: the road has never done them.`,
         tip:`Model: trips = rate × DT capped at the demonstrated maximum (${fmtExact(m0.dayTripsCap)} trips/day over ${fmtExact(m0.dayN||0)} measured days). In-history the rate is flat (~${fmtExact(baseShift,2)}/shift per truck); the ceiling only binds beyond ~${fmtExact(Math.round((m0.dayTripsCap||0)/(m0.dayRate||1)))} DT. To beat the ceiling the site needs more loaders/road, not more trucks.`});
     }else if(dt>avgDt*1.5&&slope<0){
       rows.push({kind:'fleet',icon:'📉',cls:'imp-bad',
