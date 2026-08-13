@@ -90,10 +90,64 @@
     return row&&row.achievable_production_t!=null?row.achievable_production_t*2:null; // per day
   }
 
+  // ── Target directly on the plan-table row (owner 2026-08-13: "add option
+  //    to add sap target in plan table as well so i can enter it directly").
+  // Every SAP row gets a 🎯 chip after the material tag: shows the target if
+  // set ("🎯 10,000 t"), or "＋ target" if not. Click → inline number input;
+  // Enter/blur commits to the draft row, 0/empty clears the target.
+  function decorateRowTargets(rows){
+    const d=draft();
+    Array.from(rows.querySelectorAll('.plan-mat-tag[data-matid]')).forEach(tag=>{
+      const id=tag.getAttribute('data-matid');
+      const r=d[id];
+      if(!r||r.foreign)return;
+      const isSap=(r.material||'')==='SAP';
+      const existing=tag.parentNode.querySelector('.plan-sap-chip[data-sapid="'+CSS.escape(id)+'"]');
+      if(!isSap){if(existing)existing.remove();return;}
+      const label=r.targetWmt>0?('🎯 '+fmt(r.targetWmt)+' t'):'＋ target';
+      if(existing){
+        if(!existing.querySelector('input'))existing.innerHTML=label;
+        return;
+      }
+      tag.insertAdjacentHTML('afterend',
+        ' <span class="plan-sap-chip" data-sapid="'+esc(id)+'" title="SAP is fixed supply — click to set the t/day target for this path" '
+        +'style="font-size:9px;padding:1px 6px;border-radius:8px;cursor:pointer;vertical-align:middle;'
+        +'background:rgba(34,197,94,.14);color:#4ade80;border:1px solid rgba(34,197,94,.3)">'+label+'</span>');
+    });
+  }
+
+  document.addEventListener('click',ev=>{
+    const chip=ev.target&&ev.target.closest?ev.target.closest('.plan-sap-chip[data-sapid]'):null;
+    if(!chip||chip.querySelector('input'))return;
+    const id=chip.getAttribute('data-sapid');
+    const r=draft()[id];
+    if(!r)return;
+    const inp=document.createElement('input');
+    inp.type='number';inp.min='0';inp.step='500';
+    inp.value=r.targetWmt>0?r.targetWmt:'';
+    inp.placeholder='t/day';
+    inp.style.cssText='width:64px;font-size:9px;background:transparent;color:#4ade80;border:none;outline:none';
+    chip.textContent='🎯 ';
+    chip.appendChild(inp);
+    inp.focus();
+    let done=false;
+    const commit=()=>{
+      if(done)return;done=true;
+      const v=Math.max(0,parseFloat(inp.value)||0);
+      if(v>0)r.targetWmt=v;else delete r.targetWmt;
+      if(typeof computePlan==='function')computePlan();   // re-render chip + board
+    };
+    inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();commit();}
+      if(e.key==='Escape'){done=true;if(typeof computePlan==='function')computePlan();}});
+    inp.addEventListener('blur',commit);
+    ev.stopPropagation();
+  });
+
   function renderBoard(){
     let host=q('plan-sap-board');
     const rows=q('plan-rows');
     if(!rows)return;
+    decorateRowTargets(rows);
     const targets=Object.keys(draft()).map(id=>({id,r:draft()[id]}))
       .filter(x=>x.r&&x.r.targetWmt>0&&!x.r.foreign);
     if(!host){
