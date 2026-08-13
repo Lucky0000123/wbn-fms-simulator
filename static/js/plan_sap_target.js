@@ -11,9 +11,8 @@
 //     SAP = fixed SUPPLY (has a target); LIM = BUFFER (no target needed).
 //   • The target rides on the draft row (targetWmt, t/day) and through saved
 //     plans (planDraftSnapshot wrapper).
-//   • A "SAP targets" board under the plan table shows, per SAP row:
-//     target vs predicted vs achievable, allocated DT vs REQUIRED DT (solved
-//     through the same planTripsPerDT engine), and a one-word status.
+//   • The SAP targets board lives in A · Production & capacity (after Check
+//     capacity), not under the holding-plan table — that duplicate is gone.
 // Separate module (like plan_material.js): plan.js is mid-refactor elsewhere.
 (function(){
   'use strict';
@@ -36,7 +35,19 @@
   // plan_material.js sets the route default PROGRAMMATICALLY (no change event
   // fires), so a one-shot init missed it — keep visibility synced on a light
   // interval instead (found in verification: SAP default left the field hidden).
-  setInterval(syncTargetVisibility,900);
+  // The same tick self-heals the CAP board: async re-renders (Check capacity,
+  // simulate, analogues) rebuild the capacity card with innerHTML and can
+  // detach #plan-sap-board-cap after we drew it.
+  setInterval(function(){
+    syncTargetVisibility();
+    try{
+      const cap=q('plan-scenario-estimate');
+      const hasTargets=Object.keys(draft()).some(id=>draft()[id]&&draft()[id].targetWmt>0);
+      if(cap&&hasTargets&&cap.querySelector('.plan-cap-block')&&!q('plan-sap-board-cap')){
+        renderBoard();
+      }
+    }catch(e){}
+  },900);
 
   // Stamp targetWmt on rows created by Add to plan (SAP only).
   const _origAdd=window.planAddPath;
@@ -160,25 +171,15 @@
   });
 
   function renderBoard(){
-    let host=q('plan-sap-board');
     const rows=q('plan-rows');
     if(!rows)return;
     decorateRowTargets(rows);
-    // SAP-only doctrine (owner: "if it is going to buffer, it's limonite...")
-    // A target can end up on a non-SAP row (e.g. material edited after the
-    // target was set). Don't silently honour OR silently drop it: keep the
-    // row on the board but flag the material mismatch.
+    // Holding-plan table does not host the SAP board — Check capacity does
+    // (`#plan-sap-board-cap`). Drop any leftover under-table host.
+    const leftover=q('plan-sap-board');
+    if(leftover)leftover.remove();
     const targets=Object.keys(draft()).map(id=>({id,r:draft()[id]}))
       .filter(x=>x.r&&x.r.targetWmt>0&&!x.r.foreign);
-    if(!host){
-      const table=rows.closest('table');
-      if(!table)return;
-      host=document.createElement('div');
-      host.id='plan-sap-board';
-      table.parentNode.insertBefore(host,table.nextSibling);
-    }
-    if(!targets.length){host.innerHTML='';renderCapBoard(targets);return;}
-    host.innerHTML=boardHtml(targets);
     renderCapBoard(targets);
   }
 
@@ -190,14 +191,30 @@
       const pay=typeof planPayload==='function'?planPayload(r.key,c):{tf:50};
       const predDay=e?r.dt*e.daily*pay.tf:null;
       const achvDay=achievableFor(r.key);
-      const reqDt=requiredDt(r.key,r.targetWmt,c);
+      let reqDt=requiredDt(r.key,r.targetWmt,c);
       const ceil=typeof planDtForWmt==='function'?planDtForWmt._lastCeiling:null;
       const unreachable=reqDt==null;
+      // Target above the path's demonstrated ceiling (owner 2026-08-13,
+      // October BLB>POS 14: 26,913 asked vs 24,674 max): don't give up with
+      // a dash — still answer "how many DTs" by solving for the CEILING
+      // itself (99.5% of it: the solver rejects targets at/above the peak).
+      // The status then says both facts: trucks to reach the max, and the
+      // shortfall that no truck count can close.
+      let ceilDt=null;
+      if(unreachable&&ceil&&ceil.maxT>0){
+        ceilDt=requiredDt(r.key,ceil.maxT*2*0.995,c);
+      }
       const met=predDay!=null&&predDay>=r.targetWmt*0.995;
       const status=unreachable
-        ?'<span style="color:#ef4444;font-weight:600">target above path ceiling'+(ceil?(' ('+fmt(ceil.maxT*2)+' t/day max)'):'')+'</span>'
+        ?(ceilDt!=null
+          ?'<span style="color:#ef4444;font-weight:600">'
+            +(ceilDt>r.dt?('add '+fmt(ceilDt-r.dt)+' DT → path max '):'at path max ')
+            +fmt(ceil.maxT*2)+' t/day — short '+fmt(Math.max(0,r.targetWmt-ceil.maxT*2))
+            +' t/day needs a 2nd path</span>'
+          :'<span style="color:#ef4444;font-weight:600">target above path ceiling'+(ceil?(' ('+fmt(ceil.maxT*2)+' t/day max)'):'')+'</span>')
         :met?'<span style="color:#22c55e;font-weight:600">on target</span>'
         :'<span style="color:#f59e0b;font-weight:600">add '+fmt(Math.max(0,reqDt-r.dt))+' DT</span>';
+      if(unreachable&&ceilDt!=null)reqDt=ceilDt;   // Required-DT column: trucks for the max
       return '<tr>'
         +'<td><b>'+esc(r.key.replace('>',' → '))+'</b> <span class="muted">'+esc(r.contractor)+'</span></td>'
         +'<td class="r">'+fmt(r.targetWmt)+'</td>'
