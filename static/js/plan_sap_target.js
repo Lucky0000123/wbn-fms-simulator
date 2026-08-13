@@ -177,7 +177,12 @@
       host.id='plan-sap-board';
       table.parentNode.insertBefore(host,table.nextSibling);
     }
-    if(!targets.length){host.innerHTML='';return;}
+    if(!targets.length){host.innerHTML='';renderCapBoard(targets);return;}
+    host.innerHTML=boardHtml(targets);
+    renderCapBoard(targets);
+  }
+
+  function boardHtml(targets){
     const rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0);
     const body=targets.map(({id,r})=>{
       const c=typeof planContractor==='function'?planContractor(r.contractor):null;
@@ -202,8 +207,7 @@
         +'<td class="r">'+(reqDt!=null?fmt(reqDt):'—')+'</td>'
         +'<td>'+status+'</td></tr>';
     }).join('');
-    host.innerHTML=
-      '<div style="margin-top:10px;border:1px solid rgba(34,197,94,.3);border-radius:9px;padding:9px 12px">'
+    return '<div style="margin-top:10px;border:1px solid rgba(34,197,94,.3);border-radius:9px;padding:9px 12px">'
       +'<b style="font-size:12px">SAP targets — fixed supply</b> '
       +'<span class="muted" style="font-size:11px">(LIM is buffer — no target needed). '
       +'Goal: predicted = achievable = target. Required DT solved with the same path engine as the table.</span>'
@@ -214,11 +218,45 @@
       +body+'</table></div>';
   }
 
+  // Owner 2026-08-13 (screenshots): "this should be shown in this part after
+  // calculations" — the same board inside A · Production & capacity, under the
+  // Check-capacity route table, where Achievable is filled from the engine.
+  function renderCapBoard(targets){
+    const cap=q('plan-scenario-estimate');
+    if(!cap)return;
+    let slot=q('plan-sap-board-cap');
+    if(!targets||!targets.length){if(slot)slot.innerHTML='';return;}
+    if(!slot){
+      const block=cap.querySelector('.plan-cap-block')||cap;
+      slot=document.createElement('div');
+      slot.id='plan-sap-board-cap';
+      block.appendChild(slot);
+    }else if(!slot.isConnected||!cap.contains(slot)){
+      // capacity card re-rendered via innerHTML — reattach
+      const block=cap.querySelector('.plan-cap-block')||cap;
+      slot=document.createElement('div');
+      slot.id='plan-sap-board-cap';
+      block.appendChild(slot);
+    }
+    slot.innerHTML=boardHtml(targets);
+  }
+
   // Re-render whenever the plan table re-renders.
   const _origCompute=window.computePlan;
   if(typeof _origCompute==='function'){
     window.computePlan=function(){
       const r=_origCompute.apply(this,arguments);
+      try{renderBoard();}catch(e){}
+      return r;
+    };
+  }
+
+  // A · Production & capacity re-renders with its own innerHTML on Check
+  // capacity / simulate — re-attach the board right after it paints.
+  if(typeof window.planRenderEstimateColumn==='function'){
+    const _origCap=window.planRenderEstimateColumn;
+    window.planRenderEstimateColumn=function(){
+      const r=_origCap.apply(this,arguments);
       try{renderBoard();}catch(e){}
       return r;
     };
