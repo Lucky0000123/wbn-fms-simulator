@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Monthly Plan — FMS Simulator</title>
+<title>Monthly plan — prediction · achievable · target</title>
 <style>
 :root{--bg:#0d1117;--card:#161b22;--line:#30363d;--txt:#e6edf3;--muted:#8b98a5;
---accent:#f59e0b;--ok:#22c55e;--warn:#f59e0b;--er:#ef4444;--blue:#60a5fa}
+--accent:#f59e0b;--ok:#22c55e;--warn:#f59e0b;--er:#ef4444;--blue:#60a5fa;--achv:#34d399}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--txt);font:13px/1.45 -apple-system,'Segoe UI',Roboto,sans-serif}
 header{display:flex;align-items:center;gap:14px;padding:10px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
@@ -18,18 +18,16 @@ main{max-width:1200px;margin:0 auto;padding:16px}
 .card h2{font-size:13px;margin:0 0 10px;letter-spacing:.02em}
 .muted{color:var(--muted)}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-select,input[type=month],input[type=file]{background:#0d1117;color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:5px 9px;font-size:12.5px}
+select,input[type=month],input[type=number],input[type=file]{background:#0d1117;color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:5px 9px;font-size:12.5px}
 textarea{width:100%;min-height:74px;background:#0d1117;color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:7px 9px;font-size:12px;font-family:ui-monospace,monospace}
 button{background:#21262d;color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:6px 13px;font-size:12.5px;cursor:pointer}
 button:hover{border-color:#8b98a5}
 button.primary{background:var(--accent);color:#1a1d24;font-weight:700;border-color:var(--accent)}
 button:disabled{opacity:.45;cursor:default}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-@media(max-width:900px){.grid2{grid-template-columns:1fr}}
 .kpis{display:flex;gap:22px;flex-wrap:wrap;margin:6px 0}
 .kpi .v{font-size:20px;font-weight:700}
 .kpi .k{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
-.kpi .v.pred{color:var(--blue)} .kpi .v.man{color:var(--warn)} .kpi .v.gap{color:var(--ok)}
+.kpi .v.pred{color:var(--blue)} .kpi .v.man{color:var(--warn)} .kpi .v.gap{color:var(--ok)} .kpi .v.achv{color:var(--achv)}
 .chart{height:300px}
 table{border-collapse:collapse;width:100%;font-size:12px}
 th,td{padding:3px 9px;border-bottom:1px solid var(--line);text-align:right}
@@ -38,115 +36,154 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
 .tag{display:inline-block;padding:1px 7px;border-radius:9px;font-size:10px;background:rgba(96,165,250,.15);color:var(--blue)}
 .status{font-size:11.5px;margin-left:8px}
 .status.ok{color:var(--ok)} .status.er{color:var(--er)}
+.defs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0}
+@media(max-width:800px){.defs{grid-template-columns:1fr}}
+.def{border:1px solid var(--line);border-radius:9px;padding:10px 12px;background:#0d1117}
+.def h3{margin:0 0 4px;font-size:12px;letter-spacing:.04em;text-transform:uppercase}
+.def.pred h3{color:var(--blue)} .def.achv h3{color:var(--achv)} .def.tgt h3{color:var(--warn)}
+.def a{color:var(--achv);text-decoration:none}
+.def a:hover{text-decoration:underline}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-top:12px}
+.mcard{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:#0d1117;cursor:pointer;text-align:left;width:100%;font:inherit;color:inherit}
+.mcard:hover{border-color:#8b98a5}
+.mcard.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.mcard .name{font-size:14px;font-weight:700;margin:0 0 8px}
+.mcard .meta{font-size:11px;color:var(--muted);margin:0 0 8px}
+.mcard .row3{display:flex;flex-direction:column;gap:5px}
+.mcard .ln{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:12px}
+.mcard .ln b{font-variant-numeric:tabular-nums;font-size:14px}
+.mcard .ln.pred b{color:var(--blue)} .mcard .ln.achv b{color:var(--achv)} .mcard .ln.tgt b{color:var(--warn)}
+.bars{display:flex;gap:6px;align-items:flex-end;height:44px;margin-top:10px}
+.bars i{flex:1;border-radius:3px 3px 0 0;min-height:3px}
+.bars .p{background:var(--blue)} .bars .a{background:var(--achv)} .bars .t{background:var(--warn)}
+.adv>summary{cursor:pointer;color:var(--muted);font-size:12.5px;padding:4px 0}
 </style>
 </head>
 <body>
 <header>
-  <h1>📅 Monthly plan — prediction vs manual</h1>
+  <h1>Monthly plan</h1>
   <a href="/simulator">← back to simulator</a>
+  <a href="/simulator?tab=plan">Plan tab</a>
   <span style="flex:1"></span>
-  <label class="muted" style="font-size:12px">Month
-    <input type="month" id="mo-month" style="margin-left:6px">
+  <label class="muted" style="font-size:12px">Year
+    <input type="number" id="mo-year" min="2025" max="2035" step="1" style="width:88px;margin-left:6px">
   </label>
-  <select id="mo-months" title="Stored months"><option value="">Stored…</option></select>
+  <button class="primary" onclick="moExportYear()">⬇ Download Excel</button>
 </header>
 <main>
 
 <div class="card">
-  <h2>0 · Yearly plan matrix <span class="tag" style="background:rgba(34,197,94,.15);color:var(--ok)">one paste fills every month</span></h2>
-  <p class="muted" style="margin:4px 0 10px">Paste (or upload) the mine-planning
-  matrix — ORIGIN / MATERIAL / DESTINATION / CONTRACTOR rows with WMT/day and
-  NB_DT_ per month. Each month then builds with one click: <b>manual side</b> =
-  the matrix's own WMT/day × days, <b>prediction side</b> = the same fleet
-  (NB_DT_) run through the measured plan engine.</p>
+  <h2>What the three numbers are</h2>
+  <div class="defs">
+    <div class="def pred">
+      <h3>Prediction</h3>
+      <p>The minimum you can bet on tomorrow. Measured trips/DT × this fleet, capped at the most trips that road has ever done in a day. Every variable in it is already in the history — it does not wait for a new scenario.</p>
+    </div>
+    <div class="def achv">
+      <h3>Achievable</h3>
+      <p>What the same fleet can deliver if loader and dump point ceilings hold. This is the simulate engine on the <a href="/simulator?tab=plan">Plan tab</a> (Check capacity). When conditions change, run a new scenario there and rebuild — the two numbers are never averaged.</p>
+    </div>
+    <div class="def tgt">
+      <h3>Target</h3>
+      <p>Your matrix: WMT/day × days in the month. The plan you wrote. Same figure every day — nothing is invented between days.</p>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Yearly matrix <span class="tag" style="background:rgba(34,197,94,.15);color:var(--ok)">one paste · every month</span></h2>
+  <p class="muted" style="margin:4px 0 10px">Paste (or upload) the mine-planning matrix — ORIGIN / MATERIAL / DESTINATION / CONTRACTOR with <b>WMT/day</b> and <b>NB_DT_</b> per month. That is one typical day. We run that day across every calendar day of each month, then show prediction, achievable and target.</p>
   <textarea id="mo-yearly-paste" placeholder="Paste the matrix straight from Excel (tab-separated)…"></textarea>
   <div class="row" style="margin-top:6px">
-    <button onclick="moYearlyPaste()">Load pasted matrix</button>
+    <button class="primary" onclick="moYearlyPaste()">Load matrix and build year</button>
     <input type="file" id="mo-yearly-file" accept=".xlsx,.xlsm,.csv,.tsv,.txt">
-    <button onclick="moYearlyUpload()">Upload matrix file</button>
+    <button onclick="moYearlyUpload()">Upload and build year</button>
     <span class="status" id="mo-yearly-status"></span>
   </div>
-  <div id="mo-yearly-months" class="row" style="margin-top:10px"></div>
-  <div id="mo-record-out" style="margin-top:10px"></div>
 </div>
 
-<div class="grid2">
-  <div class="card">
-    <h2>1 · Prediction plan <span class="tag">from the Plan tab</span></h2>
-    <p class="muted" style="margin:4px 0 10px">Pick a saved daily plan. It runs
-    every day of the month: day = 2 × 12 h shifts × the plan's per-shift
-    prediction. Same fleet, same paths, rain fixed at the saved value.</p>
-    <div class="row">
-      <select id="mo-saved"><option value="">Saved daily plans…</option></select>
-      <button class="primary" id="mo-build" onclick="moBuild()">Build month from this plan</button>
-      <span class="status" id="mo-build-status"></span>
-    </div>
-    <div id="mo-pred-summary" class="muted" style="margin-top:10px;font-size:12px"></div>
+<div class="card" id="mo-board">
+  <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+    <h2 style="margin:0">Year board</h2>
+    <button class="primary" onclick="moExportYear()">⬇ Download Excel</button>
   </div>
-
-  <div class="card">
-    <h2>2 · Manual plan <span class="tag" style="background:rgba(245,158,11,.15);color:var(--warn)">your Excel</span></h2>
-    <p class="muted" style="margin:4px 0 10px">Upload the month plan you made
-    by the usual method (historical trips, no variables) — .xlsx or .csv with a
-    date (or day number) column and a WMT/tonnage column. Or paste rows.</p>
-    <div class="row">
-      <input type="file" id="mo-file" accept=".xlsx,.xlsm,.csv,.tsv,.txt">
-      <button onclick="moUpload()">Upload</button>
-      <span class="status" id="mo-man-status"></span>
-    </div>
-    <textarea id="mo-paste" placeholder="…or paste rows, e.g.&#10;date,wmt&#10;2026-09-01,34500&#10;2026-09-02,36200"></textarea>
-    <div class="row" style="margin-top:6px">
-      <button onclick="moPaste()">Use pasted rows</button>
-      <span class="muted" id="mo-man-summary" style="font-size:12px"></span>
-    </div>
-  </div>
+  <p class="muted" id="mo-board-note" style="margin:0 0 8px">Load a matrix to fill the months.</p>
+  <div class="kpis" id="mo-year-kpis"></div>
+  <div class="cards" id="mo-cards"></div>
+  <div class="chart" id="mo-chart-year" style="margin-top:16px;height:340px"></div>
 </div>
 
-<div class="card" id="mo-compare-card" style="display:none">
-  <h2>3 · Comparison</h2>
+<div class="card" id="mo-month-card" style="display:none">
+  <h2 id="mo-month-title">Month</h2>
   <div class="kpis" id="mo-kpis"></div>
   <div class="chart" id="mo-chart-daily"></div>
-  <div class="chart" id="mo-chart-cum" style="margin-top:10px"></div>
-  <div class="chart" id="mo-chart-gap" style="margin-top:10px;height:220px"></div>
   <div class="row" style="margin-top:12px">
-    <button class="primary" onclick="moExport()">⬇ Export Excel (data + charts)</button>
-    <button onclick="moClear('all')" title="Delete everything stored for this month">Clear month</button>
-    <span class="muted" style="font-size:11.5px">The export contains the daily table,
-    totals, the plan basis (paths, DT, WB, material, rain) and three native Excel charts.</span>
+    <button class="primary" onclick="moExport()">⬇ Export this month (Excel)</button>
+    <span class="muted" style="font-size:11.5px">Daily table is flat on purpose: the same day, every day.</span>
   </div>
   <details style="margin-top:12px"><summary class="muted" style="cursor:pointer">Daily table</summary>
     <div style="max-height:340px;overflow:auto;margin-top:8px"><table id="mo-table"></table></div>
   </details>
+  <div id="mo-path-box" style="margin-top:12px"></div>
 </div>
 
-<p class="muted" style="font-size:11.5px">Prediction days come from the saved plan's
-own totals (measured path engine, shared ceilings, weighbridges). The manual plan is
-stored verbatim — nothing is recalculated on that side. To model a different month,
-save another daily plan in the Plan tab and build from it here.</p>
+<details class="card adv">
+  <summary>Advanced — saved daily plan, extra Excel, record attempt, SAP rebalance</summary>
+  <div class="row" style="margin-top:10px">
+    <label class="muted">Month <input type="month" id="mo-month" style="margin-left:6px"></label>
+    <select id="mo-months" title="Stored months"><option value="">Stored…</option></select>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:12px">
+    <div>
+      <h2>Build from a Plan-tab save</h2>
+      <p class="muted" style="margin:4px 0 10px">Pick a saved daily plan. It runs every day of the selected month.</p>
+      <div class="row">
+        <select id="mo-saved"><option value="">Saved daily plans…</option></select>
+        <button onclick="moBuild()">Build month</button>
+        <span class="status" id="mo-build-status"></span>
+      </div>
+      <div id="mo-pred-summary" class="muted" style="margin-top:10px;font-size:12px"></div>
+    </div>
+    <div>
+      <h2>Replace target from another Excel</h2>
+      <p class="muted" style="margin:4px 0 10px">Optional. The matrix already is the target. Use this only if you have a different day-by-day file.</p>
+      <div class="row">
+        <input type="file" id="mo-file" accept=".xlsx,.xlsm,.csv,.tsv,.txt">
+        <button onclick="moUpload()">Upload</button>
+        <span class="status" id="mo-man-status"></span>
+      </div>
+      <textarea id="mo-paste" placeholder="…or paste rows, e.g.&#10;date,wmt&#10;2026-09-01,34500"></textarea>
+      <div class="row" style="margin-top:6px">
+        <button onclick="moPaste()">Use pasted rows</button>
+        <span class="muted" id="mo-man-summary" style="font-size:12px"></span>
+      </div>
+    </div>
+  </div>
+  <div id="mo-yearly-months" class="row" style="margin-top:12px"></div>
+  <div id="mo-record-out" style="margin-top:10px"></div>
+</details>
+
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <script>
 'use strict';
 const $=id=>document.getElementById(id);
-let _state=null,_charts={};
+let _state=null,_charts={},_board=null,_selMonth='';
 
+function year(){return String($('mo-year').value||new Date().getFullYear());}
 function month(){return $('mo-month').value;}
 function fmt(n){return n==null?'—':Number(n).toLocaleString('en-GB',{maximumFractionDigits:0});}
 
 function chart(id,opt){
-  if(typeof echarts==='undefined'){$(id).innerHTML='<div class="muted" style="padding:20px">Chart library offline — the daily table below and the Excel export still work.</div>';return;}
+  const el=$(id);if(!el)return;
+  if(typeof echarts==='undefined'){el.innerHTML='<div class="muted" style="padding:20px">Chart library offline — the month cards and Excel export still work.</div>';return;}
   let c=_charts[id];
-  if(c&&(c.isDisposed()||c.getDom()!==$(id))){try{c.dispose();}catch(e){}c=null;}
-  if(!c){c=echarts.init($(id));_charts[id]=c;}
+  if(c&&(c.isDisposed()||c.getDom()!==el)){try{c.dispose();}catch(e){}c=null;}
+  if(!c){c=echarts.init(el);_charts[id]=c;}
   c.setOption(opt,true);
 }
 window.addEventListener('resize',()=>Object.values(_charts).forEach(c=>{try{c.resize();}catch(e){}}));
-
-function defaultMonth(){
-  const d=new Date();d.setMonth(d.getMonth()+1);
-  return d.toISOString().slice(0,7);
-}
 
 async function refreshMonths(){
   const r=await fetch('/api/monthly/months').then(x=>x.json()).catch(()=>null);
@@ -154,7 +191,6 @@ async function refreshMonths(){
   const ms=(r&&r.months)||[];
   sel.innerHTML='<option value="">Stored… ('+ms.length+')</option>'+ms.map(m=>'<option>'+m+'</option>').join('');
 }
-
 async function refreshSaved(){
   const r=await fetch('/api/plan/saved/list').then(x=>x.json()).catch(()=>null);
   const sel=$('mo-saved');
@@ -163,101 +199,163 @@ async function refreshSaved(){
     +ds.map(d=>'<option>'+d+'</option>').join('');
 }
 
+function renderBoard(){
+  const b=_board||{};
+  const cards=b.cards||[];
+  const note=$('mo-board-note');
+  if(!b.has_matrix&&!cards.length){
+    note.textContent='Load a matrix to fill the months.';
+  }else{
+    note.textContent=(b.source?('Loaded: '+b.source+' · '):'')
+      +(b.routes?b.routes+' route rows · ':'')
+      +'same day every day of each month.';
+  }
+  const tot={p:0,a:0,t:0,n:0};
+  cards.forEach(c=>{
+    if(c.pred_month!=null){tot.p+=c.pred_month;tot.n+=1;}
+    if(c.achv_month!=null)tot.a+=c.achv_month;
+    if(c.target_month!=null)tot.t+=c.target_month;
+  });
+  $('mo-year-kpis').innerHTML=tot.n
+    ?('<div class="kpi"><div class="v pred">'+fmt(tot.p)+'</div><div class="k">prediction · year t</div></div>'
+     +'<div class="kpi"><div class="v achv">'+fmt(tot.a||null)+'</div><div class="k">achievable · year t</div></div>'
+     +'<div class="kpi"><div class="v man">'+fmt(tot.t||null)+'</div><div class="k">target · year t</div></div>')
+    :'';
+  const max=Math.max(1,...cards.map(c=>Math.max(c.pred_month||0,c.achv_month||0,c.target_month||0)));
+  $('mo-cards').innerHTML=cards.map(c=>{
+    const on=_selMonth===c.month?' on':'';
+    const h=v=>Math.max(6,Math.round(40*(v||0)/max));
+    return '<button type="button" class="mcard'+on+'" onclick="moPickMonth(\''+c.month+'\')">'
+      +'<div class="name">'+c.name+' '+year()+'</div>'
+      +'<div class="meta">'+(c.n_days||'—')+' days'
+      +(c.dt!=null?' · '+fmt(c.dt)+' DT':'')
+      +(c.built?'':' · not built yet')+'</div>'
+      +'<div class="row3">'
+      +'<div class="ln pred"><span>Prediction</span><b>'+fmt(c.pred_month)+'</b></div>'
+      +'<div class="ln achv"><span>Achievable</span><b>'+fmt(c.achv_month)+'</b></div>'
+      +'<div class="ln tgt"><span>Target</span><b>'+fmt(c.target_month)+'</b></div>'
+      +'</div>'
+      +(c.built?('<div class="bars" aria-hidden="true"><i class="p" style="height:'+h(c.pred_month)+'px"></i>'
+        +'<i class="a" style="height:'+h(c.achv_month)+'px"></i>'
+        +'<i class="t" style="height:'+h(c.target_month)+'px"></i></div>'):'')
+      +'</button>';
+  }).join('')||'<div class="muted">No months yet.</div>';
+
+  const labs=cards.map(c=>c.name);
+  const axis={type:'category',data:labs,axisLabel:{color:'#8b98a5'}};
+  const yax={type:'value',axisLabel:{color:'#8b98a5'},splitLine:{lineStyle:{color:'rgba(148,163,184,.09)'}}};
+  chart('mo-chart-year',{
+    title:{text:'Year · monthly tonnes',left:8,textStyle:{fontSize:12.5,color:'#cbd5e1'}},
+    legend:{top:4,right:8,textStyle:{color:'#8b98a5',fontSize:11}},
+    grid:{left:74,right:20,top:38,bottom:26},tooltip:{trigger:'axis'},
+    xAxis:axis,yAxis:{...yax,name:'t / month'},
+    series:[
+      {name:'Prediction',type:'line',smooth:false,symbol:'circle',symbolSize:8,color:'#60a5fa',
+        data:cards.map(c=>c.pred_month??null)},
+      {name:'Achievable',type:'line',smooth:false,symbol:'circle',symbolSize:8,color:'#34d399',
+        data:cards.map(c=>c.achv_month??null)},
+      {name:'Target',type:'line',smooth:false,symbol:'circle',symbolSize:8,color:'#f59e0b',
+        data:cards.map(c=>c.target_month??null)},
+    ]});
+}
+
+async function loadBoard(){
+  const r=await fetch('/api/monthly/year-board?year='+year()).then(x=>x.json()).catch(()=>null);
+  _board=(r&&r.ok)?r:{cards:[],has_matrix:false};
+  renderBoard();
+}
+
 async function loadState(){
   if(!month())return;
   const r=await fetch('/api/monthly/state?month='+month()).then(x=>x.json()).catch(()=>null);
   _state=(r&&r.state)||null;
-  render();
+  renderMonth();
 }
 
-function render(){
+function renderMonth(){
   const st=_state||{};
   const p=st.prediction,m=st.manual;
+  const card=$('mo-month-card');
   $('mo-pred-summary').innerHTML=p
-    ?('Built from <b>'+p.source_date+'</b> · '+fmt(p.per_day_wmt)+' t/day ('
-      +fmt(p.per_shift_wmt)+' t/shift × 2) · '+fmt(p.dt)+' DT · rain '+(p.rain_mm==null?'—':p.rain_mm+' mm')
-      +'<br>'+(p.paths||[]).map(x=>x.key+' ('+x.contractor+', '+x.dt+' DT'+(x.material?', '+x.material:'')+(x.wbSel&&x.wbSel.length?', WB '+x.wbSel.join('+'):'')+')').join(' · ')
-      +((p.extrapolated&&p.extrapolated.length)
-        ?('<div style="margin-top:6px;color:var(--warn)">⚠ Extrapolated beyond measured history — treat as indicative:<br>'
-          +p.extrapolated.map(e=>'&nbsp;&nbsp;· '+e).join('<br>')+'</div>')
-        :'')
-      +((p.per_day_upside_wmt&&p.per_day_upside_wmt>p.per_day_wmt*1.02)
-        ?('<div style="margin-top:8px;border:1px solid rgba(96,165,250,.35);border-radius:8px;padding:8px 11px">'
-          +'<b style="color:var(--blue)">Conditional upside: '+fmt(p.per_day_upside_wmt)+' t/day</b> '
-          +'<span class="muted">(+'+fmt(p.per_day_upside_wmt-p.per_day_wmt)+' over the prediction, '
-          +'+'+Math.round((p.per_day_upside_wmt/p.per_day_wmt-1)*100)+'%). The fleet can produce this — '
-          +'the prediction holds it back only because of demonstrated corridor limits. It becomes real IF:</span>'
-          +(p.upside_conditions||[]).map(c=>'<div style="font-size:12px;margin-top:4px">'
-            +'· <b>'+c.route+'</b> <span class="muted">('+c.contractor+')</span> — '
-            +'<span style="color:var(--warn)">'+fmt(c.locked_wmt_day)+' t/day locked</span>: '+c.condition+'</div>').join('')
-          +'</div>')
-        :''))
+    ?('Built from <b>'+(p.source_date||'')+'</b> · prediction '+fmt(p.per_day_wmt)+' t/day'
+      +(p.per_day_achv_wmt!=null?' · achievable '+fmt(p.per_day_achv_wmt)+' t/day':'')
+      +' · '+fmt(p.dt)+' DT'
+      +'<br>'+(p.paths||[]).map(x=>x.key+' ('+x.contractor+', '+x.dt+' DT'
+        +(x.material?', '+x.material:'')+')').join(' · '))
     :'No prediction month built yet.';
-  $('mo-man-summary').textContent=m
-    ?('Loaded '+(m.days||[]).length+' days from '+(m.source||'?'))
-    :'';
-  const card=$('mo-compare-card');
+  $('mo-man-summary').textContent=m?('Loaded '+(m.days||[]).length+' days from '+(m.source||'?')):'';
   if(!p&&!m){card.style.display='none';return;}
   card.style.display='';
+  $('mo-month-title').textContent=(_selMonth||month()||'Month')+' · same day, every day';
 
   const days={};
-  (p&&p.days||[]).forEach(d=>{const r=(days[d.date]=days[d.date]||{});r.p=d.wmt;if(d.wmt_upside!=null)r.u=d.wmt_upside;});
-  (m&&m.days||[]).forEach(d=>{(days[d.date]=days[d.date]||{}).m=d.wmt;});
+  (p&&p.days||[]).forEach(d=>{
+    const r=(days[d.date]=days[d.date]||{});
+    r.p=d.wmt;
+    r.a=d.wmt_achv!=null?d.wmt_achv:p.per_day_achv_wmt;
+  });
+  (m&&m.days||[]).forEach(d=>{(days[d.date]=days[d.date]||{}).t=d.wmt;});
   const ds=Object.keys(days).sort();
   const totP=(p&&p.days||[]).reduce((a,d)=>a+(d.wmt||0),0);
-  const totM=(m&&m.days||[]).reduce((a,d)=>a+(d.wmt||0),0);
-  const totU=(p&&p.days||[]).reduce((a,d)=>a+(d.wmt_upside||0),0);
+  const totA=(p&&p.days||[]).reduce((a,d)=>a+(d.wmt_achv!=null?d.wmt_achv:(p.per_day_achv_wmt||0)),0);
+  const totT=(m&&m.days||[]).reduce((a,d)=>a+(d.wmt||0),0);
   $('mo-kpis').innerHTML=
     '<div class="kpi"><div class="v pred">'+fmt(totP||null)+'</div><div class="k">prediction · month t</div></div>'
-   +((totU>totP*1.02)?'<div class="kpi" title="Reachable with the SAME fleet if the named corridor conditions are met — see the conditions box above"><div class="v" style="color:var(--blue);opacity:.85">'+fmt(totU)+'</div><div class="k">conditional upside · t</div></div>':'')
-   +'<div class="kpi"><div class="v man">'+fmt(totM||null)+'</div><div class="k">manual plan · month t</div></div>'
-   +(p&&m?'<div class="kpi"><div class="v gap">'+(totP>=totM?'+':'')+fmt(totP-totM)+'</div><div class="k">prediction − manual</div></div>':'')
-   +(p&&m&&totM?'<div class="kpi"><div class="v gap">'+((totP/totM-1)*100).toFixed(1)+'%</div><div class="k">relative</div></div>':'');
+   +'<div class="kpi"><div class="v achv">'+fmt(totA||null)+'</div><div class="k">achievable · month t</div></div>'
+   +'<div class="kpi"><div class="v man">'+fmt(totT||null)+'</div><div class="k">target · month t</div></div>'
+   +(p&&m?'<div class="kpi"><div class="v gap">'+(totP>=totT?'+':'')+fmt(totP-totT)+'</div><div class="k">prediction − target</div></div>':'');
 
   const lab=ds.map(d=>d.slice(8));
   const axis={type:'category',data:lab,axisLabel:{color:'#8b98a5'}};
   const yax={type:'value',axisLabel:{color:'#8b98a5'},splitLine:{lineStyle:{color:'rgba(148,163,184,.09)'}}};
   chart('mo-chart-daily',{
-    title:{text:'Daily WMT',left:8,textStyle:{fontSize:12.5,color:'#cbd5e1'}},
+    title:{text:'Daily WMT (flat — the same plan every day)',left:8,textStyle:{fontSize:12.5,color:'#cbd5e1'}},
     legend:{top:4,right:8,textStyle:{color:'#8b98a5',fontSize:11}},
     grid:{left:64,right:20,top:38,bottom:26},tooltip:{trigger:'axis'},
     xAxis:axis,yAxis:{...yax,name:'t/day'},
     series:[
-      p&&{name:'Prediction',type:'line',smooth:true,showSymbol:false,color:'#60a5fa',data:ds.map(d=>days[d].p??null)},
-      p&&ds.some(d=>days[d].u!=null&&days[d].u>(days[d].p||0)*1.02)
-        ?{name:'Conditional upside',type:'line',smooth:true,showSymbol:false,color:'#60a5fa',
-          lineStyle:{type:'dashed',width:1.4,opacity:.7},
-          areaStyle:{color:'rgba(96,165,250,.06)'},
-          data:ds.map(d=>days[d].u??null)}:null,
-      m&&{name:'Manual plan',type:'line',smooth:true,showSymbol:false,color:'#f59e0b',data:ds.map(d=>days[d].m??null)},
+      p&&{name:'Prediction',type:'line',showSymbol:false,color:'#60a5fa',data:ds.map(d=>days[d].p??null)},
+      p&&{name:'Achievable',type:'line',showSymbol:false,color:'#34d399',data:ds.map(d=>days[d].a??null)},
+      m&&{name:'Target',type:'line',showSymbol:false,color:'#f59e0b',data:ds.map(d=>days[d].t??null)},
     ].filter(Boolean)});
-  let cp=0,cm=0;
-  chart('mo-chart-cum',{
-    title:{text:'Cumulative WMT',left:8,textStyle:{fontSize:12.5,color:'#cbd5e1'}},
-    legend:{top:4,right:8,textStyle:{color:'#8b98a5',fontSize:11}},
-    grid:{left:74,right:20,top:38,bottom:26},tooltip:{trigger:'axis'},
-    xAxis:axis,yAxis:{...yax,name:'t'},
-    series:[
-      p&&{name:'Prediction',type:'line',smooth:true,showSymbol:false,color:'#60a5fa',
-          areaStyle:{opacity:.08},data:ds.map(d=>{cp+=(days[d].p||0);return days[d].p!=null?cp:null;})},
-      m&&{name:'Manual plan',type:'line',smooth:true,showSymbol:false,color:'#f59e0b',
-          areaStyle:{opacity:.08},data:ds.map(d=>{cm+=(days[d].m||0);return days[d].m!=null?cm:null;})},
-    ].filter(Boolean)});
-  if(p&&m){
-    chart('mo-chart-gap',{
-      title:{text:'Daily gap (prediction − manual)',left:8,textStyle:{fontSize:12.5,color:'#cbd5e1'}},
-      grid:{left:64,right:20,top:34,bottom:26},tooltip:{trigger:'axis'},
-      xAxis:axis,yAxis:{...yax,name:'t'},
-      series:[{type:'bar',data:ds.map(d=>{
-        const g=(days[d].p!=null&&days[d].m!=null)?days[d].p-days[d].m:null;
-        return {value:g,itemStyle:{color:g>=0?'#22c55e':'#ef4444'}};})}]});
-  }else{$('mo-chart-gap').innerHTML='';}
 
-  $('mo-table').innerHTML='<tr><th>Date</th><th>Prediction t</th><th>Manual t</th><th>Gap t</th></tr>'
+  $('mo-table').innerHTML='<tr><th>Date</th><th>Prediction t</th><th>Achievable t</th><th>Target t</th></tr>'
     +ds.map(d=>{const r=days[d];
-      const g=(r.p!=null&&r.m!=null)?r.p-r.m:null;
-      return '<tr><td>'+d+'</td><td>'+fmt(r.p)+'</td><td>'+fmt(r.m)+'</td><td>'+(g==null?'—':(g>=0?'+':'')+fmt(g))+'</td></tr>';}).join('')
-    +'<tr><td><b>Total</b></td><td><b>'+fmt(totP||null)+'</b></td><td><b>'+fmt(totM||null)+'</b></td><td><b>'+(p&&m?(totP>=totM?'+':'')+fmt(totP-totM):'—')+'</b></td></tr>';
+      return '<tr><td>'+d+'</td><td>'+fmt(r.p)+'</td><td>'+fmt(r.a)+'</td><td>'+fmt(r.t)+'</td></tr>';}).join('')
+    +'<tr><td><b>Total</b></td><td><b>'+fmt(totP||null)+'</b></td><td><b>'+fmt(totA||null)+'</b></td><td><b>'+fmt(totT||null)+'</b></td></tr>';
+
+  const paths=p&&p.paths||[];
+  $('mo-path-box').innerHTML=paths.length
+    ?('<table><tr><th>Path</th><th>Contractor</th><th>Material</th><th>DT</th><th>Prediction t/day</th><th>Achievable t/day</th><th>Target t/day</th></tr>'
+      +paths.map(x=>'<tr><td>'+x.key+'</td><td>'+(x.contractor||'')+'</td><td>'+(x.material||'—')+'</td>'
+        +'<td>'+fmt(x.dt)+'</td><td>'+fmt(x.pred_wmt_day)+'</td><td>'+fmt(x.achv_wmt_day)+'</td><td>'+fmt(x.manual_wmt_day)+'</td></tr>').join('')
+      +'</table>')
+    :'';
+}
+
+async function moPickMonth(m){
+  _selMonth=m;
+  $('mo-month').value=m;
+  renderBoard();
+  await loadState();
+  const el=$('mo-month-card');
+  if(el)el.scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+async function moBuildYear(){
+  const st=$('mo-yearly-status');
+  st.className='status';st.textContent='building '+year()+'…';
+  const r=await fetch('/api/monthly/build-year',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({year:year()})}).then(x=>x.json()).catch(e=>({error:String(e)}));
+  if(!r||!r.ok){st.className='status er';st.textContent=(r&&r.error)||'failed';return;}
+  const n=(r.cards||[]).length;
+  const err=(r.errors||[]).length;
+  st.className=err?'status er':'status ok';
+  st.textContent=n+' month'+(n===1?'':'s')+' built'
+    +(err?' · '+err+' failed':'')+' ✓';
+  await loadBoard();
+  refreshMonths();
+  if(r.cards&&r.cards[0])moPickMonth(r.cards[0].month);
 }
 
 async function moBuild(){
@@ -269,7 +367,7 @@ async function moBuild(){
     body:JSON.stringify({month:month(),source_date:src})}).then(x=>x.json()).catch(e=>({error:String(e)}));
   if(!r||!r.ok){st.className='status er';st.textContent=(r&&r.error)||'failed';return;}
   st.className='status ok';st.textContent='built ✓';
-  _state=r.state;render();refreshMonths();
+  _state=r.state;_selMonth=month();renderMonth();refreshMonths();loadBoard();
 }
 
 async function moUpload(){
@@ -281,9 +379,8 @@ async function moUpload(){
   const r=await fetch('/api/monthly/manual',{method:'POST',body:fd}).then(x=>x.json()).catch(e=>({error:String(e)}));
   if(!r||!r.ok){st.className='status er';st.textContent=(r&&r.error)||'failed';return;}
   st.className='status ok';st.textContent=r.parsedDays+' days ✓';
-  _state=r.state;render();refreshMonths();
+  _state=r.state;renderMonth();refreshMonths();loadBoard();
 }
-
 async function moPaste(){
   const txt=$('mo-paste').value.trim(),st=$('mo-man-status');
   if(!month()){st.className='status er';st.textContent='pick a month first';return;}
@@ -293,31 +390,76 @@ async function moPaste(){
     body:JSON.stringify({month:month(),pasted:txt})}).then(x=>x.json()).catch(e=>({error:String(e)}));
   if(!r||!r.ok){st.className='status er';st.textContent=(r&&r.error)||'failed';return;}
   st.className='status ok';st.textContent=r.parsedDays+' days ✓';
-  _state=r.state;render();refreshMonths();
+  _state=r.state;renderMonth();refreshMonths();loadBoard();
+}
+function moExport(){
+  const m=_selMonth||month();
+  if(m)window.location='/api/monthly/export?month='+m;
+}
+function moExportYear(){
+  window.location='/api/monthly/export-year?year='+year();
 }
 
-function moExport(){window.location='/api/monthly/export?month='+month();}
-
-// ── Yearly matrix ────────────────────────────────────────────────────────────
 async function moYearlyRefresh(){
   const r=await fetch('/api/monthly/yearly').then(x=>x.json()).catch(()=>null);
   const host=$('mo-yearly-months');
   if(!r||!r.exists){host.innerHTML='';return;}
-  const y=r.yearly,yr=new Date().getFullYear();
+  const y=r.yearly;
   const names={1:'Jan',2:'Feb',3:'Mar',4:'Apr',5:'May',6:'Jun',7:'Jul',8:'Aug',9:'Sep',10:'Oct',11:'Nov',12:'Dec'};
-  host.innerHTML='<span class="muted" style="font-size:12px">Loaded: '+(y.source||'?')+' · '
-    +y.entries.length+' route rows · build month:</span> '
-    +y.months.map(m=>'<button onclick="moYearlyBuild('+m+')">'+names[m]+'</button>').join('')
-    +' <span class="muted" style="font-size:12px;margin-left:10px">· record attempt (no history limit):</span> '
-    +y.months.map(m=>'<button onclick="moRecord('+m+')" title="What physically happens if every truck runs flat out — only loader/dump record rates limit it">🚀 '+names[m]+'</button>').join('')
-    +' <span class="muted" style="font-size:12px;margin-left:10px">· SAP-fixed rebalance:</span> '
-    +y.months.map(m=>'<button onclick="moRebalance('+m+')" title="Keep SAP tonnage, keep contractors — move only LIM trucks stuck past saturation">⚖ '+names[m]+'</button>').join('');
+  host.innerHTML='<span class="muted" style="font-size:12px">Per-month tools:</span> '
+    +(y.months||[]).map(m=>'<button onclick="moYearlyBuild('+m+')">Build '+names[m]+'</button>').join('')
+    +' <span class="muted" style="font-size:12px;margin-left:10px">record:</span> '
+    +(y.months||[]).map(m=>'<button onclick="moRecord('+m+')">🚀 '+names[m]+'</button>').join('')
+    +' <span class="muted" style="font-size:12px;margin-left:10px">SAP rebalance:</span> '
+    +(y.months||[]).map(m=>'<button onclick="moRebalance('+m+')">⚖ '+names[m]+'</button>').join('')
+    +' <span class="muted" style="font-size:12px;margin-left:10px">priority allocation:</span> '
+    +(y.months||[]).map(m=>'<button onclick="moAllocate('+m+')" title="Fixed fleet. P1 SAP targets → P2 TOS limonite → P3 LD limonite gets the rest. Same-contractor moves, same origin first.">🎯 '+names[m]+'</button>').join('');
 }
 
-// SAP-fixed rebalance: keep SAP, keep contractors, move stranded LIM trucks.
+// Priority allocation: P1 SAP / P2 TOS-LIM / P3 LD-LIM with the fixed fleet.
+async function moAllocate(mnum){
+  const m=year()+'-'+String(mnum).padStart(2,'0');
+  const host=$('mo-record-out');
+  host.innerHTML='<span class="muted">allocating by priority…</span>';
+  const r=await fetch('/api/monthly/allocate',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({month:m})}).then(x=>x.json()).catch(e=>({error:String(e)}));
+  if(!r||!r.ok){host.innerHTML='<span class="status er">'+((r&&r.error)||'failed')+'</span>';return;}
+  const P=r.prio_summary;
+  const pk=(p,lbl)=>'<div class="kpi"><div class="v '+(P[p].pred>=P[p].target*0.95?'gap':'man')+'">'
+    +fmt(P[p].pred)+' / '+fmt(P[p].target)+'</div><div class="k">'+lbl+' · pred/target t·day</div></div>';
+  host.innerHTML=
+    '<div style="border:1px solid var(--line);border-radius:9px;padding:10px 13px;background:#0d1117">'
+    +'<b>🎯 Priority allocation · '+m+'</b> <span class="muted">— fixed fleet: '
+    +Object.entries(r.fleet).map(([c,v])=>c+' '+v+' DT').join(' · ')
+    +'. P1 SAP → P2 TOS-LIM → P3 LD-LIM. Moves same-contractor, same-origin first.</span>'
+    +'<div class="kpis" style="margin-top:8px">'+pk('1','P1 SAP')+pk('2','P2 TOS-LIM')+pk('3','P3 LD-LIM')+'</div>'
+    +'<table style="margin-top:6px"><tr><th>P</th><th>Route</th><th>Mat·Origin</th><th>Contr.</th>'
+    +'<th>Target t/day</th><th>Plan DT</th><th>→ Alloc DT</th><th>Predicted t/day</th><th>Status</th></tr>'
+    +r.rows.map(x=>{
+      const d=(x.alloc_dt||0)-(x.matrix_dt||0);
+      const st=x.met?'<span style="color:var(--ok)">meets target</span>'
+        :(x.capped?'<span style="color:var(--er)" title="target above what this road has ever demonstrated — N*≈'+Math.round(x.n_star||0)+' DT">road ceiling</span>'
+        :(x.prio===3?'<span class="muted">buffer</span>':'<span style="color:var(--warn)">short</span>'));
+      return '<tr><td>P'+x.prio+'</td><td>'+x.route+'</td><td>'+x.mat+' · '+x.otype+'</td><td>'+x.contractor+'</td>'
+        +'<td>'+fmt(x.target)+'</td><td>'+fmt(x.matrix_dt)+'</td>'
+        +'<td><b>'+fmt(x.alloc_dt)+'</b>'+(d?' <span style="color:'+(d>0?'var(--ok)':'var(--warn)')+'">('+(d>0?'+':'')+d+')</span>':'')+'</td>'
+        +'<td>'+(x.pred_wmt!=null?fmt(x.pred_wmt):'—')+'</td><td>'+st+'</td></tr>';
+    }).join('')
+    +'</table>'
+    +(r.moves.length
+      ?('<div style="margin-top:8px"><b>Truck moves ('+r.moves.reduce((a,x)=>a+x.trucks,0)+' DT):</b>'
+        +r.moves.map(x=>'<div style="font-size:12px;margin-top:2px">· '+x.contractor+' '+x.trucks+' DT: '
+          +x.from+' → '+x.to+' <span class="muted">('+(x.same_origin?'same origin':'cross plan')+')</span></div>').join('')+'</div>')
+      :'')
+    +(r.shortfalls.length
+      ?('<div style="margin-top:6px;color:var(--er)"><b>Fleet shortfalls:</b><br>'+r.shortfalls.map(s=>'· '+s).join('<br>')+'</div>')
+      :'')
+    +'<div class="muted" style="font-size:11px;margin-top:6px">'+r.note+'</div>'
+    +'</div>';
+}
+
 async function moRebalance(mnum){
-  const yr=($('mo-month').value||new Date().toISOString().slice(0,7)).slice(0,4);
-  const m=yr+'-'+String(mnum).padStart(2,'0');
+  const m=year()+'-'+String(mnum).padStart(2,'0');
   const host=$('mo-record-out');
   host.innerHTML='<span class="muted">computing SAP-fixed rebalance…</span>';
   const r=await fetch('/api/monthly/rebalance',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -327,63 +469,34 @@ async function moRebalance(mnum){
     '<div style="border:1px solid var(--line);border-radius:9px;padding:10px 13px;background:#0d1117">'
     +'<b>⚖ SAP-fixed rebalance · '+m+'</b>'
     +'<div class="muted" style="font-size:12px;margin-top:2px">Rules honoured: '
-    +r.constraints.join(' · ')+'</div>'
+    +(r.constraints||[]).join(' · ')+'</div>'
     +'<div class="kpis" style="margin-top:8px">'
     +'<div class="kpi"><div class="v gap">+'+fmt(r.sap_gain_day)+'</div><div class="k">SAP gain · t/day</div></div>'
     +'<div class="kpi"><div class="v pred">'+fmt(r.lim_loss_day)+'</div><div class="k">LIM lost · t/day</div></div>'
-    +'<div class="kpi"><div class="v man">'+r.moves.reduce((a,x)=>a+x.trucks,0)+'</div><div class="k">trucks re-tasked</div></div>'
     +'</div>'
-    +(r.moves.length
+    +(r.moves&&r.moves.length
       ?('<table style="margin-top:6px"><tr><th>Contractor</th><th>Move</th><th>Trucks</th><th>SAP gain t/day</th></tr>'
-        +r.moves.map(x=>'<tr title="'+x.note+'"><td>'+x.contractor+'</td>'
+        +r.moves.map(x=>'<tr><td>'+x.contractor+'</td>'
           +'<td>'+x.from_route+' (LIM) → '+x.to_route+' (SAP)</td>'
-          +'<td>'+x.trucks+'</td><td>+'+fmt(x.sap_wmt_gain_day)
-          +(x.note.includes('trial')?' <span style="color:var(--warn)">≈trial</span>':'')+'</td></tr>').join('')
+          +'<td>'+x.trucks+'</td><td>+'+fmt(x.sap_wmt_gain_day)+'</td></tr>').join('')
         +'</table>')
-      :'<div style="margin-top:6px;color:var(--ok)">No stranded LIM trucks this month — nothing to move.</div>')
-    +'<div class="muted" style="font-size:11px;margin-top:6px">'+r.note+'</div>'
+      :'<div style="margin-top:6px;color:var(--ok)">No stranded LIM trucks this month.</div>')
     +'</div>';
 }
-
-// "What if we really run it": free-flow demand vs infrastructure record rates.
 async function moRecord(mnum){
-  const yr=($('mo-month').value||new Date().toISOString().slice(0,7)).slice(0,4);
-  const m=yr+'-'+String(mnum).padStart(2,'0');
+  const m=year()+'-'+String(mnum).padStart(2,'0');
   const host=$('mo-record-out');
   host.innerHTML='<span class="muted">calculating record attempt…</span>';
   const r=await fetch('/api/monthly/record-attempt',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({month:m})}).then(x=>x.json()).catch(e=>({error:String(e)}));
   if(!r||!r.ok){host.innerHTML='<span class="status er">'+((r&&r.error)||'failed')+'</span>';return;}
-  const served=r.served_trips,dem=r.demand_trips;
   host.innerHTML=
     '<div style="border:1px solid var(--line);border-radius:9px;padding:10px 13px;background:#0d1117">'
-    +'<b>🚀 Record attempt · '+m+'</b> <span class="muted">— no history ceiling: every truck runs the free-flow cycle, '
-    +'only the loaders/dumps limit it, each at its best-hour-ever rate held 24 h straight</span>'
+    +'<b>🚀 Record attempt · '+m+'</b>'
     +'<div class="kpis" style="margin-top:8px">'
     +'<div class="kpi"><div class="v pred">'+fmt(r.per_day_wmt)+'</div><div class="k">physics best · t/day</div></div>'
     +'<div class="kpi"><div class="v man">'+fmt(r.manual_day)+'</div><div class="k">plan target · t/day</div></div>'
-    +'<div class="kpi"><div class="v gap">'+fmt(served)+' / '+fmt(dem)+'</div><div class="k">trips served / demanded</div></div>'
-    +'<div class="kpi"><div class="v '+(r.per_day_wmt>=r.manual_day?'gap':'man')+'">'
-      +(r.per_day_wmt>=r.manual_day?'plan is physically reachable':'plan exceeds even record physics')
-      +'</div><div class="k">verdict</div></div>'
-    +'</div>'
-    +(r.bottlenecks.length
-      ?('<div style="margin-top:6px"><b>Where it breaks first:</b>'
-        +r.bottlenecks.map(b=>'<div style="font-size:12px;margin-top:2px">'
-          +'<span style="color:'+(b.served_pct<50?'var(--er)':'var(--warn)')+'">'+b.point+' '+b.kind+'</span>'
-          +' — plan sends '+fmt(b.demand)+' trips/day, record pace handles '+fmt(b.record_day_cap)
-          +' → serves '+b.served_pct+'%, <b>'+b.queued_trucks_per_hour+' trucks/h join the queue</b></div>').join('')
-        +'</div>')
-      :'<div style="margin-top:6px;color:var(--ok)">No infrastructure bottleneck — the fleet itself is the limit.</div>')
-    +'<details style="margin-top:6px"><summary class="muted" style="cursor:pointer;font-size:12px">Per-path physics</summary>'
-    +'<table style="margin-top:6px"><tr><th>Path</th><th>DT</th><th>Cycle</th><th>Demand</th><th>Served</th><th>%</th><th>t/day</th></tr>'
-    +r.paths.map(p=>'<tr title="'+((p.assumptions||[]).join('; ')||'all inputs measured')+'"><td>'+p.key+' · '+p.contractor
-      +((p.assumptions&&p.assumptions.length)?' <span style="color:var(--warn)" title="'+p.assumptions.join('; ')+'">≈</span>':'')
-      +'</td><td>'+p.dt+'</td><td>'+p.cycle_min+' min</td>'
-      +'<td>'+fmt(p.demand_trips_day)+'</td><td>'+fmt(p.served_trips_day)+'</td><td>'+p.served_pct+'%</td><td>'+fmt(p.wmt_day)+'</td></tr>').join('')
-    +'</table></details>'
-    +'<div class="muted" style="font-size:11px;margin-top:6px">'+r.note+'</div>'
-    +'</div>';
+    +'</div></div>';
 }
 async function moYearlyLoad(body,isFile){
   const st=$('mo-yearly-status');
@@ -393,8 +506,9 @@ async function moYearlyLoad(body,isFile){
     :fetch('/api/monthly/yearly',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
   ).then(x=>x.json()).catch(e=>({error:String(e)}));
   if(!r||!r.ok){st.className='status er';st.textContent=(r&&r.error)||'failed';return;}
-  st.className='status ok';st.textContent=r.routes+' routes · months '+r.months.join(', ')+' ✓';
+  st.className='status ok';st.textContent=r.routes+' routes · months '+(r.months||[]).join(', ')+' — building year…';
   moYearlyRefresh();
+  await moBuildYear();
 }
 function moYearlyPaste(){
   const t=$('mo-yearly-paste').value;
@@ -408,31 +522,24 @@ function moYearlyUpload(){
   moYearlyLoad(fd,true);
 }
 async function moYearlyBuild(mnum){
-  const yr=($('mo-month').value||new Date().toISOString().slice(0,7)).slice(0,4);
-  const m=yr+'-'+String(mnum).padStart(2,'0');
+  const m=year()+'-'+String(mnum).padStart(2,'0');
   const st=$('mo-yearly-status');
   st.className='status';st.textContent='building '+m+'…';
   const r=await fetch('/api/monthly/build-from-yearly',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({month:m})}).then(x=>x.json()).catch(e=>({error:String(e)}));
   if(!r||!r.ok){st.className='status er';st.textContent=(r&&r.error)||'failed';return;}
   st.className='status ok';
-  st.textContent=m+': engine '+fmt(r.pred_day)+' vs plan '+fmt(r.manual_day)+' t/day ✓'
-    +(r.warnings&&r.warnings.length?' · '+r.warnings.length+' capacity warnings':'');
-  $('mo-month').value=m;
-  _state=r.state;render();refreshMonths();
+  st.textContent=m+': prediction '+fmt(r.pred_day)+' · achievable '+fmt(r.achv_day)+' · target '+fmt(r.manual_day)+' t/day ✓';
+  _selMonth=m;$('mo-month').value=m;
+  _state=r.state;renderMonth();refreshMonths();loadBoard();
 }
 
-async function moClear(which){
-  if(which==='all'&&!confirm('Delete everything stored for '+month()+'?'))return;
-  const r=await fetch('/api/monthly/clear',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({month:month(),which})}).then(x=>x.json()).catch(()=>null);
-  _state=(r&&r.state)||null;render();refreshMonths();
-}
-
-$('mo-month').addEventListener('change',loadState);
-$('mo-months').addEventListener('change',e=>{if(e.target.value){$('mo-month').value=e.target.value;loadState();}});
-$('mo-month').value=defaultMonth();
-refreshSaved();refreshMonths();loadState();moYearlyRefresh();
+$('mo-year').addEventListener('change',loadBoard);
+$('mo-month').addEventListener('change',()=>{_selMonth=month();loadState();renderBoard();});
+$('mo-months').addEventListener('change',e=>{if(e.target.value){moPickMonth(e.target.value);}});
+$('mo-year').value=String(new Date().getFullYear());
+$('mo-month').value=(()=>{const d=new Date();d.setMonth(d.getMonth()+1);return d.toISOString().slice(0,7);})();
+refreshSaved();refreshMonths();loadBoard();moYearlyRefresh();
 </script>
 </body>
 </html>
