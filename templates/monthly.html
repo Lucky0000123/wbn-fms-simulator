@@ -309,7 +309,40 @@ async function moYearlyRefresh(){
     +y.entries.length+' route rows · build month:</span> '
     +y.months.map(m=>'<button onclick="moYearlyBuild('+m+')">'+names[m]+'</button>').join('')
     +' <span class="muted" style="font-size:12px;margin-left:10px">· record attempt (no history limit):</span> '
-    +y.months.map(m=>'<button onclick="moRecord('+m+')" title="What physically happens if every truck runs flat out — only loader/dump record rates limit it">🚀 '+names[m]+'</button>').join('');
+    +y.months.map(m=>'<button onclick="moRecord('+m+')" title="What physically happens if every truck runs flat out — only loader/dump record rates limit it">🚀 '+names[m]+'</button>').join('')
+    +' <span class="muted" style="font-size:12px;margin-left:10px">· SAP-fixed rebalance:</span> '
+    +y.months.map(m=>'<button onclick="moRebalance('+m+')" title="Keep SAP tonnage, keep contractors — move only LIM trucks stuck past saturation">⚖ '+names[m]+'</button>').join('');
+}
+
+// SAP-fixed rebalance: keep SAP, keep contractors, move stranded LIM trucks.
+async function moRebalance(mnum){
+  const yr=($('mo-month').value||new Date().toISOString().slice(0,7)).slice(0,4);
+  const m=yr+'-'+String(mnum).padStart(2,'0');
+  const host=$('mo-record-out');
+  host.innerHTML='<span class="muted">computing SAP-fixed rebalance…</span>';
+  const r=await fetch('/api/monthly/rebalance',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({month:m})}).then(x=>x.json()).catch(e=>({error:String(e)}));
+  if(!r||!r.ok){host.innerHTML='<span class="status er">'+((r&&r.error)||'failed')+'</span>';return;}
+  host.innerHTML=
+    '<div style="border:1px solid var(--line);border-radius:9px;padding:10px 13px;background:#0d1117">'
+    +'<b>⚖ SAP-fixed rebalance · '+m+'</b>'
+    +'<div class="muted" style="font-size:12px;margin-top:2px">Rules honoured: '
+    +r.constraints.join(' · ')+'</div>'
+    +'<div class="kpis" style="margin-top:8px">'
+    +'<div class="kpi"><div class="v gap">+'+fmt(r.sap_gain_day)+'</div><div class="k">SAP gain · t/day</div></div>'
+    +'<div class="kpi"><div class="v pred">'+fmt(r.lim_loss_day)+'</div><div class="k">LIM lost · t/day</div></div>'
+    +'<div class="kpi"><div class="v man">'+r.moves.reduce((a,x)=>a+x.trucks,0)+'</div><div class="k">trucks re-tasked</div></div>'
+    +'</div>'
+    +(r.moves.length
+      ?('<table style="margin-top:6px"><tr><th>Contractor</th><th>Move</th><th>Trucks</th><th>SAP gain t/day</th></tr>'
+        +r.moves.map(x=>'<tr title="'+x.note+'"><td>'+x.contractor+'</td>'
+          +'<td>'+x.from_route+' (LIM) → '+x.to_route+' (SAP)</td>'
+          +'<td>'+x.trucks+'</td><td>+'+fmt(x.sap_wmt_gain_day)
+          +(x.note.includes('trial')?' <span style="color:var(--warn)">≈trial</span>':'')+'</td></tr>').join('')
+        +'</table>')
+      :'<div style="margin-top:6px;color:var(--ok)">No stranded LIM trucks this month — nothing to move.</div>')
+    +'<div class="muted" style="font-size:11px;margin-top:6px">'+r.note+'</div>'
+    +'</div>';
 }
 
 // "What if we really run it": free-flow demand vs infrastructure record rates.

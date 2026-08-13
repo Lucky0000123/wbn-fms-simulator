@@ -845,3 +845,172 @@ def _record_physics(route_list, cyc_lookup):
                      "cycle all day. Limits = each loading/dumping point at its RECORD "
                      "rate (best hour ever measured, held for 24 h straight). Trucks "
                      "beyond a point's record rate queue - they do not vanish.")}
+
+
+# ── SAP-fixed rebalance advisor (owner 2026-08-13) ───────────────────────────
+# "we can't reduce the tonnages of our SAP material ... come up with a plan
+#  which will keep our SAP material quantity same. And if you want to add more
+#  trucks in this, you can add there. And give me suggestions from where we can
+#  reduce the trucks from Lemonite ... we can't switch the contractors."
+#
+# HARD CONSTRAINTS honoured:
+#   1. SAP rows: tonnage NEVER goes down. Trucks may be ADDED to SAP rows that
+#      still have measured headroom (below the fleet where the road saturates).
+#   2. Contractor stays on its own route - no row changes contractor or route.
+#   3. Only LIM rows may give up trucks, and only trucks that are past the
+#      route's saturation point (they add ~nothing where they are).
+# The advisor therefore only DOCUMENTS waste and headroom - it moves LIM's
+# stranded trucks to SAP rows of the SAME contractor where the road still pays.
+
+def _day_stats_from_snapshot():
+    """Per-route day model: trimmed-mean rate, demonstrated cap, fleet max."""
+    stats = {}
+    try:
+        import simulator_api as _sa
+        rows_snap, _rain = _sa._path_snapshot()
+        from collections import defaultdict as _dd
+        day_agg = _dd(lambda: [0.0, 0.0])
+        env = _dd(float)
+        for r in rows_snap:
+            k = (r["o"], r["dd"])
+            day_agg[(k, r.get("d"))][0] += r.get("dt") or 0
+            day_agg[(k, r.get("d"))][1] += r.get("trips") or 0
+            env[k] = max(env[k], r.get("dt") or 0)
+        by_path = _dd(list)
+        for (k, _dte), (dtv, tr) in day_agg.items():
+            if dtv > 0 and tr > 0:
+                by_path[k].append((dtv, tr))
+        for k, pts in by_path.items():
+            if len(pts) < 5:
+                continue
+            rates = sorted(t / d for d, t in pts)
+            core = rates[int(len(rates) * .2):max(int(len(rates) * .2) + 1, int(len(rates) * .8))]
+            stats["%s>%s" % k] = {
+                "rate": sum(core) / len(core),
+                "cap": max(t for _d, t in pts),
+                "dt_max": max(max(d for d, _t in pts), env[k]),
+            }
+    except Exception:  # noqa: BLE001
+        pass
+    return stats
+
+
+@bp.route("/api/monthly/rebalance", methods=["POST"])
+def api_monthly_rebalance():
+    """SAP-fixed truck reallocation suggestions for one matrix month."""
+    body = request.get_json(silent=True) or {}
+    month = (body.get("month") or "").strip()
+    if not _month_path(month):
+        return jsonify({"ok": False, "error": "supply month=YYYY-MM"}), 400
+    if not os.path.isfile(_YEARLY_PATH):
+        return jsonify({"ok": False, "error": "no yearly matrix loaded yet"}), 404
+    with open(_YEARLY_PATH, encoding="utf-8") as fh:
+        yearly = json.load(fh)
+    mnum = str(int(month[5:7]))
+    active = [e for e in yearly["entries"]
+              if (e["wmt"].get(mnum) or 0) > 0 or (e["dt"].get(mnum) or 0) > 0]
+    if not active:
+        return jsonify({"ok": False, "error": "no matrix rows for %s" % month}), 400
+    # Row per origin+dest+contractor+MATERIAL (material drives the constraint).
+    rows = {}
+    for e in active:
+        src = _ORIGIN_MAP.get(e["origin"].upper(), e["origin"].upper())
+        dst = _canon_dest(e["dest"])
+        mat = (e.get("material") or "").upper()
+        key = (src, dst, e["contractor"].upper(), mat)
+        rec = rows.setdefault(key, {"src": src, "dst": dst, "route": "%s>%s" % (src, dst),
+                                    "contractor": e["contractor"].upper(), "material": mat,
+                                    "dt": 0.0, "wmt_day": 0.0})
+        rec["dt"] += e["dt"].get(mnum) or 0
+        rec["wmt_day"] += e["wmt"].get(mnum) or 0
+    rows = [r for r in rows.values() if r["dt"] > 0]
+    stats = _day_stats_from_snapshot()
+    if not stats:
+        return jsonify({"ok": False, "error": "no measured day history available (DB down?)"}), 503
+    # Combined fleet per route (saturation is a road property).
+    from collections import defaultdict as _dd
+    comb = _dd(float)
+    for r in rows:
+        comb[r["route"]] += r["dt"]
+    # Per-route saturation fleet N* = cap/rate.
+    def n_star(route):
+        s = stats.get(route)
+        return (s["cap"] / s["rate"]) if s and s["rate"] > 0 else None
+    # 1) LIM donors: trucks beyond saturation on their route (stranded).
+    donors = []
+    for r in rows:
+        if r["material"] != "LIM":
+            continue
+        ns = n_star(r["route"])
+        if ns is None:
+            continue
+        over = comb[r["route"]] - ns
+        if over <= 0:
+            continue
+        # This row's share of the stranded trucks (pro-rata by its fleet).
+        share = r["dt"] / comb[r["route"]] if comb[r["route"]] else 0
+        stranded = min(r["dt"], over * share)
+        if stranded >= 1:
+            donors.append({"row": r, "stranded_dt": stranded, "n_star": ns})
+    # 2) SAP receivers: same-contractor rows with measured headroom.
+    receivers = []
+    for r in rows:
+        if r["material"] != "SAP":
+            continue
+        s = stats.get(r["route"])
+        ns = n_star(r["route"])
+        if s is None or ns is None:
+            continue
+        head = ns - comb[r["route"]]
+        if head >= 1:
+            receivers.append({"row": r, "headroom_dt": head, "rate": s["rate"],
+                              "dt_max": s["dt_max"]})
+    receivers.sort(key=lambda x: -x["rate"])            # best-paying road first
+    # 3) Match: same contractor only; SAP tonnage only goes UP.
+    moves = []
+    pay_default = 49.9
+    for d in donors:
+        rem = d["stranded_dt"]
+        for rc in receivers:
+            if rem < 1:
+                break
+            if rc["row"]["contractor"] != d["row"]["contractor"]:
+                continue
+            take = min(rem, rc["headroom_dt"])
+            if take < 1:
+                continue
+            gain = take * rc["rate"] * pay_default
+            beyond = comb[rc["row"]["route"]] + take > rc["dt_max"]
+            moves.append({
+                "contractor": d["row"]["contractor"],
+                "from_route": d["row"]["route"], "from_material": "LIM",
+                "to_route": rc["row"]["route"], "to_material": "SAP",
+                "trucks": int(take),
+                "lim_wmt_lost_day": 0,
+                "sap_wmt_gain_day": round(gain),
+                "note": ("these %d trucks sit past %s's saturation (N*≈%d) and add "
+                         "almost nothing there; on %s they still earn the full rate "
+                         "(%.1f trips/DT·day)%s"
+                         % (int(take), d["row"]["route"], round(d["n_star"]),
+                            rc["row"]["route"], rc["rate"],
+                            " — takes the road past its biggest measured fleet, label as trial" if beyond else "")),
+            })
+            rc["headroom_dt"] -= take
+            rem -= take
+    total_gain = sum(m["sap_wmt_gain_day"] for m in moves)
+    return jsonify({
+        "ok": True, "month": month,
+        "constraints": ["SAP tonnage never reduced (only increased)",
+                        "contractors stay on their own routes",
+                        "only LIM trucks past their road's saturation point move"],
+        "donors": [{"route": d["row"]["route"], "contractor": d["row"]["contractor"],
+                    "dt": round(d["row"]["dt"]), "stranded_dt": round(d["stranded_dt"]),
+                    "n_star": round(d["n_star"])} for d in donors],
+        "moves": moves,
+        "sap_gain_day": round(total_gain),
+        "lim_loss_day": 0,
+        "note": ("LIM tonnage is UNCHANGED by these moves: the donated trucks are "
+                 "the ones already past the road's demonstrated saturation - the "
+                 "road cannot serve them, so removing them does not remove trips. "
+                 "SAP gains are earned at the receiving road's measured day rate."),
+    })
