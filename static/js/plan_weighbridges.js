@@ -183,11 +183,22 @@
       // Carry the bridge NUMBER picked in the top panel for this path. The
       // alternates list is the FULL site grid, annotated with history where
       // it exists — reassignment is never limited to historical bridges.
+      //
+      // RACE (caught in verification 2026-08-13): _sel is reset by init()
+      // only AFTER weighbridge-by-path resolves. Add a path right after
+      // switching destination and _sel still holds the PREVIOUS route's
+      // bridges — TF→FENI KM15 got stamped WB 1+12 measured on FENI KM0.
+      // If the picker's loaded route doesn't match this path, defer: default
+      // to the new route's top historical bridge when its fetch answers.
+      const stale = (_route.s + '>' + _route.d) !== (s + '>' + d);
       const byWb = {};
       _bridges.forEach(b => { byWb[b.wb] = b; });
-      _pathWb[id] = {
-        bridges: ALL_WBS.map(wb => ({ wb, sharePct: byWb[wb] ? byWb[wb].sharePct : null })),
-        sel: new Set(_sel.size ? _sel : ['1']), open: false };
+      _pathWb[id] = stale
+        ? { bridges: ALL_WBS.map(wb => ({ wb, sharePct: null })),
+            sel: new Set(['1']), open: false, pendingDefault: true }
+        : { bridges: ALL_WBS.map(wb => ({ wb, sharePct: byWb[wb] ? byWb[wb].sharePct : null })),
+            sel: new Set(_sel.size ? _sel : ['1']), open: false };
+      if (stale) annotatePathWb(id, { source: s, dest: d });
     }
   }
 
@@ -510,6 +521,14 @@
           rec.trips += b.trips; rec.sharePct += (b.sharePct || 0);
         });
         pw.bridges = ALL_WBS.map(wb => ({ wb, sharePct: byNum[wb] ? byNum[wb].sharePct : null }));
+        // Deferred default (route changed right before Add): now that this
+        // route's history is in, select ITS top bridge, not the placeholder.
+        if (pw.pendingDefault){
+          const top = Object.keys(byNum).sort((a, b) => byNum[b].trips - byNum[a].trips)[0];
+          if (top) pw.sel = new Set([top]);
+          delete pw.pendingDefault;
+          syncWbCount();
+        }
         if (typeof computePlan === 'function') computePlan();
       }).catch(() => {});
   }
