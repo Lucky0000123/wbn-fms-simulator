@@ -391,6 +391,12 @@
                   <span class="k">Material</span>
                   <select id="plan-material" onchange="planMaterialManual()"></select>
                 </label>
+                <label class="plan-field" id="plan-sap-target-field" style="display:none" title="SAP is fixed supply — enter the tonnes/day this path must deliver. The plan table then tracks target vs predicted vs achievable and suggests the trucks required.">
+                  <span class="k">SAP target</span>
+                  <span class="plan-dt-row">
+                    <input id="plan-sap-target" type="number" min="0" step="500" placeholder="t/day">
+                  </span>
+                </label>
                 <label id="plan-input-dt" class="plan-field">
                   <span class="k">Trucks (DT)</span>
                   <span class="plan-dt-row">
@@ -885,6 +891,7 @@
 <script src="/static/js/plan_scenario.js"></script>
 <script src="/static/js/plan_sensitivity.js"></script>
 <script src="/static/js/plan_material.js"></script>
+<script src="/static/js/plan_sap_target.js"></script>
 <script src="/static/js/plan_reconcile.js"></script>
 <script src="/static/js/plan_weighbridges.js"></script>
 <script src="/static/js/main.js"></script>
