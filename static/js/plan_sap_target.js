@@ -102,17 +102,33 @@
       const r=d[id];
       if(!r||r.foreign)return;
       const isSap=(r.material||'')==='SAP';
+      const hasTarget=r.targetWmt>0;
       const existing=tag.parentNode.querySelector('.plan-sap-chip[data-sapid="'+CSS.escape(id)+'"]');
-      if(!isSap){if(existing)existing.remove();return;}
-      const label=r.targetWmt>0?('🎯 '+fmt(r.targetWmt)+' t'):'＋ target';
+      // Chip shows for SAP rows (settable) AND for any row that already
+      // carries a target (so a stray target on a LIM row stays visible and
+      // clearable instead of being an invisible board entry).
+      if(!isSap&&!hasTarget){if(existing)existing.remove();return;}
+      const label=hasTarget?('🎯 '+fmt(r.targetWmt)+' t'):'＋ target';
+      const warn=hasTarget&&!isSap;
       if(existing){
-        if(!existing.querySelector('input'))existing.innerHTML=label;
+        if(!existing.querySelector('input')){
+          existing.innerHTML=label+(warn?' ⚠':'');
+          existing.style.background=warn?'rgba(245,158,11,.14)':'rgba(34,197,94,.14)';
+          existing.style.color=warn?'#fbbf24':'#4ade80';
+          existing.style.borderColor=warn?'rgba(245,158,11,.35)':'rgba(34,197,94,.3)';
+          existing.title=warn?'Target set but material is '+(r.material||'?')+' — targets are for SAP (fixed supply). Click to edit/clear.'
+                             :'SAP is fixed supply — click to set the t/day target for this path';
+        }
         return;
       }
       tag.insertAdjacentHTML('afterend',
-        ' <span class="plan-sap-chip" data-sapid="'+esc(id)+'" title="SAP is fixed supply — click to set the t/day target for this path" '
+        ' <span class="plan-sap-chip" data-sapid="'+esc(id)+'" title="'
+        +(warn?'Target set but material is '+esc(r.material||'?')+' — targets are for SAP (fixed supply). Click to edit/clear.'
+              :'SAP is fixed supply — click to set the t/day target for this path')+'" '
         +'style="font-size:9px;padding:1px 6px;border-radius:8px;cursor:pointer;vertical-align:middle;'
-        +'background:rgba(34,197,94,.14);color:#4ade80;border:1px solid rgba(34,197,94,.3)">'+label+'</span>');
+        +'background:'+(warn?'rgba(245,158,11,.14)':'rgba(34,197,94,.14)')+';color:'+(warn?'#fbbf24':'#4ade80')
+        +';border:1px solid '+(warn?'rgba(245,158,11,.35)':'rgba(34,197,94,.3)')+'">'
+        +label+(warn?' ⚠':'')+'</span>');
     });
   }
 
@@ -148,6 +164,10 @@
     const rows=q('plan-rows');
     if(!rows)return;
     decorateRowTargets(rows);
+    // SAP-only doctrine (owner: "if it is going to buffer, it's limonite...")
+    // A target can end up on a non-SAP row (e.g. material edited after the
+    // target was set). Don't silently honour OR silently drop it: keep the
+    // row on the board but flag the material mismatch.
     const targets=Object.keys(draft()).map(id=>({id,r:draft()[id]}))
       .filter(x=>x.r&&x.r.targetWmt>0&&!x.r.foreign);
     if(!host){
