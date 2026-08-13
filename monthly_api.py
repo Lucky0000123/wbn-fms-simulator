@@ -662,3 +662,136 @@ def api_monthly_build_from_yearly():
                     "routes": len(plans),
                     "extrapolated": extrapolated,
                     "warnings": sim["summary"].get("capacity_warnings") or []})
+
+
+@bp.route("/api/monthly/record-attempt", methods=["POST"])
+def api_monthly_record_attempt():
+    """First-principles 'what if we really run it': no history ceiling."""
+    body = request.get_json(silent=True) or {}
+    month = (body.get("month") or "").strip()
+    if not _month_path(month):
+        return jsonify({"ok": False, "error": "supply month=YYYY-MM"}), 400
+    if not os.path.isfile(_YEARLY_PATH):
+        return jsonify({"ok": False, "error": "no yearly matrix loaded yet"}), 404
+    with open(_YEARLY_PATH, encoding="utf-8") as fh:
+        yearly = json.load(fh)
+    mnum = str(int(month[5:7]))
+    active = [e for e in yearly["entries"]
+              if (e["wmt"].get(mnum) or 0) > 0 or (e["dt"].get(mnum) or 0) > 0]
+    if not active:
+        return jsonify({"ok": False, "error": "the matrix has no rows for month %s" % month}), 400
+    routes = {}
+    for e in active:
+        src = _ORIGIN_MAP.get(e["origin"].upper(), e["origin"].upper())
+        dst = _canon_dest(e["dest"])
+        key = (src, dst, e["contractor"].upper())
+        rec = routes.setdefault(key, {"src": src, "dst": dst,
+                                      "contractor": e["contractor"].upper(),
+                                      "dt": 0.0, "wmt_day": 0.0})
+        rec["dt"] += e["dt"].get(mnum) or 0
+        rec["wmt_day"] += e["wmt"].get(mnum) or 0
+    route_list = [r for r in routes.values() if r["dt"] > 0]
+    # Cycle + payload from measured route history.
+    import csv as _csv
+    cyc, pay = {}, {}
+    try:
+        with open(os.path.join(_ROOT, "data", "route_lookup.csv"), encoding="utf-8") as fh:
+            for r in _csv.DictReader(fh):
+                cyc[r["route"]] = float(r["mean_cycle_min"] or 0) or None
+                pay[r["route"]] = float(r["median_payload_t"] or 0) or None
+    except OSError:
+        pass
+    for r in route_list:
+        r["payload"] = pay.get("%s>%s" % (r["src"], r["dst"]))
+    out = _record_physics(route_list, {k: v for k, v in cyc.items() if v})
+    if out is None:
+        return jsonify({"ok": False, "error": "point_capacity.csv missing"}), 500
+    man_day = sum(r["wmt_day"] for r in route_list)
+    out["manual_day"] = round(man_day)
+    out["month"] = month
+    return jsonify({"ok": True, **out})
+
+
+# ── "Record attempt" physics (owner 2026-08-13) ──────────────────────────────
+# "no matter what was the history and if we want to run this plan, i want to
+#  know what will happen ... what if we want to make new record, dont limit
+#  your thinking ... think we really put this plan in work what will happen?"
+#
+# So: NO historical trip ceiling. Every truck is assumed to run the route's
+# free-flow cycle all day (demand = DT x 1440 / cycle). The only limits left
+# are physical infrastructure, each taken at its RECORD rate - the best hour
+# ever measured at that point, sustained for 24 hours straight, which no
+# operation has ever done. This is the most generous physically-grounded
+# ceiling that exists. What cannot be served queues, and the queue is
+# reported as trucks standing idle.
+
+def _record_physics(route_list, cyc_lookup):
+    import csv as _csv
+    cap = {}
+    try:
+        with open(os.path.join(_ROOT, "data", "point_capacity.csv"), encoding="utf-8") as fh:
+            for r in _csv.DictReader(fh):
+                cap[(r["point"].upper(), r["kind"])] = {
+                    "cap_hr": float(r["capacity_trips_hr"] or 0),
+                    "peak_hr": float(r["peak_trips_hr"] or 0),
+                }
+    except OSError:
+        return None
+    # Free-flow demand per route.
+    demands = []
+    from collections import defaultdict as _dd
+    load_d, dump_d = _dd(float), _dd(float)
+    for r in route_list:
+        cycle = cyc_lookup.get("%s>%s" % (r["src"], r["dst"]))
+        if not cycle:
+            # unmeasured route: median of routes out of the same source
+            same = [v for k, v in cyc_lookup.items() if k.startswith(r["src"] + ">")]
+            cycle = sorted(same)[len(same) // 2] if same else 120.0
+        dem = r["dt"] * 1440.0 / cycle
+        demands.append({"r": r, "cycle": cycle, "demand": dem})
+        load_d[r["src"]] += dem
+        dump_d[r["dst"]] += dem
+    # Served fraction at each point, at RECORD pace (best hour ever x 24).
+    def frac(point, kind, demand):
+        c = cap.get((point.upper(), kind))
+        if not c or not c["peak_hr"]:
+            return 1.0, None                      # no measured device: assume open
+        day_cap = c["peak_hr"] * 24.0
+        return (min(1.0, day_cap / demand) if demand > 0 else 1.0), day_cap
+    bottlenecks = []
+    lfrac, dfrac = {}, {}
+    for p, dem in load_d.items():
+        f, day_cap = frac(p, "loading", dem)
+        lfrac[p] = f
+        if f < 0.999 and day_cap:
+            bottlenecks.append({"point": p, "kind": "loading", "demand": round(dem),
+                                "record_day_cap": round(day_cap), "served_pct": round(f * 100),
+                                "queued_trucks_per_hour": round((dem - day_cap) / 24.0, 1)})
+    for p, dem in dump_d.items():
+        f, day_cap = frac(p, "dumping", dem)
+        dfrac[p] = f
+        if f < 0.999 and day_cap:
+            bottlenecks.append({"point": p, "kind": "dumping", "demand": round(dem),
+                                "record_day_cap": round(day_cap), "served_pct": round(f * 100),
+                                "queued_trucks_per_hour": round((dem - day_cap) / 24.0, 1)})
+    paths, total_wmt, total_served, total_demand = [], 0.0, 0.0, 0.0
+    for d in demands:
+        r = d["r"]
+        f = min(lfrac.get(r["src"], 1.0), dfrac.get(r["dst"], 1.0))
+        served = d["demand"] * f
+        payload = r.get("payload") or 50.0
+        wmt = served * payload
+        total_wmt += wmt
+        total_served += served
+        total_demand += d["demand"]
+        paths.append({"key": "%s>%s" % (r["src"], r["dst"]), "contractor": r["contractor"],
+                      "dt": int(round(r["dt"])), "cycle_min": round(d["cycle"]),
+                      "demand_trips_day": round(d["demand"]), "served_trips_day": round(served),
+                      "served_pct": round(f * 100), "wmt_day": round(wmt)})
+    return {"per_day_wmt": round(total_wmt), "demand_trips": round(total_demand),
+            "served_trips": round(total_served), "paths": paths,
+            "bottlenecks": sorted(bottlenecks, key=lambda b: b["served_pct"]),
+            "note": ("NO history ceiling. Demand = every truck running the free-flow "
+                     "cycle all day. Limits = each loading/dumping point at its RECORD "
+                     "rate (best hour ever measured, held for 24 h straight). Trucks "
+                     "beyond a point's record rate queue - they do not vanish.")}

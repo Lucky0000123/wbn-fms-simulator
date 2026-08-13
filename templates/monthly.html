@@ -67,6 +67,7 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
     <span class="status" id="mo-yearly-status"></span>
   </div>
   <div id="mo-yearly-months" class="row" style="margin-top:10px"></div>
+  <div id="mo-record-out" style="margin-top:10px"></div>
 </div>
 
 <div class="grid2">
@@ -288,7 +289,48 @@ async function moYearlyRefresh(){
   const names={1:'Jan',2:'Feb',3:'Mar',4:'Apr',5:'May',6:'Jun',7:'Jul',8:'Aug',9:'Sep',10:'Oct',11:'Nov',12:'Dec'};
   host.innerHTML='<span class="muted" style="font-size:12px">Loaded: '+(y.source||'?')+' · '
     +y.entries.length+' route rows · build month:</span> '
-    +y.months.map(m=>'<button onclick="moYearlyBuild('+m+')">'+names[m]+'</button>').join('');
+    +y.months.map(m=>'<button onclick="moYearlyBuild('+m+')">'+names[m]+'</button>').join('')
+    +' <span class="muted" style="font-size:12px;margin-left:10px">· record attempt (no history limit):</span> '
+    +y.months.map(m=>'<button onclick="moRecord('+m+')" title="What physically happens if every truck runs flat out — only loader/dump record rates limit it">🚀 '+names[m]+'</button>').join('');
+}
+
+// "What if we really run it": free-flow demand vs infrastructure record rates.
+async function moRecord(mnum){
+  const yr=($('mo-month').value||new Date().toISOString().slice(0,7)).slice(0,4);
+  const m=yr+'-'+String(mnum).padStart(2,'0');
+  const host=$('mo-record-out');
+  host.innerHTML='<span class="muted">calculating record attempt…</span>';
+  const r=await fetch('/api/monthly/record-attempt',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({month:m})}).then(x=>x.json()).catch(e=>({error:String(e)}));
+  if(!r||!r.ok){host.innerHTML='<span class="status er">'+((r&&r.error)||'failed')+'</span>';return;}
+  const served=r.served_trips,dem=r.demand_trips;
+  host.innerHTML=
+    '<div style="border:1px solid var(--line);border-radius:9px;padding:10px 13px;background:#0d1117">'
+    +'<b>🚀 Record attempt · '+m+'</b> <span class="muted">— no history ceiling: every truck runs the free-flow cycle, '
+    +'only the loaders/dumps limit it, each at its best-hour-ever rate held 24 h straight</span>'
+    +'<div class="kpis" style="margin-top:8px">'
+    +'<div class="kpi"><div class="v pred">'+fmt(r.per_day_wmt)+'</div><div class="k">physics best · t/day</div></div>'
+    +'<div class="kpi"><div class="v man">'+fmt(r.manual_day)+'</div><div class="k">plan target · t/day</div></div>'
+    +'<div class="kpi"><div class="v gap">'+fmt(served)+' / '+fmt(dem)+'</div><div class="k">trips served / demanded</div></div>'
+    +'<div class="kpi"><div class="v '+(r.per_day_wmt>=r.manual_day?'gap':'man')+'">'
+      +(r.per_day_wmt>=r.manual_day?'plan is physically reachable':'plan exceeds even record physics')
+      +'</div><div class="k">verdict</div></div>'
+    +'</div>'
+    +(r.bottlenecks.length
+      ?('<div style="margin-top:6px"><b>Where it breaks first:</b>'
+        +r.bottlenecks.map(b=>'<div style="font-size:12px;margin-top:2px">'
+          +'<span style="color:'+(b.served_pct<50?'var(--er)':'var(--warn)')+'">'+b.point+' '+b.kind+'</span>'
+          +' — plan sends '+fmt(b.demand)+' trips/day, record pace handles '+fmt(b.record_day_cap)
+          +' → serves '+b.served_pct+'%, <b>'+b.queued_trucks_per_hour+' trucks/h join the queue</b></div>').join('')
+        +'</div>')
+      :'<div style="margin-top:6px;color:var(--ok)">No infrastructure bottleneck — the fleet itself is the limit.</div>')
+    +'<details style="margin-top:6px"><summary class="muted" style="cursor:pointer;font-size:12px">Per-path physics</summary>'
+    +'<table style="margin-top:6px"><tr><th>Path</th><th>DT</th><th>Cycle</th><th>Demand</th><th>Served</th><th>%</th><th>t/day</th></tr>'
+    +r.paths.map(p=>'<tr><td>'+p.key+' · '+p.contractor+'</td><td>'+p.dt+'</td><td>'+p.cycle_min+' min</td>'
+      +'<td>'+fmt(p.demand_trips_day)+'</td><td>'+fmt(p.served_trips_day)+'</td><td>'+p.served_pct+'%</td><td>'+fmt(p.wmt_day)+'</td></tr>').join('')
+    +'</table></details>'
+    +'<div class="muted" style="font-size:11px;margin-top:6px">'+r.note+'</div>'
+    +'</div>';
 }
 async function moYearlyLoad(body,isFile){
   const st=$('mo-yearly-status');
