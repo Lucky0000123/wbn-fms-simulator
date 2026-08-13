@@ -347,13 +347,14 @@ def api_monthly_export():
                       for row in (p.get("paths") or []))
     if has_perpath:
         ws2.append(["Path", "Contractor", "DT", "Material", "Weighbridges",
-                    "Plan WMT/day", "Engine WMT/day", "Engine - Plan"])
+                    "Plan WMT/day", "Engine WMT/day", "Engine - Plan", "Envelope"])
         for row in (p.get("paths") or []):
             mw, pw = row.get("manual_wmt_day"), row.get("pred_wmt_day")
             ws2.append([row.get("key"), row.get("contractor"), row.get("dt"),
                         row.get("material"), ",".join(row.get("wbSel") or []),
                         mw, pw,
-                        (pw - mw) if (pw is not None and mw is not None) else None])
+                        (pw - mw) if (pw is not None and mw is not None) else None,
+                        row.get("envelope_flag") or "within measured history"])
     else:
         ws2.append(["Path", "Contractor", "DT", "Material", "Weighbridges"])
         for row in (p.get("paths") or []):
@@ -538,19 +539,101 @@ def api_monthly_build_from_yearly():
     # is NOT unique (TF>HUAFEI runs for both RIM and SMA - a dict keyed by
     # route silently gave both rows the last row's tonnage; caught in testing).
     sim_rows = sim.get("results", [])
-    pred_day = float(sim["summary"]["achievable_production_t"]) * 2   # 2 × 12 h shifts
+
+    # ── Demonstrated-throughput ceiling (the Plan tab's day model) ──────────
+    # plan_simulator scales trips LINEARLY with trucks (shift / effective
+    # cycle × N) and knows no saturation, so a 650-DT matrix month reads as
+    # 4× tonnage on a road whose best-ever day is a fixed trip count. The
+    # Plan tab's engine (planTripsPerDT) caps at dayTripsCap and decays
+    # beyond — 659 DT on TF>HUAFEI = 25,390 t there, not 78,000. Caught
+    # 2026-08-13 when the owner asked why the two pages disagreed. Apply the
+    # same ceiling here per path (combined fleet per route key), and label
+    # which paths are extrapolated beyond the measured fleet envelope.
+    day_stats = {}
+    try:
+        import simulator_api as _sa
+        rows_snap, _rain = _sa._path_snapshot()
+        from collections import defaultdict as _dd
+        day_agg = _dd(lambda: [0.0, 0.0])       # (path, date) -> [dt, trips]
+        env = _dd(float)
+        for r in rows_snap:
+            k = (r["o"], r["dd"])
+            day_agg[(k, r.get("d"))][0] += r.get("dt") or 0
+            day_agg[(k, r.get("d"))][1] += r.get("trips") or 0
+            env[k] = max(env[k], r.get("dt") or 0)
+        by_path = _dd(list)
+        for (k, _dte), (dtv, tr) in day_agg.items():
+            if dtv > 0 and tr > 0:
+                by_path[k].append((dtv, tr))
+        for k, pts in by_path.items():
+            if len(pts) < 5:
+                continue
+            rates = sorted(t / d for d, t in pts)
+            core = rates[int(len(rates) * .2):max(int(len(rates) * .2) + 1, int(len(rates) * .8))]
+            day_stats["%s>%s" % k] = {
+                "rate": sum(core) / len(core),
+                "cap": max(t for _d, t in pts),
+                "dt_max": max(max(d for d, _t in pts), env[k]),
+            }
+    except Exception:  # noqa: BLE001 — DB/snapshot down: linear numbers, flagged below
+        day_stats = {}
+
+    def _ceiling(route_key, combined_dt, linear_day_trips):
+        """Return (factor, flag) applying cap + BPR decay at the combined fleet."""
+        s = day_stats.get(route_key)
+        if not s or combined_dt <= 0 or linear_day_trips <= 0:
+            return 1.0, ("no measured day history" if not s else None)
+        demand = s["rate"] * combined_dt
+        n_star = s["cap"] / s["rate"] if s["rate"] > 0 else combined_dt
+        if demand <= s["cap"]:
+            served = demand
+        else:
+            over = (combined_dt - n_star) / n_star if n_star > 0 else 0
+            served = s["cap"] / (1 + 0.15 * over * over) if over > 0 else s["cap"]
+            # 30% floor — same doctrine as the Plan tab's planTripsPerDT:
+            # per-truck rate never drops below 0.3 x the cluster rate, so the
+            # decay cannot fall to absurdity. Without this the monthly page
+            # said 278 trips where the Plan tab said 493 at 638 DT (checked
+            # live 2026-08-13); with it both give ~454-493 (difference is the
+            # contractor factor, which plan_simulator carries separately).
+            served = max(served, 0.3 * s["rate"] * combined_dt)
+        factor = min(1.0, served / demand) if demand > 0 else 1.0
+        flag = None
+        if combined_dt > s["dt_max"]:
+            flag = "beyond measured fleet (max ever %d DT)" % round(s["dt_max"])
+        elif demand > s["cap"]:
+            flag = "at demonstrated ceiling (%d trips/day)" % round(s["cap"])
+        return factor, flag
+
+    # Combined DT per route key (all contractors share the road's ceiling).
+    combined = {}
+    route_list = [r for r in routes.values() if r["dt"] > 0]
+    for r in route_list:
+        combined["%s>%s" % (r["src"], r["dst"])] = \
+            combined.get("%s>%s" % (r["src"], r["dst"]), 0) + r["dt"]
+
     man_day = sum(r["wmt_day"] for r in routes.values())
     days = _days_in(month)
     paths = []
-    route_list = [r for r in routes.values() if r["dt"] > 0]
+    pred_day = 0.0
+    extrapolated = []
     for i, r in enumerate(route_list):
         rt = "%s>%s" % (r["src"], r["dst"])
         sr = sim_rows[i] if i < len(sim_rows) else {}
+        linear_day = float(sr.get("achievable_production_t") or 0) * 2
+        lin_trips = float(sr.get("total_trips") or 0) * 2 or (linear_day / 50 if linear_day else 0)
+        factor, flag = _ceiling(rt, combined.get(rt, r["dt"]), lin_trips)
+        capped_day = linear_day * factor
+        pred_day += capped_day
+        if flag:
+            extrapolated.append("%s (%s %d DT): %s" % (rt, r["contractor"], round(r["dt"]), flag))
         paths.append({"key": rt, "contractor": r["contractor"],
                       "dt": int(round(r["dt"])),
                       "material": "+".join(sorted(r["materials"])) or None,
                       "manual_wmt_day": round(r["wmt_day"]),
-                      "pred_wmt_day": round(float(sr.get("achievable_production_t") or 0) * 2),
+                      "pred_wmt_day": round(capped_day),
+                      "ceiling_factor": round(factor, 3),
+                      "envelope_flag": flag,
                       "cycle_basis": (sr.get("assumptions") or {}).get("cycle_time") or sr.get("cycle_source")})
     st = _load_state(month) or {"month": month}
     st["prediction"] = {
@@ -563,7 +646,10 @@ def api_monthly_build_from_yearly():
         "days": [{"date": d, "wmt": round(pred_day)} for d in days],
         "built_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "note": ("Fleet (NB_DT_) from the yearly matrix run through the measured "
-                 "plan engine; day = 2 x 12 h shifts. Same plan every day."),
+                 "plan engine with the demonstrated day-throughput ceiling per "
+                 "road (same model as the Plan tab); day = 2 x 12 h shifts. "
+                 "Same plan every day."),
+        "extrapolated": extrapolated,
     }
     st["manual"] = {
         "source": "yearly matrix (%s)" % (yearly.get("source") or "pasted"),
@@ -574,4 +660,5 @@ def api_monthly_build_from_yearly():
     return jsonify({"ok": True, "month": month, "state": st,
                     "manual_day": round(man_day), "pred_day": round(pred_day),
                     "routes": len(plans),
+                    "extrapolated": extrapolated,
                     "warnings": sim["summary"].get("capacity_warnings") or []})

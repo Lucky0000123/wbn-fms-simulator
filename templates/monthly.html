@@ -175,7 +175,11 @@ function render(){
   $('mo-pred-summary').innerHTML=p
     ?('Built from <b>'+p.source_date+'</b> · '+fmt(p.per_day_wmt)+' t/day ('
       +fmt(p.per_shift_wmt)+' t/shift × 2) · '+fmt(p.dt)+' DT · rain '+(p.rain_mm==null?'—':p.rain_mm+' mm')
-      +'<br>'+(p.paths||[]).map(x=>x.key+' ('+x.contractor+', '+x.dt+' DT'+(x.material?', '+x.material:'')+(x.wbSel&&x.wbSel.length?', WB '+x.wbSel.join('+'):'')+')').join(' · '))
+      +'<br>'+(p.paths||[]).map(x=>x.key+' ('+x.contractor+', '+x.dt+' DT'+(x.material?', '+x.material:'')+(x.wbSel&&x.wbSel.length?', WB '+x.wbSel.join('+'):'')+')').join(' · ')
+      +((p.extrapolated&&p.extrapolated.length)
+        ?('<div style="margin-top:6px;color:var(--warn)">⚠ Extrapolated beyond measured history — treat as indicative:<br>'
+          +p.extrapolated.map(e=>'&nbsp;&nbsp;· '+e).join('<br>')+'</div>')
+        :''))
     :'No prediction month built yet.';
   $('mo-man-summary').textContent=m
     ?('Loaded '+(m.days||[]).length+' days from '+(m.source||'?'))
