@@ -179,12 +179,21 @@ def main():
               text("#pa-cong-note")[:90])
         # Count DRAWN CANVASES, not wrapper divs. The wrappers are recreated on
         # every render and so can never fail; the canvases are what blanked.
+        # Wrappers whose point has NO measured ceiling render an explanatory
+        # sentence INSTEAD of a canvas (paGauges' ratio===null branch) — that is
+        # by design, not a blank. 2026-08-13: today's plan included TF>FENI KM15
+        # (dump has no capacity data), tripping "9 canvas for 10 wrappers" on a
+        # healthy page. Exclude those wrappers from the expectation.
         n_gauge_wrap = pg.eval_on_selector_all("#pa-gauges > div", "e => e.length")
         n_gauge_canvas = pg.eval_on_selector_all("#pa-gauges canvas", "e => e.length")
+        n_no_ceiling = pg.eval_on_selector_all(
+            "#pa-gauges > div",
+            "els => els.filter(e => /no measured ceiling/i.test(e.textContent)).length")
         check("S5 gauge wrappers present", n_gauge_wrap >= 1, n_gauge_wrap)
         check("S5 gauges actually DREW after repeated renders",
-              n_gauge_canvas >= n_gauge_wrap,
-              "%d canvas for %d wrappers" % (n_gauge_canvas, n_gauge_wrap))
+              n_gauge_canvas >= n_gauge_wrap - n_no_ceiling,
+              "%d canvas for %d wrappers (%d no-ceiling, text by design)"
+              % (n_gauge_canvas, n_gauge_wrap, n_no_ceiling))
         check("S6 production table still populated", rows("#ps-rows") >= 1)
         check("S7 history table populated", rows("#pa-history-rows") >= 1)
         check("S8 fleet table populated", rows("#pa-fleet-rows") >= 1)
