@@ -298,8 +298,12 @@ def api_monthly_export():
         ws.append(row)
     last = ws.max_row
     ws.append([])
-    ws.append(["TOTAL", cp or None, cm or None,
-               (cp - cm) if (pred and man) else None])
+    total_row = ["TOTAL", cp or None, cm or None,
+                 (cp - cm) if (pred and man) else None]
+    if has_upside:
+        total_row += [None, None,
+                      sum(d.get("wmt_upside") or 0 for d in pred.values()) or None]
+    ws.append(total_row)
     ws.cell(row=ws.max_row, column=1).font = Font(bold=True)
     for i, w in enumerate([12, 22, 22, 14, 24, 20], start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
