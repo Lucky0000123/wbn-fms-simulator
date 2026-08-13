@@ -326,7 +326,9 @@ async function moRecord(mnum){
       :'<div style="margin-top:6px;color:var(--ok)">No infrastructure bottleneck — the fleet itself is the limit.</div>')
     +'<details style="margin-top:6px"><summary class="muted" style="cursor:pointer;font-size:12px">Per-path physics</summary>'
     +'<table style="margin-top:6px"><tr><th>Path</th><th>DT</th><th>Cycle</th><th>Demand</th><th>Served</th><th>%</th><th>t/day</th></tr>'
-    +r.paths.map(p=>'<tr><td>'+p.key+' · '+p.contractor+'</td><td>'+p.dt+'</td><td>'+p.cycle_min+' min</td>'
+    +r.paths.map(p=>'<tr title="'+((p.assumptions||[]).join('; ')||'all inputs measured')+'"><td>'+p.key+' · '+p.contractor
+      +((p.assumptions&&p.assumptions.length)?' <span style="color:var(--warn)" title="'+p.assumptions.join('; ')+'">≈</span>':'')
+      +'</td><td>'+p.dt+'</td><td>'+p.cycle_min+' min</td>'
       +'<td>'+fmt(p.demand_trips_day)+'</td><td>'+fmt(p.served_trips_day)+'</td><td>'+p.served_pct+'%</td><td>'+fmt(p.wmt_day)+'</td></tr>').join('')
     +'</table></details>'
     +'<div class="muted" style="font-size:11px;margin-top:6px">'+r.note+'</div>'

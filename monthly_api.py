@@ -743,12 +743,13 @@ def _record_physics(route_list, cyc_lookup):
     load_d, dump_d = _dd(float), _dd(float)
     for r in route_list:
         cycle = cyc_lookup.get("%s>%s" % (r["src"], r["dst"]))
-        if not cycle:
+        est = cycle is None
+        if est:
             # unmeasured route: median of routes out of the same source
             same = [v for k, v in cyc_lookup.items() if k.startswith(r["src"] + ">")]
             cycle = sorted(same)[len(same) // 2] if same else 120.0
         dem = r["dt"] * 1440.0 / cycle
-        demands.append({"r": r, "cycle": cycle, "demand": dem})
+        demands.append({"r": r, "cycle": cycle, "demand": dem, "cycle_estimated": est})
         load_d[r["src"]] += dem
         dump_d[r["dst"]] += dem
     # Served fraction at each point, at RECORD pace (best hour ever x 24).
@@ -784,10 +785,18 @@ def _record_physics(route_list, cyc_lookup):
         total_wmt += wmt
         total_served += served
         total_demand += d["demand"]
+        assumptions = []
+        if d.get("cycle_estimated"):
+            assumptions.append("cycle estimated from other %s routes (this one unmeasured)" % r["src"])
+        if (r["dst"].upper(), "dumping") not in cap:
+            assumptions.append("no capacity data for %s dump - assumed open" % r["dst"])
+        if not r.get("payload"):
+            assumptions.append("payload assumed 50 t (route unmeasured)")
         paths.append({"key": "%s>%s" % (r["src"], r["dst"]), "contractor": r["contractor"],
                       "dt": int(round(r["dt"])), "cycle_min": round(d["cycle"]),
                       "demand_trips_day": round(d["demand"]), "served_trips_day": round(served),
-                      "served_pct": round(f * 100), "wmt_day": round(wmt)})
+                      "served_pct": round(f * 100), "wmt_day": round(wmt),
+                      "assumptions": assumptions})
     return {"per_day_wmt": round(total_wmt), "demand_trips": round(total_demand),
             "served_trips": round(total_served), "paths": paths,
             "bottlenecks": sorted(bottlenecks, key=lambda b: b["served_pct"]),
