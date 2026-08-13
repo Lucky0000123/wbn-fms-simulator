@@ -180,6 +180,17 @@ function render(){
       +((p.extrapolated&&p.extrapolated.length)
         ?('<div style="margin-top:6px;color:var(--warn)">⚠ Extrapolated beyond measured history — treat as indicative:<br>'
           +p.extrapolated.map(e=>'&nbsp;&nbsp;· '+e).join('<br>')+'</div>')
+        :'')
+      +((p.per_day_upside_wmt&&p.per_day_upside_wmt>p.per_day_wmt*1.02)
+        ?('<div style="margin-top:8px;border:1px solid rgba(96,165,250,.35);border-radius:8px;padding:8px 11px">'
+          +'<b style="color:var(--blue)">Conditional upside: '+fmt(p.per_day_upside_wmt)+' t/day</b> '
+          +'<span class="muted">(+'+fmt(p.per_day_upside_wmt-p.per_day_wmt)+' over the prediction, '
+          +'+'+Math.round((p.per_day_upside_wmt/p.per_day_wmt-1)*100)+'%). The fleet can produce this — '
+          +'the prediction holds it back only because of demonstrated corridor limits. It becomes real IF:</span>'
+          +(p.upside_conditions||[]).map(c=>'<div style="font-size:12px;margin-top:4px">'
+            +'· <b>'+c.route+'</b> <span class="muted">('+c.contractor+')</span> — '
+            +'<span style="color:var(--warn)">'+fmt(c.locked_wmt_day)+' t/day locked</span>: '+c.condition+'</div>').join('')
+          +'</div>')
         :''))
     :'No prediction month built yet.';
   $('mo-man-summary').textContent=m
@@ -190,13 +201,15 @@ function render(){
   card.style.display='';
 
   const days={};
-  (p&&p.days||[]).forEach(d=>{(days[d.date]=days[d.date]||{}).p=d.wmt;});
+  (p&&p.days||[]).forEach(d=>{const r=(days[d.date]=days[d.date]||{});r.p=d.wmt;if(d.wmt_upside!=null)r.u=d.wmt_upside;});
   (m&&m.days||[]).forEach(d=>{(days[d.date]=days[d.date]||{}).m=d.wmt;});
   const ds=Object.keys(days).sort();
   const totP=(p&&p.days||[]).reduce((a,d)=>a+(d.wmt||0),0);
   const totM=(m&&m.days||[]).reduce((a,d)=>a+(d.wmt||0),0);
+  const totU=(p&&p.days||[]).reduce((a,d)=>a+(d.wmt_upside||0),0);
   $('mo-kpis').innerHTML=
     '<div class="kpi"><div class="v pred">'+fmt(totP||null)+'</div><div class="k">prediction · month t</div></div>'
+   +((totU>totP*1.02)?'<div class="kpi" title="Reachable with the SAME fleet if the named corridor conditions are met — see the conditions box above"><div class="v" style="color:var(--blue);opacity:.85">'+fmt(totU)+'</div><div class="k">conditional upside · t</div></div>':'')
    +'<div class="kpi"><div class="v man">'+fmt(totM||null)+'</div><div class="k">manual plan · month t</div></div>'
    +(p&&m?'<div class="kpi"><div class="v gap">'+(totP>=totM?'+':'')+fmt(totP-totM)+'</div><div class="k">prediction − manual</div></div>':'')
    +(p&&m&&totM?'<div class="kpi"><div class="v gap">'+((totP/totM-1)*100).toFixed(1)+'%</div><div class="k">relative</div></div>':'');
@@ -211,6 +224,11 @@ function render(){
     xAxis:axis,yAxis:{...yax,name:'t/day'},
     series:[
       p&&{name:'Prediction',type:'line',smooth:true,showSymbol:false,color:'#60a5fa',data:ds.map(d=>days[d].p??null)},
+      p&&ds.some(d=>days[d].u!=null&&days[d].u>(days[d].p||0)*1.02)
+        ?{name:'Conditional upside',type:'line',smooth:true,showSymbol:false,color:'#60a5fa',
+          lineStyle:{type:'dashed',width:1.4,opacity:.7},
+          areaStyle:{color:'rgba(96,165,250,.06)'},
+          data:ds.map(d=>days[d].u??null)}:null,
       m&&{name:'Manual plan',type:'line',smooth:true,showSymbol:false,color:'#f59e0b',data:ds.map(d=>days[d].m??null)},
     ].filter(Boolean)});
   let cp=0,cm=0;

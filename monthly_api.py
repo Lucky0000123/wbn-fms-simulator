@@ -271,12 +271,16 @@ def api_monthly_export():
     pred = {d["date"]: d for d in ((st.get("prediction") or {}).get("days") or [])}
     man = {d["date"]: d for d in ((st.get("manual") or {}).get("days") or [])}
     days = _days_in(month)
+    has_upside = any(d.get("wmt_upside") and d["wmt_upside"] > (d.get("wmt") or 0) * 1.02
+                     for d in pred.values())
 
     wb = Workbook()
     ws = wb.active
     ws.title = "Daily comparison"
     head = ["Date", "Prediction WMT (t/day)", "Manual plan WMT (t/day)",
             "Difference (t)", "Prediction cumulative (t)", "Manual cumulative (t)"]
+    if has_upside:
+        head.append("Conditional upside (t/day)")
     ws.append(head)
     for c in range(1, len(head) + 1):
         ws.cell(row=1, column=c).font = Font(bold=True)
@@ -286,9 +290,12 @@ def api_monthly_export():
         mw = man.get(d, {}).get("wmt")
         cp += pw or 0
         cm += mw or 0
-        ws.append([d, pw, mw,
-                   (pw - mw) if (pw is not None and mw is not None) else None,
-                   cp if pred else None, cm if man else None])
+        row = [d, pw, mw,
+               (pw - mw) if (pw is not None and mw is not None) else None,
+               cp if pred else None, cm if man else None]
+        if has_upside:
+            row.append(pred.get(d, {}).get("wmt_upside"))
+        ws.append(row)
     last = ws.max_row
     ws.append([])
     ws.append(["TOTAL", cp or None, cm or None,
@@ -340,6 +347,15 @@ def api_monthly_export():
     ws2.append(["Fleet (DT)", p.get("dt")])
     ws2.append(["Rain (mm, fixed)", p.get("rain_mm")])
     ws2.append(["Note", p.get("note")])
+    if p.get("upside_conditions"):
+        ws2.append([])
+        ws2.append(["Conditional upside", "%s t/day possible with the SAME fleet"
+                    % p.get("per_day_upside_wmt")])
+        ws2.cell(row=ws2.max_row, column=1).font = Font(bold=True)
+        ws2.append(["It becomes real IF:"])
+        for c in p["upside_conditions"]:
+            ws2.append(["  %s (%s)" % (c["route"], c["contractor"]),
+                        "%s t/day locked" % c["locked_wmt_day"], c["condition"]])
     ws2.append([])
     ws2.append(["Paths in the plan"])
     ws2.cell(row=ws2.max_row, column=1).font = Font(bold=True)
@@ -616,6 +632,8 @@ def api_monthly_build_from_yearly():
     days = _days_in(month)
     paths = []
     pred_day = 0.0
+    upside_day = 0.0        # linear engine: what the SAME fleet does if ceilings lift
+    conditions = []         # what has to be true for the upside to materialise
     extrapolated = []
     for i, r in enumerate(route_list):
         rt = "%s>%s" % (r["src"], r["dst"])
@@ -625,8 +643,24 @@ def api_monthly_build_from_yearly():
         factor, flag = _ceiling(rt, combined.get(rt, r["dt"]), lin_trips)
         capped_day = linear_day * factor
         pred_day += capped_day
+        upside_day += linear_day
         if flag:
             extrapolated.append("%s (%s %d DT): %s" % (rt, r["contractor"], round(r["dt"]), flag))
+        # Name the CONDITION that unlocks this row's gap (owner 2026-08-13:
+        # "under what conditions this +35% is more achievable ... show it").
+        if factor < 0.995 and linear_day > 0:
+            s = day_stats.get(rt) or {}
+            need_trips = lin_trips
+            have_cap = s.get("cap")
+            if have_cap:
+                conditions.append({
+                    "route": rt, "contractor": r["contractor"],
+                    "locked_wmt_day": round(linear_day - capped_day),
+                    "condition": ("%s must serve ~%d trips/day (best ever done: %d). "
+                                  "That means more loading/dump capacity or faster "
+                                  "turnaround on this corridor - the trucks themselves "
+                                  "are already enough." % (rt, round(need_trips), round(have_cap))),
+                })
         paths.append({"key": rt, "contractor": r["contractor"],
                       "dt": int(round(r["dt"])),
                       "material": "+".join(sorted(r["materials"])) or None,
@@ -643,13 +677,16 @@ def api_monthly_build_from_yearly():
         "dt": int(round(sum(r["dt"] for r in routes.values()))),
         "rain_mm": None,
         "paths": paths,
-        "days": [{"date": d, "wmt": round(pred_day)} for d in days],
+        "days": [{"date": d, "wmt": round(pred_day), "wmt_upside": round(upside_day)}
+                 for d in days],
         "built_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "note": ("Fleet (NB_DT_) from the yearly matrix run through the measured "
                  "plan engine with the demonstrated day-throughput ceiling per "
                  "road (same model as the Plan tab); day = 2 x 12 h shifts. "
                  "Same plan every day."),
         "extrapolated": extrapolated,
+        "per_day_upside_wmt": round(upside_day),
+        "upside_conditions": sorted(conditions, key=lambda c: -c["locked_wmt_day"]),
     }
     st["manual"] = {
         "source": "yearly matrix (%s)" % (yearly.get("source") or "pasted"),
