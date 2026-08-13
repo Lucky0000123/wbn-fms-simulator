@@ -39,7 +39,9 @@ _MONTH_DIR = os.path.join(_ROOT, "data", "monthly_plans")
 
 
 def _month_path(month):
-    if not re.fullmatch(r"\d{4}-\d{2}", month or ""):
+    # \d{2} alone let "2026-13" through to calendar.monthrange -> 500
+    # (found in the failure-mode battery). Month must be 01-12.
+    if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month or ""):
         return None
     return os.path.join(_MONTH_DIR, month + ".json")
 
@@ -202,15 +204,23 @@ def api_monthly_manual():
     if f and f.filename:
         src_name = f.filename
         data = f.read()
+        if not data:
+            return jsonify({"ok": False, "error": "the file is empty"}), 400
         if f.filename.lower().endswith((".xlsx", ".xlsm")):
             from openpyxl import load_workbook
-            wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+            try:
+                wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+            except Exception:  # noqa: BLE001 — corrupt/renamed file, not an xlsx
+                return jsonify({"ok": False, "error": "could not read that file as .xlsx - is it really an Excel file?"}), 400
             ws = wb.active
             rows = [list(r) for r in ws.iter_rows(values_only=True)]
         else:  # csv / tsv
             text = data.decode("utf-8", "replace")
-            sep = "\t" if "\t" in text.splitlines()[0] else ","
-            rows = [line.split(sep) for line in text.splitlines()]
+            lines = text.splitlines()
+            if not lines:
+                return jsonify({"ok": False, "error": "the file is empty"}), 400
+            sep = "\t" if "\t" in lines[0] else ","
+            rows = [line.split(sep) for line in lines]
     else:
         body = request.get_json(silent=True) or {}
         text = body.get("pasted") or ""
@@ -333,10 +343,22 @@ def api_monthly_export():
     ws2.append([])
     ws2.append(["Paths in the plan"])
     ws2.cell(row=ws2.max_row, column=1).font = Font(bold=True)
-    ws2.append(["Path", "Contractor", "DT", "Material", "Weighbridges"])
-    for row in (p.get("paths") or []):
-        ws2.append([row.get("key"), row.get("contractor"), row.get("dt"),
-                    row.get("material"), ",".join(row.get("wbSel") or [])])
+    has_perpath = any(row.get("manual_wmt_day") is not None or row.get("pred_wmt_day") is not None
+                      for row in (p.get("paths") or []))
+    if has_perpath:
+        ws2.append(["Path", "Contractor", "DT", "Material", "Weighbridges",
+                    "Plan WMT/day", "Engine WMT/day", "Engine - Plan"])
+        for row in (p.get("paths") or []):
+            mw, pw = row.get("manual_wmt_day"), row.get("pred_wmt_day")
+            ws2.append([row.get("key"), row.get("contractor"), row.get("dt"),
+                        row.get("material"), ",".join(row.get("wbSel") or []),
+                        mw, pw,
+                        (pw - mw) if (pw is not None and mw is not None) else None])
+    else:
+        ws2.append(["Path", "Contractor", "DT", "Material", "Weighbridges"])
+        for row in (p.get("paths") or []):
+            ws2.append([row.get("key"), row.get("contractor"), row.get("dt"),
+                        row.get("material"), ",".join(row.get("wbSel") or [])])
     ws2.append([])
     ws2.append(["Manual side"])
     ws2.cell(row=ws2.max_row, column=1).font = Font(bold=True)
@@ -351,3 +373,205 @@ def api_monthly_export():
     return send_file(buf, as_attachment=True,
                      download_name="monthly_plan_comparison_%s.xlsx" % month,
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+# ── Yearly plan matrix (owner 2026-08-13) ────────────────────────────────────
+# "i will not paste for whole month, but paste for one day plan, this is my
+#  whole plan for this year ... its one day for each month and we have to
+#  calculate for the whole month."
+#
+# The matrix is the mine-planning export: rows = ORIGIN/MATERIAL/ACTIVITY/
+# ORIGIN_TYPE/DESTINATION/CONTRACTOR with merged-cell carry-down, a Values
+# column alternating WMT/day and NB_DT_, and one column per month. Subtotal
+# rows ("LIM WMT/day", "BLB WMT/day", "Total WMT/day") are skipped because
+# their Values cell is not exactly WMT/day / NB_DT_. Parser verified against
+# the owner's own totals: Aug 83,988/581 vs stated 83,989/579 (their subtotal
+# rounding), Dec 208,408/1,281 vs 208,407/1,280.
+#
+# One matrix load fills BOTH sides of every month it covers:
+#   manual side     = the matrix's own WMT/day × days in month (verbatim)
+#   prediction side = the SAME fleet (NB_DT_) run through plan_simulator's
+#                     measured engine (achievable t/shift × 2 shifts × days)
+
+_MONTH_NAMES = {"january": 1, "february": 2, "march": 3, "april": 4, "may": 5,
+                "june": 6, "july": 7, "august": 8, "september": 9,
+                "october": 10, "november": 11, "december": 12}
+
+_YEARLY_PATH = os.path.join(_MONTH_DIR, "yearly_matrix.json")
+
+# Matrix labels -> the engine's route vocabulary (route_lookup.csv).
+_ORIGIN_MAP = {"TOFU": "TF"}
+
+
+def _canon_dest(d):
+    d = re.sub(r"\s+", " ", (d or "").strip().upper())
+    d = d.replace("KM 0", "KM0").replace("KM 15", "KM15").replace("KM 10", "KM10")
+    return d
+
+
+def _num(s):
+    s = re.sub(r"[^\d.]", "", str(s or ""))
+    return float(s) if s else None
+
+
+def _parse_yearly_matrix(rows):
+    hdr = None
+    for i, r in enumerate(rows):
+        low = [str(c or "").strip().lower() for c in r]
+        if "values" in low and any(c in _MONTH_NAMES for c in low):
+            hdr = i
+            break
+    if hdr is None:
+        return None, "no header row found (need a 'Values' column plus month columns like August, September...)"
+    h = rows[hdr]
+    low = [str(c or "").strip().lower() for c in h]
+    vcol = low.index("values")
+    mcols = {j: _MONTH_NAMES[c] for j, c in enumerate(low) if c in _MONTH_NAMES}
+    if not mcols:
+        return None, "no month columns found"
+    carry = {"origin": "", "material": "", "activity": "", "otype": "", "dest": "", "contractor": ""}
+    entries, pending = [], None
+    for r in rows[hdr + 1:]:
+        cells = [str(c or "").strip() for c in r] + [""] * 12
+        v = cells[vcol]
+        if v == "WMT/day":
+            for k, idx in (("origin", 0), ("material", 1), ("activity", 2),
+                           ("otype", 3), ("dest", 4), ("contractor", 5)):
+                if cells[idx]:
+                    carry[k] = cells[idx]
+            pending = {"origin": carry["origin"], "material": carry["material"],
+                       "activity": carry["activity"], "otype": carry["otype"],
+                       "dest": carry["dest"], "contractor": carry["contractor"],
+                       "wmt": {str(m): _num(cells[j]) for j, m in mcols.items()},
+                       "dt": {}}
+            entries.append(pending)
+        elif v == "NB_DT_" and pending is not None:
+            pending["dt"] = {str(m): _num(cells[j]) for j, m in mcols.items()}
+            pending = None
+    entries = [e for e in entries if any(e["wmt"].values()) or any(e["dt"].values())]
+    if not entries:
+        return None, "found the header but no WMT/day / NB_DT_ row pairs under it"
+    return {"entries": entries, "months": sorted({int(m) for e in entries for m, v in e["wmt"].items() if v})}, None
+
+
+@bp.route("/api/monthly/yearly", methods=["GET", "POST"])
+def api_monthly_yearly():
+    if request.method == "GET":
+        if not os.path.isfile(_YEARLY_PATH):
+            return jsonify({"ok": True, "exists": False})
+        with open(_YEARLY_PATH, encoding="utf-8") as fh:
+            return jsonify({"ok": True, "exists": True, "yearly": json.load(fh)})
+    rows, src_name = [], "pasted"
+    f = request.files.get("file")
+    if f and f.filename:
+        src_name = f.filename
+        data = f.read()
+        if not data:
+            return jsonify({"ok": False, "error": "the file is empty"}), 400
+        if f.filename.lower().endswith((".xlsx", ".xlsm")):
+            from openpyxl import load_workbook
+            try:
+                wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+            except Exception:  # noqa: BLE001
+                return jsonify({"ok": False, "error": "could not read that file as .xlsx"}), 400
+            ws = wb.active
+            rows = [list(r) for r in ws.iter_rows(values_only=True)]
+        else:
+            text = data.decode("utf-8", "replace")
+            rows = [l.split("\t" if "\t" in text else ",") for l in text.splitlines()]
+    else:
+        body = request.get_json(silent=True) or {}
+        text = body.get("pasted") or ""
+        if not text.strip():
+            return jsonify({"ok": False, "error": "paste the matrix or upload the file"}), 400
+        rows = [l.split("\t" if "\t" in text else ",") for l in text.splitlines()]
+    parsed, err = _parse_yearly_matrix(rows)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    parsed["source"] = src_name
+    parsed["loaded_at"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    os.makedirs(_MONTH_DIR, exist_ok=True)
+    with open(_YEARLY_PATH, "w", encoding="utf-8") as fh:
+        json.dump(parsed, fh, indent=1)
+    return jsonify({"ok": True, "months": parsed["months"], "routes": len(parsed["entries"])})
+
+
+@bp.route("/api/monthly/build-from-yearly", methods=["POST"])
+def api_monthly_build_from_yearly():
+    """One month, both sides, from the loaded yearly matrix."""
+    body = request.get_json(silent=True) or {}
+    month = (body.get("month") or "").strip()
+    if not _month_path(month):
+        return jsonify({"ok": False, "error": "supply month=YYYY-MM"}), 400
+    if not os.path.isfile(_YEARLY_PATH):
+        return jsonify({"ok": False, "error": "no yearly matrix loaded yet"}), 404
+    with open(_YEARLY_PATH, encoding="utf-8") as fh:
+        yearly = json.load(fh)
+    mnum = str(int(month[5:7]))
+    active = [e for e in yearly["entries"]
+              if (e["wmt"].get(mnum) or 0) > 0 or (e["dt"].get(mnum) or 0) > 0]
+    if not active:
+        return jsonify({"ok": False, "error": "the matrix has no rows for month %s" % month}), 400
+    # Group to engine routes: same origin+dest+contractor lines merge (the
+    # matrix splits them by ACTIVITY/ORIGIN_TYPE, the road does not care).
+    routes = {}
+    for e in active:
+        src = _ORIGIN_MAP.get(e["origin"].upper(), e["origin"].upper())
+        dst = _canon_dest(e["dest"])
+        key = (src, dst, e["contractor"].upper())
+        rec = routes.setdefault(key, {"src": src, "dst": dst,
+                                      "contractor": e["contractor"].upper(),
+                                      "dt": 0.0, "wmt_day": 0.0, "materials": set()})
+        rec["dt"] += e["dt"].get(mnum) or 0
+        rec["wmt_day"] += e["wmt"].get(mnum) or 0
+        if e.get("material"):
+            rec["materials"].add(e["material"])
+    plans = [{"route": "%s>%s" % (r["src"], r["dst"]), "source": r["src"],
+              "destination": r["dst"], "n_trucks": int(round(r["dt"])),
+              "contractor": r["contractor"]}
+             for r in routes.values() if r["dt"] > 0]
+    import plan_simulator
+    sim = plan_simulator.simulate({"plans": plans})
+    if sim.get("error"):
+        return jsonify({"ok": False, "error": sim["error"]}), 500
+    # Match results BY INDEX: simulate() preserves plan order, and a route key
+    # is NOT unique (TF>HUAFEI runs for both RIM and SMA - a dict keyed by
+    # route silently gave both rows the last row's tonnage; caught in testing).
+    sim_rows = sim.get("results", [])
+    pred_day = float(sim["summary"]["achievable_production_t"]) * 2   # 2 × 12 h shifts
+    man_day = sum(r["wmt_day"] for r in routes.values())
+    days = _days_in(month)
+    paths = []
+    route_list = [r for r in routes.values() if r["dt"] > 0]
+    for i, r in enumerate(route_list):
+        rt = "%s>%s" % (r["src"], r["dst"])
+        sr = sim_rows[i] if i < len(sim_rows) else {}
+        paths.append({"key": rt, "contractor": r["contractor"],
+                      "dt": int(round(r["dt"])),
+                      "material": "+".join(sorted(r["materials"])) or None,
+                      "manual_wmt_day": round(r["wmt_day"]),
+                      "pred_wmt_day": round(float(sr.get("achievable_production_t") or 0) * 2),
+                      "cycle_basis": (sr.get("assumptions") or {}).get("cycle_time") or sr.get("cycle_source")})
+    st = _load_state(month) or {"month": month}
+    st["prediction"] = {
+        "source_date": "yearly matrix (%s)" % (yearly.get("source") or "pasted"),
+        "per_shift_wmt": round(pred_day / 2),
+        "per_day_wmt": round(pred_day),
+        "dt": int(round(sum(r["dt"] for r in routes.values()))),
+        "rain_mm": None,
+        "paths": paths,
+        "days": [{"date": d, "wmt": round(pred_day)} for d in days],
+        "built_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "note": ("Fleet (NB_DT_) from the yearly matrix run through the measured "
+                 "plan engine; day = 2 x 12 h shifts. Same plan every day."),
+    }
+    st["manual"] = {
+        "source": "yearly matrix (%s)" % (yearly.get("source") or "pasted"),
+        "days": [{"date": d, "wmt": round(man_day)} for d in days],
+        "loaded_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    _save_state(month, st)
+    return jsonify({"ok": True, "month": month, "state": st,
+                    "manual_day": round(man_day), "pred_day": round(pred_day),
+                    "routes": len(plans),
+                    "warnings": sim["summary"].get("capacity_warnings") or []})
