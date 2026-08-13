@@ -486,6 +486,62 @@
     };
   }
 
+  // ── Saved plans carry the weighbridge picks (owner 2026-08-13: "when we
+  //    save a plan, it should save the weighbridge details as well, if it is
+  //    not saving it, means we have to do it again") ─────────────────────────
+  // planDraftSnapshot copies an explicit field list, so wbSel is added here by
+  // the module that owns _pathWb. On load the assignments are rebuilt BEFORE
+  // computePlan renders rows, then annotated with route history when the DB
+  // answers (share weights improve the split; equal split until then).
+  function annotatePathWb(id, row){
+    const s = row.source || (row.key || '').split('>')[0];
+    const d = row.dest   || (row.key || '').split('>')[1];
+    if (!s || !d) return;
+    fetch('/api/simulator/weighbridge-by-path?' + new URLSearchParams({ source: s, dest: d }))
+      .then(r => r.json()).then(res => {
+        const pw = _pathWb[id];
+        if (!pw) return;
+        const byNum = {};
+        ((res && res.bridges) || []).forEach(b => {
+          if (!(b.trips > 0)) return;
+          const digits = String(b.wbNum != null ? b.wbNum : b.wb).match(/\d+/);
+          const num = digits ? String(parseInt(digits[0], 10)) : String(b.wb);
+          const rec = byNum[num] || (byNum[num] = { trips: 0, sharePct: 0 });
+          rec.trips += b.trips; rec.sharePct += (b.sharePct || 0);
+        });
+        pw.bridges = ALL_WBS.map(wb => ({ wb, sharePct: byNum[wb] ? byNum[wb].sharePct : null }));
+        if (typeof computePlan === 'function') computePlan();
+      }).catch(() => {});
+  }
+  if (typeof window.planDraftSnapshot === 'function'){
+    const _origSnap = window.planDraftSnapshot;
+    window.planDraftSnapshot = function(){
+      const snap = _origSnap.apply(this, arguments);
+      Object.keys(snap.paths || {}).forEach(id => {
+        const pw = _pathWb[id];
+        if (pw && pw.sel && pw.sel.size)
+          snap.paths[id].wbSel = [...pw.sel].sort((a, b) => Number(a) - Number(b));
+      });
+      return snap;
+    };
+  }
+  if (typeof window.planLoadDraft === 'function'){
+    const _origLoad = window.planLoadDraft;
+    window.planLoadDraft = function(obj){
+      Object.keys(obj || {}).forEach(id => {
+        const sel = obj[id] && obj[id].wbSel;
+        if (Array.isArray(sel) && sel.length){
+          _pathWb[id] = { bridges: ALL_WBS.map(wb => ({ wb, sharePct: null })),
+                          sel: new Set(sel.map(String)), open: false };
+          annotatePathWb(id, obj[id]);
+        }
+      });
+      const r = _origLoad.apply(this, arguments);
+      syncWbCount();
+      return r;
+    };
+  }
+
   // Delegated clicks: top-panel chips, per-path chips, and re-wire on tab open.
   document.addEventListener('click', function(ev){
     const t = ev.target;

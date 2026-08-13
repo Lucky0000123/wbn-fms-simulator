@@ -133,13 +133,39 @@
       });
       if(!hit)return;
       const code=draft[hit].material;
+      // Editable in place (owner 2026-08-13: "give us option to edit the
+      // plan"): click the tag, pick a new material from the same census list.
       tds[0].insertAdjacentHTML('beforeend',
-        ' <span class="plan-mat-tag" title="'+esc(labelFor(code))
-        +' — label only, does not change the model" style="font-size:9px;padding:1px 5px;'
-        +'border-radius:8px;background:rgba(96,165,250,.16);color:#93c5fd;'
-        +'vertical-align:middle">'+esc(code)+'</span>');
+        ' <span class="plan-mat-tag" data-matid="'+esc(hit)+'" title="'+esc(labelFor(code))
+        +' — label only, does not change the model · click to change" style="font-size:9px;'
+        +'padding:1px 5px;border-radius:8px;background:rgba(96,165,250,.16);color:#93c5fd;'
+        +'vertical-align:middle;cursor:pointer">'+esc(code)+' ▾</span>');
     });
   }
+
+  // Click a row tag → swap it for a small select; change writes the draft.
+  document.addEventListener('click',ev=>{
+    const tag=ev.target&&ev.target.closest?ev.target.closest('.plan-mat-tag[data-matid]'):null;
+    if(!tag||tag.querySelector('select'))return;
+    const id=tag.getAttribute('data-matid');
+    const draft=(typeof _planDraft!=="undefined"?_planDraft:{});
+    if(!draft[id])return;
+    const cur=draft[id].material;
+    const sel=document.createElement('select');
+    sel.style.cssText='font-size:9px;background:transparent;color:#93c5fd;border:none;outline:none';
+    sel.innerHTML=_all.map(m=>'<option value="'+esc(m.code)+'"'+(m.code===cur?' selected':'')
+      +'>'+esc(m.name)+' ('+esc(m.code)+')</option>').join('');
+    tag.textContent='';
+    tag.appendChild(sel);
+    sel.focus();
+    const commit=()=>{
+      if(draft[id])draft[id].material=sel.value;
+      if(typeof computePlan==='function')computePlan();  // re-render restores tag form
+    };
+    sel.addEventListener('change',commit);
+    sel.addEventListener('blur',commit);
+    ev.stopPropagation();
+  });
   const _origCompute=window.computePlan;
   if(typeof _origCompute==='function'){
     window.computePlan=function(){
