@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Monthly Plan — FMS Simulator</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--line:#30363d;--txt:#e6edf3;--muted:#8b98a5;
+--accent:#f59e0b;--ok:#22c55e;--warn:#f59e0b;--er:#ef4444;--blue:#60a5fa}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);font:13px/1.45 -apple-system,'Segoe UI',Roboto,sans-serif}
+header{display:flex;align-items:center;gap:14px;padding:10px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
+header h1{font-size:15px;margin:0}
+header a{color:var(--muted);text-decoration:none;font-size:12px}
+header a:hover{color:var(--txt)}
+main{max-width:1200px;margin:0 auto;padding:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+.card h2{font-size:13px;margin:0 0 10px;letter-spacing:.02em}
+.muted{color:var(--muted)}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+select,input[type=month],input[type=file]{background:#0d1117;color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:5px 9px;font-size:12.5px}
+textarea{width:100%;min-height:74px;background:#0d1117;color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:7px 9px;font-size:12px;font-family:ui-monospace,monospace}
+button{background:#21262d;color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:6px 13px;font-size:12.5px;cursor:pointer}
+button:hover{border-color:#8b98a5}
+button.primary{background:var(--accent);color:#1a1d24;font-weight:700;border-color:var(--accent)}
+button:disabled{opacity:.45;cursor:default}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:900px){.grid2{grid-template-columns:1fr}}
+.kpis{display:flex;gap:22px;flex-wrap:wrap;margin:6px 0}
+.kpi .v{font-size:20px;font-weight:700}
+.kpi .k{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.kpi .v.pred{color:var(--blue)} .kpi .v.man{color:var(--warn)} .kpi .v.gap{color:var(--ok)}
+.chart{height:300px}
+table{border-collapse:collapse;width:100%;font-size:12px}
+th,td{padding:3px 9px;border-bottom:1px solid var(--line);text-align:right}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
+.tag{display:inline-block;padding:1px 7px;border-radius:9px;font-size:10px;background:rgba(96,165,250,.15);color:var(--blue)}
+.status{font-size:11.5px;margin-left:8px}
+.status.ok{color:var(--ok)} .status.er{color:var(--er)}
+</style>
+</head>
+<body>
+<header>
+  <h1>📅 Monthly plan — prediction vs manual</h1>
+  <a href="/simulator">← back to simulator</a>
+  <span style="flex:1"></span>
+  <label class="muted" style="font-size:12px">Month
+    <input type="month" id="mo-month" style="margin-left:6px">
+  </label>
+  <select id="mo-months" title="Stored months"><option value="">Stored…</option></select>
+</header>
+<main>
+
+<div class="grid2">
+  <div class="card">
+    <h2>1 · Prediction plan <span class="tag">from the Plan tab</span></h2>
+    <p class="muted" style="margin:4px 0 10px">Pick a saved daily plan. It runs
+    every day of the month: day = 2 × 12 h shifts × the plan's per-shift
+    prediction. Same fleet, same paths, rain fixed at the saved value.</p>
+    <div class="row">
+      <select id="mo-saved"><option value="">Saved daily plans…</option></select>
+      <button class="primary" id="mo-build" onclick="moBuild()">Build month from this plan</button>
+      <span class="status" id="mo-build-status"></span>
+    </div>
+    <div id="mo-pred-summary" class="muted" style="margin-top:10px;font-size:12px"></div>
+  </div>
+
+  <div class="card">
+    <h2>2 · Manual plan <span class="tag" style="background:rgba(245,158,11,.15);color:var(--warn)">your Excel</span></h2>
+    <p class="muted" style="margin:4px 0 10px">Upload the month plan you made
+    by the usual method (historical trips, no variables) — .xlsx or .csv with a
+    date (or day number) column and a WMT/tonnage column. Or paste rows.</p>
+    <div class="row">
+      <input type="file" id="mo-file" accept=".xlsx,.xlsm,.csv,.tsv,.txt">
+      <button onclick="moUpload()">Upload</button>
+      <span class="status" id="mo-man-status"></span>
+    </div>
+    <textarea id="mo-paste" placeholder="…or paste rows, e.g.&#10;date,wmt&#10;2026-09-01,34500&#10;2026-09-02,36200"></textarea>
+    <div class="row" style="margin-top:6px">
+      <button onclick="moPaste()">Use pasted rows</button>
+      <span class="muted" id="mo-man-summary" style="font-size:12px"></span>
+    </div>
+  </div>
+</div>
+
+<div class="card" id="mo-compare-card" style="display:none">
+  <h2>3 · Comparison</h2>
+  <div class="kpis" id="mo-kpis"></div>
+  <div class="chart" id="mo-chart-daily"></div>
+  <div class="chart" id="mo-chart-cum" style="margin-top:10px"></div>
+  <div class="chart" id="mo-chart-gap" style="margin-top:10px;height:220px"></div>
+  <div class="row" style="margin-top:12px">
+    <button class="primary" onclick="moExport()">⬇ Export Excel (data + charts)</button>
+    <button onclick="moClear('all')" title="Delete everything stored for this month">Clear month</button>
+    <span class="muted" style="font-size:11.5px">The export contains the daily table,
+    totals, the plan basis (paths, DT, WB, material, rain) and three native Excel charts.</span>
+  </div>
+  <details style="margin-top:12px"><summary class="muted" style="cursor:pointer">Daily table</summary>
+    <div style="max-height:340px;overflow:auto;margin-top:8px"><table id="mo-table"></table></div>
+  </details>
+</div>
+
+<p class="muted" style="font-size:11.5px">Prediction days come from the saved plan's
+own totals (measured path engine, shared ceilings, weighbridges). The manual plan is
+stored verbatim — nothing is recalculated on that side. To model a different month,
+save another daily plan in the Plan tab and build from it here.</p>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+let _state=null,_charts={};
+
+function month(){return $('mo-month').value;}
+function fmt(n){return n==null?'—':Number(n).toLocaleString('en-GB',{maximumFractionDigits:0});}
+
+function chart(id,opt){
+  if(typeof echarts==='undefined'){$(id).innerHTML='<div class="muted" style="padding:20px">Chart library offline — the daily table below and the Excel export still work.</div>';return;}
+  let c=_charts[id];
+  if(c&&(c.isDisposed()||c.getDom()!==$(id))){try{c.dispose();}catch(e){}c=null;}
+  if(!c){c=echarts.init($(id));_charts[id]=c;}
+  c.setOption(opt,true);
+}
+window.addEventListener('resize',()=>Object.values(_charts).forEach(c=>{try{c.resize();}catch(e){}}));
+
+function defaultMonth(){
+  const d=new Date();d.setMonth(d.getMonth()+1);
+  return d.toISOString().slice(0,7);
+}
+
+async function refreshMonths(){
+  const r=await fetch('/api/monthly/months').then(x=>x.json()).catch(()=>null);
+  const sel=$('mo-months');
+  const ms=(r&&r.months)||[];
+  sel.innerHTML='<option value="">Stored… ('+ms.length+')</option>'+ms.map(m=>'<option>'+m+'</option>').join('');
+}
+
+async function refreshSaved(){
+  const r=await fetch('/api/plan/saved/list').then(x=>x.json()).catch(()=>null);
+  const sel=$('mo-saved');
+  const ds=(r&&r.dates)||[];
+  sel.innerHTML='<option value="">Saved daily plans… ('+ds.length+')</option>'
+    +ds.map(d=>'<option>'+d+'</option>').join('');
+}
+
+async function loadState(){
+  if(!month())return;
+  const r=await fetch('/api/monthly/state?month='+month()).then(x=>x.json()).catch(()=>null);
+  _state=(r&&r.state)||null;
+  render();
+}
+
+function render(){
+  const st=_state||{};
+  const p=st.prediction,m=st.manual;
+  $('mo-pred-summary').innerHTML=p
+    ?('Built from <b>'+p.source_date+'</b> · '+fmt(p.per_day_wmt)+' t/day ('
+      +fmt(p.per_shift_wmt)+' t/shift × 2) · '+fmt(p.dt)+' DT · rain '+(p.rain_mm==null?'—':p.rain_mm+' mm')
+      +'<br>'+(p.paths||[]).map(x=>x.key+' ('+x.contractor+', '+x.dt+' DT'+(x.material?', '+x.material:'')+(x.wbSel&&x.wbSel.length?', WB '+x.wbSel.join('+'):'')+')').join(' · '))
+    :'No prediction month built yet.';
+  $('mo-man-summary').textContent=m
+    ?('Loaded '+(m.days||[]).length+' days from '+(m.source||'?'))
+    :'';
+  const card=$('mo-compare-card');
+  if(!p&&!m){card.style.display='none';return;}
+  card.style.display='';
+
+  const days={};
+  (p&&p.days||[]).forEach(d=>{(days[d.date]=days[d.date]||{}).p=d.wmt;});
+  (m&&m.days||[]).forEach(d=>{(days[d.date]=days[d.date]||{}).m=d.wmt;});
+  const ds=Object.keys(days).sort();
+  const totP=(p&&p.days||[]).reduce((a,d)=>a+(d.wmt||0),0);
+  const totM=(m&&m.days||[]).reduce((a,d)=>a+(d.wmt||0),0);
+  $('mo-kpis').innerHTML=
+    '<div class="kpi"><div class="v pred">'+fmt(totP||null)+'</div><div class="k">prediction · month t</div></div>'
+   +'<div class="kpi"><div class="v man">'+fmt(totM||null)+'</div><div class="k">manual plan · month t</div></div>'
+   +(p&&m?'<div class="kpi"><div class="v gap">'+(totP>=totM?'+':'')+fmt(totP-totM)+'</div><div class="k">prediction − manual</div></div>':'')
+   +(p&&m&&totM?'<div class="kpi"><div class="v gap">'+((totP/totM-1)*100).toFixed(1)+'%</div><div class="k">relative</div></div>':'');
+
+  const lab=ds.map(d=>d.slice(8));
+  const axis={type:'category',data:lab,axisLabel:{color:'#8b98a5'}};
+  const yax={type:'value',axisLabel:{color:'#8b98a5'},splitLine:{lineStyle:{color:'rgba(148,163,184,.09)'}}};
+  chart('mo-chart-daily',{
+    title:{text:'Daily WMT',left:8,textStyle:{fontSize:12.5,color:'#cbd5e1'}},
+    legend:{top:4,right:8,textStyle:{color:'#8b98a5',fontSize:11}},
+    grid:{left:64,right:20,top:38,bottom:26},tooltip:{trigger:'axis'},
+    xAxis:axis,yAxis:{...yax,name:'t/day'},
+    series:[
+      p&&{name:'Prediction',type:'line',smooth:true,showSymbol:false,color:'#60a5fa',data:ds.map(d=>days[d].p??null)},
+      m&&{name:'Manual plan',type:'line',smooth:true,showSymbol:false,color:'#f59e0b',data:ds.map(d=>days[d].m??null)},
+    ].filter(Boolean)});
+  let cp=0,cm=0;
+  chart('mo-chart-cum',{
+    title:{text:'Cumulative WMT',left:8,textStyle:{fontSize:12.5,color:'#cbd5e1'}},
+    legend:{top:4,right:8,textStyle:{color:'#8b98a5',fontSize:11}},
+    grid:{left:74,right:20,top:38,bottom:26},tooltip:{trigger:'axis'},
+    xAxis:axis,yAxis:{...yax,name:'t'},
+    series:[
+      p&&{name:'Prediction',type:'line',smooth:true,showSymbol:false,color:'#60a5fa',
+          areaStyle:{opacity:.08},data:ds.map(d=>{cp+=(days[d].p||0);return days[d].p!=null?cp:null;})},
+      m&&{name:'Manual plan',type:'line',smooth:true,showSymbol:false,color:'#f59e0b',
+          areaStyle:{opacity:.08},data:ds.map(d=>{cm+=(days[d].m||0);return days[d].m!=null?cm:null;})},
+    ].filter(Boolean)});
+  if(p&&m){
+    chart('mo-chart-gap',{
+      title:{text:'Daily gap (prediction − manual)',left:8,textStyle:{fontSize:12.5,color:'#cbd5e1'}},
+      grid:{left:64,right:20,top:34,bottom:26},tooltip:{trigger:'axis'},
+      xAxis:axis,yAxis:{...yax,name:'t'},
+      series:[{type:'bar',data:ds.map(d=>{
+        const g=(days[d].p!=null&&days[d].m!=null)?days[d].p-days[d].m:null;
+        return {value:g,itemStyle:{color:g>=0?'#22c55e':'#ef4444'}};})}]});
+  }else{$('mo-chart-gap').innerHTML='';}
+
+  $('mo-table').innerHTML='<tr><th>Date</th><th>Prediction t</th><th>Manual t</th><th>Gap t</th></tr>'
+    +ds.map(d=>{const r=days[d];
+      const g=(r.p!=null&&r.m!=null)?r.p-r.m:null;
+      return '<tr><td>'+d+'</td><td>'+fmt(r.p)+'</td><td>'+fmt(r.m)+'</td><td>'+(g==null?'—':(g>=0?'+':'')+fmt(g))+'</td></tr>';}).join('')
+    +'<tr><td><b>Total</b></td><td><b>'+fmt(totP||null)+'</b></td><td><b>'+fmt(totM||null)+'</b></td><td><b>'+(p&&m?(totP>=totM?'+':'')+fmt(totP-totM):'—')+'</b></td></tr>';
+}
+
+async function moBuild(){
+  const src=$('mo-saved').value,st=$('mo-build-status');
+  if(!month()){st.className='status er';st.textContent='pick a month first';return;}
+  if(!src){st.className='status er';st.textContent='pick a saved plan';return;}
+  st.className='status';st.textContent='building…';
+  const r=await fetch('/api/monthly/build',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({month:month(),source_date:src})}).then(x=>x.json()).catch(e=>({error:String(e)}));
+  if(!r||!r.ok){st.className='status er';st.textContent=(r&&r.error)||'failed';return;}
+  st.className='status ok';st.textContent='built ✓';
+  _state=r.state;render();refreshMonths();
+}
+
+async function moUpload(){
+  const f=$('mo-file').files[0],st=$('mo-man-status');
+  if(!month()){st.className='status er';st.textContent='pick a month first';return;}
+  if(!f){st.className='status er';st.textContent='choose a file';return;}
+  st.className='status';st.textContent='parsing…';
+  const fd=new FormData();fd.append('month',month());fd.append('file',f);
+  const r=await fetch('/api/monthly/manual',{method:'POST',body:fd}).then(x=>x.json()).catch(e=>({error:String(e)}));
+  if(!r||!r.ok){st.className='status er';st.textContent=(r&&r.error)||'failed';return;}
+  st.className='status ok';st.textContent=r.parsedDays+' days ✓';
+  _state=r.state;render();refreshMonths();
+}
+
+async function moPaste(){
+  const txt=$('mo-paste').value.trim(),st=$('mo-man-status');
+  if(!month()){st.className='status er';st.textContent='pick a month first';return;}
+  if(!txt){st.className='status er';st.textContent='paste rows first';return;}
+  st.className='status';st.textContent='parsing…';
+  const r=await fetch('/api/monthly/manual',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({month:month(),pasted:txt})}).then(x=>x.json()).catch(e=>({error:String(e)}));
+  if(!r||!r.ok){st.className='status er';st.textContent=(r&&r.error)||'failed';return;}
+  st.className='status ok';st.textContent=r.parsedDays+' days ✓';
+  _state=r.state;render();refreshMonths();
+}
+
+function moExport(){window.location='/api/monthly/export?month='+month();}
+
+async function moClear(which){
+  if(which==='all'&&!confirm('Delete everything stored for '+month()+'?'))return;
+  const r=await fetch('/api/monthly/clear',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({month:month(),which})}).then(x=>x.json()).catch(()=>null);
+  _state=(r&&r.state)||null;render();refreshMonths();
+}
+
+$('mo-month').addEventListener('change',loadState);
+$('mo-months').addEventListener('change',e=>{if(e.target.value){$('mo-month').value=e.target.value;loadState();}});
+$('mo-month').value=defaultMonth();
+refreshSaved();refreshMonths();loadState();
+</script>
+</body>
+</html>

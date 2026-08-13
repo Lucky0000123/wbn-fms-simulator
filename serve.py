@@ -29,6 +29,10 @@ app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
 app.register_blueprint(simulator_api.bp)      # the real, editable model endpoints
 
+# Monthly roll-up + comparison page (/monthly, /api/monthly/*).
+import monthly_api
+app.register_blueprint(monthly_api.bp)
+
 # Phase 2 prediction service (/api/predict, /api/retrain, /api/model-info).
 # Optional: if scikit-learn or pandas isn't installed the simulator still runs,
 # it just has no ML predictions.
@@ -121,6 +125,11 @@ def _canonical_capability(d):
 @app.route("/simulator")
 def simulator():
     return render_template("simulator.html", can_edit_matrix=True)
+
+
+@app.route("/monthly")
+def monthly_page():
+    return render_template("monthly.html")
 
 @app.route("/health")
 def health():
