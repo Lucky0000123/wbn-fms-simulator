@@ -115,31 +115,30 @@
       const isSap=(r.material||'')==='SAP';
       const hasTarget=r.targetWmt>0;
       const existing=tag.parentNode.querySelector('.plan-sap-chip[data-sapid="'+CSS.escape(id)+'"]');
-      // Chip shows for SAP rows (settable) AND for any row that already
-      // carries a target (so a stray target on a LIM row stays visible and
-      // clearable instead of being an invisible board entry).
-      if(!isSap&&!hasTarget){if(existing)existing.remove();return;}
+      // Owner 2026-08-14: LIM-TOS rows carry targets too (priority P2), so
+      // EVERY production row gets a chip. SAP chips green (P1 fixed supply);
+      // LIM chips blue (P2 TOS target; leave empty for buffer LD limonite).
       const label=hasTarget?('🎯 '+fmt(r.targetWmt)+' t'):'＋ target';
-      const warn=hasTarget&&!isSap;
+      const col=isSap?['rgba(34,197,94,.14)','#4ade80','rgba(34,197,94,.3)']
+                     :['rgba(96,165,250,.14)','#93c5fd','rgba(96,165,250,.3)'];
+      const tip=isSap?'SAP is fixed supply (P1) — click to set the t/day target'
+                     :'LIM from TOS is priority 2 — set its t/day target here; leave empty if this row is LD buffer limonite';
       if(existing){
         if(!existing.querySelector('input')){
-          existing.innerHTML=label+(warn?' ⚠':'');
-          existing.style.background=warn?'rgba(245,158,11,.14)':'rgba(34,197,94,.14)';
-          existing.style.color=warn?'#fbbf24':'#4ade80';
-          existing.style.borderColor=warn?'rgba(245,158,11,.35)':'rgba(34,197,94,.3)';
-          existing.title=warn?'Target set but material is '+(r.material||'?')+' — targets are for SAP (fixed supply). Click to edit/clear.'
-                             :'SAP is fixed supply — click to set the t/day target for this path';
+          existing.innerHTML=label;
+          existing.style.background=col[0];
+          existing.style.color=col[1];
+          existing.style.borderColor=col[2];
+          existing.title=tip;
         }
         return;
       }
       tag.insertAdjacentHTML('afterend',
-        ' <span class="plan-sap-chip" data-sapid="'+esc(id)+'" title="'
-        +(warn?'Target set but material is '+esc(r.material||'?')+' — targets are for SAP (fixed supply). Click to edit/clear.'
-              :'SAP is fixed supply — click to set the t/day target for this path')+'" '
+        ' <span class="plan-sap-chip" data-sapid="'+esc(id)+'" title="'+tip+'" '
         +'style="font-size:9px;padding:1px 6px;border-radius:8px;cursor:pointer;vertical-align:middle;'
-        +'background:'+(warn?'rgba(245,158,11,.14)':'rgba(34,197,94,.14)')+';color:'+(warn?'#fbbf24':'#4ade80')
-        +';border:1px solid '+(warn?'rgba(245,158,11,.35)':'rgba(34,197,94,.3)')+'">'
-        +label+(warn?' ⚠':'')+'</span>');
+        +'background:'+col[0]+';color:'+col[1]
+        +';border:1px solid '+col[2]+'">'
+        +label+'</span>');
     });
   }
 
@@ -215,24 +214,65 @@
         :met?'<span style="color:#22c55e;font-weight:600">on target</span>'
         :'<span style="color:#f59e0b;font-weight:600">add '+fmt(Math.max(0,reqDt-r.dt))+' DT</span>';
       if(unreachable&&ceilDt!=null)reqDt=ceilDt;   // Required-DT column: trucks for the max
+      const prio=(r.material==='SAP')?'P1':'P2';
+      const dtDelta=r._preAlloc!=null&&r._preAlloc.dt!==r.dt
+        ?' <span style="color:'+(r.dt>r._preAlloc.dt?'#4ade80':'#f59e0b')+'">('
+          +(r.dt>r._preAlloc.dt?'+':'')+(r.dt-r._preAlloc.dt)+')</span>':'';
       return '<tr>'
-        +'<td><b>'+esc(r.key.replace('>',' → '))+'</b> <span class="muted">'+esc(r.contractor)+'</span></td>'
+        +'<td><span style="font-size:9px;padding:0 5px;border-radius:7px;margin-right:4px;'
+        +(prio==='P1'?'background:rgba(34,197,94,.15);color:#4ade80':'background:rgba(96,165,250,.15);color:#93c5fd')
+        +'">'+prio+'</span><b>'+esc(r.key.replace('>',' → '))+'</b> <span class="muted">'+esc(r.contractor)+'</span></td>'
         +'<td class="r">'+fmt(r.targetWmt)+'</td>'
         +'<td class="r">'+(predDay!=null?fmt(predDay):'—')+'</td>'
         +'<td class="r">'+(achvDay!=null?fmt(achvDay):'<span class="muted" title="run ▶ Run simulated scenario to fill">run sim</span>')+'</td>'
-        +'<td class="r">'+fmt(r.dt)+'</td>'
+        +'<td class="r">'+fmt(r.dt)+dtDelta+'</td>'
         +'<td class="r">'+(reqDt!=null?fmt(reqDt):'—')+'</td>'
         +'<td>'+status+'</td></tr>';
     }).join('');
+    // Allocation deltas ready? Show the 5-tonnage comparison strip.
+    const hasAlloc=targets.some(({r})=>r._preAlloc!=null);
+    let strip='';
+    if(hasAlloc){
+      let oP=0,nP=0,oA=0,nA=0,T=0;
+      targets.forEach(({id,r})=>{
+        const pre=r._preAlloc||{};
+        T+=r.targetWmt||0;
+        oP+=pre.pred||0; oA+=pre.achv||0;
+        const c=typeof planContractor==='function'?planContractor(r.contractor):null;
+        const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,0,c,{selfId:id}):null;
+        const pay=typeof planPayload==='function'?planPayload(r.key,c):{tf:50};
+        nP+=e?r.dt*e.daily*pay.tf:0;
+        nA+=achievableFor(r.key)||0;
+      });
+      const cell=(v,l,cls)=>'<div class="kpi" style="margin-right:18px;display:inline-block">'
+        +'<div style="font-size:17px;font-weight:700;color:'+cls+'">'+fmt(v)+'</div>'
+        +'<div style="font-size:10px;color:var(--muted,#8b98a5);text-transform:uppercase">'+l+'</div></div>';
+      strip='<div style="margin:8px 0 2px">'
+        +cell(T,'target · t/day','#e6edf3')
+        +cell(nP,'new predicted','#4ade80')
+        +cell(oP,'old predicted','#8b98a5')
+        +cell(nA,'new achievable','#93c5fd')
+        +cell(oA,'old achievable','#8b98a5')
+        +'</div>';
+    }
     return '<div style="margin-top:10px;border:1px solid rgba(34,197,94,.3);border-radius:9px;padding:9px 12px">'
-      +'<b style="font-size:12px">SAP targets — fixed supply</b> '
-      +'<span class="muted" style="font-size:11px">(LIM is buffer — no target needed). '
+      +'<b style="font-size:12px">Priority targets — P1 SAP (fixed supply) · P2 LIM from TOS</b> '
+      +'<span class="muted" style="font-size:11px">(LD limonite = buffer, no target). '
       +'Goal: predicted = achievable = target. Required DT solved with the same path engine as the table.</span>'
+      +strip
       +'<table style="width:100%;margin-top:6px;font-size:12px;border-collapse:collapse">'
       +'<tr style="color:var(--muted,#8b98a5);font-size:10.5px;text-transform:uppercase">'
-      +'<th style="text-align:left">Path (SAP)</th><th class="r">Target t/day</th><th class="r">Predicted</th>'
+      +'<th style="text-align:left">Path</th><th class="r">Target t/day</th><th class="r">Predicted</th>'
       +'<th class="r">Achievable</th><th class="r">Allocated DT</th><th class="r">Required DT</th><th style="text-align:left">Status</th></tr>'
-      +body+'</table></div>';
+      +body+'</table>'
+      +'<div style="margin-top:8px">'
+      +'<button type="button" class="ms-btn" onclick="planAllocatePriority()" '
+      +'title="Fixed total fleet per contractor. Fills P1 SAP targets first, then P2 TOS-LIM targets, taking trucks from buffer (no-target) LIM rows of the same contractor. Then re-runs the scenario so new predicted AND new achievable appear next to the old ones.">'
+      +'⚡ Allocate DT as per priority requirements</button>'
+      +'<span class="muted" id="plan-alloc-status" style="font-size:11px;margin-left:9px"></span>'
+      +'</div>'
+      +(_allocMsg?('<div class="muted" style="font-size:11px;margin-top:5px">'+esc(_allocMsg)+'</div>'):'')
+      +'</div>';
   }
 
   // Owner 2026-08-13 (screenshots): "this should be shown in this part after
@@ -257,6 +297,103 @@
     }
     slot.innerHTML=boardHtml(targets);
   }
+
+  // ── Allocate DT as per priority requirements (owner 2026-08-14) ────────────
+  // "our model will see how to allocate DT from different plans to different
+  //  priorities, and then come up with new plan ... it will recalculate the
+  //  new predictions tonnage, new achievable tonnage as compared to targets."
+  //
+  // Rules (owner 2026-08-13/14): total fleet per CONTRACTOR is fixed. P1 =
+  // SAP rows with targets, P2 = LIM rows with targets (TOS), buffer = rows
+  // without targets (LD limonite). Donors: buffer rows of the same contractor,
+  // same-origin rows first. Required DT solved with planDtForWmt (same engine
+  // as everything else), capped at the path ceiling when the target is beyond
+  // it. Old predicted/achievable are snapshotted per row BEFORE the move, then
+  // the scenario re-runs so the new achievable comes from the same engine.
+  let _allocMsg='';
+  window.planAllocatePriority=function(){
+    const d=draft();
+    const st=q('plan-alloc-status');
+    const rows=Object.keys(d).map(id=>({id,r:d[id]})).filter(x=>!x.r.foreign);
+    if(!rows.length)return;
+    // Snapshot OLD numbers per targeted row (and buffer donors) first.
+    const rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0);
+    rows.forEach(({id,r})=>{
+      const c=typeof planContractor==='function'?planContractor(r.contractor):null;
+      const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rain,c,{selfId:id}):null;
+      const pay=typeof planPayload==='function'?planPayload(r.key,c):{tf:50};
+      r._preAlloc={dt:r.dt,
+        pred:e?r.dt*e.daily*pay.tf:0,
+        achv:achievableFor(r.key)||0};
+    });
+    // Per contractor: needs of P1 then P2; donors = no-target rows.
+    const byCont={};
+    rows.forEach(x=>{(byCont[x.r.contractor]=byCont[x.r.contractor]||[]).push(x);});
+    const movesTxt=[];
+    Object.keys(byCont).forEach(cont=>{
+      const crows=byCont[cont];
+      const targeted=crows.filter(x=>x.r.targetWmt>0)
+        .sort((a,b)=>((a.r.material==='SAP')?0:1)-((b.r.material==='SAP')?0:1)
+          ||b.r.targetWmt-a.r.targetWmt);
+      const buffer=crows.filter(x=>!(x.r.targetWmt>0));
+      // Surplus donors: a TARGETED row holding more DT than its own target
+      // needs (e.g. TF>HUAFEI RIM carries the LD buffer inside the same row:
+      // 284 DT vs ~101 needed for the TOS target). Its surplus may donate
+      // after true buffer rows are exhausted.
+      const surplus=targeted.map(x=>{
+        const c2=typeof planContractor==='function'?planContractor(x.r.contractor):null;
+        let need2=requiredDt(x.r.key,x.r.targetWmt,c2);
+        if(need2==null){
+          const cl=planDtForWmt._lastCeiling;
+          if(cl&&cl.maxT>0)need2=requiredDt(x.r.key,cl.maxT*2*0.995,c2);
+        }
+        return {x,spare:need2!=null?Math.max(0,x.r.dt-need2):0};
+      }).filter(o=>o.spare>1);
+      targeted.forEach(({id,r})=>{
+        const c=typeof planContractor==='function'?planContractor(r.contractor):null;
+        let need=requiredDt(r.key,r.targetWmt,c);
+        if(need==null){
+          const ceil=planDtForWmt._lastCeiling;
+          if(ceil&&ceil.maxT>0)need=requiredDt(r.key,ceil.maxT*2*0.995,c);
+        }
+        if(need==null)return;
+        let deficit=need-r.dt;
+        if(deficit<=0)return;
+        const origin=r.key.split('>')[0];
+        // same-origin buffer donors first, then any buffer of this contractor
+        const donorsOrdered=buffer.filter(x=>x.r.key.split('>')[0]===origin)
+          .concat(buffer.filter(x=>x.r.key.split('>')[0]!==origin));
+        for(const don of donorsOrdered){
+          if(deficit<=0)break;
+          const spare=don.r.dt-1;              // never strip a row to zero
+          if(spare<=0)continue;
+          const take=Math.min(deficit,spare);
+          don.r.dt-=take;
+          r.dt+=take;
+          deficit-=take;
+          movesTxt.push(cont+' '+take+' DT: '+don.r.key+' → '+r.key
+            +(don.r.key.split('>')[0]===origin?' (same origin)':' (cross plan)'));
+        }
+        // Then surplus of other targeted rows (their own target stays covered).
+        if(deficit>0)for(const o of surplus){
+          if(deficit<=0)break;
+          if(o.x.id===id||o.spare<=0)continue;
+          const take=Math.min(deficit,o.spare);
+          o.x.r.dt-=take;o.spare-=take;
+          r.dt+=take;deficit-=take;
+          movesTxt.push(cont+' '+Math.round(take)+' DT: '+o.x.r.key+' (surplus) → '+r.key);
+        }
+        if(deficit>0)movesTxt.push('⚠ '+cont+' short '+Math.ceil(deficit)+' DT for '+r.key
+          +' — buffer exhausted');
+      });
+    });
+    _allocMsg=movesTxt.length
+      ?('Moved: '+movesTxt.join(' · ')+' — engine recalculating for new achievable…')
+      :'No moves possible — every row of the contractor already carries a target (no buffer to draw from) or targets are covered.';
+    if(typeof computePlan==='function')computePlan();
+    // Re-run the scenario so NEW achievable comes from the engine.
+    if(typeof planRunScenario==='function')planRunScenario({preserveFinalize:true});
+  };
 
   // Re-render whenever the plan table re-renders.
   const _origCompute=window.computePlan;
