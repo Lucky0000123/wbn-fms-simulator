@@ -47,7 +47,7 @@
         <button class="sim-tab on" id="tabbtn-sim" onclick="setSimTab('sim')">Capability &amp; Scenario</button>
         <button class="sim-tab" id="tabbtn-cong" onclick="setSimTab('cong')">🔬 Congestion Model <span>PREVIEW</span></button>
         <button class="sim-tab" id="tabbtn-plan" onclick="setSimTab('plan')">🧭 Plan</button>
-        <a href="/monthly" class="sim-tab" style="text-decoration:none" title="Roll a saved daily plan across a month and compare with your Excel plan">📅 Monthly</a>
+        <a href="/monthly" class="sim-tab" style="text-decoration:none" title="Paste the yearly matrix — target, old predicted plan and optimized predicted plan for each month">📅 Monthly</a>
       </div>
       <div id="tab-sim">
 
@@ -332,46 +332,61 @@
         <p class="lead muted" id="cong-note" style="margin-top:8px"></p>
       </div><!-- /tab-cong -->
       <div id="tab-plan" class="plan-tab" style="display:none">
+        <!-- Sticky plan nav. The Save controls used to sit in the date card at the
+             top of a very long page, so by the time you had built a plan they had
+             scrolled out of reach. They are MOVED here, not copied: the element ids
+             are unchanged so planRefreshSaveButtons()/planSaveForDate() keep working,
+             and there is still exactly one Save button on the page. -->
+        <nav class="plan-navbar" id="plan-navbar" aria-label="Plan sections">
+          <div class="plan-nav-id">
+            <b id="plan-nav-date">—</b>
+            <span class="muted" id="plan-nav-summary">no paths yet</span>
+          </div>
+          <div class="plan-nav-wmt" id="plan-nav-wmt-wrap" title="Predicted production from the path model (live)">
+            <span class="plan-nav-wmt-k">Predicted</span>
+            <b id="plan-nav-wmt">—</b>
+            <span class="muted" id="plan-nav-wmt-u">t / day</span>
+          </div>
+          <div class="plan-nav-links" id="plan-nav-links" role="group" aria-label="Jump to section">
+            <button type="button" data-sec="plan-sec-build">Plan</button>
+            <button type="button" data-sec="plan-sec-predict">Prediction</button>
+            <button type="button" data-sec="plan-sec-outlook">Outlook</button>
+            <button type="button" data-sec="plan-s2-corridor">Road</button>
+            <button type="button" data-sec="plan-sec-detail">Detail</button>
+          </div>
+          <div class="plan-save-bar">
+            <button class="ms-btn" type="button" id="plan-save-btn" onclick="planSaveForDate()" disabled title="Save holding plan for this date">Save plan</button>
+            <button class="ms-btn" type="button" id="plan-load-btn" onclick="planLoadSavedForDate()" disabled title="Load saved plan for this date">Load saved</button>
+            <select id="plan-saved-pick" class="plan-saved-pick" onchange="planOpenSavedDate(this.value)" title="Open another saved plan">
+              <option value="">Saved…</option>
+            </select>
+            <span id="plan-save-status" class="muted" style="font-size:11px"></span>
+          </div>
+        </nav>
         <div class="plan-topbar">
           <div class="plan-date-bar">
             <label class="plan-field plan-date-field">Plan date
               <input id="plan-date" type="date" onchange="planDateChange()">
             </label>
             <span id="plan-date-note" class="muted" style="font-size:12px"></span>
-            <div class="plan-save-bar">
-              <button class="ms-btn" type="button" id="plan-save-btn" onclick="planSaveForDate()" disabled title="Save holding plan for this date">Save plan</button>
-              <button class="ms-btn" type="button" id="plan-load-btn" onclick="planLoadSavedForDate()" disabled title="Load saved plan for this date">Load saved</button>
-              <span id="plan-save-status" class="muted" style="font-size:11px"></span>
-            </div>
           </div>
-          <div class="plan-gps-strip">
-            <div class="plan-gps-strip-head">
-              <b>Haul GPS days</b>
-              <span class="muted" id="plan-gps-range">Jul+ banked · click a day for details</span>
-            </div>
-            <div id="plan-gps-days" class="plan-gps-days" aria-live="polite"></div>
-            <details class="plan-data-notes" id="plan-data-notes">
-              <summary>Day details <span class="muted">(segments · Playback · peak ops · bias)</span></summary>
-              <p class="muted plan-data-notes-lead">Select a GPS day above to inspect it. Does not change Step 1 WMT.</p>
-              <div id="plan-day-detail" class="plan-day-detail" aria-live="polite"></div>
-              <div id="plan-gps-coverage" class="plan-gps-coverage" style="display:none" aria-hidden="true"></div>
-              <div id="plan-playback-truth" class="plan-playback-truth" aria-live="polite"></div>
-              <details class="plan-peak-ref">
-                <summary>Peak season reference <span class="muted">(Jan–May averages — not the selected day)</span></summary>
-                <div id="plan-peak-proxy" class="plan-peak-proxy" aria-live="polite"></div>
-              </details>
-              <label class="plan-bias-toggle muted" title="Ticket-calibrated companion = raw ÷ 1.055. Primary simulate stays raw; availability stays 1.0.">
-                <input type="checkbox" id="plan-bias-lens" checked onchange="planBiasLensToggle()"> Show ticket-calibrated tonnes (−5.5% companion)
-              </label>
-            </details>
-          </div>
+          <details class="card plan-outlook" id="plan-sec-outlook" open>
+            <summary class="plan-outlook-sum">
+              <h3>Coming days</h3>
+              <span class="muted">rain forecast × this plan</span>
+            </summary>
+            <p class="muted plan-outlook-note">Click a day to fill Rain. Path-model prediction — simulate tonnes stay dry/wet-invariant.</p>
+            <div id="plan-coming-days" class="plan-coming-days" aria-live="polite"></div>
+            <div id="plan-rain-outlook" class="plan-rain-outlook" hidden></div>
+          </details>
         </div>
 
-        <div class="plan-step1">
+        <div class="plan-step1" id="plan-sec-build">
           <div class="plan-inputs-row">
+            <div class="plan-build-col">
             <div class="card plan-builder">
               <div class="plan-builder-head">
-                <h3>1 · Add a haul path</h3>
+                <h3>Add a haul path</h3>
                 <button class="plan-add" type="button" onclick="planAddPath()">+ Add to plan</button>
               </div>
               <div class="plan-builder-fields">
@@ -391,8 +406,15 @@
                   <span class="k">Material</span>
                   <select id="plan-material" onchange="planMaterialManual()"></select>
                 </label>
-                <label class="plan-field" id="plan-sap-target-field" style="display:none" title="SAP is fixed supply — enter the tonnes/day this path must deliver. The plan table then tracks target vs predicted vs achievable and suggests the trucks required.">
-                  <span class="k">SAP target</span>
+                <label class="plan-field" id="plan-otype-field" style="display:none" title="TOS and LD limonite to the same plant are separate rows. Changing DT on LIM-LD must not rewrite LIM-TOS.">
+                  <span class="k">LIM origin</span>
+                  <select id="plan-otype">
+                    <option value="TOS">TOS</option>
+                    <option value="LD">LD</option>
+                  </select>
+                </label>
+                <label class="plan-field" id="plan-sap-target-field" title="Tonnes/day this path should deliver. Same field for SAP, LIM-TOS, LIM-LD and every other material.">
+                  <span class="k">Target t/day</span>
                   <span class="plan-dt-row">
                     <input id="plan-sap-target" type="number" min="0" step="500" placeholder="t/day">
                   </span>
@@ -419,19 +441,20 @@
                 <span>Road-only <em>(IWIP / Position — no WMT)</em></span>
               </label>
               <div id="plan-hint" class="plan-hint" aria-live="polite"></div>
-              <!-- Cross-plan interactions for the path being built: shared road,
-                   other traffic, weighbridge ceiling — the WHY behind the numbers. -->
-              <div id="plan-impacts" class="plan-impacts" aria-live="polite"></div>
+              <!-- This-path draft (not the plan total). Plan total lives in #plan-hero. -->
+              <div id="plan-preview" class="plan-path-draft" aria-live="polite"></div>
+              <!-- Plan updates / AI advisor panel removed for now (owner 2026-08-12). -->
             </div>
+            </div><!-- /.plan-build-col -->
 
+            <div class="plan-scenario-col">
             <div class="card plan-cond-card">
               <div class="plan-cond-head">
-                <h3>Conditions</h3>
-                <label class="plan-cond-shift" title="Measured over 538,586 truck-shifts: 98.5% are exactly 12.0 h (720 min). Data supports 8–12 h (480–720).">
-                  <span class="k">Shift</span>
-                  <input id="ps-shift" type="number" min="480" max="720" step="30" value="720" onchange="psShiftChanged()">
-                  <span class="u">min · <b id="plan-hours-display">12</b> h</span>
-                </label>
+                <h3>Scenario</h3>
+                <div class="plan-horizon" role="group" aria-label="Plan totals for one shift or one day">
+                  <button type="button" class="plan-horizon-seg" data-h="shift" onclick="planSetHorizon('shift')" title="Show trips and tonnes for one 12 h shift">Shift</button>
+                  <button type="button" class="plan-horizon-seg on" data-h="day" onclick="planSetHorizon('day')" title="Show trips and tonnes for one day (2 × 12 h shifts)">Day</button>
+                </div>
               </div>
               <div class="plan-cond-metrics">
                 <label class="plan-cond-metric">
@@ -443,109 +466,146 @@
                   <span class="v"><input id="plan-wb" type="number" min="1" step="1" value="1" readonly style="pointer-events:none;opacity:.8" oninput="computePlan()"><em>/ 18</em></span>
                 </label>
                 <label class="plan-cond-metric" title="Trucks that are NOT in your holding plan (IWIP / position works) but still use the same weighbridges. Default 0 — none assumed. Pick Busy period (busiest 60 days) or Recent (last 30 days) below, or type the trucks you expect; they are distributed across bridges by measured shares.">
-                  <span class="k">Non-plan trips</span>
+                  <span class="k">Other traffic</span>
                   <span class="v"><input id="plan-other-trips" type="number" min="0" step="10" value="0" oninput="planOtherManualEdit()"><em id="plan-other-src" class="plan-other-src"></em></span>
                 </label>
               </div>
-              <!-- Other-traffic regime + road-only add (filled by planRenderWbLoad). -->
-              <div id="plan-wb-load" class="plan-wb-load" aria-live="polite"></div>
-              <!-- Path bridge picker — count syncs to Bridges above. -->
-              <div id="plan-wb-onpath" class="plan-wb-onpath"></div>
-              <!-- Per-bridge load + wait (plan_weighbridges.js). -->
-              <div id="plan-wb-stress" class="plan-wb-stress" aria-live="polite"></div>
-              <div class="plan-cond-meteo">
-                <div id="plan-rain-suggest" class="plan-rain-suggest"></div>
-                <details class="plan-rain-outlook-details" id="plan-rain-outlook-details">
-                  <summary class="plan-rain-outlook-sum">
-                    <span class="plan-ro-sum-label">16-day rain outlook</span>
-                    <span class="muted plan-ro-sum-hint">click a day → Rain</span>
-                  </summary>
-                  <div id="plan-rain-outlook" class="plan-rain-outlook" aria-live="polite"></div>
-                </details>
-              </div>
+              <div id="plan-rain-suggest" class="plan-rain-suggest"></div>
+              <details class="plan-limits-details" id="plan-limits-details" open>
+                <summary>Limits <span class="muted">bridges · other traffic · road-only</span></summary>
+                <!-- Other-traffic regime + road-only add (filled by planRenderWbLoad). -->
+                <div id="plan-wb-load" class="plan-wb-load" aria-live="polite"></div>
+                <!-- Path bridge picker — count syncs to Bridges above. -->
+                <div id="plan-wb-onpath" class="plan-wb-onpath"></div>
+                <!-- Per-bridge load + wait (plan_weighbridges.js). -->
+                <div id="plan-wb-stress" class="plan-wb-stress" aria-live="polite"></div>
+              </details>
               <input id="plan-hours" type="hidden" value="12">
+              <input id="ps-shift" type="hidden" value="720">
+              <span id="plan-hours-display" style="display:none" aria-hidden="true">12</span>
               <select id="ps-weather" style="display:none" aria-hidden="true"><option value="dry" selected>Dry</option><option value="wet">Wet</option></select>
               <div class="effkpis" id="plan-kpis" style="display:none"></div>
             </div>
+            </div><!-- /.plan-scenario-col -->
+          </div><!-- /.plan-inputs-row -->
+
+            <div class="card plan-holding" id="plan-holding">
+              <div class="plan-holding-head">
+                <div class="plan-holding-title">
+                  <h3>Your plan</h3>
+                  <button class="ms-btn plan-unlock" type="button" hidden onclick="planUnlockOriginal()" title="Unlock to edit DT. New Allocation Plan is cleared; Check capacity again when you are done.">Unlock to edit DT</button>
+                </div>
+                <div class="sub" id="plan-scope"></div>
+              </div>
+              <div class="plan-src-legend" id="plan-src-legend" hidden role="group" aria-label="Filter plan by origin"></div>
+              <div class="plan-holding-table"><table>
+                <thead><tr>
+                  <th>Path</th><th>Contractor</th><th>Material</th><th class="r plan-hold-th-dt">DT</th>
+                  <th class="r">Trips</th><th class="r">WMT</th><th></th>
+                </tr></thead>
+                <tbody id="plan-rows"><tr><td colspan="7" class="muted plan-hold-empty">No paths yet. Pick a haul above and add it.</td></tr></tbody>
+                <tfoot id="plan-foot"></tfoot>
+              </table></div>
+              <div id="plan-warn"></div>
+            </div>
+
+          <div class="card plan-hero" id="plan-sec-predict">
+            <div class="plan-hero-kicker">Predicted production <span id="plan-hero-horizon">· per day</span></div>
+            <div class="plan-hero-row">
+              <div class="plan-hero-metric">
+                <div class="plan-hero-l">Predicted</div>
+                <div class="plan-hero-v" id="plan-hero-wmt">—</div>
+                <div class="plan-hero-u" id="plan-hero-wmt-u">t / day</div>
+              </div>
+              <div class="plan-hero-metric plan-hero-achv" id="plan-hero-achv-wrap" hidden>
+                <div class="plan-hero-l">Achievable</div>
+                <div class="plan-hero-v" id="plan-hero-achv">—</div>
+                <div class="plan-hero-u">loader / point ceiling</div>
+              </div>
+              <div class="plan-hero-side">
+                <div id="plan-hero-trips" class="muted"></div>
+                <div id="plan-hero-status" class="plan-hero-status">Add a path to predict</div>
+              </div>
+            </div>
           </div>
 
-          <!-- Running Step 1 WMT / trips (orange tonnage), then Best past days under it -->
-          <div id="plan-preview" class="card plan-estimate plan-estimate-compact plan-estimate-footer"></div>
-
-          <div class="card plan-hist-card">
-            <div class="plan-panel-head plan-hist-head">
+          <details class="card plan-hist-card" id="plan-hist-card">
+            <summary class="plan-panel-head plan-hist-head">
               <div>
                 <h3>Best past days</h3>
                 <div class="plan-hist-legend muted">Selected contractor · closest DT · trips · trips/DT · <span class="ph-legend-dry">dry</span> / <span class="ph-legend-wet">wet</span></div>
               </div>
               <div id="plan-hist-summary" class="plan-hist-summary muted">Select path + DT…</div>
-            </div>
+            </summary>
             <div id="plan-hist-list" class="plan-hist-list"></div>
-          </div>
-        </div>
-
-        <div class="card plan-holding">
-          <h3>Your plan</h3>
-          <div class="sub" id="plan-scope"></div>
-          <div class="rain-table plan-holding-table"><table><thead><tr><th>Path</th><th>Contractor</th><th class="r">DT</th><th class="r">Trips/DT</th><th class="r">Trips</th><th class="r">t/trip</th><th class="r">WMT</th><th></th><th></th></tr></thead><tbody id="plan-rows"><tr><td colspan="9" class="muted">No paths yet.</td></tr></tbody><tfoot id="plan-foot"></tfoot></table></div>
-          <div id="plan-warn"></div>
+          </details>
         </div>
 
         <!-- Step 2 · stacked: decision → capacity → illustration → insights -->
-        <div class="card plan-step2">
+        <div class="card plan-step2" id="plan-sec-run">
           <div class="plan-step2-head">
             <div>
-              <h3>2 · Run scenario</h3>
-              <p class="muted plan-step2-lead">Run scenario loads A · outcomes and B · capacity first. Press ▶ Run on the GPS corridor to open D · road crowding by hour (this plan + optional IWIP), then review history.</p>
+              <h3>Check capacity</h3>
+              <p class="muted plan-step2-lead">Loader ceilings vs predicted production. Road crowding is illustration only and does not change tonnes.</p>
             </div>
             <div class="plan-step2-actions">
-              <button class="btn" type="button" id="plan-run-scenario" onclick="planRunScenario()" disabled>Run simulated scenario</button>
-              <button class="ms-btn" type="button" id="plan-open-assessment" onclick="planOpenFullAssessment()" disabled>Open full assessment</button>
+              <button class="btn" type="button" id="plan-run-scenario" onclick="planRunScenario()" disabled>Check capacity</button>
+              <button class="btn plan-unlock" type="button" hidden onclick="planUnlockOriginal()" title="Unlock to edit DT. New Allocation Plan is cleared; Check capacity again when you are done.">Unlock original plan</button>
+              <span id="plan-run-locked" class="muted" hidden style="font-size:12px;max-width:280px;line-height:1.35">Locked after Allocate. Unlock to change DT, then Check capacity again.</span>
+              <button class="ms-btn" type="button" id="plan-open-assessment" onclick="planOpenFullAssessment()" disabled>Show calculation detail</button>
             </div>
           </div>
 
           <div id="plan-scenario-panel" class="plan-scenario-stack" style="display:none">
-            <!-- A · Shift outcomes -->
-            <section class="plan-s2-block plan-s2-decision">
-              <div class="plan-s2-label">A · Shift outcomes</div>
-              <div class="plan-calc-busy" id="plan-outcomes-busy">
-                <div class="plan-calc-overlay" role="status" aria-live="polite">
-                  <div class="ph-spin" aria-hidden="true"></div>
-                  <div class="ph-load-text">Calculating productivity &amp; capacity…</div>
-                  <div class="ph-load-sub">Running simulate · history band</div>
-                </div>
-                <div id="plan-scenario-outcomes"></div>
-              </div>
-            </section>
-
-            <!-- B · Production capacity (simulate) + path estimate delta -->
+            <!-- A · Production capacity (simulate) + path estimate delta -->
             <section class="plan-s2-block">
-              <div class="plan-s2-label">B · Production &amp; capacity</div>
+              <div class="plan-s2-label">Production &amp; capacity</div>
               <div class="plan-calc-busy" id="plan-estimate-busy">
                 <div class="plan-calc-overlay" role="status" aria-live="polite">
                   <div class="ph-spin" aria-hidden="true"></div>
                   <div class="ph-load-text">Calculating productivity &amp; capacity…</div>
-                  <div class="ph-load-sub">Loader ceilings and path-model vs achievable</div>
+                  <div class="ph-load-sub">Loader ceilings vs predicted production</div>
                 </div>
                 <div id="plan-scenario-estimate"></div>
               </div>
+              <div id="plan-alloc-wrap" class="plan-alloc-panel" style="display:none">
+                <div class="plan-s2-label">New Allocation Plan</div>
+                <div class="plan-calc-busy" id="plan-alloc-busy">
+                  <div class="plan-calc-overlay" role="status" aria-live="polite">
+                    <div class="ph-spin" aria-hidden="true"></div>
+                    <div class="ph-load-text">Recalculating allocated plan…</div>
+                    <div class="ph-load-sub">Same engines — path model and /api/simulate</div>
+                  </div>
+                  <div class="plan-alloc-hero" id="plan-alloc-hero"></div>
+                  <div class="plan-alloc-buckets" id="plan-alloc-buckets"></div>
+                  <div class="plan-alloc-holding" id="plan-alloc-holding"></div>
+                  <div class="plan-alloc-moves muted" id="plan-alloc-moves"></div>
+                  <div id="plan-alloc-estimate" hidden></div>
+                </div>
+              </div>
             </section>
 
-            <!-- B2 · Fleet sensitivity — nonlinear DT sweep per plan (ECharts).
-                 Owner 2026-08-12: after Run scenario, show how WMT and
-                 trips/DT bend as trucks change, per plan and combined. -->
+            <!-- B · Fleet sensitivity — nonlinear DT sweep per plan (ECharts). -->
             <section class="plan-s2-block" id="plan-s2-sensitivity" style="display:none">
-              <div class="plan-s2-label">C · Fleet sensitivity <span class="muted">(path model · how tonnage &amp; trips/DT bend with fleet size)</span></div>
+              <div class="plan-s2-label">Fleet sensitivity <span class="muted">(how tonnes and trips/DT bend with fleet size)</span></div>
               <div class="plan-sens-wrap">
                 <div class="plan-sens-side">
                   <div class="plan-sens-side-h muted">Plans</div>
                   <div id="plan-sens-cards"></div>
                   <button type="button" class="ms-btn plan-sens-back" id="plan-sens-back" style="display:none" onclick="planSensIsolate(null)">← All plans</button>
+                  <!-- Y-metric. Efficiency is the SAME path model, re-expressed
+                       as a share of each path's own free rate, so it never
+                       disagrees with the Output view. -->
+                  <div class="plan-sens-side-h muted" style="margin-top:10px">Show</div>
+                  <div class="plan-sens-gran" role="group" aria-label="Chart metric">
+                    <button type="button" data-m="output" class="on" onclick="planSensMetric('output')">Output</button>
+                    <button type="button" data-m="efficiency" onclick="planSensMetric('efficiency')">Efficiency</button>
+                  </div>
                   <div class="plan-sens-side-h muted" style="margin-top:10px">Scale</div>
                   <div class="plan-sens-gran" role="group" aria-label="Time granularity">
                     <button type="button" data-g="hour" onclick="planSensGran('hour')">Per hour</button>
-                    <button type="button" data-g="shift" class="on" onclick="planSensGran('shift')">Per shift</button>
-                    <button type="button" data-g="day" onclick="planSensGran('day')">Per day</button>
+                    <button type="button" data-g="shift" onclick="planSensGran('shift')">Per shift</button>
+                    <button type="button" data-g="day" class="on" onclick="planSensGran('day')">Per day</button>
                   </div>
                   <!-- Live values at the hovered truck count (mirrors the tooltip). -->
                   <div id="plan-sens-readout" class="plan-sens-readout"></div>
@@ -553,14 +613,14 @@
                 <div class="plan-sens-main">
                   <div id="plan-sens-chart" style="height:480px"></div>
                   <div id="plan-sens-opt" class="plan-sens-opt"></div>
-                  <p class="muted" id="plan-sens-caption" style="font-size:10.5px;margin:6px 0 0">Top graph = tonnage, bottom graph = trips per truck, same fleet-size scale so they read together. ● your current DT · ★ calculated optimal (most trips before diminishing returns, within measured data) · dotted rule = where the day ceiling starts binding · shaded = beyond measured data. Same path model as the plan table. Road-only plans appear in the bottom graph only.</p>
+                  <p class="muted" id="plan-sens-caption" style="font-size:10.5px;margin:6px 0 0">Top graph = tonnage, bottom graph = trips per truck, same fleet-size scale so they read together. ● your current DT · ★ calculated optimal (most trips before diminishing returns, within measured data) · dotted rule = where the day ceiling starts binding · shaded = beyond measured data. Same prediction as the plan table. Road-only plans appear in the bottom graph only.</p>
                 </div>
               </div>
             </section>
 
-            <!-- GPS corridor — play here; C · Road illustration loads after ▶ Run -->
+            <!-- GPS corridor — play here; C · Road crowding loads after ▶ Run -->
             <section class="plan-s2-block plan-s2-corridor" id="plan-s2-corridor">
-              <div class="plan-s2-label">GPS corridor <span class="muted">(▶ Run opens road illustration)</span></div>
+              <div class="plan-s2-label">GPS corridor <span class="muted">(illustration · ▶ Run opens road crowding)</span></div>
               <div class="c3-flow" id="plan-c3-flow">
                 <div class="c3-flow-head">
                   <h3>Holding plan on GPS corridor</h3>
@@ -569,7 +629,7 @@
                 </div>
                 <div class="plan-test-prod" id="plan-test-prod" aria-live="polite">
                   <div class="plan-test-prod-head">
-                    <span class="plan-test-prod-label">Shift readout</span>
+                    <span class="plan-test-prod-label" id="plan-test-prod-label">Day readout</span>
                     <span class="plan-test-prod-sub muted">Predict trips · simulate tonnes · illustration only</span>
                   </div>
                   <div class="plan-test-prod-kpis">
@@ -613,17 +673,13 @@
                     <svg id="plan-c3-flow-svg" viewBox="0 0 1000 390" role="img" aria-label="Plan illustration stick"></svg>
                   </div>
                 </div>
-                <p class="muted plan-corridor-hint" id="plan-corridor-hint">After A and B finish, press <b>▶ Run</b> to load D · road crowding by hour (this plan's trucks, IWIP optional).</p>
+                <p class="muted plan-corridor-hint" id="plan-corridor-hint">After capacity check, press <b>▶ Run</b> to load road crowding by hour (this plan's trucks, IWIP optional). Illustration only — does not change tonnes.</p>
               </div>
             </section>
 
-            <!-- C · Road crowding by hour — driven by THIS plan (+ IWIP option).
-                 Replaced the old road-illustration block (Jul+ hour bars,
-                 DES table, congestion advice) 2026-08-12: those overlapped
-                 what A/B/E already report. This section answers ONE question:
-                 which hours will OUR haul roads be crowded, given the plan. -->
+            <!-- C · Road crowding by hour — driven by THIS plan (+ IWIP option). -->
             <section class="plan-s2-block plan-s2-illust" id="plan-s2-illust" style="display:none" hidden>
-              <div class="plan-s2-label">D · Road crowding by hour <span class="muted">(this plan · advisory — not tonnes)</span></div>
+              <div class="plan-s2-label">Road crowding by hour <span class="muted">(advisory — not tonnes)</span></div>
               <div class="plan-calc-busy" id="plan-illust-busy">
                 <div class="plan-calc-overlay" role="status" aria-live="polite">
                   <div class="ph-spin" aria-hidden="true"></div>
@@ -650,16 +706,24 @@
                  finishes, replacing the separate Production Simulator page.
                  Same holding plan, same engine, one page. -->
             <section class="plan-s2-block" id="plan-assessment-host" style="display:none">
-              <h3 style="margin:0 0 4px">E · Full assessment <span class="muted" style="font-size:11.5px">(simulation of this holding plan — same engine as Production &amp; capacity)</span></h3>
+              <details class="plan-detail-fold" id="plan-sec-detail">
+              <summary>Show calculation detail <span class="muted">(trip times · queues · history · map)</span></summary>
               <div id="plan-assessment-busy" class="muted" style="display:none;font-size:12px;margin:6px 0">Running prediction on the holding plan…</div>
               <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;margin-top:8px">
           <div class="card" style="flex:1;min-width:260px">
-            <h3 style="margin-bottom:3px">Shift total</h3>
-            <div class="sub">Planned is what the fleet would do unconstrained. Achievable applies measured capacity.</div>
+            <h3 style="margin-bottom:3px" id="ps-total-head">Day total</h3>
+            <div class="sub">Planned is unconstrained cycle × payload. Achievable applies measured loader / point capacity.</div>
             <div class="c3-flow-kpis" style="margin-top:10px">
               <div class="c3-flow-kpi"><b id="ps-kpi-trucks">&mdash;</b><span>Trucks</span></div>
-              <div class="c3-flow-kpi"><b id="ps-kpi-planned">&mdash;</b><span>Planned t / shift</span></div>
-              <div class="c3-flow-kpi"><b id="ps-kpi-achv">&mdash;</b><span>Achievable t / shift</span></div>
+              <div class="c3-flow-kpi"><b id="ps-kpi-planned">&mdash;</b><span id="ps-kpi-planned-lab">Planned t / day</span></div>
+              <div class="c3-flow-kpi"><b id="ps-kpi-achv">&mdash;</b><span id="ps-kpi-achv-lab">Achievable t / day</span></div>
+              <!-- Ticket-calibrated companion (raw ÷ 1.055). Re-homed here 2026-08-12:
+                   it used to render in A · Shift outcomes, and when that block was
+                   deleted the lens checkbox kept toggling a function whose container
+                   was gone, so the −5.5% figure silently stopped being displayed.
+                   Companion only — the primary Achievable KPI stays raw. -->
+              <div class="c3-flow-kpi" id="ps-kpi-ticket-wrap" style="display:none">
+                <b id="ps-kpi-ticket">&mdash;</b><span>Ticket-calibrated t (&divide;1.055)</span></div>
             </div>
             <div id="ps-warnings" style="margin-top:10px"></div>
           </div>
@@ -800,23 +864,24 @@
           </div>
 
         </div><!-- /pa-sections-bot -->
+              </details>
             </section>
 
 
-            <!-- D · Insights: history band + shared road (new information) -->
-            <section class="plan-s2-block plan-s2-insights">
-              <div class="plan-s2-label">D · Insights from history <span class="muted">(what past days say — not a second production total)</span></div>
+            <!-- E · Insights: history band + shared road (new information) -->
+            <section class="plan-s2-block plan-s2-insights" id="plan-sec-insights">
+              <div class="plan-s2-label">Insights from history <span class="muted">(what past days say — not a second production total)</span></div>
               <div class="plan-insights-grid">
                 <div class="plan-analogues-wrap">
-                  <h4>Similar days band</h4>
-                  <p class="muted" style="font-size:11px;margin:0 0 8px">Realistic range from matched past days. Compare to your plan — do not average with simulate.</p>
+                  <h4>Matched days band</h4>
+                  <p class="muted" style="font-size:11px;margin:0 0 8px">Matched days&rsquo; trips/DT &times; your DT. Compare to your prediction — do not average with achievable tonnes.</p>
                   <div id="plan-analogues-ensemble" class="plan-analogues-ensemble"></div>
                   <div class="rain-table plan-insights-table"><table>
                     <thead><tr>
                       <th>Date</th><th>Route</th><th>Season</th><th class="r">DT</th>
                       <th class="r">Trips/DT</th><th class="r">WMT</th><th class="r">GPS</th><th>Note</th>
                     </tr></thead>
-                    <tbody id="plan-analogues-rows"><tr><td colspan="8" class="muted">Run to retrieve…</td></tr></tbody>
+                    <tbody id="plan-analogues-rows"><tr><td colspan="8" class="muted">Check capacity to retrieve…</td></tr></tbody>
                   </table></div>
                   <div id="plan-analogues-note" class="muted" style="font-size:11px;margin-top:6px"></div>
                   <div id="plan-day-segments" class="plan-day-segments" aria-live="polite"></div>
@@ -838,6 +903,37 @@
             </section>
           </div>
         </div>
+        <!-- Haul GPS days — moved out of the page topbar 2026-08-12. It is
+             reference/inspection material ("Does not change Step 1 WMT"), so it sits
+             at the foot of the page with the other history material, collapsed.
+             NOT inside #plan-scenario-panel: that block is display:none until Run
+             scenario, and parking this there made a previously always-available
+             panel unreachable until you ran something. Contains the playback-truth
+             disclosure — the record that Playback has 0% haul-plate overlap. -->
+        <details class="card plan-gps-foot" id="plan-sec-gps">
+          <summary><b>Haul GPS days</b> <span class="muted">(banked GPS days · day detail · Playback truth · peak reference · ticket lens)</span></summary>
+        <div class="plan-gps-strip">
+          <div class="plan-gps-strip-head">
+            <b>Haul GPS days</b>
+            <span class="muted" id="plan-gps-range">Jul+ banked · click a day for details</span>
+          </div>
+          <div id="plan-gps-days" class="plan-gps-days" aria-live="polite"></div>
+          <details class="plan-data-notes" id="plan-data-notes">
+            <summary>Day details <span class="muted">(segments · Playback · peak ops · bias)</span></summary>
+            <p class="muted plan-data-notes-lead">Select a GPS day above to inspect it. Does not change Step 1 WMT.</p>
+            <div id="plan-day-detail" class="plan-day-detail" aria-live="polite"></div>
+            <div id="plan-gps-coverage" class="plan-gps-coverage" style="display:none" aria-hidden="true"></div>
+            <div id="plan-playback-truth" class="plan-playback-truth" aria-live="polite"></div>
+            <details class="plan-peak-ref">
+              <summary>Peak season reference <span class="muted">(Jan–May averages — not the selected day)</span></summary>
+              <div id="plan-peak-proxy" class="plan-peak-proxy" aria-live="polite"></div>
+            </details>
+            <label class="plan-bias-toggle muted" title="Ticket-calibrated companion = raw ÷ 1.055. Primary simulate stays raw; availability stays 1.0.">
+              <input type="checkbox" id="plan-bias-lens" checked onchange="planBiasLensToggle()"> Show ticket-calibrated tonnes (−5.5% companion)
+            </label>
+          </details>
+        </div>
+        </details>
       </div><!-- /tab-plan -->
 
 

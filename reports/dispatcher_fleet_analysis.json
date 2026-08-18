@@ -1,0 +1,1259 @@
+{
+  "period": "2026-01-01 to 2026-04-30",
+  "contractor_summary": [
+    {
+      "contractor": "RIM",
+      "safety_enviro_total": 2683,
+      "safety_enviro_dump_trucks": 1407,
+      "wbn_register_total": 3898,
+      "wbn_register_dt": 2532,
+      "wbn_register_excavator": 404,
+      "jan_apr_avg_running_trucks": 317.6,
+      "jan_apr_median_running_trucks": 319.0,
+      "jan_apr_p90_running_trucks": 452.1,
+      "jan_apr_max_running_trucks": 472.0,
+      "jan_apr_avg_planned_dt": 349.2,
+      "jan_apr_max_planned_dt": 416.2,
+      "jan_apr_avg_working_units_all_types": 1598.0,
+      "utilisation_vs_register_pct": 12.5
+    },
+    {
+      "contractor": "SSS",
+      "safety_enviro_total": 253,
+      "safety_enviro_dump_trucks": 178,
+      "wbn_register_total": 279,
+      "wbn_register_dt": 200,
+      "wbn_register_excavator": 21,
+      "jan_apr_avg_running_trucks": 117.8,
+      "jan_apr_median_running_trucks": 130.0,
+      "jan_apr_p90_running_trucks": 159.6,
+      "jan_apr_max_running_trucks": 171.0,
+      "jan_apr_avg_planned_dt": 90.9,
+      "jan_apr_max_planned_dt": 123.1,
+      "jan_apr_avg_working_units_all_types": 49.3,
+      "utilisation_vs_register_pct": 58.9
+    },
+    {
+      "contractor": "PPP",
+      "safety_enviro_total": 475,
+      "safety_enviro_dump_trucks": 265,
+      "wbn_register_total": 851,
+      "wbn_register_dt": 531,
+      "wbn_register_excavator": 130,
+      "jan_apr_avg_running_trucks": 75.6,
+      "jan_apr_median_running_trucks": 85.5,
+      "jan_apr_p90_running_trucks": 108.3,
+      "jan_apr_max_running_trucks": 116.0,
+      "jan_apr_avg_planned_dt": 70.5,
+      "jan_apr_max_planned_dt": 106.8,
+      "jan_apr_avg_working_units_all_types": 184.5,
+      "utilisation_vs_register_pct": 14.2
+    },
+    {
+      "contractor": "SMA",
+      "safety_enviro_total": 807,
+      "safety_enviro_dump_trucks": 375,
+      "wbn_register_total": 707,
+      "wbn_register_dt": 375,
+      "wbn_register_excavator": 94,
+      "jan_apr_avg_running_trucks": 63.6,
+      "jan_apr_median_running_trucks": 67.0,
+      "jan_apr_p90_running_trucks": 76.5,
+      "jan_apr_max_running_trucks": 83.0,
+      "jan_apr_avg_planned_dt": 71.8,
+      "jan_apr_max_planned_dt": 107.4,
+      "jan_apr_avg_working_units_all_types": 309.4,
+      "utilisation_vs_register_pct": 17.0
+    },
+    {
+      "contractor": "STM",
+      "safety_enviro_total": 248,
+      "safety_enviro_dump_trucks": 98,
+      "wbn_register_total": 463,
+      "wbn_register_dt": 197,
+      "wbn_register_excavator": 99,
+      "jan_apr_avg_running_trucks": 55.1,
+      "jan_apr_median_running_trucks": 63.0,
+      "jan_apr_p90_running_trucks": 68.0,
+      "jan_apr_max_running_trucks": 72.0,
+      "jan_apr_avg_planned_dt": 62.3,
+      "jan_apr_max_planned_dt": 103.8,
+      "jan_apr_avg_working_units_all_types": 161.6,
+      "utilisation_vs_register_pct": 28.0
+    },
+    {
+      "contractor": "??????",
+      "safety_enviro_total": 0,
+      "safety_enviro_dump_trucks": 0,
+      "wbn_register_total": 0,
+      "wbn_register_dt": 0,
+      "wbn_register_excavator": 0,
+      "jan_apr_avg_running_trucks": 47.5,
+      "jan_apr_median_running_trucks": 46.0,
+      "jan_apr_p90_running_trucks": 64.4,
+      "jan_apr_max_running_trucks": 78.0,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "????B??",
+      "safety_enviro_total": 0,
+      "safety_enviro_dump_trucks": 0,
+      "wbn_register_total": 0,
+      "wbn_register_dt": 0,
+      "wbn_register_excavator": 0,
+      "jan_apr_avg_running_trucks": 46.5,
+      "jan_apr_median_running_trucks": 47.0,
+      "jan_apr_p90_running_trucks": 75.0,
+      "jan_apr_max_running_trucks": 99.0,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "CKB",
+      "safety_enviro_total": 127,
+      "safety_enviro_dump_trucks": 105,
+      "wbn_register_total": 128,
+      "wbn_register_dt": 106,
+      "wbn_register_excavator": 5,
+      "jan_apr_avg_running_trucks": 40.2,
+      "jan_apr_median_running_trucks": 41.0,
+      "jan_apr_p90_running_trucks": 51.0,
+      "jan_apr_max_running_trucks": 57.0,
+      "jan_apr_avg_planned_dt": 35.2,
+      "jan_apr_max_planned_dt": 45.1,
+      "jan_apr_avg_working_units_all_types": 40.4,
+      "utilisation_vs_register_pct": 37.9
+    },
+    {
+      "contractor": "????F??",
+      "safety_enviro_total": 0,
+      "safety_enviro_dump_trucks": 0,
+      "wbn_register_total": 0,
+      "wbn_register_dt": 0,
+      "wbn_register_excavator": 0,
+      "jan_apr_avg_running_trucks": 35.5,
+      "jan_apr_median_running_trucks": 34.0,
+      "jan_apr_p90_running_trucks": 62.6,
+      "jan_apr_max_running_trucks": 74.0,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "GMG",
+      "safety_enviro_total": 117,
+      "safety_enviro_dump_trucks": 78,
+      "wbn_register_total": 244,
+      "wbn_register_dt": 193,
+      "wbn_register_excavator": 17,
+      "jan_apr_avg_running_trucks": 34.8,
+      "jan_apr_median_running_trucks": 35.0,
+      "jan_apr_p90_running_trucks": 43.0,
+      "jan_apr_max_running_trucks": 45.0,
+      "jan_apr_avg_planned_dt": 20.9,
+      "jan_apr_max_planned_dt": 30.6,
+      "jan_apr_avg_working_units_all_types": 36.3,
+      "utilisation_vs_register_pct": 18.0
+    },
+    {
+      "contractor": "HTE",
+      "safety_enviro_total": 0,
+      "safety_enviro_dump_trucks": 0,
+      "wbn_register_total": 0,
+      "wbn_register_dt": 0,
+      "wbn_register_excavator": 0,
+      "jan_apr_avg_running_trucks": 31.3,
+      "jan_apr_median_running_trucks": 29.0,
+      "jan_apr_p90_running_trucks": 53.9,
+      "jan_apr_max_running_trucks": 59.0,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "????",
+      "safety_enviro_total": 0,
+      "safety_enviro_dump_trucks": 0,
+      "wbn_register_total": 0,
+      "wbn_register_dt": 0,
+      "wbn_register_excavator": 0,
+      "jan_apr_avg_running_trucks": 31.0,
+      "jan_apr_median_running_trucks": 28.5,
+      "jan_apr_p90_running_trucks": 52.6,
+      "jan_apr_max_running_trucks": 70.0,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "????E??",
+      "safety_enviro_total": 0,
+      "safety_enviro_dump_trucks": 0,
+      "wbn_register_total": 0,
+      "wbn_register_dt": 0,
+      "wbn_register_excavator": 0,
+      "jan_apr_avg_running_trucks": 29.7,
+      "jan_apr_median_running_trucks": 29.0,
+      "jan_apr_p90_running_trucks": 55.6,
+      "jan_apr_max_running_trucks": 67.0,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "SGB",
+      "safety_enviro_total": 0,
+      "safety_enviro_dump_trucks": 0,
+      "wbn_register_total": 0,
+      "wbn_register_dt": 0,
+      "wbn_register_excavator": 0,
+      "jan_apr_avg_running_trucks": 19.1,
+      "jan_apr_median_running_trucks": 19.0,
+      "jan_apr_p90_running_trucks": 21.0,
+      "jan_apr_max_running_trucks": 22.0,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "KMKI",
+      "safety_enviro_total": 0,
+      "safety_enviro_dump_trucks": 0,
+      "wbn_register_total": 0,
+      "wbn_register_dt": 0,
+      "wbn_register_excavator": 0,
+      "jan_apr_avg_running_trucks": 14.4,
+      "jan_apr_median_running_trucks": 15.0,
+      "jan_apr_p90_running_trucks": 19.3,
+      "jan_apr_max_running_trucks": 20.0,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "????????",
+      "safety_enviro_total": 0,
+      "safety_enviro_dump_trucks": 0,
+      "wbn_register_total": 0,
+      "wbn_register_dt": 0,
+      "wbn_register_excavator": 0,
+      "jan_apr_avg_running_trucks": 10.9,
+      "jan_apr_median_running_trucks": 11.0,
+      "jan_apr_p90_running_trucks": 17.2,
+      "jan_apr_max_running_trucks": 22.0,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "???????",
+      "safety_enviro_total": 0,
+      "safety_enviro_dump_trucks": 0,
+      "wbn_register_total": 0,
+      "wbn_register_dt": 0,
+      "wbn_register_excavator": 0,
+      "jan_apr_avg_running_trucks": 8.8,
+      "jan_apr_median_running_trucks": 8.0,
+      "jan_apr_p90_running_trucks": 16.0,
+      "jan_apr_max_running_trucks": 19.0,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "????H??",
+      "safety_enviro_total": 0,
+      "safety_enviro_dump_trucks": 0,
+      "wbn_register_total": 0,
+      "wbn_register_dt": 0,
+      "wbn_register_excavator": 0,
+      "jan_apr_avg_running_trucks": 4.3,
+      "jan_apr_median_running_trucks": 4.0,
+      "jan_apr_p90_running_trucks": 7.0,
+      "jan_apr_max_running_trucks": 7.0,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "?????",
+      "safety_enviro_total": 0,
+      "safety_enviro_dump_trucks": 0,
+      "wbn_register_total": 0,
+      "wbn_register_dt": 0,
+      "wbn_register_excavator": 0,
+      "jan_apr_avg_running_trucks": 1.0,
+      "jan_apr_median_running_trucks": 1.0,
+      "jan_apr_p90_running_trucks": 1.0,
+      "jan_apr_max_running_trucks": 1.0,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "ANINDYA",
+      "safety_enviro_total": 19,
+      "safety_enviro_dump_trucks": 0,
+      "wbn_register_total": 0,
+      "wbn_register_dt": 0,
+      "wbn_register_excavator": 0,
+      "jan_apr_avg_running_trucks": null,
+      "jan_apr_median_running_trucks": null,
+      "jan_apr_p90_running_trucks": null,
+      "jan_apr_max_running_trucks": null,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "AWK",
+      "safety_enviro_total": 0,
+      "safety_enviro_dump_trucks": 0,
+      "wbn_register_total": 19,
+      "wbn_register_dt": 0,
+      "wbn_register_excavator": 0,
+      "jan_apr_avg_running_trucks": null,
+      "jan_apr_median_running_trucks": null,
+      "jan_apr_p90_running_trucks": null,
+      "jan_apr_max_running_trucks": null,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "BPMS",
+      "safety_enviro_total": 22,
+      "safety_enviro_dump_trucks": 0,
+      "wbn_register_total": 22,
+      "wbn_register_dt": 0,
+      "wbn_register_excavator": 0,
+      "jan_apr_avg_running_trucks": null,
+      "jan_apr_median_running_trucks": null,
+      "jan_apr_p90_running_trucks": null,
+      "jan_apr_max_running_trucks": null,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "FAVOR",
+      "safety_enviro_total": 18,
+      "safety_enviro_dump_trucks": 0,
+      "wbn_register_total": 0,
+      "wbn_register_dt": 0,
+      "wbn_register_excavator": 0,
+      "jan_apr_avg_running_trucks": null,
+      "jan_apr_median_running_trucks": null,
+      "jan_apr_p90_running_trucks": null,
+      "jan_apr_max_running_trucks": null,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "FIJ",
+      "safety_enviro_total": 0,
+      "safety_enviro_dump_trucks": 0,
+      "wbn_register_total": 18,
+      "wbn_register_dt": 0,
+      "wbn_register_excavator": 3,
+      "jan_apr_avg_running_trucks": null,
+      "jan_apr_median_running_trucks": null,
+      "jan_apr_p90_running_trucks": null,
+      "jan_apr_max_running_trucks": null,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "GGM",
+      "safety_enviro_total": 23,
+      "safety_enviro_dump_trucks": 0,
+      "wbn_register_total": 21,
+      "wbn_register_dt": 0,
+      "wbn_register_excavator": 0,
+      "jan_apr_avg_running_trucks": null,
+      "jan_apr_median_running_trucks": null,
+      "jan_apr_p90_running_trucks": null,
+      "jan_apr_max_running_trucks": null,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "HJS",
+      "safety_enviro_total": 0,
+      "safety_enviro_dump_trucks": 0,
+      "wbn_register_total": 319,
+      "wbn_register_dt": 203,
+      "wbn_register_excavator": 54,
+      "jan_apr_avg_running_trucks": null,
+      "jan_apr_median_running_trucks": null,
+      "jan_apr_p90_running_trucks": null,
+      "jan_apr_max_running_trucks": null,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": 21.6,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "MBN",
+      "safety_enviro_total": 50,
+      "safety_enviro_dump_trucks": 6,
+      "wbn_register_total": 32,
+      "wbn_register_dt": 6,
+      "wbn_register_excavator": 0,
+      "jan_apr_avg_running_trucks": null,
+      "jan_apr_median_running_trucks": null,
+      "jan_apr_p90_running_trucks": null,
+      "jan_apr_max_running_trucks": null,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "PII",
+      "safety_enviro_total": 51,
+      "safety_enviro_dump_trucks": 17,
+      "wbn_register_total": 51,
+      "wbn_register_dt": 17,
+      "wbn_register_excavator": 6,
+      "jan_apr_avg_running_trucks": null,
+      "jan_apr_median_running_trucks": null,
+      "jan_apr_p90_running_trucks": null,
+      "jan_apr_max_running_trucks": null,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "TBI",
+      "safety_enviro_total": 0,
+      "safety_enviro_dump_trucks": 0,
+      "wbn_register_total": 40,
+      "wbn_register_dt": 3,
+      "wbn_register_excavator": 0,
+      "jan_apr_avg_running_trucks": null,
+      "jan_apr_median_running_trucks": null,
+      "jan_apr_p90_running_trucks": null,
+      "jan_apr_max_running_trucks": null,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "WASTEC",
+      "safety_enviro_total": 7,
+      "safety_enviro_dump_trucks": 7,
+      "wbn_register_total": 7,
+      "wbn_register_dt": 7,
+      "wbn_register_excavator": 0,
+      "jan_apr_avg_running_trucks": null,
+      "jan_apr_median_running_trucks": null,
+      "jan_apr_p90_running_trucks": null,
+      "jan_apr_max_running_trucks": null,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    },
+    {
+      "contractor": "WSA",
+      "safety_enviro_total": 170,
+      "safety_enviro_dump_trucks": 0,
+      "wbn_register_total": 2,
+      "wbn_register_dt": 0,
+      "wbn_register_excavator": 0,
+      "jan_apr_avg_running_trucks": null,
+      "jan_apr_median_running_trucks": null,
+      "jan_apr_p90_running_trucks": null,
+      "jan_apr_max_running_trucks": null,
+      "jan_apr_avg_planned_dt": null,
+      "jan_apr_max_planned_dt": null,
+      "jan_apr_avg_working_units_all_types": null,
+      "utilisation_vs_register_pct": null
+    }
+  ],
+  "safety_enviro_by_type": [
+    {
+      "Company": "ANINDYA",
+      "Equipment_Type": "Oven",
+      "n": 7
+    },
+    {
+      "Company": "ANINDYA",
+      "Equipment_Type": "Crusher",
+      "n": 6
+    },
+    {
+      "Company": "ANINDYA",
+      "Equipment_Type": "Light Vehicle",
+      "n": 3
+    },
+    {
+      "Company": "ANINDYA",
+      "Equipment_Type": "Light Truck",
+      "n": 2
+    },
+    {
+      "Company": "ANINDYA",
+      "Equipment_Type": "Digital Balance",
+      "n": 1
+    },
+    {
+      "Company": "ATC",
+      "Equipment_Type": "Oven",
+      "n": 26
+    },
+    {
+      "Company": "ATC",
+      "Equipment_Type": "Mill",
+      "n": 19
+    },
+    {
+      "Company": "ATC",
+      "Equipment_Type": "Jaw Crusher",
+      "n": 14
+    },
+    {
+      "Company": "ATC",
+      "Equipment_Type": "Sample Divider",
+      "n": 14
+    },
+    {
+      "Company": "ATC",
+      "Equipment_Type": "Pulverizer",
+      "n": 12
+    },
+    {
+      "Company": "ATC",
+      "Equipment_Type": "Crusher Divider",
+      "n": 8
+    },
+    {
+      "Company": "ATC",
+      "Equipment_Type": "Air Compressor",
+      "n": 7
+    },
+    {
+      "Company": "ATC",
+      "Equipment_Type": "Air Conditioner",
+      "n": 6
+    },
+    {
+      "Company": "ATC",
+      "Equipment_Type": "Pickup",
+      "n": 4
+    },
+    {
+      "Company": "ATC",
+      "Equipment_Type": "Hammer Crusher",
+      "n": 3
+    },
+    {
+      "Company": "ATC",
+      "Equipment_Type": "Air Dryer",
+      "n": 2
+    },
+    {
+      "Company": "ATC",
+      "Equipment_Type": "Dust Workbench",
+      "n": 2
+    },
+    {
+      "Company": "ATC",
+      "Equipment_Type": "Microwave Dryer",
+      "n": 2
+    },
+    {
+      "Company": "ATC",
+      "Equipment_Type": "Light Truck",
+      "n": 1
+    },
+    {
+      "Company": "BPMS",
+      "Equipment_Type": "Jacro",
+      "n": 22
+    },
+    {
+      "Company": "CKB",
+      "Equipment_Type": "Dump Truck",
+      "n": 105
+    },
+    {
+      "Company": "CKB",
+      "Equipment_Type": "Light Vehicle",
+      "n": 10
+    },
+    {
+      "Company": "CKB",
+      "Equipment_Type": "Excavator",
+      "n": 5
+    },
+    {
+      "Company": "CKB",
+      "Equipment_Type": "Fuel Truck",
+      "n": 3
+    },
+    {
+      "Company": "CKB",
+      "Equipment_Type": "Manhaul",
+      "n": 2
+    },
+    {
+      "Company": "CKB",
+      "Equipment_Type": "Water Truck",
+      "n": 1
+    },
+    {
+      "Company": "CKB",
+      "Equipment_Type": "Wheel Loader",
+      "n": 1
+    },
+    {
+      "Company": "FAVOR",
+      "Equipment_Type": "Light Vehicle",
+      "n": 9
+    },
+    {
+      "Company": "FAVOR",
+      "Equipment_Type": "EXCAVATOR",
+      "n": 3
+    },
+    {
+      "Company": "FAVOR",
+      "Equipment_Type": "CRAWLER CRANE",
+      "n": 2
+    },
+    {
+      "Company": "FAVOR",
+      "Equipment_Type": "Dutro",
+      "n": 2
+    },
+    {
+      "Company": "FAVOR",
+      "Equipment_Type": "Truck Mixer",
+      "n": 2
+    },
+    {
+      "Company": "GGM",
+      "Equipment_Type": "Rig",
+      "n": 15
+    },
+    {
+      "Company": "GGM",
+      "Equipment_Type": "Light Vehicle",
+      "n": 5
+    },
+    {
+      "Company": "GGM",
+      "Equipment_Type": "Generator",
+      "n": 3
+    },
+    {
+      "Company": "GMG",
+      "Equipment_Type": "Dump Truck",
+      "n": 78
+    },
+    {
+      "Company": "GMG",
+      "Equipment_Type": "Light Vehicle",
+      "n": 16
+    },
+    {
+      "Company": "GMG",
+      "Equipment_Type": "Excavator",
+      "n": 15
+    },
+    {
+      "Company": "GMG",
+      "Equipment_Type": "Service Truck",
+      "n": 4
+    },
+    {
+      "Company": "GMG",
+      "Equipment_Type": "Fuel Truck",
+      "n": 3
+    },
+    {
+      "Company": "GMG",
+      "Equipment_Type": "Lube Truck",
+      "n": 1
+    },
+    {
+      "Company": "MBN",
+      "Equipment_Type": "Light Vehicle",
+      "n": 25
+    },
+    {
+      "Company": "MBN",
+      "Equipment_Type": "Drill Rig",
+      "n": 17
+    },
+    {
+      "Company": "MBN",
+      "Equipment_Type": "Dump Truck",
+      "n": 6
+    },
+    {
+      "Company": "MBN",
+      "Equipment_Type": "Manhaul",
+      "n": 2
+    },
+    {
+      "Company": "PII",
+      "Equipment_Type": "WHEEL LOADER",
+      "n": 19
+    },
+    {
+      "Company": "PII",
+      "Equipment_Type": "DUMP TRUCK",
+      "n": 17
+    },
+    {
+      "Company": "PII",
+      "Equipment_Type": "EXCAVATOR",
+      "n": 6
+    },
+    {
+      "Company": "PII",
+      "Equipment_Type": "WATER TRUCK",
+      "n": 3
+    },
+    {
+      "Company": "PII",
+      "Equipment_Type": "BRAKER",
+      "n": 2
+    },
+    {
+      "Company": "PII",
+      "Equipment_Type": "MANHAUL BUS",
+      "n": 2
+    },
+    {
+      "Company": "PII",
+      "Equipment_Type": "FORKLIF",
+      "n": 1
+    },
+    {
+      "Company": "PII",
+      "Equipment_Type": "HINO DUTRO",
+      "n": 1
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "Dump Truck",
+      "n": 229
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "Excavator",
+      "n": 41
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "ADT",
+      "n": 36
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "EXCAVATOR",
+      "n": 31
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "Light Vehicle",
+      "n": 31
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "Bulldozer",
+      "n": 18
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "Water Truck",
+      "n": 16
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "Compactor",
+      "n": 14
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "Manhaul",
+      "n": 13
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "Motor Grader",
+      "n": 10
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "Tower Lamp",
+      "n": 7
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "Fuel Truck",
+      "n": 6
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "Service Truck",
+      "n": 6
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "FUEL TRUCK",
+      "n": 4
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "Crane Truck",
+      "n": 3
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "Flatbed Truck",
+      "n": 2
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "SERVICE TRUCK",
+      "n": 2
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "Excavator Long Arm",
+      "n": 1
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "Loader",
+      "n": 1
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "Lowboy",
+      "n": 1
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "Lube Truck",
+      "n": 1
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "Rock Breaker",
+      "n": 1
+    },
+    {
+      "Company": "PPP",
+      "Equipment_Type": "Tyre Service",
+      "n": 1
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Dump Truck",
+      "n": 828
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Dump Truck EV",
+      "n": 435
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Excavator",
+      "n": 331
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Lighting Tower",
+      "n": 181
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "ADT",
+      "n": 144
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Manhaul",
+      "n": 125
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Bulldozer",
+      "n": 96
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Light Vehicle",
+      "n": 92
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Compactor",
+      "n": 79
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Water Truck",
+      "n": 58
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Motor Grader",
+      "n": 56
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Loader",
+      "n": 51
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Emergency Repair Truck",
+      "n": 36
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Fuel Truck",
+      "n": 36
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Green Truck",
+      "n": 25
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Generator",
+      "n": 20
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Dutro Listrik",
+      "n": 19
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Grease Truck",
+      "n": 18
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Rock Breaker",
+      "n": 16
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Excavator Long Arm",
+      "n": 9
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Mobil Truck",
+      "n": 6
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Slurry Truck",
+      "n": 6
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Forklift",
+      "n": 5
+    },
+    {
+      "Company": "RIM",
+      "Equipment_Type": "Crane Truck",
+      "n": 4
+    }
+  ],
+  "wbn_dt_detail": [
+    {
+      "CONTRACTOR": "CKB",
+      "TYPE": "DT",
+      "n": 106
+    },
+    {
+      "CONTRACTOR": "GMG",
+      "TYPE": "DT",
+      "n": 193
+    },
+    {
+      "CONTRACTOR": "HJS",
+      "TYPE": "ADT",
+      "n": 49
+    },
+    {
+      "CONTRACTOR": "HJS",
+      "TYPE": "DT",
+      "n": 154
+    },
+    {
+      "CONTRACTOR": "MBN",
+      "TYPE": "Dump Truck",
+      "n": 6
+    },
+    {
+      "CONTRACTOR": "PII",
+      "TYPE": "DUMP TRUCK",
+      "n": 17
+    },
+    {
+      "CONTRACTOR": "PPP",
+      "TYPE": "ADT",
+      "n": 42
+    },
+    {
+      "CONTRACTOR": "PPP",
+      "TYPE": "DT",
+      "n": 477
+    },
+    {
+      "CONTRACTOR": "PPP",
+      "TYPE": "Dump Truck",
+      "n": 12
+    },
+    {
+      "CONTRACTOR": "RIM",
+      "TYPE": "ADT",
+      "n": 144
+    },
+    {
+      "CONTRACTOR": "RIM",
+      "TYPE": "DT",
+      "n": 1953
+    },
+    {
+      "CONTRACTOR": "RIM",
+      "TYPE": "Dump Truck EV",
+      "n": 435
+    },
+    {
+      "CONTRACTOR": "SMA",
+      "TYPE": "ADT",
+      "n": 85
+    },
+    {
+      "CONTRACTOR": "SMA",
+      "TYPE": "DT",
+      "n": 277
+    },
+    {
+      "CONTRACTOR": "SMA",
+      "TYPE": "Dump Truck",
+      "n": 13
+    },
+    {
+      "CONTRACTOR": "SSS",
+      "TYPE": "DT",
+      "n": 200
+    },
+    {
+      "CONTRACTOR": "STM",
+      "TYPE": "ADT",
+      "n": 49
+    },
+    {
+      "CONTRACTOR": "STM",
+      "TYPE": "DT",
+      "n": 148
+    },
+    {
+      "CONTRACTOR": "TBI",
+      "TYPE": "Dump Truck",
+      "n": 3
+    },
+    {
+      "CONTRACTOR": "WASTEC",
+      "TYPE": "Dump Truck",
+      "n": 7
+    }
+  ],
+  "plan_avg_by_unit": [
+    {
+      "contractor": "CKB",
+      "unit_type": "DT",
+      "avg_daily": 35.15625,
+      "median_daily": 45.13888888888889,
+      "max_daily": 45.13888888888889,
+      "plan_days": 120
+    },
+    {
+      "contractor": "GMG",
+      "unit_type": "DT",
+      "avg_daily": 20.85034013605442,
+      "median_daily": 24.489795918367346,
+      "max_daily": 30.612244897959183,
+      "plan_days": 120
+    },
+    {
+      "contractor": "PPP",
+      "unit_type": "ADT",
+      "avg_daily": 25.8,
+      "median_daily": 26.0,
+      "max_daily": 26.0,
+      "plan_days": 35
+    },
+    {
+      "contractor": "PPP",
+      "unit_type": "DOZER",
+      "avg_daily": 10.0,
+      "median_daily": 10.0,
+      "max_daily": 10.0,
+      "plan_days": 7
+    },
+    {
+      "contractor": "PPP",
+      "unit_type": "DT",
+      "avg_daily": 62.93827160493827,
+      "median_daily": 74.74747474747475,
+      "max_daily": 84.04040404040404,
+      "plan_days": 120
+    },
+    {
+      "contractor": "PPP",
+      "unit_type": "EXCA",
+      "avg_daily": 6.0,
+      "median_daily": 6.0,
+      "max_daily": 6.0,
+      "plan_days": 35
+    },
+    {
+      "contractor": "RIM",
+      "unit_type": "ADT",
+      "avg_daily": 41.2,
+      "median_daily": 51.0,
+      "max_daily": 56.0,
+      "plan_days": 35
+    },
+    {
+      "contractor": "RIM",
+      "unit_type": "DOZER",
+      "avg_daily": 8.0,
+      "median_daily": 8.0,
+      "max_daily": 8.0,
+      "plan_days": 7
+    },
+    {
+      "contractor": "RIM",
+      "unit_type": "DT",
+      "avg_daily": 337.1565735677578,
+      "median_daily": 327.22644679881523,
+      "max_daily": 416.218671679198,
+      "plan_days": 120
+    },
+    {
+      "contractor": "RIM",
+      "unit_type": "EXCA",
+      "avg_daily": 12.8,
+      "median_daily": 17.0,
+      "max_daily": 18.0,
+      "plan_days": 35
+    },
+    {
+      "contractor": "SMA",
+      "unit_type": "ADT",
+      "avg_daily": 32.0,
+      "median_daily": 32.0,
+      "max_daily": 36.0,
+      "plan_days": 35
+    },
+    {
+      "contractor": "SMA",
+      "unit_type": "DOZER",
+      "avg_daily": 8.0,
+      "median_daily": 8.0,
+      "max_daily": 8.0,
+      "plan_days": 7
+    },
+    {
+      "contractor": "SMA",
+      "unit_type": "DT",
+      "avg_daily": 62.44047619047619,
+      "median_daily": 71.42857142857143,
+      "max_daily": 75.0,
+      "plan_days": 120
+    },
+    {
+      "contractor": "SMA",
+      "unit_type": "EXCA",
+      "avg_daily": 6.8,
+      "median_daily": 7.0,
+      "max_daily": 8.0,
+      "plan_days": 35
+    },
+    {
+      "contractor": "SSS",
+      "unit_type": "DT",
+      "avg_daily": 90.94783912324235,
+      "median_daily": 108.56079404466499,
+      "max_daily": 123.07692307692307,
+      "plan_days": 120
+    },
+    {
+      "contractor": "STM",
+      "unit_type": "ADT",
+      "avg_daily": 37.2,
+      "median_daily": 39.0,
+      "max_daily": 39.0,
+      "plan_days": 35
+    },
+    {
+      "contractor": "STM",
+      "unit_type": "DOZER",
+      "avg_daily": 13.0,
+      "median_daily": 13.0,
+      "max_daily": 13.0,
+      "plan_days": 7
+    },
+    {
+      "contractor": "STM",
+      "unit_type": "DT",
+      "avg_daily": 51.491769547325106,
+      "median_daily": 58.64197530864198,
+      "max_daily": 64.81481481481481,
+      "plan_days": 120
+    },
+    {
+      "contractor": "STM",
+      "unit_type": "EXCA",
+      "avg_daily": 9.2,
+      "median_daily": 10.0,
+      "max_daily": 11.0,
+      "plan_days": 35
+    }
+  ]
+}

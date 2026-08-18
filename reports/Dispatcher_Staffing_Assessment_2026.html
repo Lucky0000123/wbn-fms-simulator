@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Dispatcher Staffing Assessment — IWIP Haul Fleet</title>
+<style>
+  :root {
+    --ink: #1a2332;
+    --muted: #5c6b7a;
+    --accent: #0d4f8b;
+    --accent-light: #e8f2fb;
+    --border: #d0dae4;
+    --bg: #f7f9fc;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", Calibri, Arial, sans-serif;
+    color: var(--ink);
+    line-height: 1.55;
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 48px 32px 64px;
+    background: #fff;
+  }
+  .cover {
+    border-bottom: 4px solid var(--accent);
+    padding-bottom: 28px;
+    margin-bottom: 36px;
+  }
+  .cover h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--accent);
+    margin: 0 0 8px;
+    letter-spacing: -0.02em;
+  }
+  .cover .subtitle { font-size: 1.1rem; color: var(--muted); margin: 0 0 20px; }
+  .meta { font-size: 0.9rem; color: var(--muted); }
+  .meta span { display: inline-block; margin-right: 24px; }
+  h2 {
+    font-size: 1.15rem;
+    color: var(--accent);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 6px;
+    margin-top: 32px;
+  }
+  h3 { font-size: 1rem; margin-top: 20px; color: var(--ink); }
+  p { margin: 0.75em 0; }
+  .callout {
+    background: var(--accent-light);
+    border-left: 4px solid var(--accent);
+    padding: 16px 20px;
+    margin: 20px 0;
+    font-size: 0.95rem;
+  }
+  .callout strong { color: var(--accent); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+    margin: 16px 0;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 10px;
+    text-align: left;
+  }
+  th {
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+  }
+  tr:nth-child(even) { background: var(--bg); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  ul { margin: 0.5em 0; padding-left: 1.4em; }
+  li { margin: 0.35em 0; }
+  .footnote {
+    font-size: 0.82rem;
+    color: var(--muted);
+    margin-top: 40px;
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+  }
+  @media print {
+    body { padding: 24px; }
+    h2 { page-break-after: avoid; }
+    table { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <h1>Dispatcher Staffing Assessment</h1>
+  <p class="subtitle">IWIP Haul Fleet — Control Room Manning vs Registered Fleet &amp; Actual Operations</p>
+  <div class="meta">
+    <span><strong>Period analysed:</strong> 1 January – 30 April 2026</span>
+    <span><strong>Prepared:</strong> 18 August 2026</span>
+    <span><strong>Classification:</strong> Internal — Operations Planning</span>
+  </div>
+</div>
+
+<h2>1. Executive Summary</h2>
+<p>This assessment compares <strong>registered fleet</strong> (Safety &amp; Environment equipment register and WBN operations register) against <strong>actual haul activity</strong> (weighbridge tickets) and <strong>daily mining plans</strong> for January–April 2026. The objective is to support control-room dispatcher staffing by contractor and site-wide.</p>
+
+<div class="callout">
+  <strong>Lean / strong FMS benchmark:</strong> International practice for operations with a mature Fleet Management System (automated assignment, live GPS, cycle-time dashboards) supports approximately <strong>60–80 active haul trucks per dispatcher per shift</strong>. At the measured site average of <strong>1,153 trucks/day</strong>, this implies <strong>15–20 dispatchers per shift</strong> for integrated control-room coverage. On busy days (P90 ≈ 1,443 trucks), plan for <strong>19–25 dispatchers per shift</strong>; peak observed day (1,685 trucks) requires <strong>22–29 dispatchers per shift</strong>.
+</div>
+
+<p><strong>Key findings:</strong></p>
+<ul>
+  <li>Registered dump trucks across main contractors total <strong>~2,500+ units</strong> on books; only <strong>~1,150 trucks/day</strong> actually haul on IWIP roads (average Jan–Apr).</li>
+  <li><strong>RIM</strong> dominates activity (~318 trucks/day average, up to 472 on peak days) — largest dispatcher requirement.</li>
+  <li>Daily plans (<code>EQUIPMENTS_PLAN</code>) align reasonably with actual running fleet for major contractors; use <em>running trucks</em>, not register totals, for manning.</li>
+  <li>No fixed ISO or global standard exists for “dispatchers per truck”; lean FMS sites benchmark by <strong>supervised truck count</strong>, pit complexity, and shift structure (typically two 12-hour shifts).</li>
+</ul>
+
+<h2>2. Scope &amp; Data Sources</h2>
+<table>
+  <tr><th>Source</th><th>Database / Table</th><th>Purpose</th></tr>
+  <tr><td>Safety equipment register</td><td><code>SAFETY_ENVIRO.dbo.EQUIPMENTS</code></td><td>Total fleet by Company and Equipment_Type (5,234 records)</td></tr>
+  <tr><td>Operations register</td><td><code>WBN_DATABASE.dbo.EQUIPMENTS</code></td><td>Contractor fleet by TYPE / ID_EQ (7,221 records)</td></tr>
+  <tr><td>Daily mining plan</td><td><code>WBN_DATABASE.dbo.EQUIPMENTS_PLAN</code></td><td>Planned DT/ADT/EXCA units per contractor per day</td></tr>
+  <tr><td>Actual haul proof</td><td><code>WBN_DATABASE.dbo.HAULAGE_IWIP_CLEAN</code></td><td>Unique TRUCK_ID per contractor per day (Jan–Apr 2026)</td></tr>
+</table>
+
+<h2>3. Registered Fleet — Main Haul Contractors</h2>
+<p>Counts from <strong>SAFETY_ENVIRO</strong> (Company / Equipment_Type). “Dump truck” includes rigid dump truck, ADT, and EV variants.</p>
+<table>
+  <tr><th>Contractor</th><th>Total units</th><th>Dump trucks</th><th>Excavators</th><th>Notes</th></tr>
+  <tr><td>RIM</td><td class="num">2,683</td><td class="num">1,407</td><td class="num">331</td><td>828 DT + 435 EV + 144 ADT</td></tr>
+  <tr><td>SMA</td><td class="num">807</td><td class="num">375</td><td class="num">108</td><td>297 DT + 78 ADT</td></tr>
+  <tr><td>PPP</td><td class="num">475</td><td class="num">265</td><td class="num">72</td><td>229 DT + 36 ADT</td></tr>
+  <tr><td>SSS</td><td class="num">253</td><td class="num">178</td><td class="num">15</td><td>—</td></tr>
+  <tr><td>STM</td><td class="num">248</td><td class="num">98</td><td class="num">53</td><td>55 DT + 43 ADT</td></tr>
+  <tr><td>CKB</td><td class="num">127</td><td class="num">105</td><td class="num">5</td><td>—</td></tr>
+  <tr><td>GMG</td><td class="num">117</td><td class="num">78</td><td class="num">15</td><td>—</td></tr>
+</table>
+
+<h2>4. Jan–Apr 2026 — Planned vs Actual Running Trucks</h2>
+<p>“Running” = distinct truck IDs with ≥1 weighbridge ticket that day. This is the correct basis for dispatcher load, not register totals.</p>
+<table>
+  <tr>
+    <th>Contractor</th>
+    <th>Registered DT (Safety)</th>
+    <th>Registered DT (WBN)</th>
+    <th>Avg planned DT/day</th>
+    <th>Avg running/day</th>
+    <th>P90 running/day</th>
+    <th>Dispatchers/shift<br/><small>lean 60–80:1</small></th>
+    <th>Dispatchers/shift<br/><small>peak P90</small></th>
+  </tr>
+  <tr>
+          <td><strong>RIM</strong></td>
+          <td class="num">1,407</td>
+          <td class="num">2,532</td>
+          <td class="num">349.2</td>
+          <td class="num">317.6</td>
+          <td class="num">452.1</td>
+          <td class="num">4–6</td>
+          <td class="num">6–8</td>
+        </tr><tr>
+          <td><strong>SSS</strong></td>
+          <td class="num">178</td>
+          <td class="num">200</td>
+          <td class="num">90.9</td>
+          <td class="num">117.8</td>
+          <td class="num">159.6</td>
+          <td class="num">2–2</td>
+          <td class="num">2–3</td>
+        </tr><tr>
+          <td><strong>PPP</strong></td>
+          <td class="num">265</td>
+          <td class="num">531</td>
+          <td class="num">70.5</td>
+          <td class="num">75.6</td>
+          <td class="num">108.3</td>
+          <td class="num">1–2</td>
+          <td class="num">2–2</td>
+        </tr><tr>
+          <td><strong>SMA</strong></td>
+          <td class="num">375</td>
+          <td class="num">375</td>
+          <td class="num">71.8</td>
+          <td class="num">63.6</td>
+          <td class="num">76.5</td>
+          <td class="num">1–2</td>
+          <td class="num">1–2</td>
+        </tr><tr>
+          <td><strong>STM</strong></td>
+          <td class="num">98</td>
+          <td class="num">197</td>
+          <td class="num">62.3</td>
+          <td class="num">55.1</td>
+          <td class="num">68.0</td>
+          <td class="num">1–1</td>
+          <td class="num">1–2</td>
+        </tr><tr>
+          <td><strong>CKB</strong></td>
+          <td class="num">105</td>
+          <td class="num">106</td>
+          <td class="num">35.2</td>
+          <td class="num">40.2</td>
+          <td class="num">51.0</td>
+          <td class="num">1–1</td>
+          <td class="num">1–1</td>
+        </tr><tr>
+          <td><strong>GMG</strong></td>
+          <td class="num">78</td>
+          <td class="num">193</td>
+          <td class="num">20.9</td>
+          <td class="num">34.8</td>
+          <td class="num">43.0</td>
+          <td class="num">1–1</td>
+          <td class="num">1–1</td>
+        </tr><tr>
+          <td><strong>HTE</strong></td>
+          <td class="num">0</td>
+          <td class="num">0</td>
+          <td class="num">—</td>
+          <td class="num">31.3</td>
+          <td class="num">53.9</td>
+          <td class="num">1–1</td>
+          <td class="num">1–1</td>
+        </tr><tr>
+          <td><strong>HJS</strong></td>
+          <td class="num">0</td>
+          <td class="num">203</td>
+          <td class="num">—</td>
+          <td class="num">—</td>
+          <td class="num">—</td>
+          <td class="num">—–—</td>
+          <td class="num">—–—</td>
+        </tr>
+</table>
+
+<p><strong>Site total (all contractors, Jan–Apr):</strong> average <strong>1,153</strong> trucks/day · median 1,140 · P90 1,443 · maximum observed 1,685.</p>
+
+<h2>5. International Benchmarks — Lean / Strong FMS Operations</h2>
+<p>There is <strong>no universal ISO ratio</strong> for dispatchers per truck. Industry guidance (AusIMM Mine Monitoring &amp; Control, major FMS vendors, open-pit dispatch literature) converges on the following:</p>
+
+<h3>5.1 Fleet Management System maturity</h3>
+<ul>
+  <li><strong>Strong FMS:</strong> Real-time GPS, automated truck assignment, cycle/queue dashboards, shift handover tools — reduces manual reassignment and allows higher supervised fleet per dispatcher.</li>
+  <li><strong>Lean control room:</strong> Primary dispatcher focuses on exceptions (breakdowns, road closures, shovel moves); system handles routine assignment.</li>
+  <li><strong>Match factor</strong> (truck arrival rate vs shovel service rate) drives productivity; staffing follows <em>supervised active fleet</em> and pit complexity, not register size.</li>
+</ul>
+
+<h3>5.2 Benchmark ratios (haul trucks per dispatcher per shift)</h3>
+<table>
+  <tr><th>Operating model</th><th>Trucks per dispatcher</th><th>Typical use</th></tr>
+  <tr><td><strong>Lean / strong FMS</strong></td><td class="num"><strong>60–80</strong></td><td>Mature FMS, stable routes, locked shovel assignments, automated logging</td></tr>
+  <tr><td>Typical multi-contractor pit</td><td class="num">50–60</td><td>Multiple load areas (TF, BLB, KR), mixed contractors — <em>current IWIP profile</em></td></tr>
+  <tr><td>Heavy manual coordination</td><td class="num">40–50</td><td>Frequent roadworks, weak FMS, high breakdown rate</td></tr>
+</table>
+
+<h3>5.3 Control room structure (international practice)</h3>
+<ul>
+  <li><strong>Two shifts per day</strong> (12 h) for 24-hour coverage; separate day and night rosters.</li>
+  <li><strong>One senior controller / shift supervisor</strong> per shift with decision authority (AusIMM MMC Part 3).</li>
+  <li><strong>Relief depth:</strong> ~1 trainee or relief dispatcher per 4–5 primary dispatchers.</li>
+  <li>Contractors may maintain <strong>dedicated dispatch desks</strong> within a shared IWIP control room, or a central pool — organisational choice; truck counts still apply per supervised fleet.</li>
+</ul>
+
+<h2>6. Recommended Dispatcher Manning</h2>
+
+<h3>6.1 Site-wide (integrated control room) — lean FMS target (60–80:1)</h3>
+<table>
+  <tr><th>Scenario</th><th>Active haul trucks</th><th>Dispatchers per shift</th></tr>
+  <tr><td>Average day (Jan–Apr measured)</td><td class="num">1,153</td><td class="num"><strong>15–20</strong></td></tr>
+  <tr><td>Busy day (P90)</td><td class="num">1,443</td><td class="num"><strong>19–25</strong></td></tr>
+  <tr><td>Peak observed day</td><td class="num">1,685</td><td class="num"><strong>22–29</strong></td></tr>
+</table>
+<p>Add <strong>1 shift supervisor</strong> per shift. For 24 h operations: multiply dispatcher headcount by <strong>2 shifts</strong> (e.g. average-day roster ≈ 35–70 dispatcher slots across day + night, plus 2 supervisors).</p>
+
+<h3>6.2 By contractor (dedicated desks) — lean FMS 60–80:1</h3>
+<p>If each contractor staffs its own dispatch position(s), use average running trucks and peak (P90) from Section 4. Largest requirements: <strong>RIM 5–8</strong>, <strong>SSS 2–3</strong>, <strong>PPP 1–2</strong>, <strong>SMA 1–2</strong>, <strong>STM 1–2</strong>, <strong>CKB 1</strong>, <strong>GMG 1</strong> dispatchers per shift at the lean benchmark.</p>
+
+<h3>6.3 Planning rule (recommended)</h3>
+<div class="callout">
+  Staff dispatch using: <strong>Dispatchers per shift = ⌈Active haul trucks ÷ 60⌉ to ⌈Active haul trucks ÷ 80⌉</strong> under lean FMS, plus one supervisor. Use <strong>P90 daily truck count</strong> for roster sizing, not register totals or average-only (under-staffs peak season).
+</div>
+
+<h2>7. Limitations &amp; Caveats</h2>
+<ul>
+  <li>Register counts include maintenance, standby, and off-site units — not dispatch workload.</li>
+  <li>Weighbridge counts only material hauls; road-only / HRM trucks may not appear.</li>
+  <li>Some contractor codes in haulage data are encoding-corrupted; ~50 trucks/day may sit under unresolved labels.</li>
+  <li>HJS has registered fleet but negligible Jan–Apr IWIP haul activity.</li>
+  <li>Dispatcher need also depends on excavator count, road segments, and FMS maturity — ratios should be validated after 90 days of control-room KPI tracking.</li>
+</ul>
+
+<h2>8. References</h2>
+<ul>
+  <li>AusIMM Bulletin — <em>Mine monitoring or control (Part 3): Staffing the control room</em></li>
+  <li>GroundHog / industry FMS — Dispatch Operator Handbook (fleet visibility, automated cycle logging)</li>
+  <li>Open-pit dispatch literature — match factor &amp; shovel–truck balance ( Douglas, Burt &amp; Caccetta; E3S Conf. functional quality criterion)</li>
+  <li>Internal data — WBN FMS Simulator analysis, August 2026</li>
+</ul>
+
+<p class="footnote">
+  Generated from live database queries against SAFETY_ENVIRO and WBN_DATABASE. 
+  Analysis script: <code>scripts/generate_dispatcher_report.py</code> · 
+  Data cache: <code>reports/dispatcher_fleet_analysis.json</code>
+</p>
+
+</body>
+</html>

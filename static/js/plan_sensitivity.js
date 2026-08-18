@@ -18,7 +18,7 @@
   const PALETTE=['#4e79a7','#f28e2b','#59a14f','#e15759','#b07aa1','#76b7b2','#edc948','#ff9da7'];
   let _sel=null;            // isolated plan id, or null = all
   let _hidden={};           // id → true (eye toggle)
-  let _gran='shift';        // hour | shift | day
+  let _gran='day';          // hour | shift | day — follows Conditions (Day default)
   // Y-metric. 'output' = tonnage + trips/DT (the original dual axis).
   // 'efficiency' = what fraction of this path's own free rate each truck still
   // gets, 0-100%, all plans on ONE axis because the ratio is dimensionless.
@@ -407,7 +407,7 @@
           return '<div class="plan-sens-opt-row" title="'+esc(p.optNote)+'">'
             +'<span class="plan-sens-dot" style="background:'+p.color+'"></span>'
             +'<span>★ optimal ~<b>'+p.opt.dt+' DT</b> → '+Math.round(p.opt.trips)+' trips'
-            +(p.opt.wmt!=null?(' · '+Math.round(p.opt.wmt).toLocaleString()+' t/shift'):'')
+            +(p.opt.wmt!=null?(' · '+Math.round(p.opt.wmt*granFactor().f).toLocaleString()+' t'+granFactor().unit):'')
             +esc(gain)+'</span></div>';
         }).join('')
       :'';

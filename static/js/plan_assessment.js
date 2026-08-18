@@ -96,15 +96,20 @@ const PA_C = {
 };
 
 /* Every chart funnels through here so the CDN-missing path is handled once. */
-function paChart(id, option) {
+// emptyNote: what to tell the reader when ECharts is missing. Defaults to the
+// assessment-view truth ("it is all in the tables"), which is FALSE for any
+// chart-only section -- section B · Fleet sensitivity has no table behind it,
+// so it passes its own sentence rather than promising numbers that are not there.
+function paChart(id, option, emptyNote) {
   const el = document.getElementById(id);
   if (!el) return;
   if (typeof echarts === 'undefined') {
     el.innerHTML = '<div class="muted" style="padding:14px;font-size:12px;'
       + 'border:1px dashed var(--line,#30363d);border-radius:8px">'
       + 'Chart library unavailable (ECharts is loaded from a CDN and this machine '
-      + 'appears to be offline). Every figure in this section is also in the '
-      + 'tables, which do not need it.</div>';
+      + 'appears to be offline). '
+      + (emptyNote || 'Every figure in this section is also in the '
+        + 'tables, which do not need it.') + '</div>';
     return;
   }
   // Reuse the cached instance ONLY if it is still bound to the element that is

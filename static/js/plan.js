@@ -9,6 +9,107 @@
 //   • day→shift basis                          → _D.kpi + _D.shiftBasis
 const WBN_HAULERS_FALLBACK=['RIM','PPP','SSS','SMA','STM','HJS','GMG','CKB','HFNC'];
 let _planMode='dt';        // 'dt' → enter trucks, get WMT · 'wmt' → enter tonnage, get trucks
+/** Plan totals horizon: one 12 h shift, or one day (2 shifts). Engine stays per-shift. */
+let _planHorizon='day'; // 'shift' | 'day' — Day is the planning default
+function planHorizonFactor(){return _planHorizon==='day'?2:1;}
+function planHorizonLabel(){return _planHorizon==='day'?'day':'shift';}
+function planHorizonHint(){
+  return _planHorizon==='day'?'ONE day (2 × 12 h shifts)':'ONE shift (12 h)';
+}
+function planWmtTargetShift(){
+  const raw=Math.max(0,parseFloat((q('plan-wmt')||{}).value)||0);
+  const hz=planHorizonFactor();
+  return hz>0?raw/hz:raw;
+}
+function planSetHorizon(mode){
+  _planHorizon=mode==='day'?'day':'shift';
+  document.querySelectorAll('.plan-horizon-seg').forEach(b=>{
+    b.classList.toggle('on',(b.getAttribute('data-h')||'')===_planHorizon);
+  });
+  const lab=planHorizonLabel();
+  const readout=q('plan-test-prod-label');
+  if(readout)readout.textContent=_planHorizon==='day'?'Day readout':'Shift readout';
+  const dHead=q('ps-total-head');
+  if(dHead)dHead.textContent=_planHorizon==='day'?'Day total':'Shift total';
+  const pLab=q('ps-kpi-planned-lab');
+  if(pLab)pLab.textContent='Planned t / '+lab;
+  const aLab=q('ps-kpi-achv-lab');
+  if(aLab)aLab.textContent='Achievable t / '+lab;
+  if(typeof computePlan==='function')computePlan();
+  if(typeof _planLastSim!=='undefined'&&_planLastSim){
+    if(typeof planRenderEstimateColumn==='function'){
+      try{planRenderEstimateColumn(_planLastSim,typeof planPredictTotals==='function'?planPredictTotals():null);}catch(_){}
+    }
+    if(typeof psRender==='function'){
+      try{psRender(_planLastSim);}catch(_){}
+    }
+  }
+  if(typeof planSensGran==='function')planSensGran(_planHorizon);
+  if(typeof updateFlowSimulator==='function'&&typeof _flowSim!=='undefined'&&_flowSim){
+    try{updateFlowSimulator();}catch(_){}
+  }
+}
+
+// ── Predicted production hero (sticky bar + under Your plan) ────────────────
+// One number owns the page. Path-model WMT is live; Achievable appears after
+// Check capacity (simulate / loader ceiling). Never average the two.
+let _planHeroLast={wmt:null,trips:null,dt:0,achv:null,status:''};
+let _planHeroCalcTimer=null;
+function planHeroUnit(){return 't / '+planHorizonLabel();}
+function planHeroAchvLive(){
+  const sim=typeof _planLastSim!=='undefined'&&_planLastSim&&_planLastSim.summary;
+  if(!sim||sim.achievable_production_t==null)return null;
+  const dtNow=Object.keys(_planDraft||{}).reduce((a,id)=>a+((_planDraft[id]&&_planDraft[id].dt)||0),0);
+  if(Math.round(dtNow)!==Math.round(sim.total_trucks||0))return null;
+  return sim.achievable_production_t*planHorizonFactor();
+}
+function planPaintHero(opts){
+  opts=opts||{};
+  const hero=q('plan-sec-predict');
+  const wmtEl=q('plan-hero-wmt'),nav=q('plan-nav-wmt'),navU=q('plan-nav-wmt-u');
+  const u=q('plan-hero-wmt-u'),hzEl=q('plan-hero-horizon');
+  const st=q('plan-hero-status'),tr=q('plan-hero-trips');
+  const achvWrap=q('plan-hero-achv-wrap'),achvEl=q('plan-hero-achv');
+  const unit=planHeroUnit(),lab=planHorizonLabel();
+  if(hzEl)hzEl.textContent='· per '+lab;
+  if(u)u.textContent=unit;
+  if(navU)navU.textContent=unit;
+  if(opts.calculating){
+    if(hero)hero.classList.add('is-calculating');
+    if(st)st.textContent='Calculating…';
+    return;
+  }
+  if(hero)hero.classList.remove('is-calculating');
+  const wmt=opts.wmt,trips=opts.trips,dt=opts.dt;
+  const status=opts.status||'';
+  const achv=('achv' in opts)?opts.achv:planHeroAchvLive();
+  _planHeroLast={wmt,trips,dt,achv,status};
+  const wmtTxt=(wmt==null||!(Number(wmt)>=0))?'—':fmtExact(Math.round(wmt));
+  if(wmtEl){
+    wmtEl.textContent=wmtTxt;
+    wmtEl.classList.remove('est-pulse-run');
+    void wmtEl.offsetWidth;
+    wmtEl.classList.add('est-pulse-run');
+  }
+  if(nav)nav.textContent=wmtTxt;
+  const bits=[];
+  if(trips!=null&&Number.isFinite(trips))bits.push(fmtExact(Math.round(trips))+' trips');
+  if(dt)bits.push(fmtExact(Math.round(dt))+' DT');
+  if(tr)tr.textContent=bits.join(' · ');
+  if(st)st.textContent=status||(wmt==null?'Add a path to predict':'');
+  if(achvWrap&&achvEl){
+    if(achv!=null&&Number.isFinite(achv)){
+      achvWrap.hidden=false;
+      achvEl.textContent=fmtExact(Math.round(achv));
+    }else{
+      achvWrap.hidden=true;
+    }
+  }
+}
+function planLimitsMaybeOpen(bite){
+  const det=q('plan-limits-details');
+  if(det&&bite)det.open=true;
+}
 // Exact thousands-separated number — the Plan tab shows real figures ("2,154 t"), never "2k".
 const fmtExact=(n,d=0)=>Number(n||0).toLocaleString('en-GB',{minimumFractionDigits:d,maximumFractionDigits:d});
 function _planValidKeys(){return Object.keys(_pathResp||{}).filter(k=>{const[o,d]=k.split('>'),m=_pathResp[k];return m&&m.n>=30&&m.tf>0&&Number.isFinite(m.avgTr)&&o&&d&&o.trim()&&d.trim()&&o.trim()!==d.trim();});}
@@ -119,26 +220,28 @@ function _planSpan(key){
 }
 // Today's expected section DT for `key`: own dt + draft rows whose corridor
 // spans overlap (foreign road-only rows included — their trucks occupy the road).
-function _planSectionDtNow(key,dt){
+function _planSectionDtNow(key,dt,selfId){
   const span=_planSpan(key);
   if(!span)return null;
   let tot=dt;
   Object.keys(_planDraft||{}).forEach(id=>{
     const r=_planDraft[id];
-    if(!r||!(r.dt>0)||r.key===key)return;
+    if(!r||!(r.dt>0))return;
+    if(selfId&&id===selfId)return;
+    if(r.key===key){tot+=r.dt;return;}
     const s2=_planSpan(r.key);
     if(!s2)return;
     if(Math.min(span[1],s2[1])-Math.max(span[0],s2[0])>0)tot+=r.dt;
   });
   return tot;
 }
-function planSectionDrag(key,dt){
+function planSectionDrag(key,dt,selfId){
   const fx=_planSecFxGet();
   const f=fx&&fx[key];
   if(!f||!(f.per50<0)||!Number.isFinite(f.meanSection))return {delta:0,excess:0};
   // Only apply a MEASURED decline (page 1's own signal taxonomy).
   if(!/^(Clear|Likely)/.test(f.signal||''))return {delta:0,excess:0};
-  const now=_planSectionDtNow(key,dt);
+  const now=_planSectionDtNow(key,dt,selfId);
   if(now==null)return {delta:0,excess:0};
   const excess=now-f.meanSection;
   if(excess<=0)return {delta:0,excess:0};   // below typical section load: no credit, no drag
@@ -192,7 +295,7 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
   const otherDelta=planOtherTrafficDelta(key);
   tr+=otherDelta;
   // Shared-section coupling: the rest of the HOLDING PLAN on this path's span.
-  const sec=planSectionDrag(key,dt);
+  const sec=planSectionDrag(key,dt,opts&&opts.selfId);
   tr+=sec.delta;
   const scale=planRainScale(key,rain);
   const rainDelta=tr*(scale-1);
@@ -228,7 +331,11 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
       Object.keys(_planDraft).forEach(id=>{
         if(opts&&opts.selfId&&id===opts.selfId)return;
         const r2=_planDraft[id];
-        if(r2&&r2.key===key&&r2.dt>0&&!r2.foreign)otherDt+=r2.dt;
+        if(r2&&r2.key===key&&!r2.foreign){
+          const n=(typeof planAllocFrozen==='function'&&planAllocFrozen()
+            &&r2._allocDt!=null)?r2._allocDt:r2.dt;
+          if(n>0)otherDt+=n;
+        }
       });
     }
     const nComb=dt+otherDt;
@@ -297,7 +404,7 @@ function planPayload(key,contractor){
 }
 // Swap-mode inverse: trucks needed for a tonnage target. Trips/DT itself depends on the fleet (the
 // b·DT term), so solve by damped fixed-point iteration, then round UP — you can't run half a truck.
-function planDtForWmt(key,targetWmt,rain,contractor){
+function planDtForWmt(key,targetWmt,rain,contractor,opts){
   const pay=planPayload(key,contractor).tf;if(!(pay>0)||!(targetWmt>0))return null;
   const m=_pathResp&&_pathResp[key];let dt=Math.max(1,(m&&m.avgDt)||30);
   // UNREACHABLE TARGET (harsh-test 2026-08-12): with the demonstrated
@@ -305,6 +412,8 @@ function planDtForWmt(key,targetWmt,rain,contractor){
   // has no fixed point and the solver used to fail with a generic message.
   // Detect it up front and report the ceiling so the planner learns the
   // actual limit instead of "could not size".
+  // opts.selfId is load-bearing: without it planTripsPerDT counts this row
+  // twice in the combined-fleet cap and Required DT over-asks on ceiling paths.
   if(m&&Number.isFinite(m.dayTripsCap)&&m.dayTripsCap>0){
     const sf=typeof planShiftFactor==='function'?planShiftFactor():0.5;
     const scale=typeof planRainScale==='function'?planRainScale(key,rain):1;
@@ -317,7 +426,7 @@ function planDtForWmt(key,targetWmt,rain,contractor){
   }
   planDtForWmt._lastCeiling=null;
   for(let i=0;i<60;i++){
-    const e=planTripsPerDT(key,dt,rain,contractor);if(!e||!(e.shift>0))return null;
+    const e=planTripsPerDT(key,dt,rain,contractor,opts);if(!e||!(e.shift>0))return null;
     const next=targetWmt/(e.shift*pay);
     if(!Number.isFinite(next)||next>1e6)return null;
     if(Math.abs(next-dt)<.01){dt=next;break;}
@@ -332,90 +441,14 @@ function planDtForWmt(key,targetWmt,rain,contractor){
 // is measured (page-1 coefficients, M/M/1 arrivals, ticket history) — when an
 // effect is zero it says WHY it's zero rather than hiding the concept.
 function planRenderImpacts(key,dt,e,contractor){
-  const box=q('plan-impacts');if(!box)return;
-  if(!e){box.innerHTML='';return;}
-  const rows=[];
-  const dtPct=x=>fmtExact(Math.abs(x),2);
-  // 0 · Fleet size (plain language). Hidden once the ✦ AI answer is on screen —
-  // AI covers the same point; keep the AI, drop this duplicate.
-  const prevAiHtml=(box.querySelector('#plan-ai-out')||{}).innerHTML||'';
-  const aiHasAnswer=/plan-ai-answer/.test(prevAiHtml);
-  const m0=e.m||{};
-  const sf=typeof planShiftFactor==='function'?planShiftFactor():0.5;
-  const hasDay0=Number.isFinite(m0.dayRate)&&m0.dayRate>0;
-  const baseShift=hasDay0?m0.dayRate*sf:(Number.isFinite(m0.avgTr)?m0.avgTr*sf:null);
-  const avgDt=hasDay0?(m0.dayAvgDt||null):(Number.isFinite(m0.avgDt)?Math.round(m0.avgDt):null);
-  const slope=Number.isFinite(e.slope)?e.slope:0;
-  if(!aiHasAnswer&&baseShift!=null&&avgDt!=null&&dt>0){
-    const dtMax0=planDtEnvelope(m0);
-    const saturated=Number.isFinite(e.satFactor)&&e.satFactor<0.995;
-    if(saturated){
-      // Demonstrated-throughput ceiling binds: trips pinned at dayTripsCap.
-      const capTrips=Math.round((m0.dayTripsCap||0)*sf);
-      rows.push({kind:'fleet',icon:'📉',cls:'imp-bad',
-        txt:`Path throughput ceiling. This road has never delivered more than ~${fmtExact(m0.dayTripsCap)} trips/day (~${fmtExact(capTrips)}/shift), even on its biggest day (${dtMax0!=null?fmtExact(dtMax0):'?'} DT). At ${fmtExact(dt)} DT each truck is priced at ~${fmtExact(e.shift,2)} trips (30% floor — trucks never model below 30% of the measured rate). Trips shown above the ceiling are floor-driven and UNPROVEN: the road has never done them.`,
-        tip:`Model: trips = rate × DT capped at the demonstrated maximum (${fmtExact(m0.dayTripsCap)} trips/day over ${fmtExact(m0.dayN||0)} measured days). In-history the rate is flat (~${fmtExact(baseShift,2)}/shift per truck); the ceiling only binds beyond ~${fmtExact(Math.round((m0.dayTripsCap||0)/(m0.dayRate||1)))} DT. To beat the ceiling the site needs more loaders/road, not more trucks.`});
-    }else if(dt>avgDt*1.5&&slope<0){
-      rows.push({kind:'fleet',icon:'📉',cls:'imp-bad',
-        txt:`Bigger fleet than usual (~${fmtExact(avgDt)} DT typical). At ${fmtExact(dt)} DT each truck does less: about ${fmtExact(e.shiftFree!=null?e.shiftFree:e.shift,2)} trips per truck this shift (was ~${fmtExact(baseShift,2)} at the usual fleet).`,
-        tip:'Measured day-level decline on this path. Still within measured history.'});
-    }else if(dt>avgDt*1.5){
-      rows.push({kind:'fleet',icon:'✅',cls:'imp-ok',
-        txt:`Bigger fleet than usual (~${fmtExact(avgDt)} DT typical) — history supports it: day-level rate stays ~${fmtExact(baseShift,2)} trips/truck out to ${dtMax0!=null?fmtExact(dtMax0):'?'} DT (largest day ever run).`,
-        tip:`Across ${fmtExact(m0.dayN||0)} measured days the per-truck rate did not decline with fleet size inside the envelope. The demonstrated ceiling (~${fmtExact(m0.dayTripsCap||0)} trips/day) is the honest limit.`});
-    }else if(dt<avgDt*0.6&&slope<0){
-      rows.push({kind:'fleet',icon:'📈',cls:'imp-ok',
-        txt:`Smaller fleet than usual (~${fmtExact(avgDt)} DT typical). At ${fmtExact(dt)} DT each truck runs a bit better (~${fmtExact(e.shiftFree!=null?e.shiftFree:e.shift,2)} trips/truck vs ~${fmtExact(baseShift,2)} average).`,
-        tip:'Fewer trucks means less queueing at the loader.'});
-    }
-  }
-  // 1 · Shared road with the REST OF THE PLAN (holding-plan rows on this span)
-  const others=Object.keys(_planDraft||{}).map(id=>_planDraft[id])
-    .filter(r=>r&&r.key!==key&&r.dt>0&&(()=>{const a=_planSpan(key),b=_planSpan(r.key);
-      return a&&b&&Math.min(a[1],b[1])-Math.max(a[0],b[0])>0;})());
-  const otherDt=others.reduce((n,r)=>n+r.dt,0);
-  if(e.secDelta<=-.005){
-    const lost=Math.round(Math.abs(e.secDelta)*dt);
-    rows.push({icon:'🛣',cls:'imp-bad',
-      txt:`Shared road: ${others.length} other plan row${others.length===1?'':'s'} (${fmtExact(otherDt)} DT) overlap this span — measured section effect −${dtPct(e.secDelta)} Trips/DT ≈ −${fmtExact(lost)} trips this shift`,
-      tip:`Page-1 combined 3D model: this path's trips/DT declines when TOTAL section DT exceeds its historical typical (excess ${fmtExact(Math.round(e.secExcess))} DT). Paths sharing the span: ${others.map(r=>r.key.replace('>',' → ')+' ('+fmtExact(r.dt)+' DT)').join(', ')}`});
-  }else if(others.length){
-    rows.push({icon:'🛣',cls:'imp-ok',
-      txt:`Shared road: ${others.length} other plan row${others.length===1?'':'s'} (${fmtExact(otherDt)} DT) overlap this span — no measured drag`,
-      tip:`Total section DT stays within what this path historically ran at (mean section ${(()=>{const fx=_planSecFxGet();const f=fx&&fx[key];return f&&Number.isFinite(f.meanSection)?fmtExact(Math.round(f.meanSection))+' DT':'n/a';})()}), or page 1 measured no Clear/Likely decline for this path — only measured effects are applied, never invented.`});
-  }
-  // 2 · Other (IWIP/Position) corridor traffic
-  if(e.otherDelta<=-.005){
-    rows.push({icon:'🚚',cls:'imp-bad',
-      txt:`Other traffic: IWIP above typical on the FENI corridor — −${dtPct(e.otherDelta)} Trips/DT`,
-      tip:'Measured page-1 coefficient × FENI-bound excess over the typical median. Scales with the Other-trips input.'});
-  }else if(/FENI|CRUSHER|HUAFEI|BSE/i.test(key.split('>')[1]||'')){
-    rows.push({icon:'🚚',cls:'imp-ok',
-      txt:'Other traffic: within typical FENI-corridor levels — no extra drag (typical load is already in this path\u2019s history)',
-      tip:'The baseline trips/DT was measured WITH normal IWIP traffic present; drag applies only above-typical (never a credit).'});
-  }
-  // Weighbridge status lives on the Bridge load board — not duplicated here.
-  // 4 · Rain (when active)
-  if(e.rainDelta<=-.01){
-    rows.push({icon:'☔',cls:'imp-warn',
-      txt:`Rain: −${dtPct(e.rainDelta)} Trips/DT at the entered rainfall`,
-      tip:'Path-specific measured rain response.'});
-  }
-  // Keep AI analysis across re-renders; do not show which model produced it.
-  box.innerHTML=(rows.length
-    ?`<div class="imp-head muted">Plan updates <span title="Shared-road load, other (IWIP) traffic, and rain on THIS path. Fleet-size detail is in the ✦ AI read when available. Weighbridge detail is on the Bridge load board.">ⓘ</span></div>`
-      +rows.map(r=>`<div class="imp-row ${r.cls}" data-imp="${escH(r.kind||'')}" title="${escH(r.tip)}"><span class="imp-ic">${r.icon}</span><span>${r.txt}</span></div>`).join('')
-    :`<div class="imp-head muted">Plan updates</div>`)
-    +`<div id="plan-ai-out" class="plan-ai-out">${prevAiHtml}</div>`;
-  planAiSchedule();
+  // Plan updates panel hidden for now — keep stub so callers stay safe.
+  const box=q('plan-impacts');if(box)box.innerHTML='';
+  if(typeof _planAiTimer!=='undefined'&&_planAiTimer){clearTimeout(_planAiTimer);_planAiTimer=null;}
 }
 function planAiDropFleetDup(){
   // Once ✦ AI has answered, remove the short fleet-size row — same story twice.
   const box=q('plan-impacts');if(!box)return;
   box.querySelectorAll('.imp-row[data-imp="fleet"]').forEach(el=>el.remove());
-  const head=box.querySelector('.imp-head');
-  const rows=box.querySelectorAll('.imp-row');
-  if(head&&!rows.length){/* keep head + AI */}
 }
 // ── AI advisor (owner 2026-08-12: "an AI that reads what we have in
 // historicals, our thresholds, and gives real info instead of prewritten
@@ -712,6 +745,11 @@ let _planBiasLensOn=true; // default ON — ticket companion; engine primary sta
 function planBiasLensToggle(){
   const el=q('plan-bias-lens');
   _planBiasLensOn=!!(el&&el.checked);
+  // A · Production & capacity is where the companion actually renders now. The
+  // planRenderOutcomes() call below is a no-op since its container was deleted
+  // on 2026-08-12 — that is exactly why this checkbox silently stopped doing
+  // anything, so do not rely on it being the live consumer again.
+  if(typeof psRefreshTicketKpi==='function')psRefreshTicketKpi();
   if(typeof planRenderOutcomes==='function'&&typeof _planLastSim!=='undefined'&&_planLastSim){
     const pred=typeof planPredictTotals==='function'?planPredictTotals():{wmt:0,dt:0,trips:0};
     planRenderOutcomes(_planLastSim,pred);
@@ -804,32 +842,57 @@ function planFetchRainOutlook(){
     .then(res=>{_planRainOutlook=res;planRenderRainOutlook();})
     .catch(()=>{_planRainOutlook=null;planRenderRainOutlook();});
 }
-function planRenderRainOutlook(){
-  const box=q('plan-rain-outlook');
-  const wrap=q('plan-rain-outlook-details');
+function planPathModelWmtAtRain(rainMm){
+  const hz=planHorizonFactor();
+  let wmt=0,any=false;
+  Object.keys(_planDraft||{}).forEach(id=>{
+    const r=_planDraft[id];
+    if(!r||r.foreign)return;
+    const c=planContractor(r.contractor);
+    const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rainMm,c,{selfId:id}):null;
+    const pay=typeof planPayload==='function'?planPayload(r.key,c):null;
+    if(!e||!pay||!(pay.tf>0))return;
+    wmt+=r.dt*e.shift*hz*(pay.tf||0);
+    any=true;
+  });
+  return any?wmt:null;
+}
+function planRenderComingDays(){
+  const box=q('plan-coming-days');
   if(!box)return;
   const res=_planRainOutlook;
-  if(!res||!res.ok||!(res.days||[]).length){
-    box.innerHTML='';
-    if(wrap)wrap.hidden=true;
+  const days=(res&&res.ok&&res.days)||[];
+  if(!days.length){
+    box.innerHTML='<p class="muted" style="margin:0;font-size:12px">Rain forecast unavailable — set Rain in Scenario.</p>';
     return;
   }
-  if(wrap)wrap.hidden=false;
-  const sumLabel=document.querySelector('#plan-rain-outlook-details .plan-ro-sum-label');
-  if(sumLabel)sumLabel.textContent='Rain outlook · next '+res.days.length+' days';
   const sel=(q('plan-date')||{}).value||'';
-  const chip=d=>{
+  const hasPlan=Object.keys(_planDraft||{}).some(id=>_planDraft[id]&&!_planDraft[id].foreign);
+  const wmts=days.map(d=>planPathModelWmtAtRain(Math.max(0,Number(d.mm)||0)));
+  const finite=wmts.filter(n=>n!=null&&n>0);
+  const max=finite.length?Math.max.apply(null,finite):1;
+  box.innerHTML=`<div class="plan-coming-strip">${days.map((d,i)=>{
     const mm=d.mm==null?null:d.mm;
-    const wet=mm!=null&&mm>=10, damp=mm!=null&&mm>=2&&mm<10;
-    const cls='plan-ro-chip'+(wet?' wet':damp?' damp':'')+(d.date===sel?' on':'');
-    const md=d.date.slice(5);
-    const probTxt=d.probPct!=null?d.probPct+'% chance of rain · ':'';
+    const wet=mm!=null&&mm>=10,damp=mm!=null&&mm>=2&&mm<10;
+    const w=wmts[i];
+    const h=hasPlan&&w!=null?Math.max(10,Math.round(72*w/max)):8;
+    const cls='plan-coming-chip'+(wet?' wet':damp?' damp':'')+(d.date===sel?' on':'');
+    const wmtTxt=(!hasPlan||w==null)?'—':fmtExact(Math.round(w));
+    const mmTxt=mm!=null?(mm>=1?Math.round(mm):mm>0?'&lt;1':'0'):'—';
     return `<button type="button" class="${cls}" data-date="${d.date}"
-      title="${d.date} · ${mm!=null?mm+' mm forecast':'no data'} · ${probTxt}click to set Rainfall and plan date"
+      title="${d.date} · ${mm!=null?mm+' mm':''} · ${wmtTxt} t predicted (path model · rain moves trips)"
       onclick="planPickOutlookDay('${d.date}')">
-      <span class="d">${md}</span><span class="mm">${mm!=null?(mm>=1?Math.round(mm):mm>0?'&lt;1':'0'):'—'}</span></button>`;
-  };
-  box.innerHTML=`<div class="plan-ro-strip">${res.days.map(chip).join('')}</div>`;
+      <span class="d">${d.date.slice(5)}</span>
+      <span class="bar-wrap"><span class="bar" style="height:${h}%"></span></span>
+      <span class="t">${wmtTxt}</span>
+      <span class="mm">${mmTxt} mm</span>
+    </button>`;
+  }).join('')}</div>`;
+}
+function planRenderRainOutlook(){
+  // Coming-days strip is the product view. Hidden #plan-rain-outlook stays as
+  // a fixture-safe stub; do not claim simulate tonnes change with rain (J57).
+  if(typeof planRenderComingDays==='function')planRenderComingDays();
 }
 function planPickOutlookDay(date){
   const el=q('plan-date');
@@ -1032,7 +1095,7 @@ function planRenderWbLoad(totTrips,wb,hours,avgTf){
   if(!(other>0||addBtn||peak)){box.innerHTML='';return;}
   const helpTxt=other>0
     ?'IWIP / position trucks on the same bridges — counted in Bridge load below'
-    :'None assumed — pick Busy period / Recent, or type trucks in the Conditions box';
+    :'None assumed — pick Busy period / Recent, or type trucks in Scenario';
   box.innerHTML=`<div class="plan-other-strip">
     <div class="plan-other-strip-main">
       <span class="plan-other-k">Non-plan traffic</span>
@@ -1288,13 +1351,13 @@ function planUpdatePathMeta(){
 let _planPredictSeq=0, _planPredictTimer=null;
 const PLAN_PREDICT_DEBOUNCE_MS=180;
 function _planModelLabel(v){
-  if(v.model==='local')return {cls:'pending', text:'Model · historical average (loading…)'};
-  if(v.model==='localfinal')return {cls:'ok', text:'Model · measured path history (day-level cluster + ceiling)'};
-  if(v.model==='roadonly')return {cls:'ok', text:'Road-only \u00b7 measured congestion, no WMT model'};
-  if(v.fallback||v.model==='offline')return {cls:'warn', text:'Model · path formula fallback (offline)'};
+  if(v.model==='local')return {cls:'pending', text:'Updating…'};
+  if(v.model==='localfinal')return {cls:'ok', text:'Measured path history'};
+  if(v.model==='roadonly')return {cls:'ok', text:'Road-only · congestion, no WMT'};
+  if(v.fallback||v.model==='offline')return {cls:'warn', text:'Path formula fallback (offline)'};
   const name=PLAN_MODEL_LABELS[v.model]||v.modelLabel||v.model||'model';
   const cv=Number.isFinite(v.cvR2), shown=cv?v.cvR2:v.r2;
-  let text=`Model · ${escH(name)}`;
+  let text=escH(name);
   if(Number.isFinite(shown))text+=` · R² ${fmtExact(shown,2)}`;
   if(Number.isFinite(v.contractorFactor)&&v.contractorFactor!==1){
     text+=` · factor ${fmtExact(v.contractorFactor,2)}×`;
@@ -1304,49 +1367,61 @@ function _planModelLabel(v){
 }
 function _planRenderEstimate(v){
   const box=q('plan-preview');if(!box)return;
+  const hz=planHorizonFactor();
+  const tripsShow=Math.round((v.trips||0)*hz);
+  const wmtShow=Math.round((v.wmt||0)*hz);
   const lines=[
-    ['Trips / DT (this shift)',fmtExact(v.tripsPerDt,2)],
-    [v.swapped?'Trucks needed': 'Trucks',fmtExact(v.dt)+' DT'],
-    ['Trips',fmtExact(Math.round(v.trips))],
-    ['t / trip',v.foreign?'—':fmtExact(v.payload,1)+' t'],   // road-only: not weighed for us
+    ['Trips / DT',fmtExact((v.tripsPerDt||0)*hz,2)],
+    [v.swapped?'Trucks needed':'Trucks',fmtExact(v.dt)+' DT'],
+    ['Trips',fmtExact(tripsShow)],
+    ['t / trip',v.foreign?'—':fmtExact(v.payload,1)+' t'],
   ];
   if(Number.isFinite(v.contractorFactor)&&v.contractorFactor!==1){
-    lines.push(['Contractor factor',fmtExact(v.contractorFactor,2)+'×']);
+    lines.push(['Contractor',fmtExact(v.contractorFactor,2)+'×']);
   }
   if(v.cycle&&Number.isFinite(v.cycle.cycle_time_min)){
     lines.push(['Cycle',fmtExact(v.cycle.cycle_time_min,0)+' min']);
   }
   const mod=_planModelLabel(v);
   const note=`${escH(v.src)} → ${escH(v.dst)} · ${escH(v.contractor||'—')}`
-    +(v.foreign?' · road-only (no WMT)':(v.swapped?` · ${fmtExact(Math.round(v.wmt))} t`:''));
+    +(v.foreign?' · road-only (no WMT)':(v.swapped?` · ${fmtExact(wmtShow)} t`:''));
   const totalInner=v.foreign
     ?`<div class="est-total-v est-total-road">Road-only <span class="u">no WMT</span></div>`
-    :`<div class="est-total-v">${v.swapped?fmtExact(v.dt):fmtExact(Math.round(v.wmt))} <span class="u">${v.swapped?'DT':'t'}</span></div>`;
+    :`<div class="est-total-v">${v.swapped?fmtExact(v.dt):fmtExact(wmtShow)} <span class="u">${v.swapped?'DT':'t'}</span></div>`;
   box.classList.remove('empty','has-warns');
   box.classList.toggle('is-loading', v.model==='local');
-  // Column layout: hero strip (metrics + tonnage) stays intact; path/model under it.
-  // Beyond-data / model-extrapolation notes are not shown here (Plan updates ✦ covers that).
-  box.innerHTML=`<div class="est-head">Estimated shift output <span class="muted" style="font-weight:400;font-size:10.5px">· ONE shift (${escH((q('plan-hours')||{}).value||12)} h)</span></div>`
+  box.innerHTML=`<div class="est-head"><span>This path</span><span class="muted">${escH(planHorizonHint())} · not the plan total</span></div>`
     +`<div class="est-main">`
-    +`<div class="est-body">`
-    +`<div class="est-lines">${lines.map(l=>`<div class="est-line"><span>${escH(l[0])}</span><b>${l[1]}</b></div>`).join('')}</div>`
+    +`<div class="est-kpis">${lines.map(l=>`<div class="est-kpi"><span class="k">${escH(l[0])}</span><b class="v">${l[1]}</b></div>`).join('')}</div>`
     +`<div class="est-total"><div class="est-total-l">${v.foreign?'WMT':(v.swapped?'Trucks needed':'WMT')}</div>${totalInner}</div>`
     +`</div>`
     +`<div class="est-foot">`
     +`<div class="est-note" title="${note}">${note}</div>`
     +`<div class="est-attr"><span class="est-model ${mod.cls}">${mod.text}</span></div>`
-    +`</div>`
     +`</div>`;
+  if(!Object.keys(_planDraft||{}).length&&!v.foreign&&typeof planPaintHero==='function'){
+    planPaintHero({
+      wmt:Math.round((v.wmt||0)*hz),
+      trips:Math.round((v.trips||0)*hz),
+      dt:v.dt,
+      achv:null,
+      status:'This path · not yet in the plan'
+    });
+  }
 }
 function planPreview(){
   const box=q('plan-preview');if(!box)return;
   const blank=(msg)=>{box.classList.add('empty');box.classList.remove('is-loading','has-warns');
-    box.innerHTML=`<div class="est-head">Estimated shift output</div>`
-      +`<div class="est-main"><div class="est-body"><div class="est-lines"></div>`
+    box.innerHTML=`<div class="est-head"><span>This path</span></div>`
+      +`<div class="est-main"><div class="est-kpis"></div>`
       +`<div class="est-total"><div class="est-total-v">—</div></div></div>`
-      +`<div class="est-foot"><div class="est-note">${escH(msg)}</div></div></div>`;
+      +`<div class="est-foot"><div class="est-note">${escH(msg)}</div></div>`;
     const imp=q('plan-impacts');if(imp)imp.innerHTML='';
-    planRenderBestHistory({ok:false,error:msg});};
+    planRenderBestHistory({ok:false,error:msg});
+    if(!Object.keys(_planDraft||{}).length&&typeof planPaintHero==='function'){
+      planPaintHero({wmt:null,trips:null,dt:0,achv:null,status:'Add a path to predict'});
+    }
+  };
   const s=(q('plan-src')||{}).value,d=(q('plan-dst')||{}).value,key=s+'>'+d,m=_pathResp&&_pathResp[key];
   const foreign=planForeignOn();   // road-only: IWIP / POSITION trucks, no WMT for us
   const hours=Math.max(1,parseFloat((q('plan-hours')||{}).value)||12);
@@ -1379,11 +1454,11 @@ function planPreview(){
   if(_planMode==='wmt'){
     const target=Math.max(0,parseFloat((q('plan-wmt')||{}).value)||0);
     if(!(target>0))return blank('Enter a target tonnage to size the fleet.');
-    dt=planDtForWmt(key,target,rain,c);
+    dt=planDtForWmt(key,planWmtTargetShift(),rain,c);
     if(!dt){
       const ceil=planDtForWmt._lastCeiling;
       return blank(ceil
-        ?('Target above this path\u2019s demonstrated ceiling: best ever is ~'+fmtExact(ceil.maxT)+' t/shift ('+fmtExact(ceil.cap)+' trips/day). Lower the target or split across paths.')
+        ?('Target above this path\u2019s demonstrated ceiling: best ever is ~'+fmtExact(ceil.maxT*planHorizonFactor())+' t/'+planHorizonLabel()+' ('+fmtExact(ceil.cap)+' trips/day). Lower the target or split across paths.')
         :'Could not size a fleet for that target on this path.');
     }
   }else{
@@ -1582,7 +1657,58 @@ function planFetchBestHistory(source,dest,dt,contractor,rain){
     });
   },280);
 }
-// A plan row is one contractor on one path, so two contractors can share the same path.
+// A plan row is one contractor on one path, AND for limonite one origin type
+// (TOS vs LD). Same plant (e.g. HUAFEI) can take LIM-TOS and LIM-LD as two
+// independent rows — they must not share a draft id, or editing DT on LD
+// silently rewrites TOS.
+function planLimOtypeOf(r){
+  const ot=String((r&&r.otype)||'').trim().toUpperCase();
+  return (ot==='LD'||ot==='TOS')?ot:'';
+}
+function planDraftSlotId(contractor,key,spec){
+  const name=contractor||'—';
+  if(spec&&spec.foreign)return name+'|'+key+'|road';
+  const mat=String((spec&&spec.material)||'').trim().toUpperCase();
+  const ot=String((spec&&spec.otype)||'').trim().toUpperCase();
+  if(mat==='LIM'&&(ot==='TOS'||ot==='LD'))return name+'|'+key+'|LIM|'+ot;
+  return name+'|'+key;
+}
+function planMoveDraftId(from,to){
+  if(!from||!to||from===to)return false;
+  if(typeof _planDraft==='undefined'||!_planDraft[from])return false;
+  if(_planDraft[to])return false;
+  _planDraft[to]=_planDraft[from];
+  delete _planDraft[from];
+  if(typeof planWbRekey==='function')planWbRekey(from,to);
+  return true;
+}
+function planMigrateLimIds(){
+  if(typeof _planDraft==='undefined')return;
+  Object.keys(_planDraft).forEach(id=>{
+    const r=_planDraft[id];
+    if(!r||r.foreign||!r.key)return;
+    const mat=String(r.material||'').trim().toUpperCase();
+    if(mat!=='LIM')return;
+    let ot=planLimOtypeOf(r);
+    if(!ot)return;
+    r.otype=ot;
+    const want=planDraftSlotId(r.contractor,r.key,{material:'LIM',otype:ot});
+    if(want!==id)planMoveDraftId(id,want);
+  });
+}
+function planApplyMaterial(id,code,otype){
+  const r=(typeof _planDraft!=='undefined')&&_planDraft[id];
+  if(!r)return false;
+  const mat=String(code||'').trim().toUpperCase();
+  r.material=mat;
+  if(mat==='LIM')r.otype=(String(otype||'').toUpperCase()==='LD')?'LD':'TOS';
+  else if(mat==='SAP')r.otype='TOS';
+  else r.otype='';
+  const want=planDraftSlotId(r.contractor,r.key,{material:r.material,otype:r.otype,foreign:!!r.foreign});
+  if(want===id)return true;
+  if(_planDraft[want])return false;
+  return planMoveDraftId(id,want);
+}
 function planAddPath(){
   const s=(q('plan-src')||{}).value,d=(q('plan-dst')||{}).value,key=s+'>'+d;
   if(!s||!d)return;
@@ -1604,6 +1730,7 @@ function planAddPath(){
     const dt=Math.max(1,parseFloat((q('plan-dt')||{}).value)||1);
     // |road suffix keeps foreign rows separate from production on the same route.
     _planDraft[name+'|'+key+'|road']={key,dt,contractor:name,source:s,dest:d,foreign:true,
+      material:((q('plan-material')||{}).value||'').trim(),
       measTrips:Math.max(0,Math.round(fp.trips||0)),
       measTrucks:Math.max(1,Math.round(fp.trucks||1))};
     computePlan();
@@ -1614,62 +1741,182 @@ function planAddPath(){
   const c=planContractor(),name=c?c.name:'—',rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0);
   let dt;
   if(_planMode==='wmt'){
-    dt=planDtForWmt(key,Math.max(0,parseFloat((q('plan-wmt')||{}).value)||0),rain,c);
+    dt=planDtForWmt(key,planWmtTargetShift(),rain,c);
     if(!dt){
       const b=q('plan-preview');if(b)b.innerHTML='<span class="er">Could not size a fleet for that target on this path.</span>';
       if(btn){btn.classList.remove('is-busy');btn.disabled=false;}
       return;
     }
   }else dt=Math.max(1,parseFloat((q('plan-dt')||{}).value)||50);
-  _planDraft[name+'|'+key]={key,dt,contractor:name,source:s,dest:d,foreign:false};
+  const matAdd=((q('plan-material')||{}).value||'').trim();
+  const otRaw=((q('plan-otype')||{}).value||'TOS').toUpperCase();
+  const otAdd=matAdd==='LIM'?(otRaw==='LD'?'LD':'TOS'):(matAdd==='SAP'?'TOS':'');
+  const id=planDraftSlotId(name,key,{material:matAdd,otype:otAdd});
+  const row={key,dt,contractor:name,source:s,dest:d,foreign:false,
+    material:matAdd,otype:otAdd};
+  if(_planDraft[id]){
+    _planDraft[id].dt=dt;
+    _planDraft[id].material=matAdd;
+    if(otAdd)_planDraft[id].otype=otAdd;
+  }else{
+    const bare=name+'|'+key;
+    const existing=_planDraft[bare];
+    if(existing&&!existing.foreign&&matAdd==='LIM'&&(otAdd==='TOS'||otAdd==='LD')){
+      const exMat=String(existing.material||'').toUpperCase();
+      const exOt=planLimOtypeOf(existing)||(exMat==='LIM'?'TOS':'');
+      if(exMat==='LIM'&&exOt===otAdd){
+        existing.otype=otAdd;
+        planMoveDraftId(bare,id);
+        if(_planDraft[id])_planDraft[id].dt=dt;
+      }else if(exMat==='LIM'&&exOt&&exOt!==otAdd){
+        const otherId=planDraftSlotId(name,key,{material:'LIM',otype:exOt});
+        existing.otype=exOt;
+        planMoveDraftId(bare,otherId);
+        _planDraft[id]=row;
+      }else{
+        _planDraft[id]=row;
+      }
+    }else{
+      _planDraft[id]=row;
+    }
+  }
   computePlan();
   // Brief busy flash so “Add to plan” feels acknowledged while tables refresh
   setTimeout(()=>{if(btn){btn.classList.remove('is-busy');btn.disabled=false;}},320);
 }
 function planRemove(id){delete _planDraft[id];computePlan();}
 function planSet(id,v){const r=_planDraft[id];if(r){r.dt=Math.max(0,parseFloat(v)||0);computePlan();}}
+/** Stable colour per loading source so holding-plan rows are easy to scan. */
+const PLAN_SRC_COLOURS={
+  TF:'#38bdf8',KR:'#f59e0b',BLB:'#a78bfa',CSW:'#22c55e',EOS:'#f472b6',LOYPOLOY:'#2dd4bf',
+  POS:'#fb923c','POS 10':'#eab308','POS 11':'#f43f5e','POS 12':'#84cc16','POS 14':'#818cf8',
+  'POS CBB':'#34d399','POS CUU':'#c084fc'
+};
+const PLAN_SRC_FALLBACK=['#fb923c','#eab308','#f43f5e','#84cc16','#818cf8','#34d399','#c084fc'];
+function planSrcColour(src){
+  const k=String(src||'').trim().toUpperCase();
+  if(PLAN_SRC_COLOURS[k])return PLAN_SRC_COLOURS[k];
+  let h=0;for(let i=0;i<k.length;i++)h=(h*31+k.charCodeAt(i))>>>0;
+  return PLAN_SRC_FALLBACK[h%PLAN_SRC_FALLBACK.length]||'#94a3b8';
+}
+function planHoldSrc(r){
+  return String((r&&r.source)||(r&&r.key||'').split('>')[0]||'').trim();
+}
+/** Material is a label only — never a model input. Click the tag to change it. */
+function planHoldMatHtml(id){
+  const r=_planDraft[id];
+  const code=String((r&&r.material)||'').trim();
+  const ot=planLimOtypeOf(r);
+  const name=(typeof planMaterialLabel==='function'&&code)?planMaterialLabel(code):code;
+  if(!code){
+    return `<span class="plan-mat-tag plan-mat-tag--empty" data-matid="${escH(id)}" title="Material is a label only — click to set">Set</span>`;
+  }
+  const extra=(code==='LIM'&&ot)?' · '+ot:'';
+  const cls=code==='LIM'&&ot==='LD'?' plan-mat-tag--ld':code==='LIM'&&ot==='TOS'?' plan-mat-tag--tos':'';
+  const tip=code==='LIM'&&ot
+    ?(ot==='LD'?'Limonite from LD — separate from LIM-TOS on this plant · click to change'
+      :'Limonite from TOS — separate from LIM-LD on this plant · click to change')
+    :(escH(name||code)+' — label only, does not change tonnes · click to change');
+  return `<span class="plan-mat-tag${cls}" data-matid="${escH(id)}" title="${escH(tip)}">${escH(code)}${extra}</span>`;
+}
+/** View filter for Your plan: '' = all origins. Does not change the holding plan or predicted WMT. */
+let _planHoldOrigin='';
+function planHoldOriginSet(src){
+  _planHoldOrigin=String(src||'').trim();
+  computePlan();
+}
 function computePlan(){
   const rows=q('plan-rows');if(!rows)return;
+  if(typeof planMigrateLimIds==='function')planMigrateLimIds();
+  const idsNow=Object.keys(_planDraft||{});
+  if(idsNow.length&&typeof planPaintHero==='function')planPaintHero({calculating:true});
   planPreview();
   const rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0),wb=Math.max(1,parseFloat((q('plan-wb')||{}).value)||8),
     hours=Math.max(1,parseFloat((q('plan-hours')||{}).value)||12),ids=Object.keys(_planDraft),scope=q('plan-scope'),foot=q('plan-foot');
-  if(!ids.length){rows.innerHTML='<tr><td colspan="9" class="muted">No paths yet.</td></tr>';
-    if(foot)foot.innerHTML='';const pk=q('plan-kpis');if(pk)pk.innerHTML='';q('plan-warn').innerHTML='';if(scope)scope.textContent='';
+  // Compact under-builder columns: Path · Contractor · DT · Trips · WMT · remove
+  const legend=q('plan-src-legend');
+  if(!ids.length){rows.innerHTML='<tr><td colspan="7" class="muted plan-hold-empty">No paths yet. Pick a haul above and add it.</td></tr>';
+    if(foot)foot.innerHTML='';const pk=q('plan-kpis');if(pk)pk.innerHTML='';const pw=q('plan-warn');if(pw)pw.innerHTML='';if(scope)scope.textContent='';
+    if(legend){legend.innerHTML='';legend.hidden=true;}
+    _planHoldOrigin='';
     if(typeof planSetScenarioBtn==='function')planSetScenarioBtn();
     if(typeof planRefreshSaveButtons==='function')planRefreshSaveButtons();
+    if(typeof planRenderComingDays==='function')planRenderComingDays();
     return;}
-  let totTrips=0,totWmt=0,totDt=0;
+  let totTrips=0,totWmt=0,totDt=0,beyond=false,hasForeign=false;
+  let visTrips=0,visWmt=0,visDt=0,visN=0;
+  const hz=planHorizonFactor();
+  const srcsAll=[...new Set(ids.map(id=>planHoldSrc(_planDraft[id])).filter(Boolean))];
+  if(_planHoldOrigin&&srcsAll.indexOf(_planHoldOrigin)<0)_planHoldOrigin='';
+  const dtIn=id=>`<input type="number" min="0" step="1" value="${Math.round(_planDraft[id].dt)}" onchange="planSet('${escH(id)}',this.value)" class="plan-hold-dt" aria-label="Dump trucks" title="Dump trucks on this path">`;
+  const rm=id=>`<a class="plan-hold-rm" onclick="planRemove('${escH(id)}')" title="Remove path" role="button">\u2715</a>`;
+  const holdTr=(id,extra,pathHtml,tripsHtml,wmtHtml)=>{
+    const r=_planDraft[id],src=planHoldSrc(r),col=planSrcColour(src);
+    const cls=['plan-hold-src',extra].filter(Boolean).join(' ');
+    return `<tr class="${cls}" style="--src:${col}" title="Source ${escH(src)}"><td class="plan-hold-path"><span class="plan-hold-dot" aria-hidden="true"></span>${pathHtml}</td><td><span class="plan-hold-co">${escH(r.contractor)}</span></td><td class="plan-hold-mat">${planHoldMatHtml(id)}</td><td class="r plan-hold-dt-cell">${dtIn(id)}</td><td class="r plan-hold-num">${tripsHtml}</td><td class="r plan-hold-wmt">${wmtHtml}</td><td class="c">${rm(id)}</td></tr>`;
+  };
   rows.innerHTML=ids.map(id=>{const r=_planDraft[id],m=_pathResp[r.key];
+    const path=`<b>${escH(r.key.replace('>',' \u2192 '))}</b>`;
+    const show=!_planHoldOrigin||planHoldSrc(r)===_planHoldOrigin;
+    if(r.foreign)hasForeign=true;
     if(!m&&r.foreign&&Number.isFinite(r.measTrips)){
-      // Foreign path without WBN history: measured ticket rate scaled by DT.
-      const rate=r.measTrucks?r.measTrips/r.measTrucks:0,ftrips=r.dt*rate;
-      const tag=' <span title="Road-only / foreign traffic (measured from tickets): adds congestion, no WMT" style="font-size:9px;padding:1px 5px;border-radius:8px;background:rgba(148,163,184,.18);color:var(--muted,#8b98a5);vertical-align:middle">ROAD-ONLY \u00b7 measured</span>';
-      return `<tr style="opacity:.72"><td><b>${escH(r.key.replace('>',' \u2192 '))}</b>${tag}</td><td>${escH(r.contractor)}</td><td class="r"><input type="number" min="0" step="1" value="${Math.round(r.dt)}" onchange="planSet('${escH(id)}',this.value)" style="width:56px;text-align:center"></td><td class="r">${fmtExact(rate,2)}</td><td class="r">${fmtExact(Math.round(ftrips))}</td><td class="r muted">\u2014</td><td class="r muted" title="foreign traffic adds no WMT">\u2014</td><td></td><td><a onclick="planRemove('${escH(id)}')" style="cursor:pointer;color:#f87171" title="remove">\u2715</a></td></tr>`;
+      if(!show)return '';
+      visN+=1;visDt+=r.dt;
+      const rate=r.measTrucks?r.measTrips/r.measTrucks:0,ftrips=r.dt*rate*hz;
+      return holdTr(id,'plan-hold-road',path+' <span class="plan-hold-tag" title="Road-only: congestion, no WMT">road</span>',fmtExact(Math.round(ftrips)),'<span class="muted">\u2014</span>');
     }
     if(!m)return '';
     const c=planContractor(r.contractor),e=planTripsPerDT(r.key,r.dt,rain,c,{selfId:id}),pay=planPayload(r.key,c);
     if(!e)return '';
-    const trips=r.dt*e.shift,wmt=trips*pay.tf;
-    // Road-only / foreign lines add congestion but no WMT for us, so they are
-    // excluded from the productive totals here; the engine still applies their drag.
+    const env=planDtEnvelope(m);
+    if(Number.isFinite(env)&&r.dt>env)beyond=true;
+    const trips=r.dt*e.shift*hz,wmt=trips*pay.tf;
     if(r.foreign){
-      const tag=' <span title="Road-only / foreign traffic: adds congestion, no WMT" style="font-size:9px;padding:1px 5px;border-radius:8px;background:rgba(148,163,184,.18);color:var(--muted,#8b98a5);vertical-align:middle">ROAD-ONLY</span>';
-      return `<tr style="opacity:.72"><td><b>${escH(r.key.replace('>',' → '))}</b>${tag}</td><td>${escH(r.contractor)}</td><td class="r"><input type="number" min="0" step="1" value="${Math.round(r.dt)}" onchange="planSet('${escH(id)}',this.value)" style="width:56px;text-align:center"></td><td class="r">${fmtExact(e.shift,2)}</td><td class="r">${fmtExact(Math.round(trips))}</td><td class="r muted">—</td><td class="r muted" title="foreign traffic adds no WMT">—</td><td></td><td><a onclick="planRemove('${escH(id)}')" style="cursor:pointer;color:#f87171" title="remove">✕</a></td></tr>`;}
+      if(!show)return '';
+      visN+=1;visDt+=r.dt;
+      return holdTr(id,'plan-hold-road',path+' <span class="plan-hold-tag" title="Road-only: congestion, no WMT">road</span>',fmtExact(Math.round(trips)),'<span class="muted">\u2014</span>');
+    }
     totTrips+=trips;totWmt+=wmt;totDt+=r.dt;
-    return `<tr><td><b>${escH(r.key.replace('>',' → '))}</b></td><td>${escH(r.contractor)}</td><td class="r"><input type="number" min="0" step="1" value="${Math.round(r.dt)}" onchange="planSet('${escH(id)}',this.value)" style="width:56px;text-align:center"></td><td class="r">${fmtExact(e.shift,2)}</td><td class="r">${fmtExact(Math.round(trips))}</td><td class="r muted">${fmtExact(pay.tf,1)}</td><td class="r">${fmtExact(Math.round(wmt))} t</td><td></td><td><a onclick="planRemove('${escH(id)}')" style="cursor:pointer;color:#f87171" title="remove">✕</a></td></tr>`;}).join('');
-  const avgEff=totDt?totTrips/totDt:0;
-  if(foot)foot.innerHTML=`<tr class="plan-total-row"><td><b>TOTAL</b></td><td class="muted">${ids.length}</td><td class="r"><b>${fmtExact(Math.round(totDt))}</b></td><td class="r"><b>${fmtExact(avgEff,2)}</b></td><td class="r"><b>${fmtExact(Math.round(totTrips))}</b></td><td class="r muted">${totTrips?fmtExact(totWmt/totTrips,1):'—'}</td><td class="r"><b>${fmtExact(Math.round(totWmt))} t</b></td><td colspan="2"></td></tr>`;
+    if(!show)return '';
+    visN+=1;visTrips+=trips;visWmt+=wmt;visDt+=r.dt;
+    return holdTr(id,'',path,fmtExact(Math.round(trips)),fmtExact(Math.round(wmt))+' t');
+  }).join('');
+  // Road-only / unmatched rows also honour the origin filter (they returned
+  // holdTr already). If the filter hid everything, say so.
+  if(_planHoldOrigin&&!visN&&!rows.querySelector('tr.plan-hold-src')){
+    rows.innerHTML=`<tr><td colspan="7" class="muted">No paths from ${escH(_planHoldOrigin)} — pick All or another origin</td></tr>`;
+  }
+  if(legend){
+    legend.hidden=!srcsAll.length;
+    const allOn=!_planHoldOrigin;
+    legend.innerHTML=`<button type="button" class="plan-src-chip${allOn?' on':''}" onclick="planHoldOriginSet('')">All</button>`
+      +srcsAll.map(s=>{
+        const col=planSrcColour(s),on=_planHoldOrigin===s;
+        return `<button type="button" class="plan-src-chip${on?' on':''}" style="--src:${col}" onclick="planHoldOriginSet('${escH(s)}')"><i></i>${escH(s)}</button>`;
+      }).join('');
+  }
+  const footN=_planHoldOrigin?visN:ids.length;
+  const footDt=_planHoldOrigin?visDt:totDt;
+  const footTr=_planHoldOrigin?visTrips:totTrips;
+  const footWmt=_planHoldOrigin?visWmt:totWmt;
+  const footLab=_planHoldOrigin?(_planHoldOrigin+(hz>1?' · day':'')):'TOTAL'+(hz>1?' · day':'');
+  if(foot)foot.innerHTML=`<tr class="plan-total-row"><td><b>${escH(footLab)}</b></td><td class="muted">${footN}</td><td></td><td class="r"><b>${fmtExact(Math.round(footDt))}</b></td><td class="r"><b>${fmtExact(Math.round(footTr))}</b></td><td class="r"><b>${fmtExact(Math.round(footWmt))} t</b></td><td></td></tr>`;
   const names=[...new Set(ids.map(id=>_planDraft[id].contractor))];
+  const mats=[...new Set(ids.map(id=>(_planDraft[id].material||'').trim()).filter(Boolean))];
   const otherN=Math.round(_planOtherTrips||0);
-  if(scope)scope.textContent=`${ids.length} path${ids.length===1?'':'s'} · ${names.join(', ')} · ${rain>0?fmtExact(rain)+' mm':'dry'} · ${fmtExact(wb)} WB`+(otherN>0?` · +${fmtExact(otherN)} other trips`:'');
-  // Weighbridge capacity verdicts are PER BRIDGE now (Bridge stress board in
-  // plan_weighbridges.js — planner's own assignments + other traffic). The old
-  // pooled trips-vs-bridge-count warning contradicted it, so it is gone.
+  const viewTxt=_planHoldOrigin?` · showing ${_planHoldOrigin} (${visN} of ${ids.length})`:'';
+  if(scope)scope.textContent=`${ids.length} path${ids.length===1?'':'s'} \u00b7 ${names.join(', ')}${mats.length?` \u00b7 ${mats.join(', ')}`:''} \u00b7 per ${planHorizonLabel()}`+viewTxt+(otherN>0?` \u00b7 +${fmtExact(otherN)} other`:'');
   const avgTf=totTrips?totWmt/totTrips:0;
-  planRenderWbLoad(totTrips,wb,hours,avgTf);
-  q('plan-warn').innerHTML='';
+  planRenderWbLoad(totTrips/hz,wb,hours,avgTf);
+  const pw=q('plan-warn');if(pw)pw.innerHTML='';
   if(typeof planSetScenarioBtn==='function')planSetScenarioBtn();
   if(typeof planRefreshSaveButtons==='function')planRefreshSaveButtons();
+  const status=beyond?'Beyond observed DT':'Within measured fleet';
+  const paint=()=>planPaintHero({wmt:totWmt,trips:totTrips,dt:totDt,status});
+  clearTimeout(_planHeroCalcTimer);
+  _planHeroCalcTimer=setTimeout(paint,160);
+  if(typeof planRenderComingDays==='function')planRenderComingDays();
+  planLimitsMaybeOpen(hasForeign||(_planOtherTrips||0)>0);
 }
 
 

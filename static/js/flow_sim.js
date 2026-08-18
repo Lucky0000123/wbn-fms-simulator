@@ -322,22 +322,25 @@ function evaluateFlowScenario(){
   s.dbTrips=dbTrips;s.targetTrips=target;s.achievedTrips=achieved;s.vc=vc;s.queue=Math.max(0,Math.ceil((demand-laneCapacity)*p.hours));s.inputs=p;
   const setTxt=(id,v)=>{const el=flowQ(id);if(el)el.textContent=v;};
   const setHtml=(id,v)=>{const el=flowQ(id);if(el)el.innerHTML=v;};
-  setTxt('flow-attain',fmt(_flowMode==='plan'?achieved:dbTrips));
+  const hzPlan=_flowHost==='plan'&&typeof planHorizonFactor==='function'?planHorizonFactor():1;
+  const hzLab=_flowHost==='plan'&&typeof planHorizonLabel==='function'?planHorizonLabel():'shift';
+  const hzUnit=hzPlan>1?'/ day (2 × 12h)':'/ 12h shift';
+  setTxt('flow-attain',fmt(hzPlan*(_flowMode==='plan'?achieved:dbTrips)));
   // Plan readout kickers already say Predict/Simulate; keep unit lines short.
   // BUT: the corridor stick only carries TF–FENI-mapped routes. A holding plan
   // with off-corridor paths (e.g. BLB>BSE) has those DT silently excluded from
   // this trip figure — say so, or "73 trips from 134 DT" reads as a bug.
-  let attainLabel='trips / 12h shift';
+  let attainLabel='trips '+hzUnit;
   if(_flowHost==='plan'&&typeof _flowPlanDraft!=='undefined'){
     const draftKeys=Object.keys(_flowPlanDraft||{});
     const onStick=new Set(s.routes.map(r=>r.key));
     const excluded=draftKeys.filter(k=>!onStick.has(k));
     const exclDt=excluded.reduce((n,k)=>n+(Number.isFinite(_flowPlanDraft[k])?_flowPlanDraft[k]:0),0);
     if(excluded.length&&exclDt>0){
-      attainLabel='trips / 12h · corridor routes only ('+fmt(fleetTotal,0)+' DT — excludes '
+      attainLabel='trips '+hzUnit+' · corridor routes only ('+fmt(fleetTotal,0)+' DT — excludes '
         +fmt(exclDt,0)+' DT off-corridor: '+excluded.map(k=>k.replace('>','→')).join(', ')+')';
     }else{
-      attainLabel='trips / 12h shift · '+fmt(fleetTotal,0)+' DT on corridor';
+      attainLabel='trips '+hzUnit+' · '+fmt(fleetTotal,0)+' DT on corridor';
     }
   }
   setTxt('flow-attain-label',_flowHost==='plan'
@@ -367,14 +370,14 @@ function evaluateFlowScenario(){
   const simSum=(_flowHost==='plan'&&typeof _planLastSim!=='undefined'&&_planLastSim&&_planLastSim.summary)||null;
   const simAchv=simSum&&Number.isFinite(simSum.achievable_production_t)?simSum.achievable_production_t:null;
   if(_flowHost==='plan'&&simAchv!=null){
-    setHtml('flow-prod',fmtM(simAchv));
+    setHtml('flow-prod',fmtM(simAchv*hzPlan));
     setTxt('flow-prod-label',simSum.planned_production_t!=null
-      ?`${fmt(100*simAchv/Math.max(1,simSum.planned_production_t),0)}% of planned`
-      :'achievable t');
+      ?`${fmt(100*simAchv/Math.max(1,simSum.planned_production_t),0)}% of planned · ${hzLab}`
+      :'achievable t / '+hzLab);
   }else{
-    setHtml('flow-prod',_prod?(fmtM(_prod)+(_flowMode==='plan'&&Math.abs(_dWMT)>=1?` <span style="font-size:11px;color:${_dWMT>=0?'#22c55e':'#ef4444'}">${_dWMT>=0?'+':'−'}${fmtM(Math.abs(_dWMT))}</span>`:'')):'—');
+    setHtml('flow-prod',_prod?(fmtM(_prod*hzPlan)+(_flowMode==='plan'&&Math.abs(_dWMT)>=1?` <span style="font-size:11px;color:${_dWMT>=0?'#22c55e':'#ef4444'}">${_dWMT>=0?'+':'−'}${fmtM(Math.abs(_dWMT)*hzPlan)}</span>`:'')):'—');
     setTxt('flow-prod-label',_flowHost==='plan'
-      ?('WMT / shift'+(_tf?' · TF '+fmt(_tf,1)+' t':''))
+      ?('WMT / '+hzLab+(_tf?' · TF '+fmt(_tf,1)+' t':''))
       :((_flowMode==='plan'?'predict · WMT / shift':'dispatch · WMT / shift')+(_tf?' · TF '+fmt(_tf,1)+' t':'')));
   }
   updateFlowModeBadge();

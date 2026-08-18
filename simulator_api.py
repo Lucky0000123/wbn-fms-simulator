@@ -2757,6 +2757,9 @@ def api_plan_saved():
         "meta": body.get("meta") or {},
         "saved_at": __import__("datetime").datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
+    alloc = body.get("allocation")
+    if isinstance(alloc, dict) and alloc.get("frozen"):
+        plan["allocation"] = alloc
     try:
         os.makedirs(_SAVED_PLANS_DIR, exist_ok=True)
         tmp = path + ".tmp"

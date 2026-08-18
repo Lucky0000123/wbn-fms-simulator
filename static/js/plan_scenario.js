@@ -15,21 +15,35 @@ function planDraftToPsPlans(){
   // Aggregate by route (engine has no contractor). Sum DT when two contractors share a path.
   // Road-only / foreign rows stay a SEPARATE entry (keyed with a |road suffix) and carry
   // foreign:true, so the engine keeps them out of production and applies their corridor drag.
+  // After Allocate, Your plan keeps the original DT; simulate the optimized fleet.
+  const frozen=typeof planAllocFrozen==='function'&&planAllocFrozen();
   const by={};
-  planDraftEntries().forEach(r=>{
-    const foreign=!!r.foreign,gk=r.source+'>'+r.dest+(foreign?'|road':'');
-    const g=by[gk]||(by[gk]={route:r.source+'>'+r.dest,source:r.source,destination:r.dest,n_trucks:0,foreign});
-    g.n_trucks+=Math.round(r.dt);
+  Object.keys(_planDraft||{}).forEach(id=>{
+    const r=_planDraft[id];
+    if(!r||!r.key)return;
+    const dt=Math.round((frozen&&r._allocDt!=null)?r._allocDt:r.dt);
+    if(!(dt>0))return;
+    const parts=(r.key||'').split('>');
+    const source=(r.source||parts[0]||'').trim();
+    const dest=(r.dest||parts[1]||'').trim();
+    const foreign=!!r.foreign,gk=source+'>'+dest+(foreign?'|road':'');
+    const g=by[gk]||(by[gk]={route:source+'>'+dest,source:source,destination:dest,n_trucks:0,foreign});
+    g.n_trucks+=dt;
   });
   return Object.values(by).filter(p=>p.n_trucks>0);
 }
 
 function planDraftToFlowSeed(){
   // Synthetic single-day path rows so Shift Road needs no 3D date.
+  const frozen=typeof planAllocFrozen==='function'&&planAllocFrozen();
   const by={},colours={};
-  planDraftEntries().forEach(r=>{
+  Object.keys(_planDraft||{}).forEach(id=>{
+    const r=_planDraft[id];
+    if(!r||!r.key)return;
+    const dt=(frozen&&r._allocDt!=null)?r._allocDt:r.dt;
+    if(!(dt>0))return;
     const g=by[r.key]||(by[r.key]={key:r.key,dt:0});
-    g.dt+=r.dt;
+    g.dt+=dt;
   });
   const P=Object.values(by).map((g,i)=>{
     const [o,d]=g.key.split('>'),m=(_pathResp&&_pathResp[g.key])||{};
@@ -70,11 +84,18 @@ function planSyncWeatherToPs(){
 }
 
 function planSetScenarioBtn(){
+  if(typeof planAllocFrozen==='function'&&planAllocFrozen()){
+    if(typeof planLockCapacityBtn==='function')planLockCapacityBtn();
+    return;
+  }
   const btn=q('plan-run-scenario');
   if(!btn)return;
+  btn.hidden=false;
   const n=planDraftEntries().length;
   btn.disabled=n<1;
-  btn.title=n<1?'Add at least one path in Step 1':'Run simulate for A · production & capacity (GPS ▶ Run opens C · road crowding)';
+  btn.title=n<1?'Add at least one path first':'Check loader / point ceilings against predicted production (GPS ▶ Run opens road crowding)';
+  const note=q('plan-run-locked');
+  if(note)note.hidden=true;
 }
 
 /** Hide C · road crowding until the user presses ▶ Run on the GPS corridor. */
@@ -188,15 +209,66 @@ function planCapWarnCards(warnings){
   return{overs:[...groups.values()],other};
 }
 
+function planMaterialsForRoute(route){
+  const want=String(route||'').trim();
+  const seen=[];
+  planDraftEntries().forEach(r=>{
+    if(r.foreign)return;
+    const key=((r.source&&r.dest)?(r.source+'>'+r.dest):r.key)||'';
+    if(key!==want&&r.key!==want)return;
+    const m=String(r.material||'').trim();
+    if(m&&seen.indexOf(m)<0)seen.push(m);
+  });
+  return seen;
+}
+
+function planMaterialChips(codes){
+  if(!codes||!codes.length)return '<span class="muted">—</span>';
+  return codes.map(c=>{
+    const name=(typeof planMaterialLabel==='function')?planMaterialLabel(c):c;
+    return `<span class="plan-mat-tag" title="${escH(name||c)} — label only, does not change tonnes">${escH(c)}</span>`;
+  }).join(' ');
+}
+function planCapMatSummary(){
+  const seen=[];
+  planDraftEntries().forEach(r=>{
+    if(r.foreign)return;
+    const m=String(r.material||'').trim();
+    if(m&&seen.indexOf(m)<0)seen.push(m);
+  });
+  if(!seen.length)return '';
+  return ` · ${seen.map(c=>escH(c)).join(' · ')}`;
+}
+
+function planCapPaintTarget(){
+  // After ⚡ Allocate, the original Check-capacity card stays frozen and the
+  // new run paints underneath it. Do not rewrite #plan-scenario-estimate.
+  if(typeof window.planAllocFrozen==='function'&&window.planAllocFrozen()){
+    const wrap=q('plan-alloc-wrap');
+    if(wrap)wrap.style.display='';
+    return q('plan-alloc-estimate')||q('plan-scenario-estimate');
+  }
+  return q('plan-scenario-estimate');
+}
+
 function planRenderEstimateColumn(sim,predict){
-  const box=q('plan-scenario-estimate');if(!box)return;
+  if(typeof window.planAllocFrozen==='function'&&window.planAllocFrozen()
+     &&typeof window.planRenderAllocView==='function'){
+    window.planRenderAllocView(sim,predict);
+    return;
+  }
+  const box=planCapPaintTarget();if(!box)return;
   const s=(sim&&sim.summary)||{};
   // "Planned" = Step‑1 path-model WMT (what the holding plan asks for).
   // Simulate's planned_production_t often equals achievable when under loader
   // capacity — that is not the user's plan tonnes.
-  const plannedPath=predict&&Number.isFinite(predict.wmt)?predict.wmt:null;
-  const achv=s.achievable_production_t;
-  const ratio=(plannedPath>0&&achv!=null)?achv/plannedPath:null;
+  const plannedPathRaw=predict&&Number.isFinite(predict.wmt)?predict.wmt:null;
+  const achvRaw=s.achievable_production_t;
+  const hz=typeof planHorizonFactor==='function'?planHorizonFactor():1;
+  const hzLab=typeof planHorizonLabel==='function'?planHorizonLabel():'shift';
+  const plannedPath=plannedPathRaw!=null?plannedPathRaw*hz:null;
+  const achv=achvRaw!=null?achvRaw*hz:null;
+  const ratio=(plannedPathRaw>0&&achvRaw!=null)?achvRaw/plannedPathRaw:null;
   const warnings=(s.capacity_warnings||sim.warnings||[]);
   const rows=(sim&&sim.results)||[];
   const byRoute=planPredictByRoute();
@@ -217,8 +289,8 @@ function planRenderEstimateColumn(sim,predict){
   //  - model disagreement: path model (Step-1 history) vs the engine, with NO
   //    capacity binding. Calling that "above capacity" blamed loaders for a
   //    modelling difference and confused planners after Optimize.
-  const unconADJ=s.planned_production_t;
-  const capClip=(unconADJ!=null&&achv!=null)?Math.round(unconADJ-achv):null;
+  const unconADJ=s.planned_production_t!=null?s.planned_production_t*hz:null;
+  const capClip=(s.planned_production_t!=null&&achvRaw!=null)?Math.round((s.planned_production_t-achvRaw)*hz):null;
   const gapLabel=gap==null?'—'
     :(capClip!=null&&capClip>200?`Clips ${fmtN(capClip)} t`
     :(gap>200?`Path +${fmtN(gap)} t`
@@ -228,27 +300,31 @@ function planRenderEstimateColumn(sim,predict){
     :(gap>200?'Path model above engine — models differ, no capacity limit binding'
     :(gap<-200?'Path model below engine':'Path model ≈ engine')));
   const fin=_planOptFinalized
-    ?`<p class="plan-b-finalized" role="status">Finalized · A uses accepted DT (${fmtN(s.total_trucks)} DT · path ${fmtN(plannedPath)} t)</p>`
+    ?`<p class="plan-b-finalized" role="status">Finalized · accepted DT (${fmtN(s.total_trucks)} DT · predicted ${fmtN(plannedPath)} t)</p>`
     :'';
 
   const routeRows=rows.length?rows.map(r=>{
     if(r.error){
-      return `<tr class="plan-cap-row plan-cap-row--err"><td class="plan-cap-route">${escH(r.route)}</td><td colspan="4" class="muted">${escH(r.error)}</td></tr>`;
+      return `<tr class="plan-cap-row plan-cap-row--err"><td class="plan-cap-route">${escH(r.route)}</td><td colspan="5" class="muted">${escH(r.error)}</td></tr>`;
     }
-    const pm=(byRoute[r.route]&&byRoute[r.route].wmt)!=null?byRoute[r.route].wmt:null;
+    const pmRaw=(byRoute[r.route]&&byRoute[r.route].wmt)!=null?byRoute[r.route].wmt:null;
+    const pm=pmRaw!=null?pmRaw*hz:null;
     const badge=planCapStatusBadge(r.capacity_note);
     const mm=(_pathResp&&_pathResp[(r.route||'').trim()])||{};
     const env=typeof planDtEnvelope==='function'?planDtEnvelope(mm):mm.dtMax;
     const beyond=Number.isFinite(env)&&r.n_trucks>env;
     const routeLabel=escH(String(r.route||'').replace('>',' → '));
+    const achvRow=r.achievable_production_t!=null?r.achievable_production_t*hz:null;
+    const mats=planMaterialsForRoute(r.route);
     return `<tr class="plan-cap-row${beyond?' plan-cap-row--beyond':''}${badge.cls==='over'?' plan-cap-row--over':''}">
       <td class="plan-cap-route"><b>${routeLabel}</b>${beyond?`<span class="plan-cap-mini" title="Fleet above measured history">beyond data</span>`:''}</td>
+      <td class="plan-cap-mat">${planMaterialChips(mats)}</td>
       <td class="r plan-cap-num">${fmtN(r.n_trucks)}</td>
       <td class="r plan-cap-num">${fmtN(pm)}</td>
-      <td class="r plan-cap-num">${fmtN(r.achievable_production_t)}</td>
+      <td class="r plan-cap-num">${fmtN(achvRow)}</td>
       <td><span class="plan-cap-badge plan-cap-badge--${badge.cls}" title="${escH(r.capacity_note||'')}">${escH(badge.label)}</span></td>
     </tr>`;
-  }).join(''):'<tr><td colspan="5" class="muted">No simulate rows</td></tr>';
+  }).join(''):'<tr><td colspan="6" class="muted">No simulate rows</td></tr>';
 
   const beyondHtml=beyondEnv
     ?`<div class="plan-cap-callout plan-cap-callout--amber" role="status">
@@ -258,7 +334,7 @@ function planRenderEstimateColumn(sim,predict){
           const env=typeof planDtEnvelope==='function'?planDtEnvelope(mm):mm.dtMax;
           return `<span class="plan-cap-chip"><b>${escH(String(r.route||'').replace('>',' → '))}</b> ${fmtN(r.n_trucks)} DT · max seen ${fmtN(env)}</span>`;
         }).join('')}</div>
-        <p class="plan-cap-callout-p">Engine achievable ignores crowding at this scale — use <b>path model</b> tonnes for planning.</p>
+        <p class="plan-cap-callout-p">Engine achievable ignores crowding at this scale — use <b>predicted</b> tonnes for planning.</p>
       </div>`
     :'';
 
@@ -269,9 +345,9 @@ function planRenderEstimateColumn(sim,predict){
         <div class="plan-cap-over-list">${parsed.overs.map(g=>`
           <div class="plan-cap-over-row">
             <div class="plan-cap-over-main"><b>${escH(g.loader)}</b>
-              <span class="plan-cap-over-meta">${fmtN(g.asked)} trips asked · ceiling ${fmtN(g.ceiling)} · ${fmtN(g.pct)}%</span>
+              <span class="plan-cap-over-meta">${fmtN(g.asked*hz)} trips asked · ceiling ${fmtN(g.ceiling*hz)} · ${fmtN(g.pct)}%</span>
             </div>
-            <div class="plan-cap-over-lost"><b>−${fmtN(g.lost)} t</b><span>won’t materialise</span></div>
+            <div class="plan-cap-over-lost"><b>−${fmtN(g.lost*hz)} t</b><span>won’t materialise</span></div>
           </div>`).join('')}</div>
         <p class="plan-cap-callout-p">Excess trucks queue at the loader — plan below the ceiling.</p>
       </div>`
@@ -283,18 +359,19 @@ function planRenderEstimateColumn(sim,predict){
   box.innerHTML=`
     <div class="plan-engine-block plan-cap-block">
       ${fin}
+      <div class="plan-cap-horizon muted">Totals for one <b>${escH(hzLab)}</b>${hz>1?' (2 × 12 h shifts)':''}${planCapMatSummary()}</div>
       <div class="plan-scenario-kpis plan-cap-kpis">
         <div class="effkpi plan-cap-kpi"><div class="v">${fmtN(s.total_trucks)}</div><div class="l">Trucks</div></div>
-        <div class="effkpi plan-cap-kpi"><div class="v">${fmtN(plannedPath)}</div><div class="l">Planned t</div></div>
+        <div class="effkpi plan-cap-kpi"><div class="v">${fmtN(plannedPath)}</div><div class="l">Predicted t</div></div>
         <div class="effkpi plan-cap-kpi"><div class="v">${fmtN(achv)}</div><div class="l">${achvLabel}</div></div>
-        <div class="effkpi plan-cap-kpi"><div class="v">${ratio!=null?Math.round(100*ratio)+'%':'—'}</div><div class="l">Achievable / planned</div></div>
-        <div class="effkpi plan-cap-kpi"><div class="v">${fmtN(s.planned_production_t)}</div><div class="l">Unconstrained t</div></div>
+        <div class="effkpi plan-cap-kpi"><div class="v">${ratio!=null?Math.round(100*ratio)+'%':'—'}</div><div class="l">Achievable / predicted</div></div>
+        <div class="effkpi plan-cap-kpi" title="Cycle × payload before loader share"><div class="v">${fmtN(unconADJ)}</div><div class="l">Engine unconstrained t</div></div>
         <div class="effkpi plan-cap-kpi" title="${escH(gapTip)}"><div class="v plan-cap-kpi-gap">${escH(gapLabel)}</div><div class="l">Model vs capacity</div></div>
       </div>
       <div class="plan-cap-table-wrap">
         <table class="plan-cap-table">
           <thead><tr>
-            <th>Route</th><th class="r">DT</th><th class="r">Path model</th><th class="r">Achievable</th><th>Status</th>
+            <th>Route</th><th>Material</th><th class="r">DT</th><th class="r">Predicted</th><th class="r">Achievable</th><th>Status</th>
           </tr></thead>
           <tbody>${routeRows}</tbody>
         </table>
@@ -303,11 +380,18 @@ function planRenderEstimateColumn(sim,predict){
       ${overHtml}
       ${otherWarn}
       <div class="plan-cap-legend">
-        <span><b>Planned</b> · Step‑1 path estimate</span>
+        <span><b>Predicted</b> · measured path history</span>
         <span><b>Achievable</b> · loader / point capacity</span>
-        <span><b>Unconstrained</b> · cycle × payload before share</span>
+        <span><b>Engine unconstrained</b> · cycle × payload before share</span>
       </div>
     </div>`;
+  const heroStatus=beyondEnv?'Beyond observed DT'
+    :(capClip!=null&&capClip>200)?'Loader ceiling'
+    :'Within measured fleet';
+  const predTrips=predict&&Number.isFinite(predict.trips)?predict.trips*hz:null;
+  if(typeof planPaintHero==='function'){
+    planPaintHero({wmt:plannedPath,trips:predTrips,dt:s.total_trucks,achv,status:heroStatus});
+  }
 }
 
 let _planScenarioBusy=false,_planLastSim=null,_planLastAnalogues=null;
@@ -519,11 +603,19 @@ function planPredictTotalsForDraft(draftObj){
   return {trips,wmt,dt};
 }
 
-function planBiasAdjustedAchievable(raw){
+/**
+ * Ticket-calibrated companion (raw ÷ 1.055). ONE implementation on purpose —
+ * callers pass the summary they are rendering rather than re-deriving the
+ * divisor, so the A · Production & capacity panel and anything else cannot
+ * drift apart on what "calibrated" means.
+ * @param summary optional /api/simulate summary; defaults to the last run.
+ */
+function planBiasAdjustedAchievable(raw,summary){
   const el=q('plan-bias-lens');
   const on=(typeof _planBiasLensOn!=='undefined'?_planBiasLensOn:true) || !!(el&&el.checked);
   // Prefer server companion when present (same ÷1.055)
-  const cal=_planLastSim&&_planLastSim.summary&&_planLastSim.summary.ticket_calibrated_achievable_t;
+  const s=summary||(_planLastSim&&_planLastSim.summary);
+  const cal=s&&s.ticket_calibrated_achievable_t;
   if(!on||raw==null||!Number.isFinite(Number(raw)))return {raw,adj:raw,on:false};
   const adj=(cal!=null&&Number.isFinite(Number(cal)))?Number(cal):(Number(raw)/1.055);
   return {raw:Number(raw),adj,on:true};
@@ -708,7 +800,7 @@ function planRenderOutcomes(sim,predict){
             <div>
               <span class="muted">History P25–P75</span>
               <b>${escH(histBand)}</b>
-              <em class="plan-realism-sub">similar-fleet days</em>
+              <em class="plan-realism-sub">matched days&rsquo; rate × your DT</em>
             </div>
             <div class="${ambition.cls}">
               <span class="muted">Where plan sits</span>
@@ -1050,7 +1142,7 @@ function planRenderAnalogues(data){
     ensBox.innerHTML=`
       <div class="effkpi"><div class="v">${planFmtN(e.wmt_p25)} – ${planFmtN(e.wmt_p75)} t</div><div class="l">History WMT P25–P75</div></div>
       <div class="effkpi"><div class="v">${planFmtN(histMed)} t</div><div class="l">History median</div></div>
-      <div class="effkpi"><div class="v">${planFmtN(predict.wmt)} t</div><div class="l">Your path model</div></div>
+      <div class="effkpi"><div class="v">${planFmtN(predict.wmt)} t</div><div class="l">Your predicted</div></div>
       <div class="effkpi"><div class="v">${achv!=null?planFmtN(achv)+' t':'—'}</div><div class="l">Simulate achievable</div></div>
       <div class="effkpi ${ambitionCls}"><div class="v" style="font-size:13px">${escH(ambition)}</div><div class="l">Realism check</div></div>`;
   }
@@ -1083,7 +1175,7 @@ function planRenderAnalogues(data){
       +' · '+(basis.corpus_n!=null?basis.corpus_n+' path-days':'')
       +' · k='+(data.k||rows.length)
       +(data.servedFrom==='fms_cache'?' · from FMS cache':'')
-      +'. History band is separate from simulate achievable tonnes.';
+      +'. History band is matched days\' trips/DT × planned DT — not similar-fleet tonnes. Separate from simulate.';
   }
   planRenderRoadInteractions(data);
 }
@@ -1142,8 +1234,11 @@ function planFetchAnalogues(){
 
 /** Busy overlay on A · Production & capacity while simulate recalculates. */
 function planSetCalcBusy(on){
-  const el=q('plan-estimate-busy');
+  const frozen=typeof window.planAllocFrozen==='function'&&window.planAllocFrozen();
+  const el=q(frozen?'plan-alloc-busy':'plan-estimate-busy');
   if(el)el.classList.toggle('is-busy',!!on);
+  const orig=q('plan-estimate-busy');
+  if(frozen&&orig)orig.classList.remove('is-busy');
   const runBtn=q('plan-run-scenario');
   if(runBtn&&on){runBtn.disabled=true;runBtn.textContent='Running…';}
 }
@@ -1159,6 +1254,10 @@ function planDraftFleetDt(plans){
  */
 function planRunScenario(opts){
   opts=opts||{};
+  if(typeof planAllocFrozen==='function'&&planAllocFrozen()&&!opts.fromAlloc){
+    if(typeof planLockCapacityBtn==='function')planLockCapacityBtn();
+    return;
+  }
   const plans=planDraftToPsPlans();
   const btn=q('plan-run-scenario');
   if(!plans.length){alert('Add at least one path to the holding plan first.');return;}
@@ -1187,7 +1286,8 @@ function planRunScenario(opts){
   const shiftMin=parseFloat((q('ps-shift')||{}).value)||((parseFloat((q('plan-hours')||{}).value)||12)*60);
   const panel=q('plan-scenario-panel');
   if(panel)panel.style.display='block';
-  const est=q('plan-scenario-estimate');
+  const frozen=typeof window.planAllocFrozen==='function'&&window.planAllocFrozen();
+  const est=frozen?q('plan-alloc-estimate'):q('plan-scenario-estimate');
   if(est)est.innerHTML='<p class="muted">Calculating productivity &amp; capacity…</p>';
 
   // A · Production & capacity here. C · road crowding waits for GPS corridor ▶ Run.
@@ -1219,10 +1319,12 @@ function planRunScenario(opts){
     const open=q('plan-open-assessment');
     if(open)open.disabled=false;
     planRefreshSaveButtons();
-    // Keep viewport on A · Production & capacity — GPS ▶ Run opens C below.
-    if(est&&typeof est.scrollIntoView==='function'){
-      try{est.scrollIntoView({behavior:'smooth',block:'nearest'});}
-      catch(_){est.scrollIntoView(true);}
+    // Keep viewport on the prediction hero — GPS ▶ Run opens road crowding below.
+    const hero=q('plan-sec-predict');
+    const jump=hero||est;
+    if(jump&&typeof jump.scrollIntoView==='function'){
+      try{jump.scrollIntoView({behavior:'smooth',block:'nearest'});}
+      catch(_){jump.scrollIntoView(true);}
     }
   }).catch(e=>{
     if(gen!==_planScenarioGen||_planScenarioQueued)return;
@@ -1231,7 +1333,9 @@ function planRunScenario(opts){
     if(gen!==_planScenarioGen)return;
     _planScenarioBusy=false;
     planSetCalcBusy(false);
-    if(btn){btn.disabled=false;btn.textContent='Run simulated scenario';}
+    if(typeof planAllocFrozen==='function'&&planAllocFrozen()){
+      if(typeof planLockCapacityBtn==='function')planLockCapacityBtn();
+    }else if(btn){btn.disabled=false;btn.textContent='Check capacity';}
     planSetScenarioBtn();
     const queued=_planScenarioQueued;
     _planScenarioQueued=null;
@@ -1254,8 +1358,10 @@ function planOpenFullAssessment(){
   }
   const host=q('plan-assessment-host');
   if(host)host.style.display='';
+  const det=q('plan-sec-detail');
+  if(det)det.open=true;
   // Host lives inside the scenario panel — reveal that too when the assessment
-  // is opened directly (e.g. before any Run scenario click).
+  // is opened directly (e.g. before any Check capacity click).
   const panel=q('plan-scenario-panel');
   if(panel)panel.style.display='block';
   const busy=q('plan-assessment-busy');
@@ -1284,6 +1390,7 @@ function planLoadDraft(obj){
   if(typeof _planDraft==='undefined')return;
   Object.keys(_planDraft).forEach(k=>delete _planDraft[k]);
   Object.assign(_planDraft, obj||{});
+  if(typeof planMigrateLimIds==='function')planMigrateLimIds();
   if(typeof computePlan==='function')computePlan();
   else planSetScenarioBtn();
   if(typeof planRefreshSaveButtons==='function')planRefreshSaveButtons();
@@ -1347,6 +1454,8 @@ function planDraftSnapshot(){
       key:r.key,dt:r.dt,contractor:r.contractor||'',
       source:r.source||(r.key.split('>')[0]||''),
       dest:r.dest||(r.key.split('>')[1]||''),
+      material:r.material||'',
+      otype:r.otype||'',
     };
   });
   return {
@@ -1374,7 +1483,85 @@ function planRefreshSaveButtons(){
     loadBtn.disabled=!date||!_planSavedExists;
     loadBtn.title=_planSavedExists?'Load saved plan for '+date:'No saved plan for this date';
   }
+  planNavSync();
 }
+
+// ── Sticky plan nav ─────────────────────────────────────────────────────────
+// Save/Load live in the sticky bar so they are reachable at any scroll depth.
+// Everything here is presentation only: it reads the draft, it never edits it.
+function planNavSync(){
+  const date=((q('plan-date')||{}).value||'').trim();
+  const rows=planDraftEntries();
+  const dt=rows.reduce((a,r)=>a+(+r.dt||0),0);
+  const d=q('plan-nav-date'); if(d)d.textContent=date||'no date set';
+  const s=q('plan-nav-summary');
+  if(s)s.textContent=rows.length
+    ? rows.length+' path'+(rows.length===1?'':'s')+' · '+Math.round(dt)+' DT'
+    : 'no paths yet';
+}
+
+function planNavScrollSpy(){
+  const bar=q('plan-navbar');if(!bar)return;
+  const btns=[].slice.call(document.querySelectorAll('#plan-nav-links button'));
+  if(!btns.length)return;
+  bar.classList.toggle('stuck',bar.getBoundingClientRect().top<=1);
+  // "Current" = the last section whose top is above the bar's lower edge. Using
+  // the bar height as the offset stops a section counting as reached while it is
+  // still hidden behind the bar itself.
+  const cut=bar.getBoundingClientRect().bottom+8;
+  const vis=btns.filter(b=>{const el=q(b.getAttribute('data-sec'));
+    return el&&el.offsetParent!==null;});           // skip sections not yet shown
+  if(!vis.length){btns.forEach(b=>b.classList.remove('on'));return;}
+  let cur=vis[0];
+  vis.forEach(b=>{if(q(b.getAttribute('data-sec')).getBoundingClientRect().top<=cut)cur=b;});
+  // At the bottom of the page the last section IS the current one, even though
+  // its top never reaches the bar. Without this, jumping to a section near the
+  // end scrolls as far as it can and then highlights the WRONG entry, which
+  // reads as a broken link. Bites hardest before Run scenario, when Step 2's
+  // sub-blocks are still hidden and the page is short.
+  const atEnd=window.innerHeight+window.scrollY>=
+    (document.documentElement.scrollHeight||document.body.scrollHeight)-4;
+  if(atEnd)cur=vis[vis.length-1];
+  btns.forEach(b=>b.classList.toggle('on',b===cur));
+}
+
+/** Populate the "Saved…" picker so any stored plan is one click away. */
+function planNavRefreshSavedList(){
+  const sel=q('plan-saved-pick');if(!sel)return Promise.resolve();
+  return fetch('/api/plan/saved/list').then(r=>r.json()).then(d=>{
+    const dates=(d&&d.dates)||[];
+    const cur=((q('plan-date')||{}).value||'').trim();
+    sel.innerHTML='<option value="">Saved… ('+dates.length+')</option>'
+      +dates.map(x=>`<option value="${escH(x)}"${x===cur?' selected':''}>${escH(x)}</option>`).join('');
+  }).catch(()=>{});
+}
+
+/** Jump to a stored plan: set the date, then reuse the existing load path. */
+function planOpenSavedDate(date){
+  const d=(date||'').trim();if(!d)return;
+  const inp=q('plan-date');if(!inp)return;
+  inp.value=d;
+  // Go through planDateChange() rather than poking dependants directly — it is
+  // what re-pulls conditions, analogues and the saved-plan probe for the date.
+  if(typeof planDateChange==='function')planDateChange();
+  if(typeof planLoadSavedForDate==='function')planLoadSavedForDate();
+}
+
+(function planNavInit(){
+  const start=()=>{
+    const links=q('plan-nav-links');
+    if(links)links.addEventListener('click',ev=>{
+      const b=ev.target.closest('button[data-sec]');if(!b)return;
+      const el=q(b.getAttribute('data-sec'));if(!el)return;
+      el.scrollIntoView({behavior:'smooth',block:'start'});
+    });
+    window.addEventListener('scroll',planNavScrollSpy,{passive:true});
+    window.addEventListener('resize',planNavScrollSpy,{passive:true});
+    planNavSync();planNavScrollSpy();planNavRefreshSavedList();
+  };
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);
+  else start();
+})();
 
 function planCheckSavedExists(date){
   const d=(date||((q('plan-date')||{}).value||'')).trim();
@@ -1409,6 +1596,7 @@ function planSaveForDate(){
     _planSavedExists=true;
     if(st)st.textContent='Saved for '+snap.date+(res.plan&&res.plan.saved_at?' · '+res.plan.saved_at:'');
     planRefreshSaveButtons();
+    planNavRefreshSavedList();   // a new date just became loadable
   }).catch(e=>{alert('Save failed: '+e);if(st)st.textContent='Save failed';});
 }
 
@@ -1435,6 +1623,7 @@ function planLoadSavedForDate(opts){
         return false;
       }
       planLoadDraft(res.plan.paths);
+      if(typeof planRestoreAllocation==='function')planRestoreAllocation(res.plan.allocation);
       if(res.plan.rain_mm!=null){
         const rain=q('plan-rain');
         if(rain){rain.value=String(res.plan.rain_mm);if(typeof _planRainManual!=='undefined')_planRainManual=true;}

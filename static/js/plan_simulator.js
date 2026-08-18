@@ -9,6 +9,20 @@
  * tell a measured value from a derived one without reading the docs.
  */
 let _psRoutes = [], _psPlans = [], _psReady = false;
+// Last summary this panel rendered, so the bias-lens checkbox can re-derive the
+// ticket companion without re-running /api/simulate.
+let _psLastSummary = null;
+
+/** Re-paint the ticket-calibrated companion after the lens checkbox changes. */
+function psRefreshTicketKpi() {
+  const wrap = q('ps-kpi-ticket-wrap'), tick = q('ps-kpi-ticket');
+  if (!wrap || !tick || !_psLastSummary) return;
+  const lens = (typeof planBiasAdjustedAchievable === 'function')
+    ? planBiasAdjustedAchievable(_psLastSummary.achievable_production_t, _psLastSummary)
+    : {on: false};
+  wrap.style.display = lens.on ? '' : 'none';
+  tick.textContent = lens.on ? fmt(lens.adj) : '—';
+}
 
 function psInit() {
   if (_psReady) return;
@@ -135,7 +149,16 @@ function psRun() {
 
 function psRender(d) {
   const rows = d.results || [], s = d.summary || {};
+  const hz = (typeof planHorizonFactor === 'function') ? planHorizonFactor() : 1;
+  const hzLab = (typeof planHorizonLabel === 'function') ? planHorizonLabel() : 'shift';
   const fmt = n => (n == null ? '—' : Math.round(n).toLocaleString());
+  const fmtHz = n => (n == null ? '—' : Math.round(n * hz).toLocaleString());
+  const dHead = q('ps-total-head');
+  if (dHead) dHead.textContent = hz > 1 ? 'Day total' : 'Shift total';
+  const pLab = q('ps-kpi-planned-lab');
+  if (pLab) pLab.textContent = 'Planned t / ' + hzLab;
+  const aLab = q('ps-kpi-achv-lab');
+  if (aLab) aLab.textContent = 'Achievable t / ' + hzLab;
   // An extrapolated roster figure is starred and dashed, and says so on
   // hover, so a planner never mistakes the site-wide prior for a
   // measurement on their own trucks.
@@ -165,8 +188,8 @@ function psRender(d) {
     const foreignTag = r.foreign
       ? ' <span title="Road-only / foreign traffic: adds congestion, no WMT" style="font-size:9px;padding:1px 5px;border-radius:8px;background:rgba(148,163,184,.18);color:var(--muted,#8b98a5);vertical-align:middle">ROAD-ONLY</span>'
       : '';
-    const plannedCell = r.foreign ? '<span class="muted" title="foreign traffic adds no WMT">—</span>' : fmt(r.planned_production_t);
-    const achvCell = r.foreign ? '<span class="muted">—</span>' : (over ? '<b>' + fmt(r.achievable_production_t) + '</b>' : fmt(r.achievable_production_t));
+    const plannedCell = r.foreign ? '<span class="muted" title="foreign traffic adds no WMT">—</span>' : fmtHz(r.planned_production_t);
+    const achvCell = r.foreign ? '<span class="muted">—</span>' : (over ? '<b>' + fmtHz(r.achievable_production_t) + '</b>' : fmtHz(r.achievable_production_t));
     return `<tr title="${tip.replace(/"/g, '&quot;')}"${r.foreign ? ' style="opacity:.72"' : ''}>
       <td><b>${r.route}</b>${foreignTag}</td>
       <td class="r">${r.n_trucks}</td>
@@ -188,13 +211,25 @@ function psRender(d) {
   q('ps-foot').innerHTML = `<tr><th>Total</th><th class="r">${s.total_trucks}</th>
     <th colspan="6"></th>
     <th class="r" title="${(((s.fleet_sizing || {}).bases_used) || []).join(' + ')}">${(s.fleet_sizing || {}).trucks_to_roster ?? ''}</th>
-    <th class="r">${fmt(s.planned_production_t)}</th>
-    <th class="r">${fmt(s.achievable_production_t)}</th>
-    <th colspan="2">${shortfall > 1 ? '<span style="color:var(--bad,#e5534b)">' + fmt(shortfall) + ' t blocked by capacity</span>' : ''}</th></tr>`;
+    <th class="r">${fmtHz(s.planned_production_t)}</th>
+    <th class="r">${fmtHz(s.achievable_production_t)}</th>
+    <th colspan="2">${shortfall > 1 ? '<span style="color:var(--bad,#e5534b)">' + fmtHz(shortfall) + ' t blocked by capacity</span>' : ''}</th></tr>`;
 
   q('ps-kpi-trucks').textContent = s.total_trucks ?? '—';
-  q('ps-kpi-planned').textContent = fmt(s.planned_production_t);
-  q('ps-kpi-achv').textContent = fmt(s.achievable_production_t);
+  q('ps-kpi-planned').textContent = fmtHz(s.planned_production_t);
+  q('ps-kpi-achv').textContent = fmtHz(s.achievable_production_t);
+
+  // Ticket-calibrated companion. Kept beside the raw Achievable, never replacing
+  // it: the engine's primary stays raw and availability stays 1.0 (J52/J55).
+  // Pass `s` so the lens reads THIS response, not whatever ran last elsewhere.
+  _psLastSummary = s;
+  const wrap = q('ps-kpi-ticket-wrap'), tick = q('ps-kpi-ticket');
+  if (wrap && tick) {
+    const lens = (typeof planBiasAdjustedAchievable === 'function')
+      ? planBiasAdjustedAchievable(s.achievable_production_t, s) : {on: false};
+    wrap.style.display = lens.on ? '' : 'none';
+    tick.textContent = lens.on ? fmtHz(lens.adj) : '—';
+  }
 
   const w = (s.capacity_warnings || []);
   const shared = (s.shared_loading_points || []);

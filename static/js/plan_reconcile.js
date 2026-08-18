@@ -29,7 +29,13 @@
       const draft=(typeof _planDraft!=='undefined')?_planDraft:{};
       const id=Object.keys(draft).find(k=>{
         const r=draft[k];
-        return r&&!r.foreign&&r.key===key&&(r.contractor||'')===(v.contractor||'');
+        if(!r||r.foreign||r.key!==key)return false;
+        if((r.contractor||'')!==(v.contractor||''))return false;
+        const mat=((q('plan-material')||{}).value||'').trim().toUpperCase();
+        const ot=((q('plan-otype')||{}).value||'').trim().toUpperCase();
+        if(mat&&String(r.material||'').toUpperCase()!==mat)return false;
+        if(mat==='LIM'&&(ot==='TOS'||ot==='LD')&&String(r.otype||'').toUpperCase()!==ot)return false;
+        return true;
       });
       if(!id)return;                               // path not in the plan yet
       const r=draft[id];

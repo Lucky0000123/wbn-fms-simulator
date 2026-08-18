@@ -360,4 +360,4 @@ function renderCongModel(){
 // path-response is fetched inside load() so Apply refreshes the rain table with
 // the same filter bar. Do not also call loadPathResp() here — that doubled the
 // cold SQL before the snapshot existed.
-(async()=>{await loadMatrix();loadWbPositions();loadCapabilityWeighbridge();_gSelSec.clear();(_matrix.sections||[]).forEach(s=>_gSelSec.add(s.id));setXAxis('combined');await load();const requested=new URLSearchParams(location.search).get('tab');if(['sim','cong'].includes(requested))setSimTab(requested);})();
+(async()=>{await loadMatrix();loadWbPositions();loadCapabilityWeighbridge();_gSelSec.clear();(_matrix.sections||[]).forEach(s=>_gSelSec.add(s.id));setXAxis('combined');await load();const requested=new URLSearchParams(location.search).get('tab');if(['sim','cong','plan'].includes(requested))setSimTab(requested);})();

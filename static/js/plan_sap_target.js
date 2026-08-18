@@ -15,22 +15,14 @@
 //   6. P2 surplus is only dumped to other TOS shorts or LD — never back to SAP.
 // Original Check-capacity card stays frozen; New Allocation Plan paints below.
 // Predicted and Achievable stay two clocks — never averaged.
-// Allocate sizes Predicted ≈ target. New achievable on the allocation plan is
-// min(simulate share, predicted) for that same fleet: simulate's faster clock
-// cannot be shown as extra tonnes. Raw simulate is stored as achv_sim.
+// Allocate sizes Predicted ≈ target. Achievable is /api/simulate (raw),
+// not capped at predicted or at target. Monthly is where overshoot is hidden.
 (function(){
   'use strict';
   const q=id=>document.getElementById(id);
   const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   const fmt=n=>Number(n||0).toLocaleString('en-GB',{maximumFractionDigits:0});
   const fmt2=n=>n==null||!isFinite(n)?'—':Number(n).toLocaleString('en-GB',{maximumFractionDigits:2,minimumFractionDigits:0});
-  function capAt(v,cap){
-    if(v==null||!isFinite(v))return null;
-    if(!(cap>0))return v;
-    return Math.min(v,cap);
-  }
-  // Planning achievable for this fleet: the lower of simulate and the path model.
-  function capAchv(sim, pred){return capAt(sim, pred);}
 
   function draft(){return (typeof _planDraft!=='undefined')?_planDraft:{};}
   function hz(){return typeof planHorizonFactor==='function'?planHorizonFactor():1;}
@@ -89,22 +81,16 @@
   }
   function allocMetricTds(o){
     const vs=predVsTarget(o.predNew, o.tgt);
-    const over=o.over||0;
-    let simNote=over
-      ?{note:'sim '+fmt(o.sim), noteTitle:'Uncapped simulate '+fmt(o.sim)+' t (planning achievable is capped at predicted)'}
-      :{};
-    // Owner 2026-08-14: "if achievable is more with a huge difference ... it
-    // means something different, we have to fix it. Check the new achievable
-    // for each plan." Flag any row where the two models part by >50% either
-    // way — that row's basis needs a look before trusting the plan.
+    let simNote={};
+    // Flag rows where the two clocks part by >50% either way.
     if(o.predNew>0&&o.achvNew!=null&&o.achvNew>0){
       const ratio=o.achvNew/o.predNew;
       if(ratio<0.5){
         simNote={note:'<span style="color:#ef4444">⚠ achv '+Math.round(ratio*100)+'% of pred — check</span>',
           noteTitle:'Models disagree badly on this row: the engine (all-days cycle basis) delivers under half of the path model. Usually the fleet here is far beyond the engine\'s measured cycles, or the route lacks engine history. Fix the row before trusting the plan.'};
-      }else if((o.sim||o.achvNew)/o.predNew>1.5){
-        simNote={note:'<span style="color:#f59e0b">⚠ sim '+fmt(o.sim||o.achvNew)+' ('+((o.sim||o.achvNew)/o.predNew).toFixed(1)+'× pred) — check</span>',
-          noteTitle:'Models disagree badly on this row: raw simulate sees over 1.5× the path model. Usually the path\'s day-cluster history is thin or depressed by disrupted days. Check before trusting.'};
+      }else if(ratio>1.5){
+        simNote={note:'<span style="color:#f59e0b">⚠ achv '+(ratio).toFixed(1)+'× pred — check</span>',
+          noteTitle:'Models disagree badly on this row: simulate sees over 1.5× the path model. Usually the path\'s day-cluster history is thin or depressed by disrupted days. Check before trusting.'};
       }
     }
     return ''
@@ -145,8 +131,8 @@
   }
   function allocHeroHtml(o){
     const hz=o.hzLab||'day';
-    const newAchv=capAchv(o.newAchv, o.newPred);
-    const oldAchv=capAchv(o.oldAchv, o.oldPred);
+    const newAchv=o.newAchv;
+    const oldAchv=o.oldAchv;
     const dPred=(o.newPred!=null&&o.oldPred!=null)?Math.round(o.newPred-o.oldPred):null;
     const dAchv=(newAchv!=null&&oldAchv!=null)?Math.round(newAchv-oldAchv):null;
     const delta=d=>{
@@ -754,7 +740,7 @@
   function rowClocks(id,r,dt){
     const tw=rowTonnes(id,r,dt);
     const sim=r.foreign?null:achievableShare(r.key, dt!=null?dt:workingDt(r));
-    return {trips:tw.trips,pred:tw.pred,sim:sim,achv:capAchv(sim, tw.pred)};
+    return {trips:tw.trips,pred:tw.pred,sim:sim,achv:sim};
   }
   function fillBuckets(){
     const hzLab=typeof planHorizonLabel==='function'?planHorizonLabel():'day';
@@ -825,19 +811,16 @@
       const b=B[k];
       const predLab=after?'New predicted':'Predicted';
       const achvLab=after?'New achievable':'Achievable';
-      const pred=after?b.pred:b.predWas;
-      const achvRaw=after?b.achvSim:b.achvWas;
-      const achv=capAchv(after?b.achv:b.achvWas, pred);
-      const over=(achvRaw!=null&&pred>0)?Math.max(0,achvRaw-pred):0;
+      const pred=after?b.pred:(b.predWas||b.pred);
+      const achv=after?b.achv:(b.achvWas||b.achv);
       return '<div class="plan-alloc-bucket plan-alloc-bucket--'+b.cls+'">'
         +'<div class="plan-alloc-bucket-h">'+b.label+(b.n?' · '+b.n+' path'+(b.n===1?'':'s'):'')+'</div>'
         +'<div class="plan-alloc-bucket-grid">'
         +'<div><div class="k">Target t/'+esc(hzLab)+'</div><div class="v">'+(b.target?fmt(b.target):'—')+'</div></div>'
-        +'<div><div class="k">'+predLab+'</div><div class="v">'+(b.n?fmt(after?b.pred:b.predWas||b.pred):'—')+'</div>'
+        +'<div><div class="k">'+predLab+'</div><div class="v">'+(b.n?fmt(pred):'—')+'</div>'
           +(after&&b.n?deltaHtml(b.pred,b.predWas):'')+'</div>'
         +'<div><div class="k">'+achvLab+'</div><div class="v">'+(b.n?fmt(achv):'—')+'</div>'
-          +(after&&b.n?deltaHtml(achv, capAchv(b.achvWas,b.predWas)):'')
-          +(over?'<div class="muted" style="font-size:10px">simulate '+fmt(achvRaw)+' · over predicted '+fmt(over)+'</div>':'')+'</div>'
+          +(after&&b.n?deltaHtml(b.achv, b.achvWas):'')+'</div>'
         +'<div><div class="k">DT</div><div class="v">'+(b.n?fmt(after?b.dt:b.dtWas||b.dt):'—')+'</div>'
           +(after&&b.n?deltaHtml(b.dt,b.dtWas):'')+'</div>'
         +'</div>'
@@ -896,7 +879,6 @@
         const clkNew=rowClocks(id,r,dtNow);
         const clkOld=rowClocks(id,r,dtOld);
         const tgt=r.targetWmt||0;
-        const achvRaw=clkNew.sim;
         const achv=clkNew.achv;
         const achvOld=r._preAlloc&&r._preAlloc.achv!=null?r._preAlloc.achv:clkOld.achv;
         const mat=String(r.material||'—')+(r.otype?' · '+r.otype:'')+(r.foreign?' · road':'');
@@ -910,7 +892,6 @@
           :'';
         const rpOld=ratePair(clkOld.pred, clkOld.trips, dtOld);
         const rpNew=ratePair(clkNew.pred, clkNew.trips, dtNow);
-        const over=(achvRaw!=null&&clkNew.pred>0)?Math.max(0,achvRaw-clkNew.pred):0;
         return '<tr class="plan-hold-src" style="--src:'+col+'" data-prio="'+(p||9)+'"'
           +' data-dt="'+(dtNow||0)+'" data-dt-old="'+(dtOld||0)+'" data-dt-new="'+(dtNow||0)+'"'
           +' data-trips="'+(clkNew.trips||0)+'" data-trips-old="'+(clkOld.trips||0)+'" data-trips-new="'+(clkNew.trips||0)+'"'
@@ -926,8 +907,7 @@
             tpdOld:rpOld.tpd, tpdNew:rpNew.tpd,
             wpdOld:rpOld.wpd, wpdNew:rpNew.wpd,
             predOld:clkOld.pred, predNew:clkNew.pred,
-            achvOld:achvOld, achvNew:achv,
-            sim:achvRaw, over:over
+            achvOld:achvOld, achvNew:achv
           })
           +'</tr>';
       }).join('');
@@ -995,7 +975,7 @@
       frozen:true,
       horizon:hzLab,
       old:_origTotals||{pred:null,achv:null,dt:filled.fleetWas},
-      cap:'predicted',
+      cap:'none',
       new:{pred:newPred, achv:newAchv, achv_sim:filled.achvSimTotal||null, dt:filled.fleet, target:goals.total},
       fleet:{before:filled.fleetWas, after:filled.fleet},
       goals:goals,
@@ -1019,11 +999,9 @@
       const b=packed[k]||{};
       const n=b.n||0;
       const dt=after?b.dt_after:b.dt_before;
-      const pred=after?b.pred_after:b.pred_before;
+      const pred=after?(b.pred_after||b.pred_before):(b.pred_before||b.pred_after);
       const target=b.target||0;
-      const sim=after?(b.achv_sim!=null?b.achv_sim:b.achv_after):b.achv_before;
-      const achv=capAchv(after?b.achv_after:b.achv_before, pred);
-      const over=(sim!=null&&pred>0)?Math.max(0,sim-pred):0;
+      const achv=after?(b.achv_sim!=null?b.achv_sim:b.achv_after):b.achv_before;
       return '<div class="plan-alloc-bucket plan-alloc-bucket--'+meta[k].cls+'">'
         +'<div class="plan-alloc-bucket-h">'+meta[k].label+(n?' · '+n+' path'+(n===1?'':'s'):'')+'</div>'
         +'<div class="plan-alloc-bucket-grid">'
@@ -1031,8 +1009,7 @@
         +'<div><div class="k">'+(after?'New predicted':'Predicted')+'</div><div class="v">'+(n?fmt(pred):'—')+'</div>'
           +(after?deltaHtml(pred,b.pred_before):'')+'</div>'
         +'<div><div class="k">'+(after?'New achievable':'Achievable')+'</div><div class="v">'+(n?fmt(achv):'—')+'</div>'
-          +(after?deltaHtml(achv, capAchv(b.achv_before,b.pred_before)):'')
-          +(over?'<div class="muted" style="font-size:10px">simulate '+fmt(sim)+' · over predicted '+fmt(over)+'</div>':'')+'</div>'
+          +(after?deltaHtml(achv, b.achv_before):'')+'</div>'
         +'<div><div class="k">DT</div><div class="v">'+(n?fmt(dt):'—')+'</div>'
           +(after?deltaHtml(dt,b.dt_before):'')+'</div>'
         +'</div>'
@@ -1083,10 +1060,8 @@
       }
       const rpOld=ratePair(r.pred_before, tripsOld, dtOld);
       const rpNew=ratePair(r.pred_after, tripsNew, dtNew);
-      const sim=r.achv_sim!=null?r.achv_sim:r.achv_after;
-      const achvNew=capAchv(r.achv_after, r.pred_after);
-      const achvOld=capAchv(r.achv_before, r.pred_before);
-      const over=(sim!=null&&r.pred_after>0)?Math.max(0,sim-r.pred_after):0;
+      const achvNew=r.achv_sim!=null?r.achv_sim:r.achv_after;
+      const achvOld=r.achv_before;
       const p=r.prio, prio=p===1?'P1':p===2?'P2':p===3?'P3':'';
       const mat=String(r.material||'—')+(r.otype?' · '+r.otype:'');
       return '<tr data-prio="'+(p||9)+'" data-dt="'+(dtNew||0)+'"'
@@ -1107,8 +1082,7 @@
           tpdOld:rpOld.tpd, tpdNew:rpNew.tpd,
           wpdOld:rpOld.wpd, wpdNew:rpNew.wpd,
           predOld:r.pred_before, predNew:r.pred_after,
-          achvOld:achvOld, achvNew:achvNew,
-          sim:sim, over:over
+          achvOld:achvOld, achvNew:achvNew
         })
         +'</tr>';
     }).join('');
@@ -1128,10 +1102,27 @@
     const neu=alloc.new||{};
     const fleet=alloc.fleet||{};
     const hero=q('plan-alloc-hero');
+    const afterT=(function(){
+      let pred=0,achv=0,tgt=0;
+      (alloc.rows||[]).forEach(r=>{
+        if(!(r.dt_after>0))return;
+        pred+=r.pred_after||0; tgt+=r.target||0;
+        achv+=(r.achv_sim!=null?r.achv_sim:r.achv_after)||0;
+      });
+      return {pred,achv,tgt};
+    })();
+    const beforeT=(function(){
+      let pred=0,achv=0;
+      (alloc.rows||[]).forEach(r=>{
+        pred+=r.pred_before||0;
+        achv+=r.achv_before||0;
+      });
+      return {pred,achv};
+    })();
     if(hero)hero.innerHTML=allocHeroHtml({
-      hzLab:hzLab, newPred:neu.pred, newAchv:neu.achv,
-      oldPred:old.pred, oldAchv:old.achv, newDt:fleet.after,
-      target:neu.target||(alloc.goals||{}).total
+      hzLab:hzLab, newPred:afterT.pred||neu.pred, newAchv:afterT.achv||neu.achv,
+      oldPred:beforeT.pred||old.pred, oldAchv:beforeT.achv||old.achv, newDt:fleet.after,
+      target:afterT.tgt||neu.target||(alloc.goals||{}).total
     });
     const buck=q('plan-alloc-buckets');
     if(buck){buck.className='';buck.innerHTML=packedCardsHtml(alloc.buckets||{}, 'after', alloc.fleet);}

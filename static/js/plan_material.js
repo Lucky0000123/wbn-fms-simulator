@@ -36,6 +36,7 @@
     const m=_all.find(x=>x.code===code)||_route.find(x=>x.code===code);
     return m?m.name:code;
   }
+  window.planMaterialLabel=labelFor;
 
   function renderSelect(){
     const s=q('plan-material');if(!s)return;
@@ -116,30 +117,19 @@
     };
   }
 
-  // Plan table → small tag after the path name. computePlan rebuilds the rows
-  // with innerHTML, so re-decorate after every run (rows are matched by the
-  // path + contractor text, not index, because skipped rows shift positions).
+  // Plan table now paints the tag itself (Material column). Keep this as a
+  // fallback for any row that still has a code but no tag (old markup).
   function decorateRows(){
     const rows=q('plan-rows');if(!rows)return;
     const draft=(typeof _planDraft!=="undefined"?_planDraft:{});
     Array.from(rows.querySelectorAll('tr')).forEach(tr=>{
-      const tds=tr.querySelectorAll('td');
-      if(tds.length<2||tr.querySelector('.plan-mat-tag'))return;
-      const pathTxt=(tds[0].querySelector('b')||{}).textContent||'';
-      const contTxt=(tds[1].textContent||'').trim();
-      const hit=Object.keys(draft).find(id=>{
-        const r=draft[id];
-        return r&&r.material&&r.key===pathTxt.replace(' → ','>')&&(r.contractor||'')===contTxt;
-      });
-      if(!hit)return;
-      const code=draft[hit].material;
-      // Editable in place (owner 2026-08-13: "give us option to edit the
-      // plan"): click the tag, pick a new material from the same census list.
-      tds[0].insertAdjacentHTML('beforeend',
-        ' <span class="plan-mat-tag" data-matid="'+esc(hit)+'" title="'+esc(labelFor(code))
-        +' — label only, does not change the model · click to change" style="font-size:9px;'
-        +'padding:1px 5px;border-radius:8px;background:rgba(96,165,250,.16);color:#93c5fd;'
-        +'vertical-align:middle;cursor:pointer">'+esc(code)+' ▾</span>');
+      if(tr.querySelector('.plan-mat-tag'))return;
+      const a=tr.querySelector('a[onclick^="planRemove"]');
+      const mm=a&&/planRemove\('([^']*)'\)/.exec(a.getAttribute('onclick')||'');
+      const id=mm&&mm[1];
+      if(!id||!draft[id]||!draft[id].material)return;
+      const cell=tr.querySelector('.plan-hold-mat');
+      if(cell)cell.innerHTML=(typeof planHoldMatHtml==='function')?planHoldMatHtml(id):esc(draft[id].material);
     });
   }
 
@@ -151,15 +141,27 @@
     const draft=(typeof _planDraft!=="undefined"?_planDraft:{});
     if(!draft[id])return;
     const cur=draft[id].material;
+    const curOt=String(draft[id].otype||'').toUpperCase();
     const sel=document.createElement('select');
-    sel.style.cssText='font-size:9px;background:transparent;color:#93c5fd;border:none;outline:none';
-    sel.innerHTML=_all.map(m=>'<option value="'+esc(m.code)+'"'+(m.code===cur?' selected':'')
-      +'>'+esc(m.name)+' ('+esc(m.code)+')</option>').join('');
+    sel.className='plan-mat-select';
+    sel.innerHTML=_all.map(m=>{
+      if(m.code==='LIM'){
+        const tosSel=cur==='LIM'&&curOt!=='LD'?' selected':'';
+        const ldSel=cur==='LIM'&&curOt==='LD'?' selected':'';
+        return '<option value="LIM:TOS"'+tosSel+'>Limonite TOS (LIM)</option>'
+          +'<option value="LIM:LD"'+ldSel+'>Limonite LD (LIM)</option>';
+      }
+      return '<option value="'+esc(m.code)+'"'+(m.code===cur&&m.code!=='LIM'?' selected':'')
+        +'>'+esc(m.name)+' ('+esc(m.code)+')</option>';
+    }).join('');
     tag.textContent='';
     tag.appendChild(sel);
     sel.focus();
     const commit=()=>{
-      if(draft[id])draft[id].material=sel.value;
+      let code=sel.value,ot='';
+      if(code.indexOf('LIM:')===0){ot=code.slice(4);code='LIM';}
+      if(typeof planApplyMaterial==='function')planApplyMaterial(id,code,ot);
+      else if(draft[id])draft[id].material=code;
       if(typeof computePlan==='function')computePlan();  // re-render restores tag form
     };
     sel.addEventListener('change',commit);

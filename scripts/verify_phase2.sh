@@ -513,6 +513,23 @@ chk $? "J69  GPS-first flow + posted-limit ribbon" "see: python test_flow_gps_sp
 $PY test_tab1_leftovers.py >/dev/null 2>&1
 chk $? "J70  Tab1 map/constraints/trucks/V/C/GPS-window" "see: python test_tab1_leftovers.py"
 
+# J71 — the A · Capacity card must quote the ENGINE's shortfall. It used to divide
+# by predict.wmt (the Step 1 path model), so a fleet past the loader ceiling read
+# "Shortfall 0 t · vs planned 120%" while /api/simulate was clipping 16,012 t and
+# raising two capacity_warnings — the availability override (J55) in another card.
+# Driven through the browser with a real predict.wmt for the J52 reason: a gate that
+# builds its own input cannot catch a bug in what the real caller sends. Asserts BOTH
+# directions (0 t inside the envelope, the engine's clip past it), because a
+# one-sided check is passed by hardcoding a constant. Mutation-tested 2026-08-12:
+# restoring predict.wmt as the denominator fails 5 of its assertions.
+# Needs playwright and a live server; skipped rather than failed where either is
+# absent, like J56.
+if $PY -c "import playwright" >/dev/null 2>&1 \
+   && [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 $BASE/health)" = "200" ]; then
+$PY scripts/check_capacity_card.py >/dev/null 2>&1
+chk $? "J71  capacity card quotes the engine, not the path model" "see: python scripts/check_capacity_card.py"
+fi
+
 
 echo
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"

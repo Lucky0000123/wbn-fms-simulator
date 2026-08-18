@@ -27,9 +27,11 @@
   const fmt=n=>Number(n||0).toLocaleString('en-GB',{maximumFractionDigits:0});
 
   function note(){
-    const cap=q('plan-scenario-estimate');
+    const frozen=typeof window.planAllocFrozen==='function'&&window.planAllocFrozen();
+    const cap=frozen?(q('plan-alloc-holding')||q('plan-alloc-wrap')):q('plan-scenario-estimate');
     if(!cap)return;
-    let slot=q('plan-basis-note');
+    const slotId=frozen?'plan-alloc-basis-note':'plan-basis-note';
+    let slot=q(slotId);
     const sim=(typeof _planLastSim!=='undefined')&&_planLastSim;
     const pred=(typeof planPredictTotals==='function')?planPredictTotals():null;
     if(!sim||!sim.summary||!pred||!(pred.wmt>0)){if(slot)slot.innerHTML='';return;}
@@ -42,7 +44,7 @@
     const block=cap.querySelector('.plan-cap-block')||cap;
     if(!slot||!cap.contains(slot)){
       slot=document.createElement('div');
-      slot.id='plan-basis-note';
+      slot.id=slotId;
       block.appendChild(slot);
     }
     slot.innerHTML=

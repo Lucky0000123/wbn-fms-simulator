@@ -478,6 +478,307 @@ The engine now accepts and ignores the key, echoing
 `summary.availability_override_ignored`. Do not re-add the parameter, the UI
 control, or the multiplier.
 
+## The capacity card — the same defect, found again in another card
+
+Gate `J71`, `scripts/check_capacity_card.py`. Found 2026-08-12 by the owner
+looking at a screenshot and saying the panel "looks fake".
+
+`planRenderOutcomes` in `plan_scenario.js` built the A · Capacity card from
+`predict.wmt` — the Step 1 **path model** — instead of the engine's
+`summary.planned_production_t`. On 800 DT (TF>FENI KM0, RIM) + 560 DT
+(TF>FENI KM15, PPP) the engine clipped **16,012 t** and returned two
+`capacity_warnings` naming TF's demonstrated 1140 trips/shift ceiling against
+1478 asked. The card displayed **"Shortfall 0 t · vs planned 120%"** and the
+warnings were never rendered at all.
+
+Two things made it invisible:
+
+- **The denominator was the wrong model.** The path model declines sub-linearly
+  with DT (measured decline, 30% floor) while the engine's planned tonnage grows
+  linearly, so `achievable / path_model` *rises* as the fleet grows. The metric
+  was anti-correlated with reality in exactly the regime it exists to warn about:
+  the more absurd the plan, the healthier the card looked.
+- **`Math.max(0, …)` on a difference.** Clamping turned "the path model came in
+  below simulate" into a clean zero. A clamped difference cannot tell you it went
+  negative — the same shape as the `implied_travel_time_min` residual, which is
+  now the third time a hidden negative has cost a round here.
+
+Measured, both directions:
+
+| Total DT | engine planned | achievable | engine shortfall | card before | card now |
+|---|---|---|---|---|---|
+| 173 (observed max) | 8,899 | 8,899 | 0 t | 0 t · 100% | 0 t · 100% |
+| 1360 | 70,065 | 54,053 | **16,012 t** | **0 t · 120%** | 16,012 t · 77% |
+
+The fix is one rule: **a card headed "simulate" is denominated in simulate.** The
+path-model comparison already had its own home in the REALISM card. `B ·
+Production & capacity` keeps `predict.wmt` and is *not* the same bug — its tiles
+say "Planned (path model)" and "Achievable / planned" on their face.
+
+`J71` asserts both directions on purpose. A gate demanding only "shortfall > 0"
+is passed by hardcoding one; a gate demanding only "== 0" is passed by deleting
+the feature. It drives the real `planRenderOutcomes()` with a real `/api/simulate`
+response **and a real `predict.wmt`**, for the J52 reason: a gate that builds its
+own input cannot catch a bug in what the real caller sends.
+
+> **When two panels quote the same concept from different models, one of them is
+> going to be read as a verdict.** Give the concept one owner, or label both on
+> their face. This is the third instance — the 0.85 availability override and the
+> three shift-length controls were the first two.
+
+## Sticky plan nav — Save is reachable from any scroll depth
+
+`#plan-navbar` at the top of `#tab-plan`, `position:sticky`. Section jump links
+(Plan / Run / Fleet / Road / History) with a scrollspy, the plan date and a live
+`N paths · X DT` summary, and the Save/Load controls.
+
+**The Save buttons were MOVED here, not copied.** They previously sat in the date
+card, which scrolls away — by the time a plan was worth saving, the button was off
+screen. The element ids (`plan-save-btn`, `plan-load-btn`, `plan-save-status`) are
+unchanged so `planRefreshSaveButtons()` / `planSaveForDate()` needed no edit, and
+there is still exactly ONE Save button on the page. Do not add a second one: two
+controls for one concept is how the 0.85 availability override survived.
+
+`planNavSync()` is called from `planRefreshSaveButtons()`, which already fires on
+every draft change, so the summary cannot drift from the draft.
+
+Three things that are easy to get wrong here, all asserted in the browser rather
+than assumed:
+
+- **`position:sticky` dies silently** if any ancestor has `overflow:auto/hidden/
+  scroll` or a `transform`. There are none today; the check walks the ancestor
+  chain and fails if one appears.
+- **Jump targets need `scroll-margin-top`** (64px). Without it `block:'start'`
+  parks the section heading UNDER the sticky bar and the jump looks broken.
+- **At the bottom of the page the last section is the current one.** Before Run
+  scenario the Step 2 sub-blocks are hidden, the page is short, and clicking
+  "Run" scrolls as far as it can without Run's top ever reaching the bar — so a
+  naive scrollspy highlights the wrong entry and the link reads as broken.
+
+Sections not yet rendered (`offsetParent === null`) are skipped, so Road/History
+do not highlight before Run scenario has shown them.
+
+`planOpenSavedDate()` backs the "Saved…" picker; it sets the date and goes through
+`planDateChange()` rather than poking dependants, because that is what re-pulls
+conditions, analogues and the saved-plan probe.
+
+> Testing save writes real files to `data/saved_plans/`. Use a sentinel date and
+> `DELETE /api/plan/saved?date=…` afterwards — do not save over a real plan date.
+
+### Haul GPS days moved to the page foot — and what it nearly cost
+
+`#plan-sec-gps`, a collapsed `<details>` after the Step 2 card. It was in the
+topbar above Step 1, which contradicted "keep Plan Step 1 sparse": it is
+reference material and says so itself ("Does not change Step 1 WMT").
+
+**It is deliberately NOT inside the Insights section**, which is the obvious home.
+`plan-sec-insights` lives inside `#plan-scenario-panel`, which is `display:none`
+until Run scenario — putting it there made a previously always-available panel
+unreachable until you ran something. Caught by asserting `offsetParent !== null`
+on a fresh load; nothing errored, the panel was simply gone.
+
+> **Before moving a block, check what its new parent does to it.** A move is not
+> a no-op when the destination is conditionally hidden.
+
+The block still carries the **playback-truth disclosure** — the record that
+Playback has 0% haul-plate overlap and must never be used for haul V/C or
+analogue replay. Do not delete it while trimming the page.
+
+### The bias lens was orphaned by the section-A deletion — now re-homed
+
+Deleting A · Shift outcomes silently killed the ticket-calibrated companion.
+`plan-bias-lens` still rendered and still toggled, but its only consumer was
+`planBiasAdjustedAchievable()` at one call site inside the dead
+`planRenderOutcomes()`. No error: the checkbox just did nothing, and the −5.5%
+figure stopped being displayed anywhere while `test_plan_bias_playback_ml.py`
+kept passing on the backend helper.
+
+It now renders in **A · Production & capacity** (`#ps-kpi-ticket`), beside the raw
+Achievable and never replacing it. `planBiasAdjustedAchievable(raw, summary)`
+gained an optional summary so `psRender` can pass the response it is drawing —
+one ÷1.055 implementation, so the panels cannot drift on what "calibrated" means.
+
+> **Deleting a panel orphans its logic silently.** Two orphans came out of that
+> one deletion. When a container goes, grep the ids it held.
+
+## 2026-08-12 hard test — extreme-input QA, and the BPR penalty that came out
+
+Adversarial pass over `/api/simulate` and `planTripsPerDT` with extreme inputs.
+What it found, worst first.
+
+### The BPR quadratic made output COLLAPSE — reverted
+
+A volume-delay penalty briefly replaced the hard min in `planTripsPerDT`:
+
+```js
+const over=(nComb-nStar)/nStar;
+const served=capEff/(1+0.15*over*over);   // NOT a plateau
+```
+
+Measured on TF>FENI KM0 before the revert:
+
+| DT | frontend trips | frontend t | backend t | disagreement |
+|---|---|---|---|---|
+| 172 | 204.6 | 10,207 | 8,888 | 0.9× |
+| 800 | 68.5 | 3,419 | 41,339 | 12× |
+| 2000 | 11.5 | 572 | 53,819 | **94×** |
+
+Trips **peaked at 172 DT and fell without bound** — 2,000 trucks producing 5% of
+what 172 produce. Three reasons it had to go: it is non-monotonic (adding trucks
+destroys existing output); it disagreed with `/api/simulate` by up to 94× on the
+same plan, which is the two-models-one-question defect this repo has already paid
+for twice; and the `0.15` quadratic is not measured, while four independent tests
+here failed to find any queueing effect and the density effect is −4.8% across
+the extremes.
+
+**The half that was right is kept:** `capEff = dayTripsCap × min(1, rainScale)`.
+Without it, wet beat dry at over-saturation because rain cut demand and therefore
+the penalty. Mud degrades the road, so the ceiling scales with rain.
+
+> **The ceiling is measured; the shape of any decay past it is not.** Saturate at
+> the proven ceiling and stay silent about the rest. Extra trucks divide the same
+> demonstrated trips — they do not destroy them.
+
+### OPEN: the two models cap on DIFFERENT quantities (5.3× apart)
+
+Even after the revert, at saturation the frontend plateaus at 205 trips/shift and
+the backend at 1,140:
+
+- **frontend** caps per **path** — `dayTripsCap` 410 trips/day on TF>FENI KM0
+- **backend** caps per **point** — TF loading point p99, shared across its paths
+  (verified: an 800+560 two-path plan counted both against one 1140 ceiling)
+
+Both are real; the true limit is the **minimum**, so the backend is missing a
+path-level cap. Note also that `dayTripsCap` is a *demonstrated maximum, not a
+capacity* — no day exceeded 410 trips, but no day ever tried more than 180 trucks
+either. Treating "the most we ever did" as "the most we can do" is a modelling
+choice, not a measurement.
+
+### Input validation — none
+
+| Input | Result |
+|---|---|
+| `n_trucks: -5` | **−258 t** produced |
+| `shift_minutes: -720` | **−5,167 t**, flagged as "likely OVER-states trips" |
+| `n_trucks: NaN` / `inf` | HTTP **500**, raw Python error leaked |
+| `shift_minutes: null` | HTTP **500** |
+| `n_trucks: 2.7` / `True` / `"800"` | silently coerced; 2.7 trucks → 3.0 trips |
+| `weather: 123` / `"monsoon"` | accepted silently |
+
+### OPEN: no achievable-trips field exists
+
+At 10,000 DT the engine returns `total_trips = 10,945.6` while achievable tonnage
+implies **1,140 trips**. Tonnes are clipped, trips never are. Only consumed as
+`demand` today (correctly labelled in `plan_assessment.js`), so it is a gap rather
+than a live bug — but the next consumer will get it wrong.
+
+### OPEN: an unseen route returns MORE tonnage than a real one
+
+`NOWHERE>NOPLACE` → 9,304 t against TF>FENI KM0's 5,167 t at the same DT, because
+the site-wide median cycle (378 min) beats the real one (658 min). The engine is
+honest — `basis.cycle_time` says "estimated from the site-wide median (route and
+source unseen)" — but `basis.effective_cycle` is an **empty string**, and a typo
+buys you a better answer. **Not reachable from the UI**: all 36 routes offered by
+`/api/simulate/options` have measured cycles. API-contract gap only.
+
+### Clean under stress
+
+Backend monotonicity (1→5000 DT, 0 violations), conservation across 3 paths
+(exact to 0.00 t), idempotence, duplicate-row handling, shared-point clipping and
+weather-invariance of simulate tonnes all pass. Split-vs-combined (800 vs 400+400)
+differs by 1 t — rounding only.
+
+### A · Shift outcomes was deleted; J71 moved with it
+
+The owner removed the whole A block and renumbered B→A. That deleted the
+*defective* capacity card; the honest implementation was always `psRender()` in
+`plan_simulator.js`, which computes `planned − achievable` from the engine and
+renders `capacity_warnings`. The two-definitions problem is resolved by
+elimination. `J71` now targets `psRender` / `#ps-foot` / `#ps-kpi-*`;
+re-mutation-tested 2026-08-12 (path-model denominator → 3 failures).
+
+**`planRenderOutcomes` in `plan_scenario.js` is now dead code** — its container
+`#plan-scenario-outcomes` no longer exists, so it returns at its first line.
+Delete it or restore the container; do not leave a third capacity renderer lying
+around for someone to wire back up.
+
+## Section C · Fleet efficiency — it is ceiling-sharing, NOT congestion
+
+The Efficiency toggle on the Fleet-sensitivity chart (`plan_sensitivity.js`,
+`_metric`) plots what share of a path's own free rate each truck still gets.
+Read the label carefully before extending it, because the obvious reading is
+wrong here.
+
+**There is no congestion term active on these paths.** `dayB` is *positive*
+(+0.00228 on TF>FENI KM0, +0.00093 on TF>FENI KM15), so `planTripsPerDT` sets
+`slope = 0`. Efficiency falls for one reason only: `dayTripsCap`, the most trips
+any single day ever produced, is fixed, so extra trucks divide the same trips.
+That is consistent with the rest of the project — adding trucks does not
+measurably slow the cycle — and with the day-level rebuild, which found the old
+row-level slope was a contractor-mix artifact.
+
+Efficiency is multiplicative and every factor is **already returned** by
+`planTripsPerDT`; nothing is re-derived in the chart:
+
+```
+efficiency = rateFactor(rain · other traffic · shared section · contractor)
+           × satFactor(demonstrated day ceiling)
+           × wbFactor(weighbridge throughput)
+```
+
+The baseline is recovered as `sf = shiftFree/daily` then `rawRate × sf`, rather
+than calling `planShiftFactor()` again — one convention, one source.
+
+Measured 2026-08-12, TF>FENI KM0 with RIM:
+
+| DT | pre-sat rate | satFactor | wbFactor | efficiency |
+|---|---|---|---|---|
+| 170 | 2.379/day | 1.000 | 1.000 | 100% |
+| 176 | 2.379/day | 0.979 | 1.000 | 98% |
+| 800 | 2.379/day | 0.234 | 1.000 | **23%** |
+
+**The kink moves with the contractor.** `planContractorFactor(RIM) = 1.085`
+lifts 2.193 → 2.379/day, so the ceiling binds at 410/2.379 = **172 DT**, not the
+410/2.193 = 187 you get from `dayRate` alone. A more productive contractor hits
+the ceiling *sooner*. Do not compute the kink from `dayRate`; take it from the
+swept `satFactor`.
+
+> **Efficiency is a ratio to each path's OWN baseline, so it does not rank
+> paths.** KM15 at 41% still moves 1.06 trips/truck/day; KM0 at 100% moves 2.19.
+> A planner optimising the percentage picks the wrong haul. Every efficiency
+> readout carries the absolute trips/DT for exactly the reason the capacity card
+> above went wrong — a bare ratio gets read as a verdict.
+
+Road-only/foreign rows get **no** efficiency curve: they are a flat measured
+rate with no free baseline to divide by, and a fabricated 100% would be worse
+than an absent line.
+
+The `.plan-sens-gran` class is now used by **two** button groups (metric and
+scale). Both handlers are scoped — `button[data-g]` and `button[data-m]` — because
+an unscoped `.plan-sens-gran button` selector strips the other group's `.on`.
+
+### OPEN (2026-08-12): the REALISM history band is a projection, not history
+
+Found while auditing the card above; **not yet fixed**, no gate. The card reads
+"History P25–P75 · similar-fleet days". Neither half is true at large DT:
+
+- `ensemble_from_analogues()` in `plan_analogues.py` is explicit in its own
+  docstring — *"Median / P25 / P75 forecast from matched days' trips/DT × planned
+  DT"* — and ships a `note` field saying so. **The backend is honest; the UI label
+  is not.** The `note` is never rendered.
+- At 1360 DT the band shows 74,138–79,610 t. The matched days are **99–158 DT**
+  and each moved **6,000–9,800 t**. The band is those days' trips/DT multiplied by
+  1360, with no decline and no ceiling.
+- So the band is **linear in DT** while "Your plan" (path model) is not. At large
+  fleets the band mechanically towers over the plan, which makes **"Below history
+  band" a foregone conclusion** rather than a finding.
+
+`_score_candidate` does rank by *closest* fleet, but closest is not similar: with
+an observed max of 67 DT on this path, the nearest day to 1360 is still ~20×
+smaller. **Ranking by proximity does not license a "similar" label** — say what
+the comparison is (history's rate at your DT) or show the matched days' actual DT
+next to it.
+
 ## The weather input — audited, and my own flag was wrong
 
 Full write-up: `reports/weather_input_analysis.md`. Gate `J57`.
@@ -685,6 +986,27 @@ claiming it from another machine takes the public endpoint over.
 **mirror only** — see the top of this file and the comment above it in
 `scripts/verify_phase2.sh`.
 
+`J71` was added 2026-08-12 (capacity card) and has not yet been scored in a full
+run — see below. `TOTAL` is derived at runtime, so the denominator moves itself.
+
+### 2026-08-12 — do not run the harness against a server someone is using
+
+A run scored **68/70**, and **both failures were artifacts of the run itself**, not
+defects. Read this before chasing either:
+
+- **F23 `/api/retrain` returned 409, not a crash.** `prediction_api.py` serialises
+  retrains (`if not _RETRAIN_LOCK.acquire(blocking=False)` → *"a retrain is already
+  running"*). One was in flight from a browser session; the harness POSTed into it.
+  The endpoint was healthy — it returned 200 minutes later and finished in 155.4 s
+  (`random_forest R²=0.5854, MAE=0.4411, 3816 rows`).
+- **J57 was collateral.** It ran while that retrain was rewriting `data/`.
+  Standalone, `python test_weather_path.py` exits 0 with every route passing.
+
+The server log is what settles it: `POST /api/predict` and `/api/plan/ai-advise`
+every few seconds throughout the run. **F23 asserts `== "200"` and so reads a 409
+as a dead endpoint.** Either run the harness against an idle server, or check the
+log before believing an F23 failure. Effective score that day was 70/70.
+
 ### 2026-08-07 audit — seven defects found and fixed, and what they teach
 
 - **Two "site" coordinates coexisted, both wrong** (fetch_weather.py southern
@@ -732,24 +1054,24 @@ preserve_stamp()` carries `generated_at` forward when nothing else changed, so
 - Forward planning and achievable tonnes belong on Plan Step 2 / `/api/simulate`; Capability Shift Road is for historical replay and illustration, not the planning estimate.
 - Keep the schematic chainage stick always visible with the map; Run should scroll both visuals into view so the user can watch what is playing.
 - Best past days / analogues: filter by selected contractor; rank nearby trip count first, then trips/DT; color wet vs dry; show a loading state while searching; omit “ops only / no haul GPS” caveats from that list. When a day is selected, show that day’s figures — do not label Jan–May season averages as that day’s DT/trips.
-- Keep Plan Step 1 sparse and space-efficient (date + rain in conditions, estimated output beside plan date, best-past-days under conditions in a compact scrollable grid); rainfall in conditions should move the Step 1 WMT estimate; show which model/factor produced the number.
-- On Run Scenario (Step 2), lead with estimated production and capacity with a professional loading state for A/B; defer road/GPS corridor block (C) until after the corridor run; hour-of-day charts must show which hour/argument is selected; prefer decision-oriented outcomes over repeating the same tables.
-- Optimize DT: per-row Accept (✕/✓) for suggested vs current DT (default keep current); fewer bulk option buttons; label the orange action “Finalize plan → refresh Production and capacity” (not “refresh B”); remove Save-plan-for-date from that optimize strip.
-- Shift outcomes: one clear plan-vs-history (P25–P75) row; label the road band “Road” (not “Jul GPS”); helper text that V/C means Volume/Capacity; hide Bottleneck/Do-next road-advisory fluff; keep planned WMT vs achievable/adjusted figures consistent across A and B — never average predict + simulate + history into one total.
+- Keep Plan Step 1 sparse: default haul Source **TF** / Destination **FENI KM0**; Day (not shift) is the default grain and must apply page-wide; date + rain in conditions; estimated output beside plan date; best-past-days collapsed behind a dropdown under conditions; collapse the 16-day Open-Meteo rain outlook under the forecast line and auto-fill rainfall mm when a day is chosen; Conditions and Add-haul-path cards stay compact; holding plan listed under the builder; rainfall moves Step 1 WMT. Road-only mode uses **IWIP / POSITION** contractors and measured non-plan locations (no WMT); highlight **+ Road-only paths** as adding average IWIP/Position rows for bridge load and road congestion. Estimate card: WMT stays clear at any width; warnings sit full-width below and never crush tonnage; do not show `est-warn` under plan-preview tonnage. No Auto-balance trucks strip — bridge-over-70% warning sits next to add/change WB.
+- On Run Scenario (Step 2), do **not** show an A · Shift outcomes block. Lettering is **A** Production & capacity, **B** Fleet sensitivity, **C** Road crowding by hour, **D** Full assessment, **E** Insights from history; lead with production/capacity and a professional loading state; defer the road/GPS corridor until after the corridor run; hour-of-day charts must show which hour is selected; prefer decision-oriented outcomes over repeating tables. Keep planned WMT vs achievable/adjusted consistent — never average predict + simulate + history into one total, and do not manually floor/min Prediction vs Achievable. Keep each engine's own number.
+- Plan-impacts: hide weighbridge status rows (Bridge load board owns that); keep ✦ AI analysis but never attribute or name the model underneath; use simple fleet-size language and drop the fleet-size row when AI already covers the same point.
 - Planning goal: best production with less congestion using the minimum required trucks — support edit-from-outcomes once verdicts exist.
+- Allocate DT as per priority (Plan Check capacity): leave original Production & capacity / Your plan frozen (unlock to edit DTs after a saved allocate). Separate New Allocation Plan underneath. Same contractor only — trucks never cross contractors. Size P1 SAP so Predicted sits at target (not well above); leftover same-contractor trucks go to P2 LIM-TOS, which MAY exceed target. P3 LIM-LD is first donor and leftover sink; if LD is dry, take from LIM-TOS (LIM may short). Do not fill P2 or dump extras onto LIM while any same-contractor P1 is still below Predicted target. Size SAP shortfall/surplus from Predicted vs target, not requiredDt inverse (requiredDt can read “already sized” while Predicted is still thousands short). When P1 is still short, drain P2/P3 to 0 DT (do not leave 1 truck to keep the path); drop 0-DT paths from the table. Keep tonnage/target on every path including LIM-LD. LIM-TOS vs LIM-LD to the same plant stay separate rows. Table: Target next to Predicted; P1/P2/P3 filters; hero is New predicted + New achievable + one Before/After line.
 
 ## Learned Workspace Facts
 
 - Simulate tonnes use **effective cycle** `(truck_shifts × 720) / trips`, not weigh-to-weigh predicted cycle (~77 min median). Confusing them overpredicts badly. Site median effective is ~389 min; consecutive start-to-start pairs ~240 min — do not conflate those two “240” stories.
 - `DEFAULT_AVAILABILITY = 1.0` for tonnage (J52 + J55). Downtime is already inside effective cycle; never re-add 0.85/0.80. Measured residual **+5.5%** is exposed as companion `ticket_calibrated_achievable_t` (÷1.055, not primary) with Plan lens default ON. Do not “fix” via availability (×0.85 → −10.3%). Roster sizing may still use mechanical availability (~0.72) for fleet count only.
 - Congestion / road V/C, Jul+ corridor clock (`/api/plan/corridor-hours`, `/api/plan/day-segments`, `/api/plan/gps-coverage`), congestion advice (`/api/plan/congestion-advice`), and shared-road DES-lite (`/api/plan/shared-flow`) are measured or advisory and must **never** modify simulate tonnes (J53); `basis.congestion_clips_tonnes` always false. Stick CSV refresh: `scripts/refresh_stick_from_archive.py` (also after `accumulate_gps`).
-- Point capacity is a **p99 hourly throughput lookup** (not ML). Shared-loader p99 can clip achievable tonnes — that is point capacity, not a congestion term in cycle. Dwell models: wet/dry are served; day/night may be computed but unused at serve. Dual-mode `_register` wraps **7** simulator endpoints (not “all APIs”).
-- Achievable tonnes / Plan Step 2 outcomes come from `/api/simulate`, never flow particles. Step 1 WMT uses path-response **main-cluster** `avgTr` (mid-60% trimmed mean of daily trips/DT, with P25–P75) × contractor `clamp(tripsPerDT/fleet, 0.5–1.5)` × rain; **simulate ignores contractor factors**. Rain may move Step 1 WMT; simulate tonnes stay weather-invariant (J57).
-- Capability Shift Road is illustration/replay; particles are not production. Flow speeds default to measured GPS; posted limits are overlay only. Disk snapshots (`cap_snapshot.json` / `pr_snapshot.json`) sit between memory and fixtures.
+- Point capacity is a **p99 hourly throughput lookup** (not ML). Shared-loader p99 can clip achievable tonnes — that is point capacity, not a congestion term in cycle. Dwell models: wet/dry are served; day/night may be computed but unused at serve. Dual-mode `_register` wraps **8** simulator endpoints (not “all APIs”) — counted 2026-08-12 at `simulator_api.py:1999-2006`; this said 7 until `weighbridge-by-path` was added.
+- Achievable tonnes / Plan Step 2 outcomes come from `/api/simulate`, never flow particles. Step 1 WMT uses path-response **main-cluster** `avgTr` (mid-60% trimmed mean of daily trips/DT, with P25–P75) × contractor `clamp(tripsPerDT/fleet, 0.5–1.5)` × rain; **simulate ignores contractor factors**. Rain may move Step 1 WMT; simulate tonnes stay weather-invariant (J57). Do not force Achievable to equal Prediction — they are two clocks (ticket path model vs effective cycle + loader clip).
+- Capability Shift Road is illustration/replay; particles are not production. Flow speeds default to measured GPS; posted limits are overlay only. Offline API payloads live in `fixtures/`; models, GPS archive, snapshots, and saved plans live in `data/` (disk snapshots `cap_snapshot.json` / `pr_snapshot.json` sit between memory and fixtures).
 - **DB roles:** `WBN_DATABASE` = ops truth; `FMS_DB` = location. Haul GPS (`FMS_CONGESTION_SEG` / `FMS_GPS_Historical`) from **2026-07-15** only. Playback Feb+ is HRM/support (**0%** haul plate overlap) — never for haul V·C or analogue replay; `/api/plan/playback-truth` documents that. Grow haul history with `scripts/accumulate_gps.py` (cron 07:00/19:00); `FMS_EQUIPMENTS.plateNumber` joins weighbridge.
 - Capability defaults `2026-01-01` → `2026-05-31` (peak). Jul GPS V/C is struggle-season illustration only. Plan analogues (`/api/plan/analogues`) match contractor; rank trips then trips/DT. HRM impact on trips/DT is ~0 (r≈0.0006) — keep excluded.
 - **Peak road proxy:** `/api/plan/peak-road-proxy` — Jan–May section DT/trips from weighbridge path-days (ops pressure). `speeds_kmh` is always null. Not Playback and must not be presented as a selected analogue day’s averages.
-- Shift length calibrated at **720 min** (~98.5% of shifts); other lengths raise `shift_minutes_extrapolated` (J60). Holding plans save locally via `/api/plan/saved` → `data/saved_plans/{date}.json`.
+- Shift length calibrated at **720 min** (~98.5% of shifts); other lengths raise `shift_minutes_extrapolated` (J60). Holding plans save locally via `/api/plan/saved` → `data/saved_plans/{date}.json`. A saved reallocation stores old + new allocation, predictions, targets, and DT moves (for monthly report); the on-screen Your plan stays the original.
 - Hide the Capability filter header (`.top`) on Plan and Production Simulator tabs; keep the sim-tab strip so users can leave Plan.
 - Never invent pre-2026-07-15 haul speeds from Playback; path-response main-cluster trips/DT will sit below a single best past day by design (trimmed mean, not the peak day).
 

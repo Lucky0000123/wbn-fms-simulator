@@ -169,16 +169,32 @@
   // When a path is added, snapshot the weighbridges chosen for it; show them as
   // editable chips under that path's row so the planner can see/remove per path.
   // plan.js stores no weighbridges per path, so we keep our own map keyed by the
-  // same id it uses (contractor|src>dst) and wrap its two globals at runtime —
+  // same id it uses (contractor|src>dst, plus |LIM|TOS / |LIM|LD when both
+  // origin types go to the same plant) and wrap its two globals at runtime —
   // its source stays untouched.
   let _pathWb = {};
+
+  window.planWbRekey=function(from,to){
+    if(!from||!to||from===to)return;
+    if(_pathWb[from]&&!_pathWb[to]){
+      _pathWb[to]=_pathWb[from];
+      delete _pathWb[from];
+    }
+  };
 
   function snapshotAddedPath(){
     const s = (el('plan-src') || {}).value || '', d = (el('plan-dst') || {}).value || '';
     if (!s || !d) return;
     let name = '—';
     try { if (typeof planContractor === 'function'){ const c = planContractor(); if (c && c.name) name = c.name; } } catch (e) {}
-    const id = name + '|' + s + '>' + d;
+    const key = s + '>' + d;
+    let foreign = false;
+    try { foreign = typeof planForeignOn === 'function' && planForeignOn(); } catch (e) {}
+    const mat = ((el('plan-material') || {}).value || '').trim();
+    const ot = ((el('plan-otype') || {}).value || '').trim();
+    const id = (typeof planDraftSlotId === 'function')
+      ? planDraftSlotId(name, key, { material: mat, otype: ot, foreign: foreign })
+      : (name + '|' + key + (foreign ? '|road' : ''));
     if (typeof _planDraft !== 'undefined' && _planDraft[id]){
       // Carry the bridge NUMBER picked in the top panel for this path. The
       // alternates list is the FULL site grid, annotated with history where
@@ -317,8 +333,6 @@
       const next = tr.nextSibling;
       if (next && next.className === 'pwb-row') return;   // already injected
       const { byWb, cap } = _lastUtil || bridgeUtil();
-      const colFor = u => u >= 1 ? '#ef4444' : u >= 0.7 ? '#f59e0b' : '#22c55e';
-      const bgFor  = u => u >= 1 ? 'rgba(239,68,68,.16)' : u >= 0.7 ? 'rgba(245,158,11,.16)' : 'rgba(34,197,94,.14)';
       const assigned = [...pw.sel].map(wb => {
         const rec = byWb[wb] || { trips: 0, paths: [], rho: 0, waitMin: 0 };
         const u = rec.rho || 0;
@@ -329,44 +343,48 @@
           ? ` · shared by ${rec.paths.length} paths` : '';
         const advice = u >= 1 ? ' · OVERLOADED — add a second bridge or move trips'
           : u >= 0.7 ? ' · heavy — consider a second bridge' : '';
-        return `<span class="pwb-chip" data-pwid="${escH(mm[1])}" data-wb="${escH(wb)}"`
-          + ` title="WB ${escH(wb)} · ${Math.round(rec.trips)} trips assigned (${Math.round(100 * u)}% of ${Math.round(cap)}) · ${waitTxt}${sharedWith}${advice} · click to unassign"`
-          + ` style="cursor:pointer;display:inline-block;margin:1px 4px 1px 0;padding:1px 8px;border-radius:11px;font-weight:600;`
-          + `border:1px solid ${colFor(u)};background:${bgFor(u)};color:var(--txt)">`
-          + `WB ${escH(wb)} <span style="opacity:.85">${Math.round(100 * u)}%${wait > 5 && wait !== Infinity ? ' · ' + Math.round(wait) + "'" : wait === Infinity ? ' · ∞' : ''}</span>`
-          + (u >= 1 ? ' ⛔' : u >= 0.7 || rec.paths.length > 1 ? ' ⚠' : '') + `</span>`;
+        const lvl = u >= 1 ? 'over' : u >= 0.7 ? 'heavy' : 'ok';
+        const waitBit = wait === Infinity ? ' · ∞'
+          : wait > 5 ? ` · ${Math.round(wait)} min` : '';
+        return `<span class="pwb-chip pwb-chip--${lvl}" data-pwid="${escH(mm[1])}" data-wb="${escH(wb)}"`
+          + ` title="WB ${escH(wb)} · ${Math.round(rec.trips)} trips assigned (${Math.round(100 * u)}% of ${Math.round(cap)}) · ${waitTxt}${sharedWith}${advice} · click to unassign">`
+          + `<b>WB ${escH(wb)}</b> <span class="pwb-chip-u">${Math.round(100 * u)}%${waitBit}</span></span>`;
       }).join('');
       const alternates = pw.open
         ? pw.bridges.filter(b => !pw.sel.has(b.wb)).map(b => {
-            const hint = b.sharePct != null ? ` <span style="opacity:.6">${pct(b.sharePct)}</span>` : '';
+            const hint = b.sharePct != null ? ` <span class="pwb-chip-hint">${pct(b.sharePct)}</span>` : '';
             const t = b.sharePct != null
               ? `assign WB ${escH(b.wb)} (${pct(b.sharePct)} of this route's historical weighs)`
               : `assign WB ${escH(b.wb)} (no history on this route — your choice)`;
-            return `<span class="pwb-chip" data-pwid="${escH(mm[1])}" data-wb="${escH(b.wb)}"`
-            + ` title="${t}"`
-            + ` style="cursor:pointer;display:inline-block;margin:1px 3px 1px 0;padding:1px 7px;border-radius:11px;`
-            + `border:1px dashed var(--line);color:var(--muted)">+ ${escH(b.wb)}${hint}</span>`;
+            return `<span class="pwb-chip pwb-chip--alt" data-pwid="${escH(mm[1])}" data-wb="${escH(b.wb)}"`
+            + ` title="${t}">+ WB ${escH(b.wb)}${hint}</span>`;
           }).join('')
         : '';
       const pathHeavy = [...pw.sel].some(wb => ((byWb[wb] || {}).rho || 0) >= 0.7);
       const toggle = pw.bridges.length > 1
-        ? `<span class="pwb-toggle" data-pwid="${escH(mm[1])}"`
-        + ` style="cursor:pointer;font-size:9.5px;color:var(--muted);text-decoration:underline dotted">`
-        + (pw.open ? 'hide' : 'add / change WB') + `</span>`
+        ? `<span class="pwb-toggle" data-pwid="${escH(mm[1])}">`
+        + (pw.open ? 'Hide' : 'Add / change') + `</span>`
         : '';
       const heavyWarn = pathHeavy
-        ? ` <span class="pwb-heavy-warn" style="color:#f59e0b;font-size:9.5px">⚠ a bridge is over 70% — balancing recommended</span>`
+        ? `<span class="pwb-heavy-warn">Over 70% — add another bridge</span>`
         : '';
       const sub = document.createElement('tr');
       sub.className = 'pwb-row';
-      sub.innerHTML = `<td></td><td colspan="8" style="font-size:10px;padding:0 0 7px">`
-        + `<span class="muted">WB:</span> ${assigned} ${alternates} ${toggle}${heavyWarn}</td>`;
+      sub.innerHTML = `<td colspan="7"><div class="pwb-bar">`
+        + `<span class="pwb-k">WB</span>`
+        + `<div class="pwb-chips">${assigned}${alternates}</div>`
+        + `${toggle}${heavyWarn}</div></td>`;
       tr.parentNode.insertBefore(sub, tr.nextSibling);
     });
     // Remove legacy Auto-balance strip if a previous session left it in the DOM.
     const strip = document.getElementById('pwb-balance-strip');
     if (strip && strip.parentNode) strip.parentNode.removeChild(strip);
     renderStressBoard();
+    if (typeof planLimitsMaybeOpen === 'function') {
+      const util = _lastUtil || {};
+      const bite = Object.keys(util.byWb || {}).some(wb => ((util.byWb[wb] || {}).rho || 0) >= 0.7);
+      if (bite) planLimitsMaybeOpen(true);
+    }
   }
   let _lastUtil = null;
 
@@ -484,6 +502,7 @@
     const _origAdd = planAddPath;
     planAddPath = function(){
       const r = _origAdd.apply(this, arguments);
+      if (typeof planAllocFrozen === 'function' && planAllocFrozen()) return r;
       try { snapshotAddedPath(); if (typeof computePlan === 'function') computePlan(); } catch (e) {}
       return r;
     };
@@ -556,6 +575,20 @@
         }
       });
       const r = _origLoad.apply(this, arguments);
+      if (typeof _planDraft !== 'undefined'){
+        Object.keys(_planDraft).forEach(id => {
+          if (_pathWb[id]) return;
+          const row = _planDraft[id];
+          if (!row) return;
+          const src = Object.keys(obj || {}).find(k => {
+            const p = obj[k];
+            return p && p.key === row.key && (p.contractor || '') === (row.contractor || '')
+              && (p.material || '') === (row.material || '')
+              && (p.otype || '') === (row.otype || '');
+          });
+          if (src && _pathWb[src]) window.planWbRekey(src, id);
+        });
+      }
       syncWbCount();
       return r;
     };
