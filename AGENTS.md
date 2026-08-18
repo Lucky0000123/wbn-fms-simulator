@@ -981,13 +981,51 @@ claiming it from another machine takes the public endpoint over.
 
 ## Score
 
-**70/70**, measured 2026-08-07 in database mode after the Plan-page audit
-(J64–J70 added since the 63/63 measurement of 2026-07-31). `G24` gates the
-**mirror only** — see the top of this file and the comment above it in
-`scripts/verify_phase2.sh`.
+**72/72**, measured 2026-08-18 with the server on :5055 (J71 capacity card and
+J72 scenario waterfall both scored). `G24` gates the **mirror only** — see the
+top of this file and the comment above it in `scripts/verify_phase2.sh`.
+`TOTAL` is derived at runtime, so the denominator moves itself.
 
-`J71` was added 2026-08-12 (capacity card) and has not yet been scored in a full
-run — see below. `TOTAL` is derived at runtime, so the denominator moves itself.
+## Mine-plan scenarios — same fleet, different allocation
+
+Gate `J72`, `scripts/check_scenarios.py`. Built 2026-08-18 from the owner's
+workbook `20260818 Mine Plna RKAB H2 SAP 5Mt + LIM 15 Mt For Simulator.xlsx`.
+
+`scenario_api.py` (`/api/scenarios` list · `/import` · `/<id>/allocate` ·
+`/compare`) + a card on `/monthly`. A **scenario** is pit × material monthly
+ROM targets (t/day) only. The **fleet is never part of a scenario**: every
+scenario runs on the yearly matrix's DT per contractor per month. Allocation
+is the owner's priority waterfall:
+
+  P1 SAP to target → P2 LIM-TOS to target → **every** free DT to P3 LIM-LD
+  (Tofu limonite dump → Huafei) at demonstrated t/DT/day, cumulative cap
+  **8,000,000 t** (`LIM_LD_CAP_T`).
+
+Hard rules the gate pins in BOTH directions (the J71 lesson):
+
+- **DT conservation per contractor**: used + free == pool, every month. A
+  spare SMA truck can cover TOFU/KRENE work of the other contractor
+  (lending) but trucks are never created, destroyed, or averaged.
+- **BLB is RIM-only** — in the data, in the allocator, and in the lending
+  path (lending never moves trucks *into* a RIM-only pit).
+- Impossible targets **starve P3 to zero and report deficits** — the
+  waterfall never invents trucks to save a scenario.
+- **S1 is derived live** from `yearly_matrix.json`. It has no file, cannot
+  be imported over, cannot be deleted. `data/scenarios/S1.json` existing at
+  all is a gate failure. S2/S3/... live in `data/scenarios/{id}.json`.
+
+The importer reads the workbook's **long-format** `Mine Plan DB` sheet
+(Scenario | Month | Nb Days | Mining Pit | Material | wmt ROM) — a different
+shape from the wide month-column matrix `_parse_yearly_matrix` reads. wmt ROM
+÷ Nb Days becomes t/day. Months a scenario omits (August) fall back to S1
+targets, and the UI says so on the detail summary.
+
+Measured result (why the feature exists): S1 reaches **5.45 Mt** LIM-LD —
+short of the 8 Mt sales limit by 2.55 Mt, with September at literally zero
+free DT. S2 and S3 both **hit the 8 Mt cap before December ends** (~9.5 Mt
+uncapped capacity, ~790 DT spare in December), because they defer SAP
+tonnage out of Sept–Nov. App SAP totals reconcile to the workbook's own
+grand totals to +14 t / +19 t on ~6 Mt (rounding of t/day × days).
 
 ### 2026-08-12 — do not run the harness against a server someone is using
 
@@ -1074,4 +1112,3 @@ preserve_stamp()` carries `generated_at` forward when nothing else changed, so
 - Shift length calibrated at **720 min** (~98.5% of shifts); other lengths raise `shift_minutes_extrapolated` (J60). Holding plans save locally via `/api/plan/saved` → `data/saved_plans/{date}.json`. A saved reallocation stores old + new allocation, predictions, targets, and DT moves (for monthly report); the on-screen Your plan stays the original.
 - Hide the Capability filter header (`.top`) on Plan and Production Simulator tabs; keep the sim-tab strip so users can leave Plan.
 - Never invent pre-2026-07-15 haul speeds from Playback; path-response main-cluster trips/DT will sit below a single best past day by design (trimmed mean, not the peak day).
-
