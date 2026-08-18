@@ -172,6 +172,40 @@ if scens:
 if os.path.isfile(os.path.join(sa._SCEN_DIR, "S1.json")):
     check("no S1.json file may exist (S1 is always derived live)", False)
 
+print("\n=== the Excel export quotes the same numbers as the API ===")
+try:
+    from flask import Flask
+    from openpyxl import load_workbook
+    import io as _io
+    app = Flask(__name__)
+    app.register_blueprint(sa.bp)
+    c = app.test_client()
+    rv = c.get("/api/scenarios/export")
+    check("export returns an xlsx", rv.status_code == 200 and
+          rv.data[:2] == b"PK", rv.status_code)
+    if rv.status_code == 200:
+        wb = load_workbook(_io.BytesIO(rv.data))
+        api = c.get("/api/scenarios/compare").get_json()
+        ids = [s["id"] for s in api["scenarios"]]
+        check("one detail sheet per scenario + Compare",
+              wb.sheetnames == ["Compare"] + ids, wb.sheetnames)
+        totals = None
+        for row in wb["Compare"].iter_rows(values_only=True):
+            if row[0] == "Total":
+                totals = [v for v in row if isinstance(v, (int, float))]
+        expect = [s["total"]["ld_t_planned"] for s in api["scenarios"]]
+        check("Compare totals row == /api/scenarios/compare LD totals",
+              totals == expect, "%s vs %s" % (totals, expect))
+        # per-scenario sheet: every month carries its P3 LIM-LD row
+        for s in api["scenarios"]:
+            d = wb[s["id"]]
+            ld_rows = sum(1 for row in d.iter_rows(values_only=True)
+                          if row[3] == "LIM-LD" and row[1] == "P3")
+            check("%s sheet has a P3 LIM-LD row per month" % s["id"],
+                  ld_rows == len(s["months"]), "%d vs %d" % (ld_rows, len(s["months"])))
+except ImportError as e:
+    print("  SKIP export checks (%s)" % e)
+
 print()
 if FAILS:
     print("J72 FAILED: %d check(s). First: %s" % (len(FAILS), FAILS[0]))
