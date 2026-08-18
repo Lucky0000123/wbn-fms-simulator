@@ -146,6 +146,29 @@ if scens:
 check("garbage in -> clear error, not a crash",
       sa._parse_mine_plan_db([["nothing", "here"]], "x")[1] is not None)
 
+print("\n=== re-import of identical targets keeps its stamp (the J59 lesson) ===")
+if scens:
+    import copy
+    os.makedirs(sa._SCEN_DIR, exist_ok=True)
+    p9 = sa._scen_path("S9")
+    try:
+        sa._save_scenario(s9)
+        stamp1 = os.path.getmtime(p9)
+        blob1 = open(p9).read()
+        again = copy.deepcopy(s9)
+        again["source"] = "different-filename.xlsx"
+        again["loaded_at"] = "2099-01-01T00:00:00Z"
+        sa._save_scenario(again)
+        check("identical targets -> file byte-identical, stamp kept",
+              open(p9).read() == blob1)
+        changed = copy.deepcopy(s9)
+        changed["targets"][0]["wmt_day"] += 1
+        sa._save_scenario(changed)
+        check("changed targets -> file IS rewritten", open(p9).read() != blob1)
+    finally:
+        if os.path.isfile(p9):
+            os.remove(p9)
+
 if os.path.isfile(os.path.join(sa._SCEN_DIR, "S1.json")):
     check("no S1.json file may exist (S1 is always derived live)", False)
 

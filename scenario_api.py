@@ -142,6 +142,17 @@ def _load_scenario(sid):
 def _save_scenario(sc):
     os.makedirs(_SCEN_DIR, exist_ok=True)
     p = _scen_path(sc["id"])
+    # The J59 lesson: identical targets keep their stamp. A re-import of the
+    # same workbook must not churn source/loaded_at, so git status stays a
+    # usable signal.
+    if os.path.isfile(p):
+        try:
+            with open(p, encoding="utf-8") as fh:
+                old = json.load(fh)
+            if old.get("targets") == sc.get("targets"):
+                return
+        except (OSError, ValueError):
+            pass
     tmp = p + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(sc, fh, indent=1)
