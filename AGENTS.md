@@ -992,7 +992,7 @@ Gate `J72`, `scripts/check_scenarios.py`. Built 2026-08-18 from the owner's
 workbook `20260818 Mine Plna RKAB H2 SAP 5Mt + LIM 15 Mt For Simulator.xlsx`.
 
 `scenario_api.py` (`/api/scenarios` list · `/import` · `/<id>/allocate` ·
-`/compare`) + a card on `/monthly`. A **scenario** is pit × material monthly
+`/compare` · `/export` Excel) + a card on `/monthly`. A **scenario** is pit × material monthly
 ROM targets (t/day) only. The **fleet is never part of a scenario**: every
 scenario runs on the yearly matrix's DT per contractor per month. Allocation
 is the owner's priority waterfall:
