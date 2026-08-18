@@ -475,3 +475,140 @@ def api_scenarios_compare():
         out.append(res)
     return jsonify({"ok": True, "scenarios": out, "errors": errors,
                     "ld_cap": LIM_LD_CAP_T})
+
+
+_MONN = {8: "Aug", 9: "Sept", 10: "Oct", 11: "Nov", 12: "Dec"}
+
+
+@bp.route("/api/scenarios/export")
+def api_scenarios_export():
+    """One workbook: Compare sheet + a full-allocation sheet per scenario."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    from flask import send_file
+
+    ids = ["S1"] + _scenario_ids()
+    results = []
+    for sid in ids:
+        sc = _load_scenario(sid)
+        if not sc:
+            continue
+        res, err = waterfall(sc)
+        if not err:
+            results.append(res)
+    if not results:
+        return jsonify({"ok": False, "error": "no scenarios to export"}), 404
+
+    bold = Font(bold=True)
+    head_fill = PatternFill("solid", fgColor="1F2937")
+    head_font = Font(bold=True, color="FFFFFF")
+    num = "#,##0"
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Compare"
+    ws.append(["Mine-plan scenarios - same fleet, different allocation"])
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.append(["Waterfall: P1 SAP -> P2 LIM-TOS -> P3 LIM-LD (Tofu dump -> Huafei), "
+               "cap %s t. BLB accepts RIM only. Fleet = yearly matrix DT per contractor."
+               % format(LIM_LD_CAP_T, ",")])
+    ws.append([])
+    hdr = ["", ""]
+    for r in results:
+        hdr += [r["label"], "", "", ""]
+    ws.append(hdr)
+    sub = ["Month", "Fleet (RIM+SMA)"]
+    for _ in results:
+        sub += ["P1 SAP DT", "P2 LIM-TOS DT", "P3 free DT", "LIM-LD t"]
+    ws.append(sub)
+    for c in range(1, len(sub) + 1):
+        ws.cell(row=5, column=c).fill = head_fill
+        ws.cell(row=5, column=c).font = head_font
+        top = ws.cell(row=4, column=c)
+        if top.value:
+            top.font = bold
+    for i, mo0 in enumerate(results[0]["months"]):
+        m = mo0["month"]
+        pool = mo0["pool"]
+        row = [_MONN.get(m, m), "%d (%d+%d)" % (sum(pool.values()),
+                                                pool.get("RIM", 0), pool.get("SMA", 0))]
+        for r in results:
+            mo = r["months"][i] if i < len(r["months"]) else {}
+            row += [round(mo.get("dt_p1", 0)), round(mo.get("dt_p2", 0)),
+                    round(mo.get("dt_p3", 0)),
+                    mo.get("ld_t_month_planned", 0)]
+        ws.append(row)
+    tot = ["Total", ""]
+    for r in results:
+        t = r["total"]
+        tot += ["", "", "", t["ld_t_planned"]]
+    ws.append(tot)
+    ws.cell(row=ws.max_row, column=1).font = bold
+    ws.append([])
+    for label, key in (("SAP moved (t)", "sap_t"), ("LIM-TOS moved (t)", "limtos_t"),
+                       ("LIM-LD planned (t)", "ld_t_planned"),
+                       ("LIM-LD uncapped capacity (t)", "ld_t_capacity"),
+                       ("8 Mt cap reached", "ld_cap_reached"),
+                       ("Short of cap by (t)", "ld_shortfall_t")):
+        row = [label, ""]
+        for r in results:
+            v = r["total"][key]
+            row += ["", "", "", ("YES" if v else "no") if key == "ld_cap_reached" else v]
+        ws.append(row)
+        ws.cell(row=ws.max_row, column=1).font = bold
+    for row in ws.iter_rows(min_row=6):
+        for cell in row:
+            if isinstance(cell.value, (int, float)) and abs(cell.value) >= 1000:
+                cell.number_format = num
+    ws.column_dimensions["A"].width = 26
+    ws.column_dimensions["B"].width = 16
+    for c in range(3, len(sub) + 1):
+        ws.column_dimensions[get_column_letter(c)].width = 13
+
+    for r in results:
+        d = wb.create_sheet(r["id"][:28])
+        d.append([r["label"] + " - full DT allocation"])
+        d["A1"].font = Font(bold=True, size=13)
+        if r["months_filled_from_s1"]:
+            d.append(["Months taken from S1 (not in this scenario's file): "
+                      + ", ".join(_MONN.get(m, str(m)) for m in r["months_filled_from_s1"])])
+        d.append([])
+        cols = ["Month", "Priority", "Pit", "Material", "Destination", "Contractor",
+                "t/day", "DT", "t/DT/day"]
+        d.append(cols)
+        hr = d.max_row
+        for c in range(1, len(cols) + 1):
+            d.cell(row=hr, column=c).fill = head_fill
+            d.cell(row=hr, column=c).font = head_font
+        for mo in r["months"]:
+            mn = _MONN.get(mo["month"], mo["month"])
+            for a in mo["rows"]:
+                d.append([mn, "P%d" % a["prio"], a["pit"],
+                          a["mat"] + ("-" + a["otype"] if a["otype"] not in ("", "TOS") else ""),
+                          a["dest"], a["contractor"], a["wmt_day"], a["dt"],
+                          a["rate_t_dt_day"]])
+            free_txt = " + ".join("%s %d" % (c, round(v)) for c, v in mo["free"].items())
+            d.append([mn, "P3", "TOFU", "LIM-LD", "HUAFEI", free_txt,
+                      mo["ld_t_day_capacity"], round(mo["dt_p3"], 1), ""])
+            d.cell(row=d.max_row, column=2).font = bold
+            for l in mo["lends"]:
+                d.append([mn, "", "", "lend", "", "%s -> %s work" % (l["from"], l["to_work_of"]),
+                          "", l["dt"], l["note"]])
+            for df in mo["deficit"]:
+                d.append([mn, "", df["pit"], df["mat"], "DEFICIT", "", df.get("wmt_day") or "",
+                          "", df["why"]])
+        for row in d.iter_rows(min_row=hr + 1):
+            for cell in row:
+                if isinstance(cell.value, (int, float)) and abs(cell.value) >= 1000:
+                    cell.number_format = num
+        widths = [8, 8, 8, 10, 14, 22, 11, 9, 40]
+        for c, w in enumerate(widths, start=1):
+            d.column_dimensions[get_column_letter(c)].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    name = "scenario_compare_%s.xlsx" % datetime.utcnow().strftime("%Y%m%d")
+    return send_file(buf, as_attachment=True, download_name=name,
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
