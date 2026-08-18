@@ -530,6 +530,15 @@ $PY scripts/check_capacity_card.py >/dev/null 2>&1
 chk $? "J71  capacity card quotes the engine, not the path model" "see: python scripts/check_capacity_card.py"
 fi
 
+# J72 — mine-plan scenarios (S1/S2/S3): the priority waterfall conserves the
+# fleet per contractor (P1 SAP + P2 LIM-TOS + P3 free == the matrix pool),
+# never puts a non-RIM truck at BLB, and honours the 8 Mt LIM-LD cap in BOTH
+# directions (capped months say so; impossible targets starve P3 to zero and
+# report deficits instead of inventing trucks). S1 is derived live from the
+# yearly matrix and may never exist as a file.
+$PY scripts/check_scenarios.py >/dev/null 2>&1
+chk $? "J72  scenario waterfall conserves fleet, BLB=RIM, 8 Mt cap" "see: python scripts/check_scenarios.py"
+
 
 echo
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"

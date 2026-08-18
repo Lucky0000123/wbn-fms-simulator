@@ -33,6 +33,10 @@ app.register_blueprint(simulator_api.bp)      # the real, editable model endpoin
 import monthly_api
 app.register_blueprint(monthly_api.bp)
 
+# Mine-plan scenarios (S1/S2/S3...) + priority waterfall (/api/scenarios/*).
+import scenario_api
+app.register_blueprint(scenario_api.bp)
+
 # Phase 2 prediction service (/api/predict, /api/retrain, /api/model-info).
 # Optional: if scikit-learn or pandas isn't installed the simulator still runs,
 # it just has no ML predictions.

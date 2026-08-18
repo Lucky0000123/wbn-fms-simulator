@@ -117,6 +117,24 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
   </div>
 </div>
 
+<div class="card" id="mo-scen-card">
+  <h2>Mine-plan scenarios <span class="tag" style="background:rgba(96,165,250,.15);color:#60a5fa">same fleet · different allocation</span></h2>
+  <p class="muted" style="margin:4px 0 10px">
+    Each scenario is a set of pit × material monthly targets. The fleet never changes — the yearly matrix's DT per contractor per month.
+    Allocation is the priority waterfall: <b>P1 SAP</b> until every SAP target is met, then <b>P2 LIM-TOS</b>, then every free truck hauls
+    <b>P3 LIM-LD</b> (Tofu limonite dump → Huafei), capped at <b>8,000,000 t</b>. BLB accepts <b>RIM only</b>. S1 is the live plan and is never overwritten.
+  </p>
+  <div class="row">
+    <input type="file" id="mo-scen-file" accept=".xlsx,.xlsm">
+    <button onclick="scenImport()">Import scenarios from mine-plan Excel</button>
+    <span class="status" id="mo-scen-status"></span>
+  </div>
+  <div class="mat-grid" id="mo-scen-summary" style="margin-top:12px"></div>
+  <div style="overflow:auto;margin-top:8px"><table id="mo-scen-table"></table></div>
+  <div class="chart" id="mo-scen-chart" style="margin-top:14px;height:340px"></div>
+  <div id="mo-scen-detail" style="margin-top:8px"></div>
+</div>
+
 <div class="card" id="mo-board">
   <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
     <h2 style="margin:0">Year board</h2>
@@ -997,6 +1015,81 @@ $('mo-months').addEventListener('change',e=>{if(e.target.value){moPickMonth(e.ta
 $('mo-year').value=String(new Date().getFullYear());
 $('mo-month').value=(()=>{const d=new Date();d.setMonth(d.getMonth()+1);return d.toISOString().slice(0,7);})();
 refreshSaved();refreshMonths();loadBoard();moYearlyRefresh();
+
+/* ── Mine-plan scenarios: import + waterfall compare ─────────────────── */
+const MFMT=n=>n==null?'—':Number(n).toLocaleString('en-US');
+const MONN={8:'Aug',9:'Sept',10:'Oct',11:'Nov',12:'Dec'};
+
+async function scenImport(){
+  const f=$('mo-scen-file').files[0], st=$('mo-scen-status');
+  if(!f){st.textContent='pick the mine-plan .xlsx first';return;}
+  st.textContent='importing…';
+  const body=new FormData(); body.append('file',f);
+  const r=await fetch('/api/scenarios/import',{method:'POST',body}).then(x=>x.json()).catch(e=>({error:String(e)}));
+  if(!r.ok){st.textContent='✗ '+(r.error||'import failed');return;}
+  st.textContent='✓ imported '+r.imported.join(', ')+(r.skipped_s1?' (S1 in file ignored — the live plan is S1)':'');
+  scenRefresh();
+}
+
+async function scenRefresh(){
+  const r=await fetch('/api/scenarios/compare').then(x=>x.json()).catch(()=>null);
+  const card=$('mo-scen-card');
+  if(!r||!r.ok||!r.scenarios||!r.scenarios.length){$('mo-scen-summary').innerHTML='';return;}
+  const scs=r.scenarios, cap=r.ld_cap;
+  // summary cards: one per scenario, LD attainment front and centre
+  $('mo-scen-summary').innerHTML=scs.map(s=>{
+    const t=s.total, pct=cap?Math.round(100*t.ld_t_planned/cap):null;
+    const cls=t.ld_cap_reached?'ok':(pct>=85?'warn':'er');
+    return `<div class="mat-card"><h3>${s.label}</h3>
+      <div class="cov ${cls}">${pct==null?'—':pct+'%'}</div>
+      <div class="pair"><span>LIM-LD vs 8 Mt cap</span><b>${MFMT(t.ld_t_planned)} t</b></div>
+      <div class="pair"><span>uncapped capacity</span><b>${MFMT(t.ld_t_capacity)} t</b></div>
+      <div class="pair"><span>SAP moved</span><b>${MFMT(t.sap_t)} t</b></div>
+      <div class="pair"><span>LIM-TOS moved</span><b>${MFMT(t.limtos_t)} t</b></div>
+      ${t.ld_cap_reached?'<div class="pair"><span style="color:var(--ok)">8 Mt cap reached — trucks to spare</span></div>':
+        `<div class="pair"><span style="color:var(--er)">short of the cap by</span><b>${MFMT(t.ld_shortfall_t)} t</b></div>`}
+      ${s.violations&&s.violations.length?`<div class="pair"><span style="color:var(--er)">BLB≠RIM: ${s.violations.length}</span></div>`:''}
+    </div>`;}).join('');
+  // month table: DT split per priority for every scenario side by side
+  let h='<tr><th>Month</th><th>Fleet (RIM+SMA)</th>'+scs.map(s=>`<th colspan="4">${s.label}<br><span class="muted" style="font-weight:400">P1 SAP · P2 LIM-TOS · P3 free DT · LIM-LD t</span></th>`).join('')+'</tr>';
+  const months=scs[0].months.map(m=>m.month);
+  months.forEach((mn,i)=>{
+    const pool=scs[0].months[i].pool;
+    h+=`<tr><td>${MONN[mn]||mn}</td><td>${MFMT((pool.RIM||0)+(pool.SMA||0))} <span class="muted">(${MFMT(pool.RIM||0)}+${MFMT(pool.SMA||0)})</span></td>`;
+    scs.forEach(s=>{const mo=s.months[i]||{};
+      h+=`<td>${MFMT(Math.round(mo.dt_p1))}</td><td>${MFMT(Math.round(mo.dt_p2))}</td><td><b>${MFMT(Math.round(mo.dt_p3))}</b></td><td>${MFMT(mo.ld_t_month_planned)}${mo.ld_capped?' <span class="pill ok">cap</span>':''}</td>`;});
+    h+='</tr>';});
+  h+='<tr style="font-weight:700"><td>Total</td><td></td>'+scs.map(s=>`<td></td><td></td><td></td><td>${MFMT(s.total.ld_t_planned)}</td>`).join('')+'</tr>';
+  $('mo-scen-table').innerHTML=h;
+  // chart: monthly LIM-LD per scenario + cumulative vs cap
+  if(window.echarts){
+    const el=$('mo-scen-chart'); const ch=echarts.init(el,'dark');
+    const cums=scs.map(s=>{let c=0;return s.months.map(m=>Math.round(c+=m.ld_t_month_planned));});
+    ch.setOption({backgroundColor:'transparent',
+      title:{text:'LIM-LD (Tofu dump → Huafei) by scenario',textStyle:{fontSize:13}},
+      tooltip:{trigger:'axis'},legend:{top:24},
+      grid:{top:60,left:70,right:70,bottom:30},
+      xAxis:{type:'category',data:months.map(m=>MONN[m]||m)},
+      yAxis:[{type:'value',name:'t / month'},{type:'value',name:'cumulative t',max:Math.max(cap*1.05,...cums.flat())}],
+      series:[...scs.map((s,i)=>({name:s.label,type:'bar',data:s.months.map(m=>m.ld_t_month_planned)})),
+              ...scs.map((s,i)=>({name:s.label+' cumulative',type:'line',yAxisIndex:1,data:cums[i],symbolSize:5})),
+              {name:'8 Mt cap',type:'line',yAxisIndex:1,data:months.map(()=>cap),lineStyle:{type:'dashed',color:'#ef4444'},symbol:'none'}]});
+  }
+  // per-scenario allocation detail (collapsible)
+  $('mo-scen-detail').innerHTML=scs.map(s=>{
+    let rows='';
+    s.months.forEach(mo=>{
+      (mo.rows||[]).forEach(a=>{rows+=`<tr><td>${MONN[mo.month]}</td><td>P${a.prio}</td><td>${a.pit}</td><td>${a.mat}${a.otype&&a.otype!=='TOS'?'-'+a.otype:''}</td><td>${a.dest}</td><td>${a.contractor}</td><td>${MFMT(a.wmt_day)}</td><td>${a.dt}</td><td>${MFMT(a.rate_t_dt_day)}</td></tr>`;});
+      rows+=`<tr style="color:var(--muted)"><td>${MONN[mo.month]}</td><td>P3</td><td>TOFU</td><td>LIM-LD</td><td>HUAFEI</td><td>${Object.entries(mo.free).map(([c,v])=>c+' '+Math.round(v)).join(' + ')}</td><td>${MFMT(mo.ld_t_day_capacity)}</td><td><b>${Math.round(mo.dt_p3)}</b></td><td></td></tr>`;
+      (mo.lends||[]).forEach(l=>{rows+=`<tr style="color:#60a5fa"><td>${MONN[mo.month]}</td><td colspan="8">↔ ${l.dt} DT: ${l.note}</td></tr>`;});
+      (mo.deficit||[]).forEach(d=>{rows+=`<tr style="color:var(--er)"><td>${MONN[mo.month]}</td><td colspan="8">⚠ ${d.pit} ${d.mat}: ${d.why}${d.wmt_day?' ('+MFMT(d.wmt_day)+' t/day)':''}</td></tr>`;});
+    });
+    return `<details style="margin-top:6px"><summary class="muted" style="cursor:pointer">${s.label} — full DT allocation${s.months_filled_from_s1.length?' · '+s.months_filled_from_s1.map(m=>MONN[m]).join(', ')+' taken from S1':''}</summary>
+      <div style="max-height:420px;overflow:auto;margin-top:8px"><table>
+      <tr><th>Month</th><th>Prio</th><th>Pit</th><th>Material</th><th>Destination</th><th>Contractor</th><th>t/day</th><th>DT</th><th>t/DT/day</th></tr>${rows}</table></div></details>`;
+  }).join('');
+}
+scenRefresh();
 </script>
 </body>
 </html>
