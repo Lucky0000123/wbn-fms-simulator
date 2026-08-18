@@ -469,6 +469,10 @@
                   <span class="k">Other traffic</span>
                   <span class="v"><input id="plan-other-trips" type="number" min="0" step="10" value="0" oninput="planOtherManualEdit()"><em id="plan-other-src" class="plan-other-src"></em></span>
                 </label>
+                <label class="plan-cond-metric" title="Measured over 538,586 truck-shifts: 98.5% are exactly 12.0 h (720 min). Data supports 8–12 h (480–720).">
+                  <span class="k">Shift</span>
+                  <span class="v"><input id="ps-shift" type="number" min="480" max="720" step="30" value="720" onchange="psShiftChanged()"><em>min · <b id="plan-hours-display">12</b> h · 98.5% of 538,586 shifts are 720</em></span>
+                </label>
               </div>
               <div id="plan-rain-suggest" class="plan-rain-suggest"></div>
               <details class="plan-limits-details" id="plan-limits-details" open>
@@ -481,8 +485,6 @@
                 <div id="plan-wb-stress" class="plan-wb-stress" aria-live="polite"></div>
               </details>
               <input id="plan-hours" type="hidden" value="12">
-              <input id="ps-shift" type="hidden" value="720">
-              <span id="plan-hours-display" style="display:none" aria-hidden="true">12</span>
               <select id="ps-weather" style="display:none" aria-hidden="true"><option value="dry" selected>Dry</option><option value="wet">Wet</option></select>
               <div class="effkpis" id="plan-kpis" style="display:none"></div>
             </div>
