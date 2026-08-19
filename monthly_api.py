@@ -2420,7 +2420,9 @@ def _year_alloc_totals(cards):
 
 def _year_cards(year, day=None):
     """Month cards for the year board and the year Excel download.
-    day=N picks that day-of-month's saved plan (scenario convention)."""
+    day=N picks that day-of-month's saved plan (scenario convention), and a
+    month with NO save on that day is dropped entirely - no target, no old
+    predicted plan (owner, 2026-08-19: August belongs to Scenario 1 only)."""
     yearly = _load_yearly()
     mnums = set(int(m) for m in (yearly or {}).get("months") or [])
     if os.path.isdir(_MONTH_DIR):
@@ -2434,6 +2436,17 @@ def _year_cards(year, day=None):
                     mnums.add(int(f[5:7]))
         except OSError:
             pass
+    if day is not None:
+        with_day = set()
+        if os.path.isdir(_SAVED_DIR):
+            try:
+                for f in os.listdir(_SAVED_DIR):
+                    m = re.fullmatch(r"%s-(0[1-9]|1[0-2])-%02d\.json" % (year, int(day)), f)
+                    if m:
+                        with_day.add(int(m.group(1)))
+            except OSError:
+                pass
+        mnums &= with_day
     cards = []
     for mnum in sorted(mnums):
         month = "%s-%02d" % (year, mnum)
