@@ -1415,7 +1415,83 @@
       const after=crows.reduce((a,x)=>a+x.r.dt,0);
       if(Math.abs(after-before)>0.01)movesTxt.push('⚠ '+cont+' fleet drift '+Math.round(after-before)+' DT');
     });
-    rows.forEach(({r})=>{
+
+    // ── Cross-contractor rescue (owner, 2026-08-19) ─────────────────────
+    // "If SMA trucks finished and we still have LIM-TOS to move, use RIM
+    // trucks for the pending tonnage as a new plan." Trucks NEVER change
+    // owner: the short route gains the OTHER contractor's row (a new path
+    // slot), fed from that contractor's own P3/LD leftovers. One hard wall:
+    // SMA (or anyone) cannot enter BLB - BLB is RIM-only.
+    (function crossRescue(){
+      const d=draft();
+      const all=Object.keys(d).map(id=>({id,r:d[id]})).filter(x=>x.r&&!x.r.foreign);
+      const shorts=all.filter(x=>{
+        if(prioOf(x.r)!==2||!(x.r.targetWmt>0))return false;
+        const p=predDayFor(x.id,x.r);
+        return p!=null&&p<x.r.targetWmt*0.985;
+      });
+      shorts.forEach(rec=>{
+        const srcPit=String(rec.r.key||'').split('>')[0];
+        let missing=rec.r.targetWmt-(predDayFor(rec.id,rec.r)||0);
+        if(missing<=0)return;
+        const donors=all.filter(x=>prioOf(x.r)===3&&x.r.contractor!==rec.r.contractor&&x.r.dt>0
+          &&!(srcPit==='BLB'&&String(x.r.contractor).toUpperCase()!=='RIM'));
+        donors.forEach(don=>{
+          if(missing<=0)return;
+          const helperId=(typeof planDraftSlotId==='function')
+            ?planDraftSlotId(don.r.contractor,rec.r.key,{material:'LIM',otype:'TOS'})
+            :don.r.contractor+'|'+rec.r.key+'|LIM|TOS';
+          let helper=d[helperId];
+          if(!helper){
+            helper={key:rec.r.key,dt:0,contractor:don.r.contractor,
+              source:rec.r.source||srcPit,dest:rec.r.dest||String(rec.r.key||'').split('>')[1],
+              material:'LIM',otype:'TOS',targetWmt:0,_targetManual:true,
+              _preAlloc:{dt:0,pred:0,achv:0,achv_sim:0}};
+            d[helperId]=helper;
+            all.push({id:helperId,r:helper});
+          }
+          const hx={id:helperId,r:helper};
+          // add donor trucks one at a time until the pending tonnage is covered
+          let took=0;
+          while(missing>0&&don.r.dt>0){
+            don.r.dt-=1;helper.dt+=1;took+=1;
+            const hp=predDayFor(helperId,helper)||0;
+            const rp=predDayFor(rec.id,rec.r)||0;
+            missing=rec.r.targetWmt-rp-hp;
+          }
+          if(took>0){
+            // Helper carries NO target of its own: the tonnage belongs to the
+            // short row's target, and a second target would double-count the
+            // LIM-TOS bucket (35,333 would read as 42,328). Its contribution
+            // shows in Predicted and in the moves log.
+            helper.targetWmt=0;
+            moved+=took;
+            _allocMoves.push({contractor:don.r.contractor+'→'+rec.r.contractor+' work',trucks:took,
+              from:don.r.key,from_mat:don.r.material||'',from_otype:don.r.otype||'',
+              to:rec.r.key,to_mat:'LIM',to_otype:'TOS',
+              tag:'cross-contractor rescue: '+don.r.contractor+' LD covers '+rec.r.contractor+' LIM-TOS',
+              reason:'cross-contractor rescue',same_origin:false,dropped:don.r.dt===0});
+            movesTxt.push(don.r.contractor+' '+took+' DT: '+don.r.key+' → '+rec.r.key
+              +' (cross-contractor rescue — '+don.r.contractor+' hauls '+rec.r.contractor
+              +'\u2019s pending LIM-TOS'+(don.r.dt===0?' · LD path dropped':'')+')');
+          }
+        });
+        const finalShort=rec.r.targetWmt
+          -(predDayFor(rec.id,rec.r)||0)
+          -all.filter(x=>x.r.material==='LIM'&&x.r.otype==='TOS'&&x.r.key===rec.r.key&&x.id!==rec.id)
+              .reduce((a,x)=>a+(predDayFor(x.id,x.r)||0),0);
+        if(finalShort>rec.r.targetWmt*0.015){
+          movesTxt.push('⚠ LIM-TOS still short '+fmt(Math.round(finalShort))+' t/day on '+rec.r.key
+            +' even after cross-contractor rescue — no LD trucks left anywhere');
+        }
+      });
+    })();
+    // Restore display DT to the pre-alloc plan; the allocation lives in
+    // _allocDt. Iterate the DRAFT, not `rows` - crossRescue may have added
+    // helper rows that must get the same treatment (their preAlloc dt is 0).
+    Object.keys(draft()).forEach(id=>{
+      const r=draft()[id];
+      if(!r||r.foreign)return;
       r._allocDt=r.dt;
       if(r._preAlloc&&r._preAlloc.dt!=null)r.dt=r._preAlloc.dt;
     });

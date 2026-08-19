@@ -47,14 +47,22 @@ function flowEnsureCapabilityHost(){
 function flowPlayLabel(){return '▶ Run';}
 // Analytic point on a route's loaded/empty loop. Rectangle fallback for
 // corridor-only hauls; polyline loop when a spur (BLB / HUAFEI / POS CBB) is involved.
+function flowKmFromStickX(x){
+  const s=_flowSim;
+  if(!s||!(s.roadRight>s.roadLeft)||!Number.isFinite(s.corridorKm)||!Number.isFinite(x))return null;
+  return s.corridorKm-(x-s.roadLeft)/(s.roadRight-s.roadLeft)*s.corridorKm;
+}
 function flowPointAt(r,phase){
   if(r.loop&&r.loop.length>1)return flowInterpLoop(r.loop,phase);
   const x1=r.sourceX,x2=r.destX,w=x2-x1,len=2*Math.abs(w)+60,d=(((phase%1)+1)%1)*len;
   const lo=Math.min(x1,x2),hi=Math.max(x1,x2),span=hi-lo;
-  if(d<span) return {x:x1+(w>=0?d:-d),y:180};
-  if(d<span+30) return {x:x2,y:180+(d-span)};
-  if(d<2*span+30) return {x:x2+(w>=0?-(d-span-30):(d-span-30)),y:210};
-  return {x:x1,y:210-(d-2*span-30)};
+  let x,y;
+  if(d<span){x=x1+(w>=0?d:-d);y=180;}
+  else if(d<span+30){x=x2;y=180+(d-span);}
+  else if(d<2*span+30){x=x2+(w>=0?-(d-span-30):(d-span-30));y=210;}
+  else{x=x1;y=210-(d-2*span-30);}
+  const km=flowKmFromStickX(x),ll=flowMapLatLngAt(km);
+  return {x,y,km,road:'CORRIDOR',roadKm:km,lat:ll&&ll[0],lng:ll&&ll[1],spur:false};
 }
 function flowNormName(x){return (x||'').trim().toUpperCase().replace(/\s+/g,' ');}
 function flowJoins(){
@@ -64,9 +72,9 @@ function flowJoins(){
   if(b.length)return b;
   // Survey fallback (haul_road_chainage_public.csv) so BLB paints before geometry fetch.
   return [
-    {id:'blb',road:'BLB',label:'BLB',aliases:['BLB'],joinKm:2.45,joinRoad:'CRD',joinLat:0.483061,joinLng:127.968764,endKm:19.825,endLat:0.540268,endLng:127.963169,lengthKm:17.375},
-    {id:'hfc',road:'HFC',label:'HUAFEI',aliases:['HUAFEI','HUAFEI.B01','HUAFEI.C01'],joinKm:5.5,joinRoad:'CRD',joinLat:0.482365,joinLng:127.949115,endKm:6.425,endLat:0.48646,endLng:127.943539,lengthKm:0.9},
-    {id:'cbb',road:'CBB',label:'POS CBB',aliases:['POS CBB','CBB','POSCBB'],joinKm:7.875,joinRoad:'KR',joinLat:0.47953,joinLng:127.936987,endKm:17.125,endLat:0.534598,endLng:127.955861,lengthKm:10.825}
+    {id:'blb',road:'BLB',label:'BLB',aliases:['BLB'],joinKm:2.45,joinRoad:'CRD',joinLat:0.483061,joinLng:127.968764,spurJoinKm:2.45,endKm:19.825,endLat:0.540268,endLng:127.963169,lengthKm:17.375},
+    {id:'hfc',road:'HFC',label:'HUAFEI',aliases:['HUAFEI','HUAFEI.B01','HUAFEI.C01'],joinKm:5.5,joinRoad:'CRD',joinLat:0.482365,joinLng:127.949115,spurJoinKm:5.525,endKm:6.425,endLat:0.48646,endLng:127.943539,lengthKm:0.9},
+    {id:'cbb',road:'CBB',label:'POS CBB',aliases:['POS CBB','CBB','POSCBB'],joinKm:7.875,joinRoad:'KR',joinLat:0.47953,joinLng:127.936987,spurJoinKm:6.3,endKm:17.125,endLat:0.534598,endLng:127.955861,lengthKm:10.825}
   ];
 }
 function flowLocate(name){
@@ -88,7 +96,8 @@ function flowLocate(name){
   return {
     kind:'spur',label:join.label,joinKm:join.joinKm,road:join.road,
     endKm:join.endKm,lat:join.endLat,lng:join.endLng,
-    joinLat:join.joinLat,joinLng:join.joinLng,lengthKm:join.lengthKm
+    joinLat:join.joinLat,joinLng:join.joinLng,lengthKm:join.lengthKm,
+    spurJoinKm:join.spurJoinKm
   };
 }
 function flowInterpLoop(loop,phase){
@@ -104,46 +113,112 @@ function flowInterpLoop(loop,phase){
   for(let i=0;i<segs.length;i++){
     const s=segs[i],t=Math.min(1,d/s.len);
     if(d<=s.len||i===segs.length-1){
-      const lat=(s.a.lat!=null&&s.b.lat!=null)?s.a.lat+(s.b.lat-s.a.lat)*t:null;
-      const lng=(s.a.lng!=null&&s.b.lng!=null)?s.a.lng+(s.b.lng-s.a.lng)*t:null;
+      const road=(s.a.road&&s.a.road===s.b.road)?s.a.road:s.a.road;
+      const roadKm=(Number.isFinite(s.a.roadKm)&&Number.isFinite(s.b.roadKm)&&s.a.road===s.b.road)
+        ?s.a.roadKm+(s.b.roadKm-s.a.roadKm)*t
+        :(Number.isFinite(s.a.roadKm)?s.a.roadKm:s.a.km);
+      // Map position is always a survey lookup at interpolated chainage — never a
+      // lat/lng lerp between loop vertices (that draws chords across the island).
+      const ll=flowLookupLL(road,roadKm);
       const km=(Number.isFinite(s.a.km)&&Number.isFinite(s.b.km))?s.a.km+(s.b.km-s.a.km)*t:s.a.km;
-      return {x:s.a.x+(s.b.x-s.a.x)*t,y:s.a.y+(s.b.y-s.a.y)*t,lat,lng,km,spur:!!(s.a.spur||s.b.spur)};
+      return {x:s.a.x+(s.b.x-s.a.x)*t,y:s.a.y+(s.b.y-s.a.y)*t,
+        lat:ll&&ll[0],lng:ll&&ll[1],km,road,roadKm,spur:!!(s.a.spur&&s.b.spur)};
     }
     d-=s.len;
   }
   const last=loop[loop.length-1];
-  return {x:last.x,y:last.y,lat:last.lat,lng:last.lng,km:last.km,spur:!!last.spur};
+  return {x:last.x,y:last.y,lat:last.lat,lng:last.lng,km:last.km,road:last.road,roadKm:last.roadKm,spur:!!last.spur};
 }
-function flowCorrLL(km){
-  const ll=flowMapLatLngAt(km);
-  return ll?{lat:ll[0],lng:ll[1]}:{lat:null,lng:null};
+function flowRoadPts(road){
+  const alias={TF:'TOFU',KRENE:'KR',KR:'KR',TOFU:'TOFU'};
+  const want=alias[(road||'').toUpperCase()]||(road||'').toUpperCase();
+  const roads=(_flowGeom&&_flowGeom.roads)||[];
+  const row=roads.find(x=>(x.road||'').toUpperCase()===want);
+  return ((row&&row.points)||[]).slice().sort((a,b)=>a.km-b.km);
 }
-function flowRouteVertices(r,X,lane){
-  const yL=180,yE=210,y=lane==='empty'?yE:yL;
-  const o=r.originLoc,d=r.destLoc;
-  const corr=(km,spur)=>{
-    const ll=flowCorrLL(km);
-    return {x:X(km),y,km,lat:ll.lat,lng:ll.lng,spur:!!spur};
-  };
-  const spurPt=(loc,atJoin)=>{
-    const h=Math.max(44,Math.min(220,(loc.lengthKm||8)*11));
-    if(atJoin){
-      const ll={lat:loc.joinLat,lng:loc.joinLng};
-      return {x:X(loc.joinKm),y,km:loc.joinKm,lat:ll.lat,lng:ll.lng,spur:false};
+function flowLatLngOnRoad(road,km){
+  if(!Number.isFinite(km))return null;
+  const name=(road||'').toUpperCase();
+  if(!name||name==='CORRIDOR'||name==='TOFU'||name==='KR'||name==='CRD'||name==='KRENE'||name==='TF'){
+    return flowMapLatLngAt(km);
+  }
+  const pts=flowRoadPts(name);
+  if(pts.length<2)return null;
+  if(km<=pts[0].km)return[pts[0].lat,pts[0].lng];
+  if(km>=pts[pts.length-1].km)return[pts[pts.length-1].lat,pts[pts.length-1].lng];
+  for(let i=1;i<pts.length;i++){
+    const a=pts[i-1],b=pts[i];
+    if(km>=a.km&&km<=b.km){
+      const t=(b.km===a.km)?0:(km-a.km)/(b.km-a.km);
+      return[a.lat+(b.lat-a.lat)*t,a.lng+(b.lng-a.lng)*t];
     }
-    return {x:X(loc.joinKm),y:y+(lane==='empty'?h:h),km:loc.endKm,lat:loc.lat,lng:loc.lng,spur:true,branchH:h};
-  };
+  }
+  return[pts[0].lat,pts[0].lng];
+}
+function flowLookupLL(road,km){
+  return flowLatLngOnRoad(road,km);
+}
+function flowSpurJoinKm(loc){
+  return Number.isFinite(loc.spurJoinKm)?loc.spurJoinKm:loc.joinKm;
+}
+function flowKmSamples(road,fromKm,toKm){
+  const lo=Math.min(fromKm,toKm),hi=Math.max(fromKm,toKm);
+  let kms=[];
+  if(!road||road==='CORRIDOR'){
+    kms=(_flowChain||[]).map(p=>p.km);
+  }else{
+    kms=flowRoadPts(road).map(p=>p.km);
+  }
+  kms=kms.filter(k=>Number.isFinite(k)&&k>=lo-1e-4&&k<=hi+1e-4);
+  kms.push(fromKm,toKm);
+  const uniq=[];
+  kms.sort((a,b)=>fromKm<=toKm?a-b:b-a).forEach(k=>{
+    if(!uniq.length||Math.abs(uniq[uniq.length-1]-k)>0.02)uniq.push(k);
+  });
+  if(uniq[0]!==fromKm)uniq.unshift(fromKm);
+  if(uniq[uniq.length-1]!==toKm)uniq.push(toKm);
+  return uniq;
+}
+function flowLoadedLegs(r){
+  const o=r.originLoc,d=r.destLoc,legs=[];
+  if(!o||!d)return legs;
+  if(o.kind==='spur'){
+    legs.push({kind:'spur',loc:o,fromKm:o.endKm,toKm:flowSpurJoinKm(o)});
+    legs.push({kind:'corridor',fromKm:o.joinKm,toKm:d.kind==='spur'?d.joinKm:d.km});
+  }else{
+    legs.push({kind:'corridor',fromKm:o.km,toKm:d.kind==='spur'?d.joinKm:d.km});
+  }
+  if(d.kind==='spur')legs.push({kind:'spur',loc:d,fromKm:flowSpurJoinKm(d),toKm:d.endKm});
+  return legs.filter(leg=>Number.isFinite(leg.fromKm)&&Number.isFinite(leg.toKm));
+}
+function flowVerticesFromLegs(legs,X,y){
   const pts=[];
-  if(o.kind==='spur'){pts.push(spurPt(o,false));pts.push(spurPt(o,true));}
-  else pts.push(corr(o.km,false));
-  if(d.kind==='spur'){pts.push(spurPt(d,true));pts.push(spurPt(d,false));}
-  else pts.push(corr(d.km,false));
+  legs.forEach((leg,li)=>{
+    const road=leg.kind==='spur'?leg.loc.road:'CORRIDOR';
+    const samples=flowKmSamples(road,leg.fromKm,leg.toKm);
+    samples.forEach((km,si)=>{
+      if(li>0&&si===0)return;
+      if(leg.kind==='corridor'){
+        const ll=flowMapLatLngAt(km);
+        pts.push({x:X(km),y,km,road:'CORRIDOR',roadKm:km,lat:ll&&ll[0],lng:ll&&ll[1],spur:false});
+      }else{
+        const loc=leg.loc,h=Math.max(44,Math.min(220,(loc.lengthKm||8)*11));
+        const pit=loc.endKm,join=flowSpurJoinKm(loc);
+        const t=(pit===join)?0:Math.abs(km-join)/Math.max(1e-6,Math.abs(pit-join));
+        const ll=flowLatLngOnRoad(loc.road,km);
+        pts.push({x:X(loc.joinKm),y:y+h*t,km:loc.joinKm,road:loc.road,roadKm:km,
+          lat:ll&&ll[0],lng:ll&&ll[1],spur:t>0.02});
+      }
+    });
+  });
   return pts;
 }
 function flowBuildRouteLoop(r,X){
-  const L=flowRouteVertices(r,X,'loaded');
-  const E=flowRouteVertices(r,X,'empty').slice().reverse();
-  if(L.length<2)return [];
+  const legs=flowLoadedLegs(r);
+  const L=flowVerticesFromLegs(legs,X,180);
+  const rev=legs.slice().reverse().map(leg=>({...leg,fromKm:leg.toKm,toKm:leg.fromKm}));
+  const E=flowVerticesFromLegs(rev,X,210);
+  if(L.length<2||!E.length)return L;
   const dump={...L[L.length-1],y:E[0].y};
   const load={...E[E.length-1],y:L[0].y};
   return L.concat([dump],E.slice(1),[load]);
@@ -157,7 +232,7 @@ function updateFlowSimulator(){
   const tint=Math.max(0,Math.min(1,1-_flowSimRatio));
   s.routes.forEach(r=>buildFlowMotion(r,s.inputs,Math.max(s.liveCongestion||0,tint*0.85)));
   const shiftTrips=_flowMode==='plan'?s.achievedTrips:s.dbTrips,completed=shiftTrips*s.hour/FLOW_SHIFT_HOURS;
-  const moving=[];s.routes.forEach((r,i)=>{for(let j=0;j<r.particles;j++){const id=i+'-'+j,el=flowQ('flow-p-'+id),depart=r.departures[j]||0;if(!el)continue;if(s.hour<depart){el.setAttribute('visibility','hidden');continue;}const active=Math.max(0,Math.min(FLOW_SHIFT_HOURS,s.hour-depart)),cycleTime=(r.startTimes[j]+(active?r.achievedTr*active/FLOW_SHIFT_HOURS:0))%1,phase=flowMotionPhase(r,cycleTime),pt=flowPointAt(r,phase);el.setAttribute('visibility','visible');moving.push({id,el,x:pt.x,y:pt.y,minX:r.corrX1!=null?r.corrX1:r.sourceX,maxX:r.corrX2!=null?r.corrX2:r.destX,weight:r.particleWeight,lat:pt.lat,lng:pt.lng,km:pt.km,spur:!!pt.spur});}});
+  const moving=[];s.routes.forEach((r,i)=>{for(let j=0;j<r.particles;j++){const id=i+'-'+j,el=flowQ('flow-p-'+id),depart=r.departures[j]||0;if(!el)continue;if(s.hour<depart){el.setAttribute('visibility','hidden');continue;}const active=Math.max(0,Math.min(FLOW_SHIFT_HOURS,s.hour-depart)),cycleTime=(r.startTimes[j]+(active?r.achievedTr*active/FLOW_SHIFT_HOURS:0))%1,phase=flowMotionPhase(r,cycleTime),pt=flowPointAt(r,phase);el.setAttribute('visibility','visible');moving.push({id,el,x:pt.x,y:pt.y,minX:r.corrX1!=null?r.corrX1:r.sourceX,maxX:r.corrX2!=null?r.corrX2:r.destX,weight:r.particleWeight,lat:pt.lat,lng:pt.lng,km:pt.km,road:pt.road,roadKm:pt.roadKm,spur:!!pt.spur});}});
   // Non-WBN white trucks join the SAME convoy as WBN (one physical lane → nobody overtakes). Hidden off.
   if(s.otherRoutes)s.otherRoutes.forEach((r,i)=>{for(let j=0;j<r.particles;j++){const el=flowQ('flow-op-'+i+'-'+j);if(!el)continue;if(!_otherInModel){el.setAttribute('visibility','hidden');continue;}const cycleTime=(r.startTimes[j]+r.achievedTr*s.hour/FLOW_SHIFT_HOURS)%1,pt=flowPointAt(r,flowMotionPhase(r,cycleTime));el.setAttribute('visibility','visible');moving.push({id:'o'+i+'-'+j,el,x:pt.x,y:pt.y,minX:r.sourceX,maxX:r.destX,weight:1});}});
   // Persistent one-lane convoy order. Existing members never get re-sorted, so a follower cannot
@@ -194,7 +269,7 @@ function updateFlowSimulator(){
   // Project visible particles onto the GPS polyline map (chainage → lat/lng, or spur coords).
   flowMapSync(moving.filter(p=>p.el.getAttribute('visibility')!=='hidden').map(p=>{
     const c=p.el._c||p.el.querySelector('circle');
-    return {id:p.id,km:p.km,lat:p.lat,lng:p.lng,loaded:Math.abs(p.y-180)<.8,col:(c&&c.getAttribute('fill'))||'#38bdf8'};
+    return {id:p.id,km:p.km,road:p.road,roadKm:p.roadKm,lat:p.lat,lng:p.lng,loaded:Math.abs(p.y-180)<.8,col:(c&&c.getAttribute('fill'))||'#38bdf8'};
   }));
 }
 function flowFrame(ts){const s=_flowSim;if(!s||!s.running)return;if(!s.last)s.last=ts;const dt=Math.min(.1,(ts-s.last)/1000);s.last=ts;s.hour=Math.min(FLOW_SHIFT_HOURS,s.hour+dt*FLOW_SHIFT_HOURS/24);updateFlowSimulator();if(s.hour>=FLOW_SHIFT_HOURS){stopFlowSimulator();
@@ -735,7 +810,8 @@ function renderFlowSimulator(P,colours){
   routes.forEach(r=>{
     r.loop=flowBuildRouteLoop(r,X);
     const xs=r.loop.filter(p=>!p.spur).map(p=>p.x);
-    r.sourceX=r.loop[0].x;r.destX=r.loop[Math.max(0,flowRouteVertices(r,X,'loaded').length-1)].x;
+    const loaded=flowVerticesFromLegs(flowLoadedLegs(r),X,180);
+    r.sourceX=r.loop[0].x;r.destX=(loaded.length?loaded[loaded.length-1]:r.loop[r.loop.length-1]).x;
     r.corrX1=xs.length?Math.min(...xs):Math.min(r.sourceX,r.destX);
     r.corrX2=xs.length?Math.max(...xs):Math.max(r.sourceX,r.destX);
     r.corrLo=Math.min(r.fromKm,r.toKm);r.corrHi=Math.max(r.fromKm,r.toKm);
@@ -774,7 +850,8 @@ function renderFlowSimulator(P,colours){
   // Every logical path shares these same two travel lanes; colour belongs only to its trucks and
   // endpoint crossovers. The long vertical legs dominate each closed cycle.
   routes.forEach((r,i)=>{
-    const loaded=flowRouteVertices(r,X,'loaded');
+    const loaded=flowVerticesFromLegs(flowLoadedLegs(r),X,180);
+    if(loaded.length<2)return;
     r.sourceX=loaded[0].x;r.destX=loaded[loaded.length-1].x;
     const c1=X(r.fromKm),c2=X(r.toKm),gy=42+(i%10)*10;
     const d=loaded.map((p,idx)=>(idx?'L':'M')+' '+p.x.toFixed(1)+' '+p.y.toFixed(1)).join(' ');
@@ -830,6 +907,7 @@ function renderFlowSimulator(P,colours){
   flowMapEnsure().then(()=>{
     if(!_flowSim||typeof _flowSim.X!=='function')return;
     _flowSim.routes.forEach(r=>{r.loop=flowBuildRouteLoop(r,_flowSim.X);});
+    updateFlowSimulator();
   });
 }
 
@@ -996,7 +1074,8 @@ function flowMapSync(particles){
   }
   const seen=new Set();
   list.forEach(p=>{
-    const ll=(p.lat!=null&&p.lng!=null)?[p.lat,p.lng]:flowMapLatLngAt(p.km);if(!ll)return;
+    const ll=flowLookupLL(p.road,p.roadKm)||flowMapLatLngAt(p.km)||(
+      (p.lat!=null&&p.lng!=null)?[p.lat,p.lng]:null);if(!ll)return;
     seen.add(p.id);
     let m=st.markers[p.id];
     if(!m){
