@@ -235,8 +235,11 @@ try:
           rv.status_code)
     if rv.status_code == 200:
         wb = load_workbook(_io.BytesIO(rv.data), read_only=True)
-        check("S2 sheets are Year + Aug–Dec (same as monthly_plan_2026.xlsx)",
-              wb.sheetnames == want, wb.sheetnames)
+        # "Paths" (the all-months path list, added 2026-08-19) is optional;
+        # the month sheets must be Year-then-months in order.
+        got = [s for s in wb.sheetnames if s != "Paths"]
+        check("S2 sheets are Year + months (Paths sheet optional)",
+              got == want, wb.sheetnames)
         sep = wb["Sep"]
         a1 = sep["A1"].value or ""
         check("S2 Sep title is 'Sep 2026 — old vs new'",
