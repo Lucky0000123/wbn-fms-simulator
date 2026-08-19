@@ -41,11 +41,11 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
 .tag{display:inline-block;padding:1px 7px;border-radius:9px;font-size:10px;background:rgba(96,165,250,.15);color:var(--blue)}
 .status{font-size:11.5px;margin-left:8px}
 .status.ok{color:var(--ok)} .status.er{color:var(--er)}
-.defs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0}
+.defs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0}
 @media(max-width:800px){.defs{grid-template-columns:1fr}}
 .def{border:1px solid var(--line);border-radius:9px;padding:10px 12px;background:#0d1117}
 .def h3{margin:0 0 4px;font-size:12px;letter-spacing:.04em;text-transform:uppercase}
-.def.pred h3{color:var(--blue)} .def.tgt h3{color:var(--warn)}
+.def.pred h3{color:var(--blue)} .def.tgt h3{color:var(--warn)} .def.achv h3{color:var(--ok)}
 .def a{color:var(--blue);text-decoration:none}
 .def a:hover{text-decoration:underline}
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-top:12px}
@@ -88,7 +88,7 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
     <input type="number" id="mo-year" min="2025" max="2035" step="1" style="width:88px;margin-left:6px">
   </label>
   <button class="primary" onclick="moExportYear()">⬇ Download Excel</button>
-  <button class="primary" onclick="moExportYear(1)" title="Same workbook plus the engine's achievable (t/day) beside every predicted figure">⬇ with achievable</button>
+  <button class="primary" onclick="moExportYear(1)" title="Year + month sheets with old / optimized achievable from Plan Allocate (/api/simulate)">⬇ with achievable</button>
 </header>
 <main>
 
@@ -102,6 +102,10 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
     <div class="def tgt">
       <h3>Target · SAP · LIM</h3>
       <p>Matrix WMT/day × days. Coverage is optimized predicted plan ÷ target (100% = moving the month; over 100% is extra; shortfall is what we are leaving). Same split for SAP, LIM-TOS and LIM-LD.</p>
+    </div>
+    <div class="def achv">
+      <h3>Old achievable · Optimized achievable</h3>
+      <p>Same two clocks as Plan → Allocate: <b>old</b> is Your plan after Check capacity, <b>optimized</b> is after Allocate DT. Both are raw <code>/api/simulate</code> (effective cycle + loader clip) — never averaged with predicted, never capped to target. Year board and default Excel hide them; <b>⬇ with achievable</b> puts them on the Year sheet and every month sheet.</p>
     </div>
   </div>
 </div>
@@ -131,7 +135,7 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
     <button onclick="scenImport()">Import scenarios from mine-plan Excel</button>
     <a class="primary" href="/api/scenarios/export" style="text-decoration:none"><button class="primary">⬇ Download comparison (Excel)</button></a>
     <button class="primary" onclick="scenExportFull()">⬇ Download monthly Excel (all scenarios)</button>
-    <button class="primary" onclick="scenExportFull(1)" title="Same zip plus the engine's achievable (t/day) in every month sheet">⬇ with achievable</button>
+    <button class="primary" onclick="scenExportFull(1)" title="Same Year-board workbooks plus old / optimized achievable on Year and every month sheet">⬇ with achievable</button>
     <span class="status" id="mo-scen-status"></span>
   </div>
   <div class="mat-grid" id="mo-scen-summary" style="margin-top:12px"></div>
@@ -153,7 +157,7 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
         </select>
       </label>
       <button class="primary" onclick="moExportYear()">⬇ Download Excel</button>
-      <button class="primary" onclick="moExportYear(1)" title="Same workbook plus the engine's achievable (t/day) beside every predicted figure">⬇ with achievable</button>
+      <button class="primary" onclick="moExportYear(1)" title="Year + month sheets with old / optimized achievable from Plan Allocate (/api/simulate)">⬇ with achievable</button>
     </div>
   </div>
   <p class="muted" id="mo-board-note" style="margin:0 0 8px">Load a matrix, then save Allocate DT on the Plan tab for each month.</p>

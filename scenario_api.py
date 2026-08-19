@@ -52,6 +52,42 @@ LIM_LD_TARGET_T = 8_000_000
 LIM_LD_CAP_T = LIM_LD_TARGET_T  # back-compat alias (old name, same number)
 RIM_ONLY_PITS = ("BLB",)
 
+# SAP routing conditions for imported scenarios (owner, 2026-08-19):
+#   10 kt/day TOFU -> FENI KM15,  10 kt/day BLB -> FENI KM0,
+#   TOFU's remaining SAP -> POS 12,  BLB's remaining SAP -> POS 14,
+#   KRENE SAP -> POS 12 (its only SAP route).
+# S1 keeps the matrix's own split. Fixed amounts are t/day ceilings for the
+# FENI routes; everything above them goes to the pit's "rest" destination.
+SAP_ROUTING = {
+    "BLB":  {"fixed": [("FENI KM 0", 10000.0)], "rest": "POS 14"},
+    "TOFU": {"fixed": [("FENI KM 15", 10000.0)], "rest": "POS 12"},
+    "KRENE": {"fixed": [], "rest": "POS 12"},
+}
+
+
+def _split_sap_conditions(pit, T, grp, m):
+    """[(row, wmt_day)] under SAP_ROUTING. grp = the pit's SAP matrix routes."""
+    rule = SAP_ROUTING.get(pit)
+    out, left = [], float(T)
+    if not rule:
+        return None
+    for dest, amt in rule["fixed"]:
+        rows = [r for r in grp if r["dest"].upper() == dest]
+        if not rows or left <= 0:
+            continue
+        w = min(left, amt)
+        out.append((rows[0], w))
+        left -= w
+    rest_rows = [r for r in grp if r["dest"].upper() == rule["rest"]]
+    if left > 0:
+        if not rest_rows:
+            return None  # no route to the required destination - fall back
+        base = sum(r["wmt"].get(m, 0) for r in rest_rows)
+        for r in rest_rows:
+            share = (r["wmt"].get(m, 0) / base) if base else 1.0 / len(rest_rows)
+            out.append((r, left * share))
+    return out
+
 
 # ---------------------------------------------------------------- storage
 
@@ -285,9 +321,15 @@ def waterfall(sc, yearly=None, ld_cap=LIM_LD_TARGET_T):
                     deficit.append({"pit": pit, "mat": mat, "wmt_day": round(T),
                                     "why": "no matrix route hauls this"})
                     continue
-                for r in grp:
-                    share = (r["wmt"].get(m, 0) / base) if base else 1.0 / len(grp)
-                    w = T * share
+                # Imported scenarios route SAP by the owner's conditions
+                # (fixed FENI tonnages, rest to POS). S1 keeps the matrix split.
+                pieces = None
+                if mat == "SAP" and sc["id"] != "S1":
+                    pieces = _split_sap_conditions(pit, T, grp, m)
+                if pieces is None:
+                    pieces = [(r, T * ((r["wmt"].get(m, 0) / base) if base
+                                       else 1.0 / len(grp))) for r in grp]
+                for r, w in pieces:
                     if w <= 0:
                         continue
                     rate = _route_rate(r, m)
