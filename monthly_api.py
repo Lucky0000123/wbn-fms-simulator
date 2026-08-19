@@ -16,7 +16,10 @@ Design:
     by date. Its numbers are stored verbatim.
   • Comparison + export: Key sheet (target, old predicted plan, optimized
     predicted plan) plus one sheet per month. Monthly report does not
-    show achievable / simulate. Excel is a white report — no cell fills.
+    show achievable / simulate, and does not list DT moves. Excel is a
+    white report except coverage badges (SAP / LIM-TOS / LIM-LD / Together
+    % of target), which use the Year-board green / gold / red fills.
+    Charts sit under their tables.
 
 State lives in data/monthly_plans/YYYY-MM.json, one file per month, same
 local-disk pattern as saved_plans.
@@ -377,6 +380,14 @@ def _xlsx_font(bold=False, size=11, color=None):
     return Font(name="Calibri", bold=bold, size=size, color=color or _XLSX_INK)
 
 
+def _xlsx_card_border(color):
+    """Thin box with a coloured top bar — the Year / month scorecard look."""
+    from openpyxl.styles import Border, Side
+    thin = Side(style="thin", color="D0D5DD")
+    bar = Side(style="medium", color=color or _XLSX_NAVY)
+    return Border(left=thin, right=thin, top=bar, bottom=thin)
+
+
 def _xlsx_sides():
     from openpyxl.styles import Border, Side
     thin = Side(style="thin", color="D0D5DD")
@@ -508,7 +519,8 @@ def _xlsx_line_chart(ws, title, y_title, min_col, max_col, header_row, last_row,
 
 
 def _xlsx_five_clock_block(ws, row, title, sub, points, start=1, chart_col="I"):
-    """Month (or day) × three clocks + % of target. Chart ignores the total rows."""
+    """Month (or day) × three clocks + % of target. Chart sits UNDER the table."""
+    from openpyxl.utils import get_column_letter
     r = _xlsx_section(ws, row, title, sub)
     heads = ["Month", "Target", "Old predicted plan", "Optimized predicted plan",
              "Optimized %"]
@@ -518,13 +530,16 @@ def _xlsx_five_clock_block(ws, row, title, sub, points, start=1, chart_col="I"):
     header_row = r
     rr = r
     keys = ("target", "old_pred", "new_pred")
+    clock_cols = (_XLSX_TGT, _XLSX_MUTED, _XLSX_PRED)
     for p in points:
         rr += 1
         _xlsx_text(ws.cell(row=rr, column=start), p.get("name"), center=True)
-        for i, key in enumerate(keys, start=start + 1):
-            _xlsx_num(ws.cell(row=rr, column=i), p.get(key), center=True)
+        for i, key in enumerate(keys):
+            cell = ws.cell(row=rr, column=start + 1 + i)
+            _xlsx_num(cell, p.get(key), center=True)
+            cell.font = _xlsx_font(False, 11, clock_cols[i])
         tgt, np_ = p.get("target"), p.get("new_pred")
-        _xlsx_pct_cell(ws.cell(row=rr, column=start + 4), _cov_pct(np_, tgt))
+        _xlsx_paint_cov(ws.cell(row=rr, column=start + 4), _cov_pct(np_, tgt))
     data_last = rr
     tot = {k: 0 for k in keys}
     n_have = {k: 0 for k in keys}
@@ -540,53 +555,73 @@ def _xlsx_five_clock_block(ws, row, title, sub, points, start=1, chart_col="I"):
         lab.font = _xlsx_font(True, 11, _XLSX_NAVY)
         lab.alignment = _xlsx_mid()
         _xlsx_total_border(lab)
-        for i, k in enumerate(keys, start=start + 1):
-            cell = ws.cell(row=rr, column=i, value=tot[k] if n_have[k] else None)
-            cell.font = _xlsx_font(True, 11, _XLSX_NAVY)
+        for i, k in enumerate(keys):
+            cell = ws.cell(row=rr, column=start + 1 + i, value=tot[k] if n_have[k] else None)
+            cell.font = _xlsx_font(True, 11, clock_cols[i])
             cell.number_format = "#,##0"
             cell.alignment = _xlsx_mid()
             _xlsx_total_border(cell)
         tgt, np_ = tot["target"], tot["new_pred"]
         c5 = ws.cell(row=rr, column=start + 4)
-        _xlsx_pct_cell(c5, _cov_pct(np_, tgt) if n_have["target"] else None)
-        c5.font = _xlsx_font(True, 11, _XLSX_PRED)
+        _xlsx_paint_cov(c5, _cov_pct(np_, tgt) if n_have["target"] else None)
         _xlsx_total_border(c5)
-        anchor = "%s%d" % (chart_col, max(1, header_row - 1))
+        # Chart under the table (not beside it) so the numbers and the picture read as one block.
+        chart_row = rr + 2
+        anchor = "%s%d" % (get_column_letter(start), chart_row)
         _xlsx_line_chart(
             ws, title, "tonnes", start + 1, start + 3, header_row, data_last,
-            anchor, height=7.5, width=15, cat_col=start, colors=_XLSX_CLOCKS)
-    return max(rr + 2, header_row + 16)
+            anchor, height=8, width=16, cat_col=start, colors=_XLSX_CLOCKS)
+        return chart_row + 16
+    return rr + 2
 
 
-def _xlsx_board_header(ws, heading, sub, start=2):
-    """Year-board chrome: title in column B, column A kept for row labels."""
+def _xlsx_board_header(ws, heading, sub, start=1):
+    """Year-board chrome: title, then a one-line reading note."""
     from openpyxl.utils import get_column_letter
     _xlsx_sheet_setup(ws)
     ws.cell(row=1, column=start, value=heading).font = _xlsx_font(True, 18, _XLSX_NAVY)
     ws.merge_cells(start_row=1, start_column=start, end_row=1, end_column=start + 5)
-    ws.cell(row=2, column=start, value=sub).font = _xlsx_font(False, 11, _XLSX_MUTED)
+    ws.cell(row=2, column=start, value=sub).font = _xlsx_font(False, 10, _XLSX_MUTED)
     ws.merge_cells(start_row=2, start_column=start, end_row=2, end_column=start + 5)
     ws.row_dimensions[1].height = 26
-    ws.column_dimensions["A"].width = 13
-    for i, w in enumerate([20, 16, 16, 16, 16, 12], start=start):
+    ws.row_dimensions[2].height = 18
+    for i, w in enumerate([24, 24, 28, 22, 16, 16], start=start):
         ws.column_dimensions[get_column_letter(i)].width = w
     return 4
 
 
-def _xlsx_kpi_strip(ws, row, kpis, start=2):
-    """Year-board KPIs: centred, boxed, sitting in column B onward."""
-    box = _xlsx_sides()[0]
-    mid = _xlsx_mid()
-    for i, (label, value, color) in enumerate(kpis):
-        cell_l = ws.cell(row=row, column=start + i, value=label)
-        cell_l.font = _xlsx_font(True, 9, _XLSX_MUTED)
-        cell_l.alignment = mid
-        cell_l.border = box
-        cell_v = ws.cell(row=row + 1, column=start + i, value=value)
-        cell_v.font = _xlsx_font(True, 22, color)
-        cell_v.number_format = "#,##0"
-        cell_v.alignment = mid
-        cell_v.border = box
+def _xlsx_kpi_strip(ws, row, kpis, start=1):
+    """Scorecard: colour bar on the label, large figure below.
+    Each item is (label, value, color) or (label, value, color, unit).
+    Pass value as a 0–100 coverage figure with unit='pct' to format as percent."""
+    from openpyxl.styles import Alignment
+    mid = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for i, item in enumerate(kpis):
+        label, value, color = item[0], item[1], item[2]
+        unit = item[3] if len(item) > 3 else None
+        col = start + i
+        if unit == "pct":
+            lab_txt = label
+        elif unit:
+            lab_txt = "%s\n%s" % (label, unit)
+        else:
+            lab_txt = label
+        lab = ws.cell(row=row, column=col, value=lab_txt)
+        lab.font = _xlsx_font(True, 8, _XLSX_NAVY)
+        lab.alignment = mid
+        lab.border = _xlsx_card_border(color)
+        cell = ws.cell(row=row + 1, column=col)
+        cell.alignment = mid
+        cell.border = _xlsx_sides()[0]
+        if unit == "pct":
+            _xlsx_paint_cov(cell, value, size=20)
+            cell.border = _xlsx_sides()[0]
+            cell.alignment = mid
+        else:
+            cell.value = value
+            cell.font = _xlsx_font(True, 20, color)
+            cell.number_format = "#,##0"
+    ws.row_dimensions[row].height = 28
     ws.row_dimensions[row + 1].height = 32
     return row + 3
 
@@ -616,7 +651,7 @@ def _xlsx_month_cards(ws, row, cards, year, start=2):
         cell_m.alignment = mid
         cell_m.border = box
     metric_rows = (
-        (row + 3, "Old predicted plan", "pred_month", _XLSX_PRED),
+        (row + 3, "Old predicted plan", "pred_month", _XLSX_MUTED),
         (row + 4, "Target", "target_month", _XLSX_TGT),
     )
     for mrow, label, key, color in metric_rows:
@@ -701,9 +736,6 @@ def _xlsx_saved_day_allocation(ws, r, alloc):
         "Your plan (old) stays as checked. New Allocation Plan is the optimized fleet. "
         "Predicted = path model. Target = matrix.")
     goals = alloc.get("goals") or {}
-    moved = alloc.get("moved_total")
-    if moved is None:
-        moved = sum((m.get("trucks") or 0) for m in (alloc.get("moves") or []))
     buckets = alloc.get("buckets") or {}
     labels = [("sap", "SAP · must-move"), ("tos", "LIM-TOS"), ("ld", "Other LIM · LD")]
     r = _xlsx_section(
@@ -712,7 +744,7 @@ def _xlsx_saved_day_allocation(ws, r, alloc):
     _xlsx_headers(ws, r, ["", "SAP", "LIM-TOS", "Other LIM"], center=True)
     metric_rows = [
         ("Target t/day", "target", _XLSX_TGT, False),
-        ("Old predicted plan", "pred_before", _XLSX_PRED, False),
+        ("Old predicted plan", "pred_before", _XLSX_MUTED, False),
         ("Optimized predicted plan", "pred_after", _XLSX_PRED, True),
         ("Old DT", "dt_before", _XLSX_MUTED, False),
         ("New DT", "dt_after", _XLSX_INK, True),
@@ -737,39 +769,22 @@ def _xlsx_saved_day_allocation(ws, r, alloc):
     new = alloc.get("new") or {}
     fleet = alloc.get("fleet") or {}
     note = (
-        "Fleet %s DT old · %s DT new (same trucks). %s DT moved. "
+        "Fleet %s DT old · %s DT new (same trucks). "
         "Totals — old predicted plan %s · optimized predicted plan %s."
         % (fleet.get("before") or old.get("dt") or "—",
            fleet.get("after") or new.get("dt") or "—",
-           moved or 0,
            old.get("pred") if old.get("pred") is not None else "—",
            new.get("pred") if new.get("pred") is not None else "—")
     )
     ws.cell(row=r, column=1, value=note).font = _xlsx_font(False, 9, _XLSX_MUTED)
     ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
     r += 2
-    if alloc.get("moves"):
-        r = _xlsx_section(ws, r, "Saved DT moves")
-        _xlsx_headers(ws, r, ["Contractor", "From", "To", "DT", "Reason", "Same origin"], center=True)
-        for mv in alloc["moves"]:
-            r += 1
-            for col, val in enumerate(
-                    [mv.get("contractor"), mv.get("from"), mv.get("to"),
-                     mv.get("trucks"), mv.get("tag") or mv.get("reason"),
-                     "yes" if mv.get("same_origin") else "cross plan"], start=1):
-                cell = ws.cell(row=r, column=col, value=val)
-                cell.border = box
-                cell.alignment = mid
-                cell.font = _xlsx_font(False, 10)
-                if col == 4:
-                    cell.number_format = "#,##0"
-        r += 1
     rows = alloc.get("rows") or []
     if rows:
         r = _xlsx_path_alloc_table(
             ws, r, rows, "New Allocation Plan table",
             "Old = Your plan as checked. New = after Allocate DT. "
-            "Trips/DT and WMT/DT are this path's rate.")
+            "WMT/DT is tonnes per truck-trip (payload).")
     return r
 
 
@@ -781,8 +796,30 @@ def _xlsx_pct_cell(cell, value):
     cell.alignment = _xlsx_mid()
 
 
+def _xlsx_cov_tone(pct):
+    """Year-board pill tones. pct is 0–100. >=100 green, >=90 gold, else red."""
+    if pct is None:
+        return None, None
+    if pct >= 100:
+        return "047857", "D1FAE5"
+    if pct >= 90:
+        return "B45309", "FEF3C7"
+    return "B91C1C", "FECACA"
+
+
+def _xlsx_paint_cov(cell, pct, size=11):
+    """Percent of target with a light Year-board fill so SAP / TOS / LD read at a glance."""
+    from openpyxl.styles import PatternFill
+    _xlsx_pct_cell(cell, pct)
+    fg, bg = _xlsx_cov_tone(pct)
+    if fg:
+        cell.font = _xlsx_font(True, size, fg)
+        cell.fill = PatternFill("solid", fgColor=bg)
+    return cell
+
+
 def _xlsx_path_alloc_table(ws, r, rows, title, sub):
-    """Old vs new path table with trips/DT and WMT/DT."""
+    """Old vs new path table: WMT, DT, trips, plus trips/DT and WMT/DT."""
     box = _xlsx_sides()[0]
     mid = _xlsx_mid()
     rows = list(rows or [])
@@ -791,11 +828,12 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub):
         return r
     r = _xlsx_section(ws, r, title, sub)
     heads = [
-        "P", "Path", "Contractor", "Material", "Target t/day",
+        "P", "Path", "Contractor", "Material", "Target WMT/day",
         "DT old", "DT new",
-        "Trips/DT old", "Trips/DT new",
+        "Trips old", "Trips new",
+        "WMT old", "WMT new",
         "WMT/DT old", "WMT/DT new",
-        "Old predicted plan", "Optimized predicted plan",
+        "Trips/DT old", "Trips/DT new",
     ]
     _xlsx_headers(ws, r, heads, center=True)
     tot = {
@@ -805,54 +843,62 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub):
     for row in rows:
         r += 1
         rates = _path_rates(row)
-        ddt = (row.get("dt_after") or 0) - (row.get("dt_before") or 0)
         mat = "%s%s" % (row.get("material") or "",
                         (" · " + row["otype"]) if row.get("otype") else "")
         vals = [
             "P%s" % (row.get("prio") or ""), row.get("key"), row.get("contractor"),
             mat, row.get("target"),
             row.get("dt_before"), row.get("dt_after"),
-            rates["trips_per_dt_before"], rates["trips_per_dt_after"],
-            rates["wmt_per_dt_before"], rates["wmt_per_dt_after"],
+            rates["trips_before"], rates["trips_after"],
             row.get("pred_before"), row.get("pred_after"),
+            rates["wmt_per_trip_before"], rates["wmt_per_trip_after"],
+            rates["trips_per_dt_before"], rates["trips_per_dt_after"],
         ]
         for col, val in enumerate(vals, start=1):
             cell = ws.cell(row=r, column=col, value=val)
             cell.border = box
             cell.alignment = mid
-            cell.font = _xlsx_font(col in (2, 7, 9, 11, 13), 9)
-            if col in (8, 9, 10, 11) and isinstance(val, (int, float)):
+            cell.font = _xlsx_font(col in (2, 7, 9, 11), 9)
+            if col in (12, 13, 14, 15) and isinstance(val, (int, float)):
                 cell.number_format = "0.00"
             elif col >= 5 and isinstance(val, (int, float)):
                 cell.number_format = "#,##0"
-            if col == 7 and ddt:
-                cell.font = _xlsx_font(True, 9, "059669" if ddt > 0 else "D97706")
+            if col in (6, 8, 10, 12, 14):
+                cell.font = _xlsx_font(False, 9, _XLSX_MUTED)
+            if col in (7, 9, 11, 13, 15):
+                cell.font = _xlsx_font(True, 9, _XLSX_PRED)
         tot["tgt"] += row.get("target") or 0
         tot["dt_b"] += row.get("dt_before") or 0
         tot["dt_a"] += row.get("dt_after") or 0
         tot["pr_b"] += row.get("pred_before") or 0
         tot["pr_a"] += row.get("pred_after") or 0
-        if rates["trips_per_dt_before"] is not None and row.get("dt_before"):
+        if rates["trips_before"] is not None:
+            tot["tr_b"] += rates["trips_before"]
+        elif rates["trips_per_dt_before"] is not None and row.get("dt_before"):
             tot["tr_b"] += rates["trips_per_dt_before"] * (row.get("dt_before") or 0)
-        if rates["trips_per_dt_after"] is not None and row.get("dt_after"):
+        if rates["trips_after"] is not None:
+            tot["tr_a"] += rates["trips_after"]
+        elif rates["trips_per_dt_after"] is not None and row.get("dt_after"):
             tot["tr_a"] += rates["trips_per_dt_after"] * (row.get("dt_after") or 0)
     r += 1
     tpd_b = round(tot["tr_b"] / tot["dt_b"], 2) if tot["dt_b"] else None
     tpd_a = round(tot["tr_a"] / tot["dt_a"], 2) if tot["dt_a"] else None
-    wpd_b = round(tot["pr_b"] / tot["dt_b"], 1) if tot["dt_b"] else None
-    wpd_a = round(tot["pr_a"] / tot["dt_a"], 1) if tot["dt_a"] else None
+    pay_b = round(tot["pr_b"] / tot["tr_b"], 2) if tot["tr_b"] else None
+    pay_a = round(tot["pr_a"] / tot["tr_a"], 2) if tot["tr_a"] else None
     tot_vals = [
         "TOTAL", "%s paths" % len(rows), "", "",
         tot["tgt"] or None, tot["dt_b"] or None, tot["dt_a"] or None,
-        tpd_b, tpd_a, wpd_b, wpd_a,
+        int(round(tot["tr_b"])) if tot["tr_b"] else None,
+        int(round(tot["tr_a"])) if tot["tr_a"] else None,
         tot["pr_b"] or None, tot["pr_a"] or None,
+        pay_b, pay_a, tpd_b, tpd_a,
     ]
     for col, val in enumerate(tot_vals, start=1):
         cell = ws.cell(row=r, column=col, value=val)
         cell.font = _xlsx_font(True, 9, _XLSX_NAVY)
         cell.alignment = mid
         _xlsx_total_border(cell)
-        if col in (8, 9, 10, 11) and isinstance(val, (int, float)):
+        if col in (12, 13, 14, 15) and isinstance(val, (int, float)):
             cell.number_format = "0.00"
         elif col >= 5 and isinstance(val, (int, float)):
             cell.number_format = "#,##0"
@@ -861,17 +907,16 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub):
     pct_lab.font = _xlsx_font(True, 9, _XLSX_MUTED)
     pct_lab.alignment = mid
     pct_lab.border = box
-    for col in range(2, 14):
+    for col in range(2, 16):
         ws.cell(row=r, column=col).border = box
         ws.cell(row=r, column=col).alignment = mid
-    _xlsx_pct_cell(ws.cell(row=r, column=13), _cov_pct(tot["pr_a"], tot["tgt"]))
-    ws.cell(row=r, column=13).font = _xlsx_font(True, 9, _XLSX_PRED)
+    _xlsx_pct_cell(ws.cell(row=r, column=11), _cov_pct(tot["pr_a"], tot["tgt"]))
+    ws.cell(row=r, column=11).font = _xlsx_font(True, 9, _XLSX_PRED)
     return r + 1
 
 
 def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None):
-    """One month: old vs optimized predicted plan, materials, path changes, DT moves."""
-    from openpyxl.styles import Alignment
+    """One month: old vs optimized predicted plan, materials, path table. No DT-move list."""
     _xlsx_sheet_setup(ws)
     n_days = len(_days_in(month))
     src = alloc.get("source_date") or ""
@@ -879,8 +924,8 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None):
     ws["A1"].font = _xlsx_font(True, 16, _XLSX_NAVY)
     ws.merge_cells("A1:Q1")
     ws["A2"] = (
-        "Old predicted plan = Your plan as checked. Optimized predicted plan = after Allocate DT. "
-        "Target = matrix."
+        "Target = matrix. Old predicted plan = Your plan as checked. "
+        "Optimized predicted plan = after Allocate DT."
         + ((" Saved %s." % src) if src else "")
         + " Month = day × %s days." % n_days)
     ws["A2"].font = _xlsx_font(False, 10, _XLSX_MUTED)
@@ -889,62 +934,34 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None):
     box = _xlsx_sides()[0]
     mid = _xlsx_mid()
     r = 4
-    kpis = [
-        ("target · month t", alloc.get("target_month"), _XLSX_TGT),
-        ("old predicted plan", alloc.get("old_pred_month"), _XLSX_MUTED),
-        ("optimized predicted plan", alloc.get("new_pred_month"), _XLSX_PRED),
-        ("optimized / target", None, "059669" if (alloc.get("cov_new_pred") or 0) >= 100 else "D97706"),
-    ]
-    for i, (lab, val, col) in enumerate(kpis):
-        cell_l = ws.cell(row=r, column=1 + i, value=lab)
-        cell_l.font = _xlsx_font(True, 8, _XLSX_MUTED)
-        cell_l.alignment = mid
-        cell_l.border = box
-        cell = ws.cell(row=r + 1, column=1 + i)
-        cell.alignment = mid
-        cell.border = box
-        if i == 3:
-            _xlsx_pct_cell(cell, alloc.get("cov_new_pred"))
-            cell.font = _xlsx_font(True, 16, col)
-        else:
-            cell.value = val
-            cell.font = _xlsx_font(True, 16, col)
-            cell.number_format = "#,##0"
-    ws.row_dimensions[r + 1].height = 24
-    r += 3
-    extra = [
-        ("target · t/day", alloc.get("target_day"), _XLSX_TGT),
-        ("old predicted plan · t/day", alloc.get("old_pred_day"), _XLSX_MUTED),
-        ("optimized predicted plan · t/day", alloc.get("new_pred_day"), _XLSX_PRED),
-        ("DT after (before %s)" % (alloc.get("dt_before") if alloc.get("dt_before") is not None else "—"),
-         alloc.get("dt_after"), _XLSX_INK),
-    ]
-    for i, (lab, val, col) in enumerate(extra):
-        cell_l = ws.cell(row=r, column=1 + i, value=lab)
-        cell_l.font = _xlsx_font(True, 8, _XLSX_MUTED)
-        cell_l.alignment = mid
-        cell_l.border = box
-        cell = ws.cell(row=r + 1, column=1 + i, value=val)
-        cell.font = _xlsx_font(True, 13, col)
-        cell.number_format = "#,##0"
-        cell.alignment = mid
-        cell.border = box
-    r += 4
+    cov = alloc.get("cov_new_pred")
+    r = _xlsx_kpi_strip(ws, r, [
+        ("Target", alloc.get("target_month"), _XLSX_TGT, "Month tonnes"),
+        ("Old predicted plan", alloc.get("old_pred_month"), _XLSX_MUTED, "Month tonnes"),
+        ("Optimized predicted plan", alloc.get("new_pred_month"), _XLSX_PRED, "Month tonnes"),
+        ("Optimized vs target", cov, "059669" if (cov or 0) >= 100 else "D97706", "pct"),
+    ], start=1)
+    r = _xlsx_kpi_strip(ws, r, [
+        ("Target", alloc.get("target_day"), _XLSX_TGT, "t / day"),
+        ("Old predicted plan", alloc.get("old_pred_day"), _XLSX_MUTED, "t / day"),
+        ("Optimized predicted plan", alloc.get("new_pred_day"), _XLSX_PRED, "t / day"),
+        ("Fleet after allocate", alloc.get("dt_after"), _XLSX_INK, "DT"),
+    ], start=1)
 
     mats = alloc.get("materials") or {}
     r = _xlsx_section(
         ws, r, "Materials — t / day",
-        "Coverage is optimized predicted plan ÷ that material's target.")
+        "Same three clocks as the year sheet. Coverage is optimized predicted plan ÷ target.")
     labels = [("sap", "SAP"), ("tos", "LIM-TOS"), ("ld", "LIM-LD")]
     _xlsx_headers(ws, r, ["", "SAP", "LIM-TOS", "LIM-LD", "Together"], center=True)
     metric = [
-        ("Target t/day", lambda k: (mats.get(k) or {}).get("target_day"), alloc.get("target_day"), False),
-        ("Old predicted plan", lambda k: (mats.get(k) or {}).get("pred_before_day"), alloc.get("old_pred_day"), False),
-        ("Optimized predicted plan", lambda k: (mats.get(k) or {}).get("pred_after_day"), alloc.get("new_pred_day"), True),
-        ("Old DT", lambda k: (mats.get(k) or {}).get("dt_before"), alloc.get("dt_before"), False),
-        ("New DT", lambda k: (mats.get(k) or {}).get("dt_after"), alloc.get("dt_after"), True),
+        ("Target t/day", lambda k: (mats.get(k) or {}).get("target_day"), alloc.get("target_day"), _XLSX_TGT, False),
+        ("Old predicted plan", lambda k: (mats.get(k) or {}).get("pred_before_day"), alloc.get("old_pred_day"), _XLSX_MUTED, False),
+        ("Optimized predicted plan", lambda k: (mats.get(k) or {}).get("pred_after_day"), alloc.get("new_pred_day"), _XLSX_PRED, True),
+        ("Old DT", lambda k: (mats.get(k) or {}).get("dt_before"), alloc.get("dt_before"), _XLSX_MUTED, False),
+        ("New DT", lambda k: (mats.get(k) or {}).get("dt_after"), alloc.get("dt_after"), _XLSX_INK, True),
     ]
-    for lab, fn, tot, bold in metric:
+    for lab, fn, tot, color, bold in metric:
         r += 1
         lab_c = ws.cell(row=r, column=1, value=lab)
         lab_c.font = _xlsx_font(False, 10, _XLSX_MUTED)
@@ -954,23 +971,24 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None):
             cell = ws.cell(row=r, column=2 + i, value=fn(k))
             cell.border = box
             cell.alignment = mid
-            cell.font = _xlsx_font(bold, 13 if bold else 11, _XLSX_PRED if bold else _XLSX_INK)
+            cell.font = _xlsx_font(bold, 13 if bold else 11, color)
             if isinstance(fn(k), (int, float)):
                 cell.number_format = "#,##0"
         tot_c = ws.cell(row=r, column=5, value=tot)
         tot_c.border = box
         tot_c.alignment = mid
-        tot_c.font = _xlsx_font(True, 13, _XLSX_NAVY)
+        tot_c.font = _xlsx_font(True, 13, color)
         if isinstance(tot, (int, float)):
             tot_c.number_format = "#,##0"
     r += 1
     lab_c = ws.cell(row=r, column=1, value="Optimized % of target")
-    lab_c.font = _xlsx_font(False, 10, _XLSX_MUTED)
+    lab_c.font = _xlsx_font(True, 10, _XLSX_NAVY)
     lab_c.border = box
     lab_c.alignment = mid
     for i, (k, _) in enumerate(labels):
-        _xlsx_pct_cell(ws.cell(row=r, column=2 + i), (mats.get(k) or {}).get("cov_pred"))
-    _xlsx_pct_cell(ws.cell(row=r, column=5), alloc.get("cov_new_pred"))
+        _xlsx_paint_cov(ws.cell(row=r, column=2 + i), (mats.get(k) or {}).get("cov_pred"), size=13)
+    _xlsx_paint_cov(ws.cell(row=r, column=5), alloc.get("cov_new_pred"), size=13)
+    ws.row_dimensions[r].height = 22
     r += 2
     left_lab = ws.cell(row=r, column=1, value="Leaving vs target · month t")
     left_lab.font = _xlsx_font(False, 10, _XLSX_MUTED)
@@ -984,29 +1002,8 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None):
         r += 2
         r = _xlsx_path_alloc_table(
             ws, r, rows, "Paths — old predicted plan vs optimized predicted plan",
-            "P1 SAP · P2 LIM-TOS · P3 LIM-LD. Old = Your plan as checked. Optimized = after Allocate DT. "
-            "Trips/DT and WMT/DT are this path's rate.")
-
-    moves = alloc.get("moves") or []
-    if moves:
-        r += 2
-        moved = alloc.get("moved_total")
-        if moved is None:
-            moved = sum((m.get("trucks") or 0) for m in moves)
-        r = _xlsx_section(ws, r, "DT moves (%s)" % moved)
-        _xlsx_headers(ws, r, ["Contractor", "From", "To", "DT", "Reason", "Same origin"], center=True)
-        for mv in moves:
-            r += 1
-            for col, val in enumerate(
-                    [mv.get("contractor"), mv.get("from"), mv.get("to"),
-                     mv.get("trucks"), mv.get("tag") or mv.get("reason"),
-                     "same origin" if mv.get("same_origin") else "cross plan"], start=1):
-                cell = ws.cell(row=r, column=col, value=val)
-                cell.border = box
-                cell.alignment = mid
-                cell.font = _xlsx_font(False, 10)
-                if col == 4:
-                    cell.number_format = "#,##0"
+            "P1 SAP · P2 LIM-TOS · P3 LIM-LD. WMT is predicted tonnes. DT is trucks. "
+            "Trips are predicted trips. WMT/DT is tonnes per truck-trip (payload).")
 
     r += 3
     days = _days_in(month)
@@ -1020,9 +1017,9 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None):
     r = _xlsx_five_clock_block(
         ws, r, "Daily WMT (flat — the same plan every day)",
         "Target, old predicted plan, optimized predicted plan. Same day every day.",
-        points, start=1, chart_col="I")
+        points, start=1, chart_col="A")
 
-    _xlsx_widths(ws, [14, 18, 12, 14, 13, 10, 10, 11, 11, 11, 11, 12, 12, 11, 11, 12, 11])
+    _xlsx_widths(ws, [16, 22, 14, 14, 14, 11, 11, 11, 11, 12, 12, 12, 12, 12, 12, 12, 12])
     ws.freeze_panes = "A4"
     ws.row_dimensions[1].height = 24
     return alloc.get("new_pred_month"), alloc.get("target_month")
@@ -1061,32 +1058,23 @@ def _xlsx_fill_month(ws, st, title):
     if planned_day is not None and achv_day is not None:
         shortfall_day = max(0.0, planned_day - float(achv_day))
 
-    r = _xlsx_section(ws, 4, "A · Production",
-                      "Day = 2 x 12 h shifts. Predicted is the path model. Target is the matrix.")
+    r = 4
+    r = _xlsx_kpi_strip(ws, r, [
+        ("Target", tot_t or None, _XLSX_TGT, "Month tonnes"),
+        ("Old predicted plan", tot_p or None, _XLSX_MUTED, "Month tonnes"),
+        ("Trucks", p.get("dt"), _XLSX_INK, "DT"),
+    ], start=1)
+    r = _xlsx_kpi_strip(ws, r, [
+        ("Target", tgt_day, _XLSX_TGT, "t / day"),
+        ("Old predicted plan", pred_day, _XLSX_MUTED, "t / day"),
+    ], start=1)
     box = _xlsx_sides()[0]
     mid = _xlsx_mid()
-    kpi_heads = ["Trucks (DT)", "Predicted t/day",
-                 "Target t/day",
-                 "Predicted t/month", "Target t/month"]
-    kpi_vals = [p.get("dt"), pred_day, tgt_day,
-                tot_p or None, tot_t or None]
-    kpi_cols = (_XLSX_INK, _XLSX_PRED, _XLSX_TGT,
-                _XLSX_PRED, _XLSX_TGT)
-    for i, h in enumerate(kpi_heads):
-        cell_l = ws.cell(row=r, column=1 + i, value=h)
-        cell_l.font = _xlsx_font(True, 8, _XLSX_MUTED)
-        cell_l.alignment = mid
-        cell_l.border = box
-        cell = ws.cell(row=r + 1, column=1 + i, value=kpi_vals[i])
-        cell.font = _xlsx_font(True, 14, kpi_cols[i])
-        cell.number_format = "#,##0"
-        cell.alignment = mid
-        cell.border = box
-    ws.row_dimensions[r + 1].height = 20
-    r += 3
+    r = _xlsx_section(ws, r, "Production",
+                      "Day = 2 × 12 h shifts. Old predicted plan is the path model. Target is the matrix.")
 
     cap_heads = ["Path", "Contractor", "Material", "DT", "Cycle min",
-                 "Eff. cycle min", "Trips/DT", "Predicted t/day",
+                 "Eff. cycle min", "Trips/DT", "Old predicted plan t/day",
                  "Target t/day",
                  "Roster"]
     _xlsx_headers(ws, r, cap_heads, center=True)
@@ -1112,6 +1100,10 @@ def _xlsx_fill_month(ws, st, title):
             cell.alignment = mid
             if col in (4, 5, 6, 7, 8, 9, 10) and val is not None:
                 cell.number_format = "#,##0.0" if col in (5, 6, 7) else "#,##0"
+            if col == 8:
+                cell.font = _xlsx_font(False, 10, _XLSX_MUTED)
+            if col == 9:
+                cell.font = _xlsx_font(True, 10, _XLSX_TGT)
         tot_dt += dt or 0
         tot_pred += pred or 0
         tot_tgt += tgt or 0
@@ -1142,7 +1134,7 @@ def _xlsx_fill_month(ws, st, title):
     r = _xlsx_section(
         ws, r, "Priority targets — P1 SAP · P2 LIM from TOS",
         "LD limonite is P3 buffer. Predicted = path model.")
-    sap_heads = ["P", "Path", "Mat · type", "Contractor", "Target t/day", "Predicted t/day",
+    sap_heads = ["P", "Path", "Mat · type", "Contractor", "Target t/day", "Old predicted plan t/day",
                  "Allocated DT", "Required DT", "Status"]
     _xlsx_headers(ws, r, sap_heads, center=True)
     if not sap_rows:
@@ -1172,43 +1164,26 @@ def _xlsx_fill_month(ws, st, title):
             cell.alignment = mid
             if col in (5, 6, 7, 8) and val is not None:
                 cell.number_format = "#,##0"
+            if col == 5:
+                cell.font = _xlsx_font(False, 10, _XLSX_TGT)
+            if col == 6:
+                cell.font = _xlsx_font(False, 10, _XLSX_MUTED)
 
     alloc = (st or {}).get("allocation") or {}
     if alloc.get("new") or alloc.get("old"):
         r += 2
         r = _xlsx_section(
             ws, r, "After priority allocation",
-            "Original Production & capacity above is the matrix fleet. "
-            "These five tonnes are after moving DT to P1 then P2 inside each contractor.")
-        five = [("target · t/day", (alloc.get("new") or alloc.get("old") or {}).get("target"), _XLSX_TGT),
-                ("optimized predicted plan", (alloc.get("new") or {}).get("pred"), _XLSX_PRED),
-                ("old predicted plan", (alloc.get("old") or {}).get("pred"), _XLSX_MUTED)]
-        for i, (lab, val, col) in enumerate(five):
-            cell_l = ws.cell(row=r, column=1 + i, value=lab)
-            cell_l.font = _xlsx_font(True, 8, _XLSX_MUTED)
-            cell_l.alignment = mid
-            cell_l.border = box
-            cell = ws.cell(row=r + 1, column=1 + i, value=val)
-            cell.font = _xlsx_font(True, 14, col)
-            cell.number_format = "#,##0"
-            cell.alignment = mid
-            cell.border = box
-        r += 3
-        if alloc.get("moves"):
-            r = _xlsx_section(ws, r, "Truck moves")
-            _xlsx_headers(ws, r, ["Contractor", "From", "To", "DT", "Same origin"], center=True)
-            for mv in alloc["moves"]:
-                r += 1
-                for col, val in enumerate(
-                        [mv.get("contractor"), mv.get("from"), mv.get("to"),
-                         mv.get("trucks"), "yes" if mv.get("same_origin") else "cross plan"], start=1):
-                    cell = ws.cell(row=r, column=col, value=val)
-                    cell.border = box
-                    cell.alignment = mid
-                    cell.font = _xlsx_font(False, 10)
-                    if col == 4:
-                        cell.number_format = "#,##0"
-            r += 1
+            "Original production above is the matrix fleet. "
+            "These clocks are after moving DT to P1 then P2 inside each contractor.")
+        r = _xlsx_kpi_strip(ws, r, [
+            ("Target", (alloc.get("new") or alloc.get("old") or {}).get("target"),
+             _XLSX_TGT, "t / day"),
+            ("Old predicted plan", (alloc.get("old") or {}).get("pred"),
+             _XLSX_MUTED, "t / day"),
+            ("Optimized predicted plan", (alloc.get("new") or {}).get("pred"),
+             _XLSX_PRED, "t / day"),
+        ], start=1)
         if alloc.get("shortfalls"):
             r += 1
             r = _xlsx_section(ws, r, "Fleet shortfalls")
@@ -1226,24 +1201,32 @@ def _xlsx_fill_month(ws, st, title):
     daily_head = _xlsx_section(
         ws, r, "Daily WMT",
         "Same day every day — the lines are flat on purpose.")
-    _xlsx_headers(ws, daily_head, ["Date", "Predicted t", "Target t"], center=True)
+    _xlsx_headers(ws, daily_head, ["Date", "Old predicted plan", "Target"], center=True)
     dr = daily_head
     for d, pw, aw, tw in rows:
         dr += 1
         _xlsx_text(ws.cell(row=dr, column=1), d, center=True)
-        _xlsx_num(ws.cell(row=dr, column=2), pw, center=True)
-        _xlsx_num(ws.cell(row=dr, column=3), tw, center=True)
+        pred_c = ws.cell(row=dr, column=2)
+        _xlsx_num(pred_c, pw, center=True)
+        pred_c.font = _xlsx_font(False, 11, _XLSX_MUTED)
+        tgt_c = ws.cell(row=dr, column=3)
+        _xlsx_num(tgt_c, tw, center=True)
+        tgt_c.font = _xlsx_font(False, 11, _XLSX_TGT)
     last_daily = dr
     dr += 1
     _xlsx_text(ws.cell(row=dr, column=1), "TOTAL", True, _XLSX_NAVY, center=True)
-    _xlsx_num(ws.cell(row=dr, column=2), tot_p or None, True, center=True)
-    _xlsx_num(ws.cell(row=dr, column=3), tot_t or None, True, center=True)
+    tot_p_c = ws.cell(row=dr, column=2)
+    _xlsx_num(tot_p_c, tot_p or None, True, center=True)
+    tot_p_c.font = _xlsx_font(True, 11, _XLSX_MUTED)
+    tot_t_c = ws.cell(row=dr, column=3)
+    _xlsx_num(tot_t_c, tot_t or None, True, center=True)
+    tot_t_c.font = _xlsx_font(True, 11, _XLSX_TGT)
     if last_daily > daily_head:
         _xlsx_line_chart(ws, "Daily WMT", "t/day", 2, 3, daily_head, last_daily,
-                         "E%d" % daily_head)
+                         "A%d" % (dr + 2), colors=(_XLSX_MUTED, _XLSX_TGT))
 
     _xlsx_widths(ws, [22, 14, 14, 13, 12, 14, 13, 16, 20, 16, 14, 10])
-    ws.freeze_panes = "A8"
+    ws.freeze_panes = "A4"
     ws.row_dimensions[1].height = 24
     return tot_p, tot_a, tot_t
 
@@ -1269,32 +1252,40 @@ def _xlsx_month_book(month, st):
         key, label,
         "Same day every day. Old predicted plan · Target.")
     kpis = [
-        ("old predicted plan · month t", tot_p or None, _XLSX_PRED),
-        ("target · month t", tot_t or None, _XLSX_TGT),
+        ("Target", tot_t or None, _XLSX_TGT, "Month tonnes"),
+        ("Old predicted plan", tot_p or None, _XLSX_MUTED, "Month tonnes"),
     ]
     if tot_p and tot_t:
-        kpis.append(("prediction − target", tot_p - tot_t,
-                     "059669" if tot_p >= tot_t else "B91C1C"))
-    r = _xlsx_kpi_strip(key, r, kpis)
-    chart_row = r
-    table_row = chart_row + 16
-    key.cell(row=table_row, column=2, value="Daily totals").font = _xlsx_font(True, 13, _XLSX_NAVY)
+        kpis.append(("Prediction vs target", tot_p - tot_t,
+                     "059669" if tot_p >= tot_t else "B91C1C", "tonnes"))
+    r = _xlsx_kpi_strip(key, r, kpis, start=1)
+    table_row = r
+    key.cell(row=table_row, column=1, value="Daily totals").font = _xlsx_font(True, 13, _XLSX_NAVY)
     table_row += 1
-    _xlsx_headers(key, table_row, ["Date", "Predicted t", "Target t"], start=2)
+    _xlsx_headers(key, table_row, ["Date", "Old predicted plan", "Target"], start=1)
     rr = table_row
     for d, pw, aw, tw in rows:
         rr += 1
-        _xlsx_text(key.cell(row=rr, column=2), d)
-        _xlsx_num(key.cell(row=rr, column=3), pw)
-        _xlsx_num(key.cell(row=rr, column=4), tw)
+        _xlsx_text(key.cell(row=rr, column=1), d)
+        pc = key.cell(row=rr, column=2)
+        _xlsx_num(pc, pw)
+        pc.font = _xlsx_font(False, 11, _XLSX_MUTED)
+        tc = key.cell(row=rr, column=3)
+        _xlsx_num(tc, tw)
+        tc.font = _xlsx_font(False, 11, _XLSX_TGT)
     last = rr
     rr += 1
-    _xlsx_text(key.cell(row=rr, column=2), "TOTAL", True, _XLSX_NAVY)
-    _xlsx_num(key.cell(row=rr, column=3), tot_p or None, True)
-    _xlsx_num(key.cell(row=rr, column=4), tot_t or None, True)
+    _xlsx_text(key.cell(row=rr, column=1), "TOTAL", True, _XLSX_NAVY)
+    pc = key.cell(row=rr, column=2)
+    _xlsx_num(pc, tot_p or None, True)
+    pc.font = _xlsx_font(True, 11, _XLSX_MUTED)
+    tc = key.cell(row=rr, column=3)
+    _xlsx_num(tc, tot_t or None, True)
+    tc.font = _xlsx_font(True, 11, _XLSX_TGT)
     if last > table_row:
         _xlsx_line_chart(key, "Daily WMT (flat — the same plan every day)", "t/day",
-                         3, 4, table_row, last, "B%d" % chart_row, cat_col=2)
+                         2, 3, table_row, last, "A%d" % (rr + 2), cat_col=1,
+                         colors=(_XLSX_MUTED, _XLSX_TGT))
     month_ws = wb.create_sheet(label[:31])
     _xlsx_fill_month(month_ws, st, "%s — production, capacity & SAP" % label)
     return wb
@@ -1323,30 +1314,22 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix=""):
         % (n_alloc, "" if n_alloc == 1 else "s"),
         start=1)
     if Y:
-        r = _xlsx_kpi_strip(ws, r, [
-            ("target · year t", Y.get("target"), _XLSX_TGT),
-            ("old predicted plan", Y.get("old_pred"), _XLSX_MUTED),
-            ("optimized predicted plan", Y.get("new_pred"), _XLSX_PRED),
-        ], start=1)
-        box = _xlsx_sides()[0]
-        mid = _xlsx_mid()
         mats = Y.get("materials") or {}
-        covs = [
-            ("Together optimized %", Y.get("cov_new_pred")),
-            ("SAP %", (mats.get("sap") or {}).get("cov_pred")),
-            ("LIM-TOS %", (mats.get("tos") or {}).get("cov_pred")),
-            ("LIM-LD %", (mats.get("ld") or {}).get("cov_pred")),
-        ]
-        for i, (lab, val) in enumerate(covs):
-            cell_l = ws.cell(row=r, column=1 + i, value=lab)
-            cell_l.font = _xlsx_font(True, 9, _XLSX_MUTED)
-            cell_l.alignment = mid
-            cell_l.border = box
-            cell = ws.cell(row=r + 1, column=1 + i)
-            _xlsx_pct_cell(cell, val)
-            cell.font = _xlsx_font(True, 18, "059669" if (val or 0) >= 100 else "D97706")
-        ws.row_dimensions[r + 1].height = 28
-        r += 3
+        r = _xlsx_kpi_strip(ws, r, [
+            ("Target", Y.get("target"), _XLSX_TGT, "Year tonnes"),
+            ("Old predicted plan", Y.get("old_pred"), _XLSX_MUTED, "Year tonnes"),
+            ("Optimized predicted plan", Y.get("new_pred"), _XLSX_PRED, "Year tonnes"),
+        ], start=1)
+        r = _xlsx_kpi_strip(ws, r, [
+            ("Together · % of target", Y.get("cov_new_pred"),
+             _xlsx_cov_tone(Y.get("cov_new_pred"))[0] or _XLSX_MUTED, "pct"),
+            ("SAP · % of target", (mats.get("sap") or {}).get("cov_pred"),
+             _xlsx_cov_tone((mats.get("sap") or {}).get("cov_pred"))[0] or _XLSX_MUTED, "pct"),
+            ("LIM-TOS · % of target", (mats.get("tos") or {}).get("cov_pred"),
+             _xlsx_cov_tone((mats.get("tos") or {}).get("cov_pred"))[0] or _XLSX_MUTED, "pct"),
+            ("LIM-LD · % of target", (mats.get("ld") or {}).get("cov_pred"),
+             _xlsx_cov_tone((mats.get("ld") or {}).get("cov_pred"))[0] or _XLSX_MUTED, "pct"),
+        ], start=1)
 
         def pts(getter):
             out = []
@@ -1388,10 +1371,10 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix=""):
                 _xlsx_num(ws.cell(row=r, column=2), a.get("target_month"))
                 _xlsx_num(ws.cell(row=r, column=3), a.get("old_pred_month"))
                 _xlsx_num(ws.cell(row=r, column=4), a.get("new_pred_month"), True)
-                _xlsx_pct_cell(ws.cell(row=r, column=5), a.get("cov_new_pred"))
-                _xlsx_pct_cell(ws.cell(row=r, column=6), ((a.get("materials") or {}).get("sap") or {}).get("cov_pred"))
-                _xlsx_pct_cell(ws.cell(row=r, column=7), ((a.get("materials") or {}).get("tos") or {}).get("cov_pred"))
-                _xlsx_pct_cell(ws.cell(row=r, column=8), ((a.get("materials") or {}).get("ld") or {}).get("cov_pred"))
+                _xlsx_paint_cov(ws.cell(row=r, column=5), a.get("cov_new_pred"))
+                _xlsx_paint_cov(ws.cell(row=r, column=6), ((a.get("materials") or {}).get("sap") or {}).get("cov_pred"))
+                _xlsx_paint_cov(ws.cell(row=r, column=7), ((a.get("materials") or {}).get("tos") or {}).get("cov_pred"))
+                _xlsx_paint_cov(ws.cell(row=r, column=8), ((a.get("materials") or {}).get("ld") or {}).get("cov_pred"))
                 _xlsx_num(ws.cell(row=r, column=9), a.get("left_new_pred_month"))
             else:
                 _xlsx_num(ws.cell(row=r, column=2), c.get("target_month"))
@@ -1412,8 +1395,7 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix=""):
         ):
             cell = ws.cell(row=r, column=col)
             if pctv is not None or col in (5, 6, 7, 8):
-                _xlsx_pct_cell(cell, pctv)
-                cell.font = _xlsx_font(True, 11, _XLSX_NAVY)
+                _xlsx_paint_cov(cell, pctv)
             else:
                 _xlsx_num(cell, val, True)
             _xlsx_total_border(cell)
@@ -1421,8 +1403,8 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix=""):
         tot_p = sum(c.get("pred_month") or 0 for c in cards)
         tot_t = sum(c.get("target_month") or 0 for c in cards)
         r = _xlsx_kpi_strip(ws, r, [
-            ("old predicted plan · year t", tot_p or None, _XLSX_PRED),
-            ("target · year t", tot_t or None, _XLSX_TGT),
+            ("Target", tot_t or None, _XLSX_TGT, "Year tonnes"),
+            ("Old predicted plan", tot_p or None, _XLSX_MUTED, "Year tonnes"),
         ], start=1)
         r = _xlsx_five_clock_block(
             ws, r, "Year · monthly tonnes",
@@ -2216,14 +2198,23 @@ def _path_rates(row):
             return None
         return round(pr / dt, 1)
 
+    def wpt(pr, tr):
+        if pr is None or not tr:
+            return None
+        return round(pr / tr, 2)
+
     def rnd(v):
         return None if v is None else int(round(v))
 
     return {
+        "trips_before": rnd(tr_b),
+        "trips_after": rnd(tr_a),
         "trips_per_dt_before": tpd(tr_b, dt_b),
         "trips_per_dt_after": tpd(tr_a, dt_a),
         "wmt_per_dt_before": wpd(pr_b, dt_b),
         "wmt_per_dt_after": wpd(pr_a, dt_a),
+        "wmt_per_trip_before": wpt(pr_b, tr_b),
+        "wmt_per_trip_after": wpt(pr_a, tr_a),
         "achv_before_capped": rnd(_plan_achv(pr_b, tgt)),
         "achv_after_capped": rnd(_plan_achv(pr_a, tgt)),
         "achv_after_raw": rnd(sim_a),
