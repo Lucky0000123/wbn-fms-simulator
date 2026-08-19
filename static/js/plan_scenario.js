@@ -142,7 +142,10 @@ function planSeedFlowAnimation(){
   const seed=planDraftToFlowSeed();
   if(!seed.P.length)return false;
   flowSetHost('plan');
-  _flowPointScenario={date:'plan',label:'Holding plan',path:0,section:0,tr:0,pointIndex:null};
+  const frozen=typeof planAllocFrozen==='function'&&planAllocFrozen();
+  const head=document.querySelector('#plan-c3-flow .c3-flow-head h3');
+  if(head)head.textContent=frozen?'Optimized plan on GPS corridor':'Holding plan on GPS corridor';
+  _flowPointScenario={date:'plan',label:frozen?'Optimized plan':'Holding plan',path:0,section:0,tr:0,pointIndex:null};
   _flowPlanDraft=seed.draft;
   _flowFleetAvailable=null;
   _flowSpeedsInitialised=false;

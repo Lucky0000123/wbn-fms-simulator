@@ -145,6 +145,7 @@
       +'<div class="plan-hero-l">New predicted</div>'
       +'<div class="plan-hero-v">'+t(o.newPred)+'</div>'
       +'<div class="plan-hero-u">t / '+esc(hz)+'</div></div>'
+      +'<div class="plan-alloc-hero-split" aria-hidden="true"></div>'
       +'<div class="plan-hero-metric plan-alloc-hero-achv">'
       +'<div class="plan-hero-l">New achievable</div>'
       +'<div class="plan-hero-v">'+t(newAchv)+'</div>'
@@ -1250,51 +1251,40 @@
       // wrong surplus on a saturated path: extra trucks barely add tonnes so
       // the inverse still "needs" the whole fleet even when Predicted is
       // already thousands above target (TF→FENI KM15 16 kt vs 10 kt).
+      // WALK DOWN from the current DT, never search globally: the model's
+      // trips/DT has a low-DT hump then a floored linear regime, so global
+      // searches (binary or scan-from-1) land on the wrong crossing —
+      // measured 2026-08-19 on Aug: SAP stuck at 106.5% while LIM-TOS
+      // starved at 69%. Walking down stops at the last DT that still meets
+      // target in the regime the row actually operates in.
       function minDtForTarget(x){
         if(!(x.r.targetWmt>0)||x.r.dt<=1)return x.r.dt;
         const pred=predOf(x);
         if(pred==null||pred<x.r.targetWmt*0.995)return x.r.dt;
         const tgt=x.r.targetWmt*0.995;
-        let lo=1, hi=Math.floor(x.r.dt), best=x.r.dt;
-        while(lo<=hi){
-          const mid=(lo+hi)>>1;
-          const p=predAt(x, mid);
-          if(p!=null&&p>=tgt){best=mid;hi=mid-1;}
-          else lo=mid+1;
-        }
-        // The contractor clamp makes Predicted lumpy in DT, so the binary
-        // search can stop early/late. Walk to the true boundary linearly.
-        while(best>1){
-          const p=predAt(x, best-1);
-          if(p!=null&&p>=tgt)best--;
+        let dt=Math.floor(x.r.dt);
+        while(dt>1){
+          const p=predAt(x, dt-1);
+          if(p!=null&&p>=tgt)dt--;
           else break;
         }
-        return Math.max(1,best);
+        return Math.max(1,dt);
       }
       // Extra DT to push Predicted up to target. If the path cannot reach
       // target, take every remaining P2/P3 DT including the last truck —
       // SAP is must-move; a 1-DT leftover path is not a real plan.
+      // Linear for the same non-monotonicity reason as minDtForTarget.
       function extraDtForTarget(x, spare){
         if(!(x.r.targetWmt>0)||!(spare>0))return 0;
         const pred=predOf(x);
         if(pred!=null&&pred>=x.r.targetWmt*0.995)return 0;
         const tgt=x.r.targetWmt*0.995;
-        const lo0=Math.floor(x.r.dt)+1;
-        let lo=lo0, hi=Math.floor(x.r.dt)+spare, best=null;
-        while(lo<=hi){
-          const mid=(lo+hi)>>1;
-          const p=predAt(x, mid);
-          if(p!=null&&p>=tgt){best=mid;hi=mid-1;}
-          else lo=mid+1;
+        const hi=Math.floor(x.r.dt)+spare;
+        for(let dt=Math.floor(x.r.dt)+1;dt<=hi;dt++){
+          const p=predAt(x, dt);
+          if(p!=null&&p>=tgt)return dt-x.r.dt;
         }
-        // Lumpy prediction breaks binary-search monotonicity; walk down to
-        // the true minimum so Predicted lands ~100%, not several % over.
-        while(best!=null&&best>lo0){
-          const p=predAt(x, best-1);
-          if(p!=null&&p>=tgt)best--;
-          else break;
-        }
-        return best!=null?best-x.r.dt:spare;
+        return spare;
       }
       function belowNeed(x){
         if(!(x.r.targetWmt>0))return 0;

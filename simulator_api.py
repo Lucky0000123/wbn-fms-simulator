@@ -219,6 +219,100 @@ _SIM_CORRIDOR = {
     ],
 }
 
+# Spur roads that are NOT the TF→FENI stick. BLB was previously aliased to
+# TF's 67.8 km, which put Bolo-Bolo trucks on the Tofu end of the schematic.
+# Survey HAUL_ROAD_STA (committed centreline) joins BLB to CRD at ~km 2.45
+# (FENI end). HFC = Huafei tip; CBB = POS CBB.
+_SPUR_SPECS = (
+    ("BLB", "BLB", ["BLB"], 400),
+    ("HFC", "HUAFEI", ["HUAFEI", "HUAFEI.B01", "HUAFEI.C01"], 400),
+    ("CBB", "POS CBB", ["POS CBB", "CBB", "POSCBB"], 400),
+)
+_JOINS_CACHE = None
+
+
+def _chainage_csv_path():
+    here = os.path.dirname(os.path.abspath(__file__))
+    for p, tag in ((os.path.join(here, "data", "haul_road_chainage.csv"), "extract"),
+                   (os.path.join(here, "data", "haul_road_chainage_public.csv"), "committed")):
+        if os.path.exists(p):
+            return p, tag
+    return None, None
+
+
+def _read_chainage_by_road():
+    import csv as _csv
+    path, tag = _chainage_csv_path()
+    if not path:
+        return {}, None
+    by_road = defaultdict(list)
+    with open(path, newline="") as fh:
+        for r in _csv.DictReader(fh):
+            try:
+                road = (r.get("road") or "").strip().upper()
+                if not road or road == "ROAD":
+                    continue
+                by_road[road].append((float(r["km"]), float(r["lat"]), float(r["lng"])))
+            except (TypeError, ValueError, KeyError):
+                continue
+    return by_road, tag
+
+
+def _road_joins():
+    """Nearest approach of BLB / HFC / CBB to the TOFU–KR–CRD centreline.
+
+    Distances are from the committed (or live extract) survey, not invented.
+    joinKm is TF→FENI stick chainage; endKm is the spur's far tip (pit / plant).
+    """
+    global _JOINS_CACHE
+    if _JOINS_CACHE is not None:
+        return _JOINS_CACHE
+    by_road, _tag = _read_chainage_by_road()
+    main = []
+    for road in ("TOFU", "KR", "CRD"):
+        for km, lat, lng in by_road.get(road, []):
+            main.append((road, km, lat, lng))
+    out = []
+    if not main:
+        _JOINS_CACHE = out
+        return out
+    for road, label, aliases, max_m in _SPUR_SPECS:
+        pts = by_road.get(road) or []
+        if len(pts) < 2:
+            continue
+        best = None
+        for skm, slat, slng in pts:
+            for mroad, mkm, mlat, mlng in main:
+                d2 = (slat - mlat) ** 2 + (slng - mlng) ** 2
+                if best is None or d2 < best[0]:
+                    best = (d2, skm, slat, slng, mroad, mkm, mlat, mlng)
+        dist_m = math.sqrt(best[0]) * 111000.0
+        if dist_m > max_m:
+            continue
+        kms = [p[0] for p in pts]
+        km_min, km_max = min(kms), max(kms)
+        join_skm = best[1]
+        far = km_max if abs(km_max - join_skm) >= abs(km_min - join_skm) else km_min
+        far_pt = min(pts, key=lambda p: abs(p[0] - far))
+        out.append({
+            "id": road.lower(),
+            "road": road,
+            "label": label,
+            "aliases": list(aliases),
+            "joinKm": round(best[5], 3),
+            "joinRoad": best[4],
+            "joinLat": round(best[6], 6),
+            "joinLng": round(best[7], 6),
+            "spurJoinKm": round(best[1], 3),
+            "endKm": round(far, 3),
+            "endLat": round(far_pt[1], 6),
+            "endLng": round(far_pt[2], 6),
+            "lengthKm": round(abs(far - best[1]), 3),
+            "joinOffsetM": round(dist_m),
+        })
+    _JOINS_CACHE = out
+    return out
+
 # Posted limits (Excel → CSV) + GPS measured speeds for Tab 1 flow. Cached once.
 _SPEED_LIMIT_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "data", "speed_limit_zones_public.csv")
@@ -416,6 +510,8 @@ def _corridor_payload():
     # Spur zones kept off the stick paint list but available for later views.
     base["speedLimitsSpur"] = [z for z in _CORRIDOR_LAYERS["speedLimitsAll"]
                                if not z.get("onStick")]
+    # BLB/HFC/CBB join the stick at measured survey km — not aliased to TF 67.8.
+    base["joins"] = _road_joins()
     return base
 
 _WB_POS_CACHE = None
@@ -2108,18 +2204,11 @@ def api_simulator_corridor_geometry():
     if _GEOM_CACHE is not None:
         return jsonify(_GEOM_CACHE)
 
-    here = os.path.dirname(os.path.abspath(__file__))
     # Full extract first -- it is the live survey and may be newer. The
     # committed copy is the fallback, not the primary, so a site that re-runs
     # the extract sees its own data.
-    candidates = [(os.path.join(here, "data", "haul_road_chainage.csv"), "extract"),
-                  (os.path.join(here, "data", "haul_road_chainage_public.csv"), "committed")]
-    path, source = None, None
-    for p, tag in candidates:
-        if os.path.exists(p):
-            path, source = p, tag
-            break
-    if path is None:
+    by_road, source = _read_chainage_by_road()
+    if not by_road:
         return jsonify({
             "ok": False, "roads": [],
             "reason": ("no corridor geometry found: neither "
@@ -2128,23 +2217,6 @@ def api_simulator_corridor_geometry():
                        "latter is committed, so this should not happen in a "
                        "clean checkout."),
         })
-    try:
-        import csv as _csv
-        rows = []
-        with open(path, newline="") as fh:
-            for r in _csv.DictReader(fh):
-                try:
-                    rows.append((r["road"].strip().upper(), float(r["km"]),
-                                 float(r["lat"]), float(r["lng"])))
-                except (TypeError, ValueError):
-                    continue
-    except Exception as exc:                          # noqa: BLE001
-        return jsonify({"ok": False, "roads": [],
-                        "reason": "could not read chainage: %s" % str(exc)[:120]})
-
-    by_road = defaultdict(list)
-    for road, km, lat, lng in rows:
-        by_road[road].append((km, lat, lng))
 
     roads = []
     for road, pts in by_road.items():
@@ -2164,9 +2236,11 @@ def api_simulator_corridor_geometry():
         "ok": True, "roads": roads,
         "roadAlias": _ROAD_ALIAS,
         "corridor": _corridor_payload(),
+        "joins": _road_joins(),
         "geometrySource": source,          # "extract" (local) or "committed"
         "note": ("centreline from HAUL_ROAD_STA, downsampled to ~0.25 km. "
-                 "Segment ids use TF for the road the chainage table calls TOFU."),
+                 "Segment ids use TF for the road the chainage table calls TOFU. "
+                 "BLB/HFC/CBB are spur polylines joining the stick at survey km."),
     }
     return jsonify(_GEOM_CACHE)
 

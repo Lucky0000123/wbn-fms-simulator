@@ -114,9 +114,20 @@ import serve                                                        # noqa: E402
 
 client = serve.app.test_client()
 sa._GEOM_CACHE = None
+sa._JOINS_CACHE = None
 d = client.get("/api/simulator/corridor-geometry").get_json()
 check("endpoint returns geometry", d.get("ok") is True and len(d.get("roads") or []) > 0,
       d.get("reason"))
+joins = d.get("joins") or []
+blb = next((j for j in joins if j.get("road") == "BLB"), None)
+check("BLB join is on CRD near km 2.45 (not TF 67.8)",
+      bool(blb) and abs(float(blb.get("joinKm") or 0) - 2.45) < 0.3
+      and str(blb.get("joinRoad") or "") == "CRD",
+      blb)
+hfc = next((j for j in joins if j.get("road") == "HFC"), None)
+check("HUAFEI (HFC) joins CRD near km 5.5",
+      bool(hfc) and abs(float(hfc.get("joinKm") or 0) - 5.5) < 0.3,
+      hfc)
 
 # Simulate a fresh clone by hiding the extract, so the committed file is the
 # only source. Restored in a finally so a failure here cannot leave the machine
@@ -128,6 +139,7 @@ try:
         os.rename(FULL, hidden)
         moved = True
     sa._GEOM_CACHE = None
+    sa._JOINS_CACHE = None
     d2 = client.get("/api/simulator/corridor-geometry").get_json()
     check("fresh clone still gets geometry", d2.get("ok") is True, d2.get("reason"))
     check("and it comes from the COMMITTED file",
@@ -139,6 +151,7 @@ finally:
     if moved:
         os.rename(hidden, FULL)
     sa._GEOM_CACHE = None
+    sa._JOINS_CACHE = None
 
 print()
 if FAILED:

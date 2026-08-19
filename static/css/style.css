@@ -415,9 +415,26 @@ tbody tr:hover{background:var(--panel-hover)}
   padding:14px 16px 12px;margin:0 0 12px;border:1px solid rgba(240,136,62,.4);border-radius:12px;
   background:rgba(240,136,62,.08)
 }
-.plan-alloc-hero-row{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px 40px}
-.plan-alloc-hero .plan-hero-v{color:var(--accent)}
+.plan-alloc-hero-row{
+  display:flex;flex-wrap:wrap;align-items:stretch;justify-content:center;gap:0;padding:2px 0 4px
+}
+.plan-alloc-hero-row .plan-hero-metric{
+  text-align:center;min-width:220px;padding:0 40px
+}
+.plan-alloc-hero-split{
+  width:1px;align-self:stretch;margin:6px 0;
+  background:linear-gradient(180deg,transparent,rgba(255,255,255,.18),transparent)
+}
+.plan-alloc-hero .plan-hero-l{letter-spacing:.1em}
+.plan-alloc-hero .plan-hero-v{
+  color:var(--accent);letter-spacing:-.02em;margin-top:2px
+}
+.plan-alloc-hero .plan-hero-u{letter-spacing:.04em}
 .plan-alloc-hero .plan-alloc-hero-achv .plan-hero-v{color:#4ade80}
+@media(max-width:560px){
+  .plan-alloc-hero-split{display:none}
+  .plan-alloc-hero-row .plan-hero-metric{padding:8px 16px;min-width:0;flex:1 1 100%}
+}
 .plan-alloc-hero-bar{
   display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 18px;width:100%;
   margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,.08);
@@ -1141,7 +1158,7 @@ tbody tr:hover{background:var(--panel-hover)}
 .plan-outcomes-strip span{display:block;font-size:10px;margin-bottom:4px}
 .plan-outcomes-strip b{font-size:16px;font-variant-numeric:tabular-nums}
 #plan-c3-flow-map{height:280px}
-#plan-c3-flow-svg{height:360px;overflow:visible}
+#plan-c3-flow-svg{height:420px;overflow:visible}
 .plan-cond{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;color:var(--txt-secondary);margin:9px 0}.plan-cond input{width:74px;text-align:center;padding:6px 8px}
 .plan-path{display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--line-light);font-size:12px}.plan-path label{display:flex;align-items:center;gap:5px;cursor:pointer}.plan-path .muted{font-size:10px}
 .plan-field{display:flex;flex-direction:column;gap:5px;font-size:10.5px;color:var(--txt-muted);text-transform:uppercase;letter-spacing:.04em;font-weight:600}
