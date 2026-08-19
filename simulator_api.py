@@ -2965,6 +2965,7 @@ def api_plan_shared_flow():
     except (TypeError, ValueError):
         start_h = 7
     use_fixture = str(request.args.get("fixture") or body.get("fixture") or "").strip() in ("1", "true", "yes")
+    whole_day = str(body.get("whole_day") or request.args.get("whole_day") or "").strip().lower() in ("1", "true", "yes")
     path = pch._FIXTURE if use_fixture else None
     payload = psf.shared_flow(
         plans=plans,
@@ -2972,6 +2973,7 @@ def api_plan_shared_flow():
         rain_mm=rain,
         start_hour=start_h,
         path=path,
+        whole_day=whole_day,
     )
     return jsonify(payload), (200 if payload.get("ok") else 400)
 

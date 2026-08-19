@@ -918,6 +918,10 @@ tbody tr:hover{background:var(--panel-hover)}
 .rc-watch{background:rgba(245,158,11,.34)}
 .rc-high{background:rgba(239,68,68,.42)}
 .rc-axis .rc-cell{height:14px;background:none;color:var(--txt-muted);font-weight:400;font-size:9px}
+/* Whole-day crowding: night bins get a violet tint; shift changeover a left rule */
+.rc-cell.rc-night{box-shadow:inset 0 0 0 999px rgba(99,102,241,.07)}
+.rc-cell.rc-shift-edge{border-left:2px solid rgba(139,148,158,.55);border-radius:0 4px 4px 0}
+.rc-axis .rc-cell.rc-night{color:#818cf8}
 /* Cross-plan interactions (the WHY under the path builder) */
 .plan-impacts{display:none!important}
 /* Engine capacity_warnings under the A · Capacity KPIs. These name the tonnage the
@@ -1158,7 +1162,13 @@ tbody tr:hover{background:var(--panel-hover)}
 .plan-outcomes-strip span{display:block;font-size:10px;margin-bottom:4px}
 .plan-outcomes-strip b{font-size:16px;font-variant-numeric:tabular-nums}
 #plan-c3-flow-map{height:280px}
-#plan-c3-flow-svg{height:420px;overflow:visible}
+/* Chainage stick fills the whole window width (owner, 2026-08-19): break out
+   of the card padding with negative margins and stretch taller so ribbons,
+   particles and labels read clearly. */
+#plan-c3-flow-svg{height:560px;overflow:visible;width:100%}
+.plan-s2-illust .flow-visuals{margin-left:-14px;margin-right:-14px}
+.plan-s2-illust .flow-stick{border-radius:0;border-left:none;border-right:none}
+@media(min-width:1500px){#plan-c3-flow-svg{height:640px}}
 .plan-cond{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;color:var(--txt-secondary);margin:9px 0}.plan-cond input{width:74px;text-align:center;padding:6px 8px}
 .plan-path{display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--line-light);font-size:12px}.plan-path label{display:flex;align-items:center;gap:5px;cursor:pointer}.plan-path .muted{font-size:10px}
 .plan-field{display:flex;flex-direction:column;gap:5px;font-size:10.5px;color:var(--txt-muted);text-transform:uppercase;letter-spacing:.04em;font-weight:600}

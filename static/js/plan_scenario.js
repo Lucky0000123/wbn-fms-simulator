@@ -861,7 +861,8 @@ function planFmtN(n,d){
 // (foreign rows from the last ticket shift, scaled to the Other-trips input)
 // so the corridor shows combined crowding. Advisory only — never touches
 // simulate tonnes (basis.congestion_clips_tonnes stays false, J53).
-let _planCrowdIncludeIwip=true;
+let _planCrowdIncludeIwip=false;   // default OFF (owner, 2026-08-19)
+let _planCrowdWholeDay=true;       // full 24 h day = two 12 h shifts
 function planCrowdIwipPlans(){
   // Measured IWIP paths (from planFetchOtherTraffic) scaled to the Other-trips
   // input: trips in the box ÷ trips measured that shift. Trucks scale the same
@@ -881,6 +882,10 @@ function planCrowdToggleIwip(el){
   _planCrowdIncludeIwip=!!(el&&el.checked);
   planFetchRoadCrowding();
 }
+function planCrowdToggleDay(el){
+  _planCrowdWholeDay=!!(el&&el.checked);
+  planFetchRoadCrowding();
+}
 function planFetchRoadCrowding(){
   const plans=planDraftEntries().map(r=>({
     source:r.source,destination:r.dest,n_trucks:Math.round(r.dt||0),
@@ -895,7 +900,7 @@ function planFetchRoadCrowding(){
   const rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0);
   return fetch('/api/plan/shared-flow',{
     method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({plans:plans.concat(iwip),shift_hours:shiftH,rain_mm:rain,start_hour:7}),
+    body:JSON.stringify({plans:plans.concat(iwip),shift_hours:shiftH,rain_mm:rain,start_hour:7,whole_day:_planCrowdWholeDay}),
   }).then(r=>r.json()).then(data=>{
     _planSharedFlow=data;
     planRenderRoadCrowding(data,{nPlan:plans.length,nIwip:iwip.length,nIwipAvail:planCrowdIwipPlans().length});
@@ -909,7 +914,10 @@ function planFetchRoadCrowding(){
 function planRenderRoadCrowding(data,meta){
   const box=q('plan-road-crowding');if(!box)return;
   meta=meta||{};
-  const iwipChk=`<label class="plan-rc-iwip" title="Add the measured IWIP/Position trucks (their last-shift paths, scaled to the Other-trips input) to the road occupancy. They share POS 12\u2013FENI with our hauls.">
+  const iwipChk=`<label class="plan-rc-iwip" title="Full day = two 12 h shifts (07:00 day + 19:00 night), releases re-staggered at the changeover. Untick for the day shift only.">
+      <input type="checkbox" ${_planCrowdWholeDay?'checked':''} onchange="planCrowdToggleDay(this)"> whole day (2\u00d712 h)
+    </label>
+    <label class="plan-rc-iwip" title="Add the measured IWIP/Position trucks (their last-shift paths, scaled to the Other-trips input) to the road occupancy. They share POS 12\u2013FENI with our hauls. Default OFF.">
       <input type="checkbox" ${_planCrowdIncludeIwip?'checked':''} onchange="planCrowdToggleIwip(this)"> include IWIP trucks
       ${meta.nIwipAvail?`<span class="muted">(${meta.nIwipAvail} measured path${meta.nIwipAvail===1?'':'s'})</span>`:'<span class="muted">(no measured paths)</span>'}
     </label>`;
@@ -926,13 +934,16 @@ function planRenderRoadCrowding(data,meta){
   const hourLbls=[];
   for(let b=0;b<nBins;b++)hourLbls.push(((startH+Math.round(b*binH))%24));
   // Grid: one row per section, one cell per hour, colour by occupancy/capacity.
+  const shiftLen=Math.round((data.shift_hours||12)/binH);
   const rows=secs.map(s=>{
     const cap=s.cap_trucks_bin||1;
     const cells=(s.occupancy||[]).map((c,b)=>{
       const r=cap>0?c/cap:0;
       const cls=r>=1?'rc-high':r>=0.7?'rc-watch':c>0?'rc-open':'rc-idle';
-      const tip=`${escH(s.section)} · ${String(hourLbls[b]).padStart(2,'0')}:00 · ${c} truck${c===1?'':'s'} on section (cap ~${Math.round(cap)}/bin${cap?` · ${Math.round(100*r)}%`:''})`;
-      return `<div class="rc-cell ${cls}" title="${tip}">${c>0?c:''}</div>`;
+      const night=data.whole_day&&b>=shiftLen?' rc-night':'';
+      const edge=data.whole_day&&b===shiftLen?' rc-shift-edge':'';
+      const tip=`${escH(s.section)} · ${String(hourLbls[b]).padStart(2,'0')}:00 · ${c} truck${c===1?'':'s'} on section (cap ~${Math.round(cap)}/bin${cap?` · ${Math.round(100*r)}%`:''})${night?' · night shift':''}`;
+      return `<div class="rc-cell ${cls}${night}${edge}" title="${tip}">${c>0?c:''}</div>`;
     }).join('');
     const who=(s.plans||[]).join(' · ');
     const shared=s.shared?` <span class="muted">· shared${who.includes('IWIP')?' incl. IWIP':''}</span>`:'';
@@ -942,7 +953,7 @@ function planRenderRoadCrowding(data,meta){
     </div>`;
   }).join('');
   const axis=`<div class="rc-row rc-axis"><div class="rc-sec"></div><div class="rc-cells">${
-    hourLbls.map(h=>`<div class="rc-cell rc-hour">${String(h).padStart(2,'0')}</div>`).join('')
+    hourLbls.map((h,b)=>`<div class="rc-cell rc-hour${data.whole_day&&b>=shiftLen?' rc-night':''}${data.whole_day&&b===shiftLen?' rc-shift-edge':''}">${String(h).padStart(2,'0')}</div>`).join('')
   }</div></div>`;
   // Verdict: worst crowded hours across sections.
   const chours=data.congestion_hours||[];
@@ -959,7 +970,7 @@ function planRenderRoadCrowding(data,meta){
     </div>
     <div class="plan-rc-grid">${axis}${rows}</div>
     <div class="muted" style="font-size:10.5px;margin-top:6px">
-      Trucks on each section per hour \u2014 our ${meta.nPlan||0} plan path(s)${iwipNote}.
+      Trucks on each section per hour \u2014 our ${meta.nPlan||0} plan path(s)${iwipNote}${data.whole_day?' · full day: 07:00 day + 19:00 night shift, releases re-staggered at changeover':''}.
       Cell colour: green &lt;70% of section capacity · amber \u226570% · red \u2265100%.
       Measured load/dump dwell + Jul+ section speeds, staggered releases.
       Advisory only \u2014 never changes simulate tonnes.

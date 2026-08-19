@@ -183,19 +183,27 @@ def shared_flow(
     start_hour: int = 7,
     path=None,
     bin_hours: float = BIN_HOURS,
+    whole_day: bool = False,
 ) -> dict:
-    """Build shared-section occupancy timeline for a holding plan."""
+    """Build shared-section occupancy timeline for a holding plan.
+
+    whole_day=True runs TWO consecutive shifts (day + night, each
+    shift_hours long, releases re-staggered at the changeover) so the
+    timeline covers the full 24 h clock - the site runs 2 x 12 h, it is
+    NOT one continuous 24 h shift (owner, 2026-08-19)."""
     shift_hours = max(1.0, _f(shift_hours, 12.0) or 12.0)
     wet = (_f(rain_mm, 0) or 0) >= 1.0
     start_hour = int(start_hour) % 24
     bin_hours = max(0.25, _f(bin_hours, BIN_HOURS) or BIN_HOURS)
+    n_shifts = 2 if whole_day else 1
+    horizon_h = shift_hours * n_shifts
 
     norm = _norm_plans(plans)
     basis = {
         "congestion_clips_tonnes": False,
         "simulate_unchanged": True,
         "invents_playback_haul_speeds": False,
-        "phase": "des_lite_loaded_outbound",
+        "phase": "des_lite_loaded_outbound" + ("_2shift" if whole_day else ""),
         "era": "struggle",
     }
     if not norm:
@@ -254,38 +262,43 @@ def shared_flow(
     events: List[Tuple[str, float, float, str, str]] = []
     section_plans: Dict[str, set] = defaultdict(set)
 
-    for src, group in by_src.items():
-        # Serialize all trucks from this source across plans by cumulative index
-        # Stagger = max of load times at this source
-        load_stagger_h = max(g["load_min"] for g in group) / 60.0
-        truck_idx = 0
-        for pr in group:
-            n = min(pr["n_trucks"], MAX_TRUCKS_SIM)
-            for _t in range(n):
-                for trip in range(pr["trips_per_truck"]):
-                    # First departure after load; then + cycle each trip
-                    t_depart = truck_idx * load_stagger_h + trip * pr["cycle_h"]
-                    if t_depart >= shift_hours:
-                        break
-                    t_cursor = t_depart
-                    for st in pr["sec_times"]:
-                        t0 = t_cursor
-                        t1 = t_cursor + st["hours"]
-                        if t0 < shift_hours:
-                            events.append((
-                                st["section"],
-                                t0,
-                                min(t1, shift_hours + 0.01),
-                                pr["id"],
-                                pr["label"],
-                            ))
-                            section_plans[st["section"]].add(pr["label"])
-                        t_cursor = t1
-                        if t_cursor >= shift_hours:
+    # Each shift restarts the release sequence: night crew re-staggers from
+    # the loader at the changeover, exactly like the morning.
+    for shift_i in range(n_shifts):
+        shift_t0 = shift_i * shift_hours
+        shift_t1 = shift_t0 + shift_hours
+        for src, group in by_src.items():
+            # Serialize all trucks from this source across plans by cumulative
+            # index. Stagger = max of load times at this source.
+            load_stagger_h = max(g["load_min"] for g in group) / 60.0
+            truck_idx = 0
+            for pr in group:
+                n = min(pr["n_trucks"], MAX_TRUCKS_SIM)
+                for _t in range(n):
+                    for trip in range(pr["trips_per_truck"]):
+                        # First departure after load; then + cycle each trip
+                        t_depart = shift_t0 + truck_idx * load_stagger_h + trip * pr["cycle_h"]
+                        if t_depart >= shift_t1:
                             break
-                truck_idx += 1
+                        t_cursor = t_depart
+                        for st in pr["sec_times"]:
+                            t0 = t_cursor
+                            t1 = t_cursor + st["hours"]
+                            if t0 < shift_t1:
+                                events.append((
+                                    st["section"],
+                                    t0,
+                                    min(t1, shift_t1 + 0.01),
+                                    pr["id"],
+                                    pr["label"],
+                                ))
+                                section_plans[st["section"]].add(pr["label"])
+                            t_cursor = t1
+                            if t_cursor >= shift_t1:
+                                break
+                    truck_idx += 1
 
-    n_bins = int(math.ceil(shift_hours / bin_hours))
+    n_bins = int(math.ceil(horizon_h / bin_hours))
     # section → bin → count / plan labels
     occ: Dict[str, List[int]] = defaultdict(lambda: [0] * n_bins)
     occ_plans: Dict[str, List[set]] = defaultdict(lambda: [set() for _ in range(n_bins)])
@@ -395,6 +408,9 @@ def shared_flow(
     return {
         "ok": True,
         "shift_hours": shift_hours,
+        "whole_day": whole_day,
+        "n_shifts": n_shifts,
+        "horizon_hours": horizon_h,
         "start_hour": start_hour,
         "bin_hours": bin_hours,
         "wet": wet,
