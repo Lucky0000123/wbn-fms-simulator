@@ -206,33 +206,121 @@ try:
 except ImportError as e:
     print("  SKIP export checks (%s)" % e)
 
-print("\n=== full Excel export (all scenarios, Monthly layout) ===")
+print("\n=== full Excel export (one Monthly workbook per scenario) ===")
 try:
     from flask import Flask
-    import zipfile
+    from openpyxl import load_workbook
     import io as _io
+    import zipfile
     import monthly_api as ma
     app = Flask(__name__)
     app.register_blueprint(sa.bp)
     app.register_blueprint(ma.bp)
     c = app.test_client()
-    yr = str(__import__("datetime").date.today().year)
-    rv = c.get("/api/scenarios/export-full?year=" + yr)
-    check("export-full returns a zip", rv.status_code == 200 and rv.data[:2] == b"PK",
+    yr = "2026"
+    want = ["Year", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    rv = c.get("/api/scenarios/export-full?year=%s&id=S2" % yr)
+    check("S2 monthly workbook returns xlsx", rv.status_code == 200 and rv.data[:2] == b"PK",
           rv.status_code)
     if rv.status_code == 200:
-        zf = zipfile.ZipFile(_io.BytesIO(rv.data))
-        names = zf.namelist()
-        check("zip has S1 monthly_plan workbook",
-              any(n == "monthly_plan_%s.xlsx" % yr for n in names), names)
-        for sid in sa._scenario_ids():
-            check("zip has %s workbook" % sid,
-                  "monthly_plan_%s_%s.xlsx" % (yr, sid) in names, names)
-        zf.close()
+        wb = load_workbook(_io.BytesIO(rv.data), read_only=True)
+        check("S2 sheets are Year + Aug–Dec (same as monthly_plan_2026.xlsx)",
+              wb.sheetnames == want, wb.sheetnames)
+        sep = wb["Sep"]
+        a1 = sep["A1"].value or ""
+        check("S2 Sep title is 'Sep 2026 — old vs new'",
+              a1.startswith("Sep 2026"), a1)
+        rows = list(sep.iter_rows(min_row=1, max_row=40, max_col=13, values_only=True))
+        heads = [r for r in rows if r and r[0] == "P"]
+        check("S2 Sep has the path table header", bool(heads), heads[:1])
+        p3 = [r for r in rows if r and r[0] == "P3"]
+        check("S2 Sep has P3 LIM-LD path rows (leftover DT)", bool(p3), p3[:1])
+        wb.close()
+    rvz = c.get("/api/scenarios/export-full?year=" + yr)
+    check("all-scenarios zip returns", rvz.status_code == 200 and rvz.data[:2] == b"PK",
+          rvz.status_code)
+    if rvz.status_code == 200:
+        z = zipfile.ZipFile(_io.BytesIO(rvz.data))
+        names = z.namelist()
+        check("zip has monthly_plan_2026.xlsx (S1)", "monthly_plan_2026.xlsx" in names, names)
+        check("zip has monthly_plan_2026_S2.xlsx", "monthly_plan_2026_S2.xlsx" in names, names)
+        check("zip has monthly_plan_2026_S3.xlsx", "monthly_plan_2026_S3.xlsx" in names, names)
+        for fn in names:
+            inner = load_workbook(_io.BytesIO(z.read(fn)), read_only=True)
+            check("%s sheets start with Year" % fn, inner.sheetnames[0] == "Year",
+                  inner.sheetnames)
+            inner.close()
+        z.close()
 except ImportError as e:
     print("  SKIP export-full checks (%s)" % e)
 except Exception as e:
-    check("export-full smoke test", False, str(e)[:120])
+    check("export-full smoke test", False, str(e)[:200])
+
+
+print("=== draft plans: Plan-tab shape, fleet conserved, predicted on target ===")
+try:
+    import shutil, tempfile
+    from flask import Flask
+    app3 = Flask(__name__)
+    import monthly_api as ma3
+    app3.register_blueprint(sa.bp)
+    app3.register_blueprint(ma3.bp)
+    import simulator_api as sim3
+    app3.register_blueprint(sim3.bp)
+    c3 = app3.test_client()
+    # generate into a throwaway date (day 28, unlikely to be used) then clean up
+    rv = c3.post("/api/scenarios/S2/draft-plans", json={
+        "year": 2026, "day": 28, "months": [9]})
+    d = rv.get_json()
+    wrote = d.get("ok") and d.get("written")
+    check("draft-plans writes a Plan-tab save", bool(wrote), d)
+    fp = os.path.join(sa._ROOT, "data", "saved_plans", "2026-09-28.json")
+    try:
+        if wrote:
+            plan = json.load(open(fp))
+            check("draft has date/paths/rain/hours keys",
+                  all(k in plan for k in ("date", "paths", "rain_mm", "hours")))
+            tot = {}
+            blb_bad = []
+            for slot, p in plan["paths"].items():
+                tot[p["contractor"]] = tot.get(p["contractor"], 0) + p["dt"]
+                if p["source"] == "BLB" and p["contractor"] != "RIM":
+                    blb_bad.append(slot)
+            pool = d["written"][0]["pool"]
+            check("draft fleet == pool per contractor",
+                  all(abs(tot.get(k, 0) - v) <= 1 for k, v in pool.items()),
+                  "%s vs %s" % (tot, pool))
+            check("draft has no non-RIM at BLB", not blb_bad, blb_bad)
+            # existing date is refused without overwrite
+            rv2 = c3.post("/api/scenarios/S2/draft-plans", json={
+                "year": 2026, "day": 28, "months": [9]})
+            d2 = rv2.get_json()
+            check("existing date refused without overwrite",
+                  not d2.get("written") and d2.get("errors"), d2)
+            # P1/P2 predicted lands on target (>=99.5% of target each)
+            with app3.app_context():
+                paths_m, fleet_m, contr_m = ma3._path_model_context()
+                comb = {}
+                for p in plan["paths"].values():
+                    comb[p["key"]] = comb.get(p["key"], 0) + p["dt"]
+                low = []
+                for slot, p in plan["paths"].items():
+                    if p.get("otype") == "LD" or not p.get("targetWmt"):
+                        continue
+                    row = ma3._path_row_wmt(p["source"], p["dest"], p["contractor"],
+                                            p["dt"], comb[p["key"]],
+                                            paths_m, fleet_m, contr_m)
+                    w = row.get("wmt") or 0
+                    if w < p["targetWmt"] * 0.995:
+                        low.append((slot, round(w), p["targetWmt"]))
+                check("every P1/P2 route predicts >= 99.5%% of target", not low, low[:3])
+    finally:
+        if os.path.isfile(fp):
+            os.remove(fp)
+except ImportError as e:
+    print("  SKIP draft-plan checks (%s)" % e)
+except Exception as e:  # noqa: BLE001
+    check("draft-plan smoke test", False, str(e)[:120])
 
 print()
 if FAILS:

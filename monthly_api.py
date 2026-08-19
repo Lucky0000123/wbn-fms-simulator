@@ -873,16 +873,14 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None):
     """One month: old vs optimized predicted plan, materials, path changes, DT moves."""
     from openpyxl.styles import Alignment
     _xlsx_sheet_setup(ws)
-    n = alloc.get("target_month") and alloc.get("target_day")
-    n_days = int(round(n / alloc["target_day"])) if n and alloc.get("target_day") else len(_days_in(month))
+    n_days = len(_days_in(month))
     src = alloc.get("source_date") or ""
     ws["A1"] = title
     ws["A1"].font = _xlsx_font(True, 16, _XLSX_NAVY)
     ws.merge_cells("A1:Q1")
     ws["A2"] = (
         "Old predicted plan = Your plan as checked. Optimized predicted plan = after Allocate DT. "
-        "Target = %s."
-        % (alloc.get("target_label") or "matrix")
+        "Target = matrix."
         + ((" Saved %s." % src) if src else "")
         + " Month = day × %s days." % n_days)
     ws["A2"].font = _xlsx_font(False, 10, _XLSX_MUTED)
@@ -2349,8 +2347,6 @@ def _alloc_view(alloc, n_days, source_date=None, include_detail=False):
         "moved_total": alloc.get("moved_total"),
         "materials": materials,
     }
-    if alloc.get("target_label"):
-        out["target_label"] = alloc["target_label"]
     if include_detail:
         out["rows"] = alloc.get("rows") or []
         out["moves"] = alloc.get("moves") or []
