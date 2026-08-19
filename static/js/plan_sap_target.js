@@ -1404,7 +1404,7 @@
       if(r._preAlloc&&r._preAlloc.dt!=null)r.dt=r._preAlloc.dt;
     });
     _allocMsg=moved
-      ?(movesTxt.join('\n')+'\nEngine recalculating for new achievable…')
+      ?(movesTxt.join('\n')+'\nAllocator v2 · extras → LIM-LD only · P1/P2 trimmed to ~100% of target\nEngine recalculating for new achievable…')
       :(movesTxt.filter(t=>t.indexOf('⚠')===0).length
         ?movesTxt.join('\n')
         :'No moves — SAP is covered, or this contractor has no LIM trucks left to draw from.');
