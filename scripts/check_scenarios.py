@@ -94,18 +94,29 @@ for sid, res in results.items():
 check("lending never targets a RIM-only pit (code path)",
       "RIM_ONLY_PITS" in open(sa.__file__.replace(".pyc", ".py")).read())
 
-print("\n=== the 8 Mt LIM-LD cap, both directions ===")
+print("\n=== the 8 Mt LIM-LD TARGET line: never a clip (owner, 2026-08-19) ===")
 for sid, res in results.items():
     t = res["total"]
-    check("%s: planned LD <= cap" % sid, t["ld_t_planned"] <= sa.LIM_LD_CAP_T + 1,
-          t["ld_t_planned"])
+    # LD is UNCAPPED: planned == full free-fleet capacity, every month.
+    check("%s: planned LD == uncapped capacity (no clip)" % sid,
+          abs(t["ld_t_planned"] - t["ld_t_capacity"]) <= 2,
+          "%s vs %s" % (t["ld_t_planned"], t["ld_t_capacity"]))
     cum = sum(mo["ld_t_month_planned"] for mo in res["months"])
     check("%s: months sum to the total (%s)" % (sid, format(t["ld_t_planned"], ",")),
           abs(cum - t["ld_t_planned"]) <= 2, cum)
     for mo in res["months"]:
-        if mo["ld_capped"]:
-            check("%s M%d says capped only when actually below capacity" % (sid, mo["month"]),
-                  mo["ld_t_month_planned"] < mo["ld_t_month_capacity"])
+        check("%s M%d: month planned == month capacity" % (sid, mo["month"]),
+              abs(mo["ld_t_month_planned"] - mo["ld_t_month_capacity"]) <= 2 and
+              not mo["ld_capped"])
+    # attainment is REPORTED against the target line, both directions:
+    if t["ld_t_planned"] >= sa.LIM_LD_TARGET_T:
+        check("%s: over-target reported (%s t over)" % (sid, format(t["ld_over_target_t"], ",")),
+              t["ld_cap_reached"] and t["ld_shortfall_t"] == 0 and
+              abs(t["ld_over_target_t"] - (t["ld_t_planned"] - sa.LIM_LD_TARGET_T)) <= 1)
+    else:
+        check("%s: shortfall vs target reported" % sid,
+              not t["ld_cap_reached"] and t["ld_over_target_t"] == 0 and
+              abs(t["ld_shortfall_t"] - (sa.LIM_LD_TARGET_T - t["ld_t_planned"])) <= 1)
 # a scenario whose targets consume everything must plan ~zero LD:
 starved = {"id": "SX", "label": "starve", "targets": [
     {"pit": p, "mat": m, "month": mm, "wmt_day": 10_000_000}

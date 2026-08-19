@@ -9,7 +9,7 @@ The waterfall, in the owner's words (2026-08-18):
   1. allocate DTs until every SAP target is met,
   2. then until every LIM-TOS target is met,
   3. every truck still free hauls LIM-LD (Tofu limonite dump -> Huafei),
-     capped at the 8 Mt H2 sales limit.
+     every leftover truck, uncapped - 8 Mt is the sales target line.
 
 Hard rules:
   * BLB pit accepts RIM trucks only - never SMA or another contractor.
@@ -45,7 +45,11 @@ _MN = {"aug": 8, "august": 8, "sept": 9, "sep": 9, "september": 9,
        "oct": 10, "october": 10, "nov": 11, "november": 11,
        "dec": 12, "december": 12}
 
-LIM_LD_CAP_T = 8_000_000  # H2 limonite-from-dump sales limit (owner, 2026-08-18)
+# H2 LIM-LD sales TARGET (owner, 2026-08-19): a reference line, NOT a clip.
+# "LIM-LD is the only place extra trucks go - it has no kind of cap." Every
+# free DT hauls LD; the plan reports attainment against this line.
+LIM_LD_TARGET_T = 8_000_000
+LIM_LD_CAP_T = LIM_LD_TARGET_T  # back-compat alias (old name, same number)
 RIM_ONLY_PITS = ("BLB",)
 
 
@@ -222,7 +226,7 @@ def _parse_mine_plan_db(ws_rows, src_name):
 
 # ---------------------------------------------------------------- allocator
 
-def waterfall(sc, yearly=None, ld_cap=LIM_LD_CAP_T):
+def waterfall(sc, yearly=None, ld_cap=LIM_LD_TARGET_T):
     """Run the P1 -> P2 -> P3 waterfall for one scenario.
 
     Fleet = yearly-matrix DT pools per contractor per month (fixed).
@@ -334,8 +338,9 @@ def waterfall(sc, yearly=None, ld_cap=LIM_LD_CAP_T):
         ld_day = sum(free[c] * ld_rate.get(c, 100.0) for c in free)
         ld_month_uncapped = ld_day * _DAYS[m]
         ld_uncapped_total += ld_month_uncapped
-        room = max(0.0, ld_cap - ld_cum) if ld_cap else ld_month_uncapped
-        ld_month = min(ld_month_uncapped, room)
+        # No clip: every free truck hauls LD every month (owner, 2026-08-19).
+        # ld_cap is only the reference target the totals are judged against.
+        ld_month = ld_month_uncapped
         ld_cum += ld_month
         months_out.append({
             "month": m, "days": _DAYS[m],
@@ -352,16 +357,18 @@ def waterfall(sc, yearly=None, ld_cap=LIM_LD_CAP_T):
             "ld_t_day_capacity": round(ld_day),
             "ld_t_month_capacity": round(ld_month_uncapped),
             "ld_t_month_planned": round(ld_month),
-            "ld_capped": ld_month < ld_month_uncapped - 0.5,
+            "ld_capped": False,  # kept for API compat; LD is never clipped
         })
     total = {
         "sap_t": round(sum(mo["sap_t_day"] * mo["days"] for mo in months_out)),
         "limtos_t": round(sum(mo["limtos_t_day"] * mo["days"] for mo in months_out)),
         "ld_t_capacity": round(ld_uncapped_total),
         "ld_t_planned": round(ld_cum),
-        "ld_cap": ld_cap,
-        "ld_cap_reached": ld_cap and ld_cum >= ld_cap - 0.5,
+        "ld_cap": ld_cap,  # the 8 Mt TARGET line (name kept for API compat)
+        "ld_target": ld_cap,
+        "ld_cap_reached": bool(ld_cap and ld_cum >= ld_cap - 0.5),
         "ld_shortfall_t": round(max(0.0, (ld_cap or 0) - ld_cum)),
+        "ld_over_target_t": round(max(0.0, ld_cum - (ld_cap or 0))),
     }
     return {
         "id": sc["id"], "label": sc.get("label") or sc["id"],
@@ -718,7 +725,7 @@ def _write_compare_sheet(ws, results):
     for label, key in (("SAP moved (t)", "sap_t"), ("LIM-TOS moved (t)", "limtos_t"),
                        ("LIM-LD planned (t)", "ld_t_planned"),
                        ("LIM-LD uncapped capacity (t)", "ld_t_capacity"),
-                       ("8 Mt cap reached", "ld_cap_reached"),
+                       ("8 Mt target met", "ld_cap_reached"),
                        ("Short of cap by (t)", "ld_shortfall_t")):
         row = [label, ""]
         for r in results:

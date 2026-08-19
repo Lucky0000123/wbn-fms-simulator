@@ -1236,6 +1236,13 @@
           if(p!=null&&p>=tgt){best=mid;hi=mid-1;}
           else lo=mid+1;
         }
+        // The contractor clamp makes Predicted lumpy in DT, so the binary
+        // search can stop early/late. Walk to the true boundary linearly.
+        while(best>1){
+          const p=predAt(x, best-1);
+          if(p!=null&&p>=tgt)best--;
+          else break;
+        }
         return Math.max(1,best);
       }
       // Extra DT to push Predicted up to target. If the path cannot reach
@@ -1253,6 +1260,13 @@
           const p=predAt(x, mid);
           if(p!=null&&p>=tgt){best=mid;hi=mid-1;}
           else lo=mid+1;
+        }
+        // Lumpy prediction breaks binary-search monotonicity; walk down to
+        // the true minimum so Predicted lands ~100%, not several % over.
+        while(best!=null&&best>lo0){
+          const p=predAt(x, best-1);
+          if(p!=null&&p>=tgt)best--;
+          else break;
         }
         return best!=null?best-x.r.dt:spare;
       }
@@ -1357,12 +1371,11 @@
           });
           dumpExtra(p1, (origin)=>
             orderDonors(tosShort(), origin)
-              .concat(orderDonors(p3, origin))
-              .concat(orderDonors(p2, origin)),
-            'trim SAP to target → LIM-TOS (may go over) / LD');
+              .concat(orderDonors(p3, origin)),
+            'trim SAP to target → LD (extras haul LIM-LD)');
           dumpExtra(p2, (origin)=>
             orderDonors(tosShort(), origin).concat(orderDonors(p3, origin)),
-            'LIM-TOS extra → other TOS short / LD');
+            'trim LIM-TOS to target → LD (extras haul LIM-LD)');
         }
         if(moved===before)break;
       }
