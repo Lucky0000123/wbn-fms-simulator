@@ -1444,7 +1444,7 @@ def _xlsx_append_month_sheets(wb, year, cards, used, prefix=""):
         if c.get("alloc_raw"):
             raw, src = c["alloc_raw"], c.get("alloc_source")
         else:
-            raw, src = _resolve_allocation(month, st)
+            raw, src = _resolve_allocation(month, st, day=c.get("_alloc_day"))
         n = c.get("n_days") or len(_days_in(month))
         alloc = _alloc_view(raw, n, src, include_detail=True)
         name = _xlsx_unique_sheet_name(prefix + (c.get("name") or month), used)
@@ -1504,11 +1504,15 @@ def api_monthly_export_year():
     year = (request.args.get("year") or str(date.today().year)).strip()
     if not re.fullmatch(r"\d{4}", year):
         return jsonify({"ok": False, "error": "year=YYYY"}), 400
-    _yearly, cards = _year_cards(year)
+    day = (request.args.get("day") or "").strip()
+    day = int(day) if re.fullmatch(r"[0-9]{1,2}", day) and 1 <= int(day) <= 28 else None
+    _yearly, cards = _year_cards(year, day=day)
     if not cards:
         return jsonify({"ok": False, "error": "nothing stored for %s — load a matrix and build the year first" % year}), 404
-    return _xlsx_send(_xlsx_year_book(year, cards),
-                      "monthly_plan_%s.xlsx" % year)
+    for c in cards:
+        c["_alloc_day"] = day
+    name = "monthly_plan_%s.xlsx" % year if not day else "monthly_plan_%s_day%02d.xlsx" % (year, day)
+    return _xlsx_send(_xlsx_year_book(year, cards), name)
 
 
 
@@ -2107,14 +2111,18 @@ def _hz_to_day(alloc):
     return 1
 
 
-def _find_saved_allocation(month):
-    """Latest frozen Plan-tab allocation in data/saved_plans for YYYY-MM."""
+def _find_saved_allocation(month, day=None):
+    """Frozen Plan-tab allocation in data/saved_plans for YYYY-MM.
+
+    day=None keeps the old rule (latest date wins). day=N restricts to that
+    day of month - the scenario convention (owner, 2026-08-19): the 1st holds
+    S1, the 2nd S2, the 3rd S3, so one month stores one plan per scenario."""
     if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month or ""):
         return None, None
     if not os.path.isdir(_SAVED_DIR):
         return None, None
     best, best_date = None, None
-    prefix = month + "-"
+    prefix = month + "-" if day is None else "%s-%02d" % (month, int(day))
     try:
         names = os.listdir(_SAVED_DIR)
     except OSError:
@@ -2137,10 +2145,15 @@ def _find_saved_allocation(month):
     return best, best_date
 
 
-def _resolve_allocation(month, st=None):
-    """Prefer the month file's copy; else the latest saved daily plan."""
+def _resolve_allocation(month, st=None, day=None):
+    """Prefer the month file's copy; else the latest saved daily plan.
+
+    With day=N the month-state copy is SKIPPED: that copy was frozen from
+    whichever save last built the month, which may be another scenario's."""
     if st is None:
         st = _load_state(month)
+    if day is not None:
+        return _find_saved_allocation(month, day)
     pred = (st or {}).get("prediction") or {}
     for blob, src in (
         ((st or {}).get("saved_day_allocation"), pred.get("source_date")),
@@ -2148,7 +2161,7 @@ def _resolve_allocation(month, st=None):
     ):
         if isinstance(blob, dict) and blob.get("frozen"):
             return blob, src
-    return _find_saved_allocation(month)
+    return _find_saved_allocation(month, day)
 
 
 def _cov_pct(num, den):
@@ -2414,8 +2427,9 @@ def _year_alloc_totals(cards):
     return tot
 
 
-def _year_cards(year):
-    """Month cards for the year board and the year Excel download."""
+def _year_cards(year, day=None):
+    """Month cards for the year board and the year Excel download.
+    day=N picks that day-of-month's saved plan (scenario convention)."""
     yearly = _load_yearly()
     mnums = set(int(m) for m in (yearly or {}).get("months") or [])
     if os.path.isdir(_MONTH_DIR):
@@ -2444,7 +2458,7 @@ def _year_cards(year):
                 _save_state(month, st)
         tgt_days = man.get("days") or []
         tgt_day = tgt_days[0].get("wmt") if tgt_days else None
-        alloc, src = _resolve_allocation(month, st)
+        alloc, src = _resolve_allocation(month, st, day=day)
         view = _alloc_view(alloc, n, src, include_detail=False)
         card = {
             "month": month, "name": _MONTH_LABELS[mnum], "n_days": n,
@@ -2470,9 +2484,11 @@ def api_monthly_year_board():
     year = (request.args.get("year") or str(date.today().year)).strip()
     if not re.fullmatch(r"\d{4}", year):
         return jsonify({"ok": False, "error": "year=YYYY"}), 400
-    yearly, cards = _year_cards(year)
+    day = (request.args.get("day") or "").strip()
+    day = int(day) if re.fullmatch(r"[0-9]{1,2}", day) and 1 <= int(day) <= 28 else None
+    yearly, cards = _year_cards(year, day=day)
     return jsonify({
-        "ok": True, "year": year,
+        "ok": True, "year": year, "day": day,
         "has_matrix": yearly is not None,
         "source": (yearly or {}).get("source"),
         "routes": len((yearly or {}).get("entries") or []),

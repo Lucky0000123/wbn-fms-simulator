@@ -141,7 +141,17 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
 <div class="card" id="mo-board">
   <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
     <h2 style="margin:0">Year board</h2>
-    <button class="primary" onclick="moExportYear()">⬇ Download Excel</button>
+    <div class="row" style="gap:8px;align-items:center">
+      <label class="muted" style="font-size:12px" title="Which scenario's saved plans to show. Convention: the 1st of each month holds Scenario 1, the 2nd Scenario 2, the 3rd Scenario 3.">Scenario
+        <select id="mo-board-scen" style="margin-left:6px">
+          <option value="">Latest save (any day)</option>
+          <option value="1">Scenario 1 · day 1</option>
+          <option value="2">Scenario 2 · day 2</option>
+          <option value="3">Scenario 3 · day 3</option>
+        </select>
+      </label>
+      <button class="primary" onclick="moExportYear()">⬇ Download Excel</button>
+    </div>
   </div>
   <p class="muted" id="mo-board-note" style="margin:0 0 8px">Load a matrix, then save Allocate DT on the Plan tab for each month.</p>
   <div class="kpis" id="mo-year-kpis"></div>
@@ -590,8 +600,9 @@ function renderBoard(){
     :'';
 }
 
+function boardDay(){const el=$('mo-board-scen');return el&&el.value?('&day='+el.value):'';}
 async function loadBoard(){
-  const r=await fetch('/api/monthly/year-board?year='+year()).then(x=>x.json()).catch(()=>null);
+  const r=await fetch('/api/monthly/year-board?year='+year()+boardDay()).then(x=>x.json()).catch(()=>null);
   _board=(r&&r.ok)?r:{cards:[],has_matrix:false};
   renderBoard();
 }
@@ -864,7 +875,7 @@ function moExport(){
   if(m)window.location='/api/monthly/export?month='+m;
 }
 function moExportYear(){
-  window.location='/api/monthly/export-year?year='+year();
+  window.location='/api/monthly/export-year?year='+year()+boardDay();
 }
 
 async function moYearlyRefresh(){
@@ -1013,6 +1024,7 @@ async function moYearlyBuild(mnum){
 }
 
 $('mo-year').addEventListener('change',loadBoard);
+$('mo-board-scen').addEventListener('change',loadBoard);
 $('mo-month').addEventListener('change',()=>{_selMonth=month();loadState();renderBoard();});
 $('mo-months').addEventListener('change',e=>{if(e.target.value){moPickMonth(e.target.value);}});
 $('mo-year').value=String(new Date().getFullYear());

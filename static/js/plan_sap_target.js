@@ -795,6 +795,30 @@
       return '<div class="muted" style="font-size:10.5px;margin-top:6px;color:#f59e0b">still over target — this contractor has no LIM-TOS / LIM-LD path to take leftover trucks</div>';
     return '';
   }
+  function covPct(target,pred){
+    if(!(target>0)||pred==null||!Number.isFinite(pred))return null;
+    return Math.round(1000*pred/target)/10;
+  }
+  function covBlockHtml(k,target,pred){
+    const pct=covPct(target,pred);
+    if(pct==null)
+      return '<div class="plan-alloc-cov">'
+        +'<div class="k">Predicted / target</div>'
+        +'<div class="v plan-alloc-cov-v">—</div>'
+        +'<div class="plan-alloc-was">'+(target?'no predicted yet':'no target on this bucket')+'</div>'
+        +'</div>';
+    const d=Math.round(pred)-Math.round(target);
+    let tone='ok';
+    if(pct<99.5)tone='short';
+    else if(pct>101)tone=(k==='sap')?'over':'over-ok';
+    const delta=!d?'on target'
+      :(d>0?'+'+fmt(d)+' t over ('+pct+'%)':fmt(d)+' t short ('+pct+'%)');
+    return '<div class="plan-alloc-cov '+tone+'">'
+      +'<div class="k">Predicted / target</div>'
+      +'<div class="v plan-alloc-cov-v">'+pct+'%</div>'
+      +'<div class="plan-alloc-was">'+delta+'</div>'
+      +'</div>';
+  }
   function deltaHtml(now,was){
     if(was==null||!Number.isFinite(was))return '';
     const d=Math.round(now)-Math.round(was);
@@ -815,6 +839,7 @@
       const achv=after?b.achv:(b.achvWas||b.achv);
       return '<div class="plan-alloc-bucket plan-alloc-bucket--'+b.cls+'">'
         +'<div class="plan-alloc-bucket-h">'+b.label+(b.n?' · '+b.n+' path'+(b.n===1?'':'s'):'')+'</div>'
+        +covBlockHtml(k,b.target,pred)
         +'<div class="plan-alloc-bucket-grid">'
         +'<div><div class="k">Target t/'+esc(hzLab)+'</div><div class="v">'+(b.target?fmt(b.target):'—')+'</div></div>'
         +'<div><div class="k">'+predLab+'</div><div class="v">'+(b.n?fmt(pred):'—')+'</div>'
@@ -1004,6 +1029,7 @@
       const achv=after?(b.achv_sim!=null?b.achv_sim:b.achv_after):b.achv_before;
       return '<div class="plan-alloc-bucket plan-alloc-bucket--'+meta[k].cls+'">'
         +'<div class="plan-alloc-bucket-h">'+meta[k].label+(n?' · '+n+' path'+(n===1?'':'s'):'')+'</div>'
+        +covBlockHtml(k,target,pred)
         +'<div class="plan-alloc-bucket-grid">'
         +'<div><div class="k">Target t/'+esc(hzLab)+'</div><div class="v">'+(target?fmt(target):'—')+'</div></div>'
         +'<div><div class="k">'+(after?'New predicted':'Predicted')+'</div><div class="v">'+(n?fmt(pred):'—')+'</div>'

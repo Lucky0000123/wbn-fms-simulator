@@ -333,6 +333,34 @@ except ImportError as e:
 except Exception as e:  # noqa: BLE001
     check("draft-plan smoke test", False, str(e)[:120])
 
+
+print("=== year board day=N picks that day's saved plan (scenario convention) ===")
+try:
+    from flask import Flask
+    import monthly_api as ma5
+    app5 = Flask(__name__)
+    app5.register_blueprint(ma5.bp)
+    c5 = app5.test_client()
+    srcs = {}
+    for d in (None, 1, 2, 3):
+        url = "/api/monthly/year-board?year=2026" + ("&day=%d" % d if d else "")
+        r = c5.get(url).get_json()
+        srcs[d] = [(c["month"], (c.get("alloc") or {}).get("source_date"))
+                   for c in r["cards"] if c.get("has_alloc")]
+    for d in (1, 2, 3):
+        got = srcs.get(d) or []
+        check("day=%d only resolves day-%02d saves" % (d, d),
+              got and all(s and s.endswith("-%02d" % d) for _, s in got),
+              got[:3])
+    check("day=1 and day=2 resolve different plans (not the same copy)",
+          srcs[1] and srcs[2] and srcs[1] != srcs[2])
+    check("day omitted keeps the old latest-save rule",
+          bool(srcs[None]))
+except ImportError as e:
+    print("  SKIP year-board day checks (%s)" % e)
+except Exception as e:  # noqa: BLE001
+    check("year-board day smoke test", False, str(e)[:120])
+
 print()
 if FAILS:
     print("J72 FAILED: %d check(s). First: %s" % (len(FAILS), FAILS[0]))
