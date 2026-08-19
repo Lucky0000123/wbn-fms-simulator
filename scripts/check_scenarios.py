@@ -206,6 +206,34 @@ try:
 except ImportError as e:
     print("  SKIP export checks (%s)" % e)
 
+print("\n=== full Excel export (all scenarios, Monthly layout) ===")
+try:
+    from flask import Flask
+    import zipfile
+    import io as _io
+    import monthly_api as ma
+    app = Flask(__name__)
+    app.register_blueprint(sa.bp)
+    app.register_blueprint(ma.bp)
+    c = app.test_client()
+    yr = str(__import__("datetime").date.today().year)
+    rv = c.get("/api/scenarios/export-full?year=" + yr)
+    check("export-full returns a zip", rv.status_code == 200 and rv.data[:2] == b"PK",
+          rv.status_code)
+    if rv.status_code == 200:
+        zf = zipfile.ZipFile(_io.BytesIO(rv.data))
+        names = zf.namelist()
+        check("zip has S1 monthly_plan workbook",
+              any(n == "monthly_plan_%s.xlsx" % yr for n in names), names)
+        for sid in sa._scenario_ids():
+            check("zip has %s workbook" % sid,
+                  "monthly_plan_%s_%s.xlsx" % (yr, sid) in names, names)
+        zf.close()
+except ImportError as e:
+    print("  SKIP export-full checks (%s)" % e)
+except Exception as e:
+    check("export-full smoke test", False, str(e)[:120])
+
 print()
 if FAILS:
     print("J72 FAILED: %d check(s). First: %s" % (len(FAILS), FAILS[0]))

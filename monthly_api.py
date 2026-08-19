@@ -881,7 +881,8 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None):
     ws.merge_cells("A1:Q1")
     ws["A2"] = (
         "Old predicted plan = Your plan as checked. Optimized predicted plan = after Allocate DT. "
-        "Target = matrix."
+        "Target = %s."
+        % (alloc.get("target_label") or "matrix")
         + ((" Saved %s." % src) if src else "")
         + " Month = day × %s days." % n_days)
     ws["A2"].font = _xlsx_font(False, 10, _XLSX_MUTED)
@@ -1301,21 +1302,30 @@ def _xlsx_month_book(month, st):
     return wb
 
 
-def _xlsx_year_book(year, cards):
-    """Key = year dashboard (five-clock line charts) then one old-vs-new sheet per month."""
-    from openpyxl import Workbook
-    wb = Workbook()
-    key = wb.active
-    key.title = "Year"
+def _xlsx_unique_sheet_name(base, used):
+    name = (base or "Sheet")[:31]
+    n = 2
+    while name in used:
+        name = ("%s %d" % (base, n))[:31]
+        n += 1
+    used.add(name)
+    return name
+
+
+def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix=""):
+    """Year dashboard sheet: KPIs, five-clock charts, coverage table."""
     Y = _year_alloc_totals(cards)
     n_alloc = sum(1 for c in cards if c.get("has_alloc") or c.get("alloc"))
+    head = "Year dashboard · %s" % year
+    if title_prefix:
+        head = "%s · %s" % (title_prefix, head)
     r = _xlsx_board_header(
-        key, "Year dashboard · %s" % year,
+        ws, head,
         "%s month%s with Allocate snapshots. Target, old predicted plan, optimized predicted plan."
         % (n_alloc, "" if n_alloc == 1 else "s"),
         start=1)
     if Y:
-        r = _xlsx_kpi_strip(key, r, [
+        r = _xlsx_kpi_strip(ws, r, [
             ("target · year t", Y.get("target"), _XLSX_TGT),
             ("old predicted plan", Y.get("old_pred"), _XLSX_MUTED),
             ("optimized predicted plan", Y.get("new_pred"), _XLSX_PRED),
@@ -1330,14 +1340,14 @@ def _xlsx_year_book(year, cards):
             ("LIM-LD %", (mats.get("ld") or {}).get("cov_pred")),
         ]
         for i, (lab, val) in enumerate(covs):
-            cell_l = key.cell(row=r, column=1 + i, value=lab)
+            cell_l = ws.cell(row=r, column=1 + i, value=lab)
             cell_l.font = _xlsx_font(True, 9, _XLSX_MUTED)
             cell_l.alignment = mid
             cell_l.border = box
-            cell = key.cell(row=r + 1, column=1 + i)
+            cell = ws.cell(row=r + 1, column=1 + i)
             _xlsx_pct_cell(cell, val)
             cell.font = _xlsx_font(True, 18, "059669" if (val or 0) >= 100 else "D97706")
-        key.row_dimensions[r + 1].height = 28
+        ws.row_dimensions[r + 1].height = 28
         r += 3
 
         def pts(getter):
@@ -1348,7 +1358,7 @@ def _xlsx_year_book(year, cards):
             return out
 
         r = _xlsx_five_clock_block(
-            key, r, "Together · year",
+            ws, r, "Together · year",
             "Month on X · tonnes on Y. Target, old predicted plan, optimized predicted plan.",
             pts(lambda a, c: {
                 "target": a.get("target_month") if a else c.get("target_month"),
@@ -1359,7 +1369,7 @@ def _xlsx_year_book(year, cards):
         for key_m, title in (("sap", "SAP · year"), ("tos", "LIM-TOS · year"),
                              ("ld", "LIM-LD · year")):
             r = _xlsx_five_clock_block(
-                key, r, title,
+                ws, r, title,
                 "Same three clocks for this material only.",
                 pts(lambda a, c, k=key_m: {
                     "target": ((a.get("materials") or {}).get(k) or {}).get("target_month"),
@@ -1368,28 +1378,28 @@ def _xlsx_year_book(year, cards):
                 }),
                 start=1, chart_col="I")
         r = _xlsx_section(
-            key, r, "Coverage table",
+            ws, r, "Coverage table",
             "Optimized predicted plan ÷ target.")
-        _xlsx_headers(key, r, ["Month", "Target", "Old predicted plan", "Optimized predicted plan", "Optimized %",
+        _xlsx_headers(ws, r, ["Month", "Target", "Old predicted plan", "Optimized predicted plan", "Optimized %",
                                "SAP %", "LIM-TOS %", "LIM-LD %", "Leaving"], start=1)
         for c in cards:
             r += 1
             a = c.get("alloc") or {}
-            _xlsx_text(key.cell(row=r, column=1), c.get("name"))
+            _xlsx_text(ws.cell(row=r, column=1), c.get("name"))
             if a:
-                _xlsx_num(key.cell(row=r, column=2), a.get("target_month"))
-                _xlsx_num(key.cell(row=r, column=3), a.get("old_pred_month"))
-                _xlsx_num(key.cell(row=r, column=4), a.get("new_pred_month"), True)
-                _xlsx_pct_cell(key.cell(row=r, column=5), a.get("cov_new_pred"))
-                _xlsx_pct_cell(key.cell(row=r, column=6), ((a.get("materials") or {}).get("sap") or {}).get("cov_pred"))
-                _xlsx_pct_cell(key.cell(row=r, column=7), ((a.get("materials") or {}).get("tos") or {}).get("cov_pred"))
-                _xlsx_pct_cell(key.cell(row=r, column=8), ((a.get("materials") or {}).get("ld") or {}).get("cov_pred"))
-                _xlsx_num(key.cell(row=r, column=9), a.get("left_new_pred_month"))
+                _xlsx_num(ws.cell(row=r, column=2), a.get("target_month"))
+                _xlsx_num(ws.cell(row=r, column=3), a.get("old_pred_month"))
+                _xlsx_num(ws.cell(row=r, column=4), a.get("new_pred_month"), True)
+                _xlsx_pct_cell(ws.cell(row=r, column=5), a.get("cov_new_pred"))
+                _xlsx_pct_cell(ws.cell(row=r, column=6), ((a.get("materials") or {}).get("sap") or {}).get("cov_pred"))
+                _xlsx_pct_cell(ws.cell(row=r, column=7), ((a.get("materials") or {}).get("tos") or {}).get("cov_pred"))
+                _xlsx_pct_cell(ws.cell(row=r, column=8), ((a.get("materials") or {}).get("ld") or {}).get("cov_pred"))
+                _xlsx_num(ws.cell(row=r, column=9), a.get("left_new_pred_month"))
             else:
-                _xlsx_num(key.cell(row=r, column=2), c.get("target_month"))
-                _xlsx_num(key.cell(row=r, column=3), c.get("pred_month"))
+                _xlsx_num(ws.cell(row=r, column=2), c.get("target_month"))
+                _xlsx_num(ws.cell(row=r, column=3), c.get("pred_month"))
         r += 1
-        tot_lab = key.cell(row=r, column=1, value="TOTAL · %s months" % Y.get("n"))
+        tot_lab = ws.cell(row=r, column=1, value="TOTAL · %s months" % Y.get("n"))
         tot_lab.font = _xlsx_font(True, 11, _XLSX_NAVY)
         _xlsx_total_border(tot_lab)
         for col, val, pctv in (
@@ -1402,7 +1412,7 @@ def _xlsx_year_book(year, cards):
             (8, None, (mats.get("ld") or {}).get("cov_pred")),
             (9, Y.get("left_new_pred"), None),
         ):
-            cell = key.cell(row=r, column=col)
+            cell = ws.cell(row=r, column=col)
             if pctv is not None or col in (5, 6, 7, 8):
                 _xlsx_pct_cell(cell, pctv)
                 cell.font = _xlsx_font(True, 11, _XLSX_NAVY)
@@ -1412,38 +1422,39 @@ def _xlsx_year_book(year, cards):
     else:
         tot_p = sum(c.get("pred_month") or 0 for c in cards)
         tot_t = sum(c.get("target_month") or 0 for c in cards)
-        r = _xlsx_kpi_strip(key, r, [
+        r = _xlsx_kpi_strip(ws, r, [
             ("old predicted plan · year t", tot_p or None, _XLSX_PRED),
             ("target · year t", tot_t or None, _XLSX_TGT),
         ], start=1)
         r = _xlsx_five_clock_block(
-            key, r, "Year · monthly tonnes",
+            ws, r, "Year · monthly tonnes",
             "No Allocate snapshots yet — matrix predicted plan / target.",
             [{"name": c.get("name"), "target": c.get("target_month"),
               "old_pred": c.get("pred_month"), "new_pred": None} for c in cards],
             start=1, chart_col="I")
 
-    _xlsx_widths(key, [16, 14, 14, 14, 12, 14, 14, 12, 14, 12, 10, 12, 12, 12])
-    key.freeze_panes = "A4"
+    _xlsx_widths(ws, [16, 14, 14, 14, 12, 14, 14, 12, 14, 12, 10, 12, 12, 12])
+    ws.freeze_panes = "A4"
 
-    used = {"Year"}
+
+def _xlsx_append_month_sheets(wb, year, cards, used, prefix=""):
+    """One old-vs-new sheet per month card. Cards may carry alloc_raw for scenarios."""
     for c in cards:
-        st = _load_state(c["month"]) or {"month": c["month"]}
-        st["month"] = c["month"]
-        raw, src = _resolve_allocation(c["month"], st)
-        n = c.get("n_days") or len(_days_in(c["month"]))
+        month = c["month"]
+        st = _load_state(month) or {"month": month}
+        st["month"] = month
+        if c.get("alloc_raw"):
+            raw, src = c["alloc_raw"], c.get("alloc_source")
+        else:
+            raw, src = _resolve_allocation(month, st)
+        n = c.get("n_days") or len(_days_in(month))
         alloc = _alloc_view(raw, n, src, include_detail=True)
-        name = (c.get("name") or c["month"])[:31]
-        base, nuniq = name, 2
-        while name in used:
-            name = ("%s %d" % (base, nuniq))[:31]
-            nuniq += 1
-        used.add(name)
+        name = _xlsx_unique_sheet_name(prefix + (c.get("name") or month), used)
         ws = wb.create_sheet(name)
         label = "%s %s" % (c.get("name") or "", year)
         if alloc:
             _xlsx_fill_month_alloc(
-                ws, c["month"], "%s — old vs new" % label.strip(), alloc, st)
+                ws, month, "%s — old vs new" % label.strip(), alloc, st)
         elif st.get("prediction") or st.get("manual"):
             _xlsx_fill_month(ws, st, "%s — production, capacity & SAP" % label.strip())
         else:
@@ -1451,6 +1462,28 @@ def _xlsx_year_book(year, cards):
             ws["A1"].font = _xlsx_font(True, 16, _XLSX_NAVY)
             ws["A2"] = "No saved Allocate snapshot and no month file yet."
             ws["A2"].font = _xlsx_font(False, 10, _XLSX_MUTED)
+
+
+def append_year_book_sheets(wb, year, cards, used=None, prefix=""):
+    """Add a year dashboard + month sheets to an existing workbook (multi-scenario export)."""
+    if used is None:
+        used = set(wb.sheetnames)
+    yr = _xlsx_unique_sheet_name(prefix + "Year", used)
+    ws = wb.create_sheet(yr)
+    _xlsx_fill_year_dashboard(ws, year, cards, title_prefix=prefix.rstrip(" · "))
+    _xlsx_append_month_sheets(wb, year, cards, used, prefix=prefix)
+    return used
+
+
+def _xlsx_year_book(year, cards):
+    """Key = year dashboard (five-clock line charts) then one old-vs-new sheet per month."""
+    from openpyxl import Workbook
+    wb = Workbook()
+    key = wb.active
+    key.title = "Year"
+    used = {"Year"}
+    _xlsx_fill_year_dashboard(key, year, cards)
+    _xlsx_append_month_sheets(wb, year, cards, used, prefix="")
     return wb
 
 
@@ -2316,6 +2349,8 @@ def _alloc_view(alloc, n_days, source_date=None, include_detail=False):
         "moved_total": alloc.get("moved_total"),
         "materials": materials,
     }
+    if alloc.get("target_label"):
+        out["target_label"] = alloc["target_label"]
     if include_detail:
         out["rows"] = alloc.get("rows") or []
         out["moves"] = alloc.get("moves") or []

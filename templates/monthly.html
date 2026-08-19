@@ -128,6 +128,7 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
     <input type="file" id="mo-scen-file" accept=".xlsx,.xlsm">
     <button onclick="scenImport()">Import scenarios from mine-plan Excel</button>
     <a class="primary" href="/api/scenarios/export" style="text-decoration:none"><button class="primary">⬇ Download comparison (Excel)</button></a>
+    <button class="primary" onclick="scenExportFull()">⬇ Download monthly plans (all scenarios · zip)</button>
     <span class="status" id="mo-scen-status"></span>
   </div>
   <div class="mat-grid" id="mo-scen-summary" style="margin-top:12px"></div>
@@ -1032,6 +1033,10 @@ async function scenImport(){
   scenRefresh();
 }
 
+function scenExportFull(){
+  window.location='/api/scenarios/export-full?year='+year();
+}
+
 async function scenRefresh(){
   const r=await fetch('/api/scenarios/compare').then(x=>x.json()).catch(()=>null);
   const card=$('mo-scen-card');
@@ -1050,6 +1055,7 @@ async function scenRefresh(){
       ${t.ld_cap_reached?'<div class="pair"><span style="color:var(--ok)">8 Mt cap reached — trucks to spare</span></div>':
         `<div class="pair"><span style="color:var(--er)">short of the cap by</span><b>${MFMT(t.ld_shortfall_t)} t</b></div>`}
       ${s.violations&&s.violations.length?`<div class="pair"><span style="color:var(--er)">BLB≠RIM: ${s.violations.length}</span></div>`:''}
+      <div class="pair" style="margin-top:8px"><a href="/api/scenarios/${s.id}/export-monthly?year=${$('mo-year').value||new Date().getFullYear()}" style="font-size:11.5px">⬇ Monthly plan Excel (${s.id})</a></div>
     </div>`;}).join('');
   // month table: DT split per priority for every scenario side by side
   let h='<tr><th>Month</th><th>Fleet (RIM+SMA)</th>'+scs.map(s=>`<th colspan="4">${s.label}<br><span class="muted" style="font-weight:400">P1 SAP · P2 LIM-TOS · P3 free DT · LIM-LD t</span></th>`).join('')+'</tr>';

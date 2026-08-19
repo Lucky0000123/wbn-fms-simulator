@@ -374,6 +374,463 @@ def waterfall(sc, yearly=None, ld_cap=LIM_LD_CAP_T):
     }, None
 
 
+# ---------------------------------------------------------------- full Excel (all scenarios)
+
+_PIT_SRC = {"BLB": "BLB", "KRENE": "KR", "TOFU": "TF"}
+
+
+def _wf_route_key(a):
+    import monthly_api as ma
+    src = _PIT_SRC.get(a["pit"], a["pit"])
+    src = ma._ORIGIN_MAP.get(src, src)
+    return (src, ma._canon_dest(a["dest"]), a["contractor"], a["mat"], a.get("otype") or "TOS")
+
+
+def _matrix_route_key(e, mstr):
+    import monthly_api as ma
+    src = ma._ORIGIN_MAP.get((e.get("origin") or "").upper(), (e.get("origin") or "").upper())
+    return (src, ma._canon_dest(e.get("dest")), (e.get("contractor") or "").upper(),
+            (e.get("material") or "").upper(), (e.get("otype") or "").upper())
+
+
+def _matrix_rows_for_month(yearly, mnum):
+    """Every yearly-matrix row for one month (Plan / Excel vocabulary)."""
+    import monthly_api as ma
+    mstr = str(int(mnum))
+    out = []
+    for e in (yearly or {}).get("entries") or []:
+        dt = (e.get("dt") or {}).get(mstr) or (e.get("dt") or {}).get(int(mnum)) or 0
+        wmt = (e.get("wmt") or {}).get(mstr) or (e.get("wmt") or {}).get(int(mnum)) or 0
+        if dt <= 0 and wmt <= 0:
+            continue
+        src = ma._ORIGIN_MAP.get((e.get("origin") or "").upper(), (e.get("origin") or "").upper())
+        dst = ma._canon_dest(e.get("dest"))
+        mat = (e.get("material") or "").upper()
+        otype = (e.get("otype") or "").upper()
+        if mat == "SAP":
+            prio = 1
+        elif mat == "LIM" and otype == "TOS":
+            prio = 2
+        elif mat == "LIM":
+            prio = 3
+        else:
+            prio = 9
+        out.append({
+            "src": src, "dst": dst, "key": "%s>%s" % (src, dst),
+            "contractor": (e.get("contractor") or "").upper(),
+            "material": mat, "otype": otype, "prio": prio,
+            "matrix_dt": float(dt), "matrix_wmt": float(wmt),
+            "route_key": (src, dst, (e.get("contractor") or "").upper(), mat, otype),
+        })
+    return out
+
+
+def _norm_otype(otype):
+    o = (otype or "").upper()
+    return o if o and o != "TOS" else ""
+
+
+def _saved_old_rows(month):
+    """Your plan as checked — latest saved Plan allocation for this month, if any."""
+    import monthly_api as ma
+    raw, _src = ma._find_saved_allocation(month)
+    if not isinstance(raw, dict) or not raw.get("frozen"):
+        return {}
+    out = {}
+    for r in raw.get("rows") or []:
+        k = (r.get("key") or "", (r.get("contractor") or "").upper(),
+             (r.get("material") or "").upper(), _norm_otype(r.get("otype")))
+        out[k] = r
+    return out
+
+
+def _saved_old_lookup(saved_old, mr):
+    """Match saved rows even when matrix uses otype TOS and Plan save used blank."""
+    sk = (mr["key"], mr["contractor"], mr["material"], _norm_otype(mr.get("otype")))
+    return saved_old.get(sk)
+
+
+def _compute_moves(detail):
+    """Same-contractor DT moves between paths (Plan export table)."""
+    moves = []
+    for cont in sorted({d["contractor"] for d in detail}):
+        donors = [d for d in detail if d["contractor"] == cont
+                  and (d.get("dt_after") or 0) < (d.get("dt_before") or 0)]
+        receivers = [d for d in detail if d["contractor"] == cont
+                       and (d.get("dt_after") or 0) > (d.get("dt_before") or 0)]
+        for rec in sorted(receivers, key=lambda x: x.get("prio") or 9):
+            need = round((rec.get("dt_after") or 0) - (rec.get("dt_before") or 0))
+            for don in sorted(donors, key=lambda x: -(x.get("dt_before") or 0)):
+                if need <= 0:
+                    break
+                avail = round((don.get("dt_before") or 0) - (don.get("dt_after") or 0)
+                              - don.get("_given", 0))
+                if avail <= 0:
+                    continue
+                take = min(need, avail)
+                don["_given"] = don.get("_given", 0) + take
+                need -= take
+                tag = "LIM-LD → SAP" if don.get("prio") == 3 and rec.get("prio") == 1 else (
+                    "LIM-TOS → SAP" if don.get("prio") == 2 and rec.get("prio") == 1 else "rebalance")
+                moves.append({
+                    "contractor": cont,
+                    "from": don.get("key"),
+                    "to": rec.get("key"),
+                    "trucks": take,
+                    "tag": tag,
+                    "reason": tag,
+                    "same_origin": don.get("src") == rec.get("src"),
+                })
+    return moves
+
+
+def _build_synthetic_allocation(mo, yearly, mnum, sc_id, month):
+    """Frozen Plan-tab allocation from scenario waterfall — same shape as saved_plans."""
+    import monthly_api as ma
+    wf_map = {_wf_route_key(a): a for a in (mo.get("rows") or [])}
+    saved_old = _saved_old_rows(month)
+    detail = []
+    seen_ld = set()
+    for mr in _matrix_rows_for_month(yearly, mnum):
+        saved = _saved_old_lookup(saved_old, mr)
+        if saved:
+            dt_b = float(saved.get("dt_before") or 0)
+        elif saved_old:
+            dt_b = 0.0
+        else:
+            dt_b = float(mr["matrix_dt"])
+        wf = wf_map.get(mr["route_key"])
+        if mr["prio"] == 3:
+            seen_ld.add(mr["contractor"])
+            dt_a = 0.0
+            tgt = 0
+        elif wf:
+            dt_a = float(wf["dt"])
+            tgt = float(wf["wmt_day"] or 0)
+        else:
+            dt_a = 0.0
+            tgt = 0.0
+        d = dict(mr, dt_before=dt_b, dt_after=dt_a, target=round(tgt))
+        if saved:
+            if saved.get("pred_before") is not None:
+                d["pred_before_saved"] = saved["pred_before"]
+            if saved.get("achv_before") is not None:
+                d["achv_before_saved"] = saved["achv_before"]
+            if saved.get("trips_before") is not None:
+                d["trips_before_saved"] = saved["trips_before"]
+        detail.append(d)
+    ld_day = float(mo.get("ld_t_day_capacity") or 0)
+    free_pool = {k: float(v or 0) for k, v in (mo.get("free") or {}).items()}
+    free_total = sum(free_pool.values())
+    for contractor, fdt in free_pool.items():
+        if fdt <= 0:
+            continue
+        ld_paths = [d for d in detail if d["prio"] == 3 and d["contractor"] == contractor]
+        ld_tgt = round(ld_day * (fdt / free_total)) if ld_day and free_total else 0
+        if not ld_paths:
+            detail.append({
+                "src": "TF", "dst": "HUAFEI", "key": "TF>HUAFEI",
+                "contractor": contractor, "material": "LIM", "otype": "LD", "prio": 3,
+                "matrix_dt": 0.0, "matrix_wmt": 0.0,
+                "route_key": ("TF", "HUAFEI", contractor, "LIM", "LD"),
+                "dt_before": 0.0, "dt_after": fdt,
+                "target": ld_tgt,
+            })
+            ld_paths = [detail[-1]]
+        tot_b = sum(p["dt_before"] for p in ld_paths)
+        for p in ld_paths:
+            if tot_b > 0:
+                share = p["dt_before"] / tot_b
+            else:
+                share = 1.0 / len(ld_paths)
+            p["dt_after"] = fdt * share
+            p["target"] = round(ld_tgt * share) if ld_tgt else 0
+    pool = mo.get("pool") or {}
+    for contractor, want in pool.items():
+        rows = [d for d in detail if d["contractor"] == contractor]
+        got = sum(d["dt_after"] for d in rows)
+        drift = round(float(want) - got)
+        if drift and rows:
+            ld_rows = [d for d in rows if d.get("prio") == 3 and (d.get("dt_after") or 0) > 0]
+            tgt = ld_rows[0] if ld_rows else max(rows, key=lambda x: x.get("dt_after") or 0)
+            tgt["dt_after"] = max(0.0, (tgt.get("dt_after") or 0) + drift)
+    detail = [d for d in detail if d["dt_before"] > 0 or d["dt_after"] > 0]
+    if not detail:
+        return None
+
+    def _route_list(which):
+        return [{"src": d["src"], "dst": d["dst"], "contractor": d["contractor"],
+                 "dt": d[which], "key": d["key"]} for d in detail]
+
+    before_list = _route_list("dt_before")
+    after_list = _route_list("dt_after")
+    pred_b, rows_b = ma._plan_predict_for_routes(before_list)
+    pred_a, rows_a = ma._plan_predict_for_routes(after_list)
+    sim_b, _ = ma._simulate_for_paths(before_list)
+    sim_a, _ = ma._simulate_for_paths(after_list)
+    sim_rows_b = (sim_b or {}).get("results") or []
+    sim_rows_a = (sim_a or {}).get("results") or []
+
+    def _achv(sim_rows, idx):
+        if idx >= len(sim_rows):
+            return None
+        v = sim_rows[idx].get("achievable_production_t")
+        return float(v) * 2 if v is not None else None
+
+    achv_b = achv_a = 0.0
+    alloc_rows = []
+    for i, d in enumerate(detail):
+        pr_b = rows_b[i] if i < len(rows_b) else {}
+        pr_a = rows_a[i] if i < len(rows_a) else {}
+        pb = d.get("pred_before_saved")
+        if pb is None:
+            pb = pr_b.get("wmt")
+        pa = pr_a.get("wmt")
+        tr_b = d.get("trips_before_saved") or pr_b.get("trips")
+        tr_a = pr_a.get("trips")
+        ab = d.get("achv_before_saved")
+        if ab is None:
+            ab = _achv(sim_rows_b, i)
+        aa = _achv(sim_rows_a, i)
+        if pb is not None:
+            achv_b += ab or 0
+        if pa is not None:
+            achv_a += aa or 0
+        if (d.get("dt_after") or 0) <= 0:
+            continue
+        rid = "%s|%s" % (d["contractor"], d["key"])
+        alloc_rows.append({
+            "id": rid, "key": d["key"], "contractor": d["contractor"],
+            "material": d["material"], "otype": d["otype"], "prio": d["prio"],
+            "target": round(d["target"]), "foreign": False,
+            "dt_before": round(d["dt_before"]), "dt_after": round(d["dt_after"]),
+            "pred_before": round(pb) if pb is not None else None,
+            "pred_after": round(pa) if pa is not None else None,
+            "achv_before": round(ab) if ab is not None else None,
+            "achv_after": round(aa) if aa is not None else None,
+            "achv_sim": round(aa) if aa is not None else None,
+            "trips": round(tr_a) if tr_a is not None else None,
+            "trips_before": round(tr_b) if tr_b is not None else None,
+        })
+    fleet_b = round(sum(d["dt_before"] for d in detail))
+    fleet_a = round(sum(d["dt_after"] for d in detail))
+    dt_res = fleet_a - sum(r.get("dt_after") or 0 for r in alloc_rows)
+    if dt_res and alloc_rows:
+        alloc_rows[-1]["dt_after"] = (alloc_rows[-1].get("dt_after") or 0) + dt_res
+    moves = _compute_moves(detail)
+
+    def _bucket(prio):
+        rs = [r for r in alloc_rows if r.get("prio") == prio]
+        if not rs:
+            return {"n": 0, "target": 0, "dt_before": 0, "dt_after": 0,
+                    "pred_before": 0, "pred_after": 0, "achv_before": 0, "achv_after": 0,
+                    "achv_sim": 0}
+        return {
+            "n": len(rs),
+            "target": sum(r.get("target") or 0 for r in rs),
+            "dt_before": sum(r.get("dt_before") or 0 for r in rs),
+            "dt_after": sum(r.get("dt_after") or 0 for r in rs),
+            "pred_before": sum(r.get("pred_before") or 0 for r in rs),
+            "pred_after": sum(r.get("pred_after") or 0 for r in rs),
+            "achv_before": sum(r.get("achv_before") or 0 for r in rs),
+            "achv_after": sum(r.get("achv_after") or 0 for r in rs),
+            "achv_sim": sum(r.get("achv_after") or 0 for r in rs),
+        }
+
+    buckets = {"sap": _bucket(1), "tos": _bucket(2), "ld": _bucket(3)}
+    ld_tgt = round(ld_day)
+    if buckets["ld"]["target"] <= 0 and ld_tgt:
+        buckets["ld"]["target"] = ld_tgt
+    goals = {
+        "sap": buckets["sap"]["target"],
+        "tos": buckets["tos"]["target"],
+        "ld": buckets["ld"]["target"] or ld_tgt,
+        "total": buckets["sap"]["target"] + buckets["tos"]["target"]
+                 + (buckets["ld"]["target"] or ld_tgt),
+    }
+    moved = sum(m.get("trucks") or 0 for m in moves)
+    return {
+        "frozen": True,
+        "horizon": "day",
+        "target_label": "scenario mine plan",
+        "old": {"pred": round(pred_b), "achv": round(achv_b), "dt": fleet_b},
+        "new": {"pred": round(pred_a), "achv": round(achv_a), "dt": fleet_a,
+                "target": goals["total"]},
+        "fleet": {"before": fleet_b, "after": fleet_a},
+        "goals": goals,
+        "buckets": buckets,
+        "rows": alloc_rows,
+        "moves": moves,
+        "moved_total": moved,
+        "notes": "Scenario %s · same fleet · scenario targets only (P1→P2→P3 waterfall)"
+                   % sc_id,
+    }
+
+
+def _scenario_month_card(sc, mo, year, mnum, yearly):
+    import monthly_api as ma
+    month = "%s-%02d" % (year, int(mnum))
+    n = len(ma._days_in(month))
+    raw = _build_synthetic_allocation(mo, yearly, mnum, sc["id"], month)
+    if not raw:
+        return None
+    view = ma._alloc_view(raw, n, "scenario:%s" % sc["id"], include_detail=False)
+    tgt_day = ((mo.get("sap_t_day") or 0) + (mo.get("limtos_t_day") or 0)
+               + (mo.get("ld_t_day_capacity") or 0))
+    return {
+        "month": month,
+        "name": ma._MONTH_LABELS.get(int(mnum), month),
+        "n_days": n,
+        "target_day": round(tgt_day),
+        "target_month": round(tgt_day * n),
+        "has_alloc": bool(view),
+        "alloc": view,
+        "alloc_raw": raw,
+        "alloc_source": "scenario:%s" % sc["id"],
+        "synthetic": True,
+    }
+
+
+def _scenario_year_cards(sc, year):
+    """Year board cards for S2+ from the waterfall (S1 uses saved Plan allocations)."""
+    import monthly_api as ma
+    yearly = _load_yearly()
+    if not yearly:
+        return None, "no yearly matrix loaded yet"
+    res, err = waterfall(sc, yearly)
+    if err:
+        return None, err
+    mo_by = {mo["month"]: mo for mo in res.get("months") or []}
+    mnums = set(int(m) for m in (yearly.get("months") or []))
+    mnums.update(mo_by.keys())
+    mnums.update(_MONTHS)
+    cards = []
+    for mnum in sorted(mnums):
+        if mnum < 1 or mnum > 12:
+            continue
+        mo = mo_by.get(mnum)
+        if not mo:
+            continue
+        card = _scenario_month_card(sc, mo, year, mnum, yearly)
+        if card:
+            cards.append(card)
+    if not cards:
+        return None, "no months to export for %s" % sc.get("id")
+    return cards, None
+
+
+def _scenario_results_for_export():
+    ids = ["S1"] + [s for s in _scenario_ids() if s != "S1"]
+    results = []
+    for sid in ids:
+        sc = _load_scenario(sid)
+        if not sc:
+            continue
+        res, err = waterfall(sc)
+        if not err:
+            results.append(res)
+    return results
+
+
+def _write_compare_sheet(ws, results):
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    bold = Font(bold=True)
+    head_fill = PatternFill("solid", fgColor="1F2937")
+    head_font = Font(bold=True, color="FFFFFF")
+    num = "#,##0"
+    ws.append(["Mine-plan scenarios - same fleet, different allocation"])
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.append(["Waterfall: P1 SAP -> P2 LIM-TOS -> P3 LIM-LD (Tofu dump -> Huafei), "
+               "cap %s t. BLB accepts RIM only. Fleet = yearly matrix DT per contractor."
+               % format(LIM_LD_CAP_T, ",")])
+    ws.append([])
+    hdr = ["", ""]
+    for r in results:
+        hdr += [r["label"], "", "", ""]
+    ws.append(hdr)
+    sub = ["Month", "Fleet (RIM+SMA)"]
+    for _ in results:
+        sub += ["P1 SAP DT", "P2 LIM-TOS DT", "P3 free DT", "LIM-LD t"]
+    ws.append(sub)
+    for c in range(1, len(sub) + 1):
+        ws.cell(row=5, column=c).fill = head_fill
+        ws.cell(row=5, column=c).font = head_font
+        top = ws.cell(row=4, column=c)
+        if top.value:
+            top.font = bold
+    if not results:
+        return
+    for i, mo0 in enumerate(results[0]["months"]):
+        m = mo0["month"]
+        pool = mo0["pool"]
+        row = [_MONN.get(m, m), "%d (%d+%d)" % (sum(pool.values()),
+                                                pool.get("RIM", 0), pool.get("SMA", 0))]
+        for r in results:
+            mo = r["months"][i] if i < len(r["months"]) else {}
+            row += [round(mo.get("dt_p1", 0)), round(mo.get("dt_p2", 0)),
+                    round(mo.get("dt_p3", 0)),
+                    mo.get("ld_t_month_planned", 0)]
+        ws.append(row)
+    tot = ["Total", ""]
+    for r in results:
+        t = r["total"]
+        tot += ["", "", "", t["ld_t_planned"]]
+    ws.append(tot)
+    ws.cell(row=ws.max_row, column=1).font = bold
+    ws.append([])
+    for label, key in (("SAP moved (t)", "sap_t"), ("LIM-TOS moved (t)", "limtos_t"),
+                       ("LIM-LD planned (t)", "ld_t_planned"),
+                       ("LIM-LD uncapped capacity (t)", "ld_t_capacity"),
+                       ("8 Mt cap reached", "ld_cap_reached"),
+                       ("Short of cap by (t)", "ld_shortfall_t")):
+        row = [label, ""]
+        for r in results:
+            v = r["total"][key]
+            row += ["", "", "", ("YES" if v else "no") if key == "ld_cap_reached" else v]
+        ws.append(row)
+        ws.cell(row=ws.max_row, column=1).font = bold
+    for row in ws.iter_rows(min_row=6):
+        for cell in row:
+            if isinstance(cell.value, (int, float)) and abs(cell.value) >= 1000:
+                cell.number_format = num
+    ws.column_dimensions["A"].width = 26
+    ws.column_dimensions["B"].width = 16
+    for c in range(3, len(sub) + 1):
+        ws.column_dimensions[get_column_letter(c)].width = 13
+
+
+def _xlsx_scenarios_zip(year):
+    """One monthly_plan_YYYY.xlsx per scenario — identical layout to /api/monthly/export-year."""
+    import monthly_api as ma
+    import zipfile
+    buf = io.BytesIO()
+    ids = ["S1"] + [s for s in _scenario_ids() if s != "S1"]
+    written = 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for sid in ids:
+            sc = _load_scenario(sid)
+            if not sc:
+                continue
+            if sid == "S1":
+                _, cards = ma._year_cards(year)
+            else:
+                cards, err = _scenario_year_cards(sc, year)
+                if err or not cards:
+                    continue
+            wb = ma._xlsx_year_book(year, cards)
+            xbuf = io.BytesIO()
+            wb.save(xbuf)
+            fname = ("monthly_plan_%s.xlsx" % year if sid == "S1"
+                     else "monthly_plan_%s_%s.xlsx" % (year, sid))
+            zf.writestr(fname, xbuf.getvalue())
+            written += 1
+    if not written:
+        return None, "no scenario workbooks could be built — load the matrix and import scenarios"
+    buf.seek(0)
+    return buf, None
+
+
 # ---------------------------------------------------------------- routes
 
 @bp.route("/api/scenarios")
@@ -480,23 +937,45 @@ def api_scenarios_compare():
 _MONN = {8: "Aug", 9: "Sept", 10: "Oct", 11: "Nov", 12: "Dec"}
 
 
+# ------------------------------------------------- monthly-plan workbook
+
+@bp.route("/api/scenarios/<sid>/export-monthly")
+def api_scenario_export_monthly(sid):
+    """One scenario as the monthly_plan_YYYY.xlsx workbook (Year dashboard +
+    one old-vs-new sheet per month). Same builder as /api/scenarios/export-full
+    - ONE renderer of the concept, per the capacity-card lesson."""
+    import monthly_api as ma
+
+    sid = _safe_id(sid)
+    sc = _load_scenario(sid)
+    if not sc:
+        return jsonify({"ok": False, "error": "no such scenario"}), 404
+    year = (request.args.get("year") or str(datetime.utcnow().year)).strip()
+    if not re.fullmatch(r"\d{4}", year):
+        return jsonify({"ok": False, "error": "year=YYYY"}), 400
+    if sid == "S1":
+        _, cards = ma._year_cards(year)
+        if not cards:
+            return jsonify({"ok": False, "error":
+                            "nothing stored for %s - load a matrix and build the year first" % year}), 404
+    else:
+        cards, err = _scenario_year_cards(sc, year)
+        if err:
+            return jsonify({"ok": False, "error": err}), 400
+    name = ("monthly_plan_%s.xlsx" % year if sid == "S1"
+            else "monthly_plan_%s_%s.xlsx" % (year, sid))
+    return ma._xlsx_send(ma._xlsx_year_book(year, cards), name)
+
+
 @bp.route("/api/scenarios/export")
 def api_scenarios_export():
     """One workbook: Compare sheet + a full-allocation sheet per scenario."""
     from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.styles import Font, PatternFill
     from openpyxl.utils import get_column_letter
     from flask import send_file
 
-    ids = ["S1"] + _scenario_ids()
-    results = []
-    for sid in ids:
-        sc = _load_scenario(sid)
-        if not sc:
-            continue
-        res, err = waterfall(sc)
-        if not err:
-            results.append(res)
+    results = _scenario_results_for_export()
     if not results:
         return jsonify({"ok": False, "error": "no scenarios to export"}), 404
 
@@ -508,63 +987,7 @@ def api_scenarios_export():
     wb = Workbook()
     ws = wb.active
     ws.title = "Compare"
-    ws.append(["Mine-plan scenarios - same fleet, different allocation"])
-    ws["A1"].font = Font(bold=True, size=14)
-    ws.append(["Waterfall: P1 SAP -> P2 LIM-TOS -> P3 LIM-LD (Tofu dump -> Huafei), "
-               "cap %s t. BLB accepts RIM only. Fleet = yearly matrix DT per contractor."
-               % format(LIM_LD_CAP_T, ",")])
-    ws.append([])
-    hdr = ["", ""]
-    for r in results:
-        hdr += [r["label"], "", "", ""]
-    ws.append(hdr)
-    sub = ["Month", "Fleet (RIM+SMA)"]
-    for _ in results:
-        sub += ["P1 SAP DT", "P2 LIM-TOS DT", "P3 free DT", "LIM-LD t"]
-    ws.append(sub)
-    for c in range(1, len(sub) + 1):
-        ws.cell(row=5, column=c).fill = head_fill
-        ws.cell(row=5, column=c).font = head_font
-        top = ws.cell(row=4, column=c)
-        if top.value:
-            top.font = bold
-    for i, mo0 in enumerate(results[0]["months"]):
-        m = mo0["month"]
-        pool = mo0["pool"]
-        row = [_MONN.get(m, m), "%d (%d+%d)" % (sum(pool.values()),
-                                                pool.get("RIM", 0), pool.get("SMA", 0))]
-        for r in results:
-            mo = r["months"][i] if i < len(r["months"]) else {}
-            row += [round(mo.get("dt_p1", 0)), round(mo.get("dt_p2", 0)),
-                    round(mo.get("dt_p3", 0)),
-                    mo.get("ld_t_month_planned", 0)]
-        ws.append(row)
-    tot = ["Total", ""]
-    for r in results:
-        t = r["total"]
-        tot += ["", "", "", t["ld_t_planned"]]
-    ws.append(tot)
-    ws.cell(row=ws.max_row, column=1).font = bold
-    ws.append([])
-    for label, key in (("SAP moved (t)", "sap_t"), ("LIM-TOS moved (t)", "limtos_t"),
-                       ("LIM-LD planned (t)", "ld_t_planned"),
-                       ("LIM-LD uncapped capacity (t)", "ld_t_capacity"),
-                       ("8 Mt cap reached", "ld_cap_reached"),
-                       ("Short of cap by (t)", "ld_shortfall_t")):
-        row = [label, ""]
-        for r in results:
-            v = r["total"][key]
-            row += ["", "", "", ("YES" if v else "no") if key == "ld_cap_reached" else v]
-        ws.append(row)
-        ws.cell(row=ws.max_row, column=1).font = bold
-    for row in ws.iter_rows(min_row=6):
-        for cell in row:
-            if isinstance(cell.value, (int, float)) and abs(cell.value) >= 1000:
-                cell.number_format = num
-    ws.column_dimensions["A"].width = 26
-    ws.column_dimensions["B"].width = 16
-    for c in range(3, len(sub) + 1):
-        ws.column_dimensions[get_column_letter(c)].width = 13
+    _write_compare_sheet(ws, results)
 
     for r in results:
         d = wb.create_sheet(r["id"][:28])
@@ -612,3 +1035,18 @@ def api_scenarios_export():
     name = "scenario_compare_%s.xlsx" % datetime.utcnow().strftime("%Y%m%d")
     return send_file(buf, as_attachment=True, download_name=name,
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@bp.route("/api/scenarios/export-full")
+def api_scenarios_export_full():
+    """Zip of monthly_plan workbooks — one file per scenario, same layout as S1 export."""
+    from flask import send_file
+    year = (request.args.get("year") or str(datetime.utcnow().year)).strip()
+    if not re.fullmatch(r"\d{4}", year):
+        return jsonify({"ok": False, "error": "year=YYYY"}), 400
+    buf, err = _xlsx_scenarios_zip(year)
+    if err:
+        return jsonify({"ok": False, "error": err}), 404
+    name = "mine_plan_scenarios_%s_%s.zip" % (year, datetime.utcnow().strftime("%Y%m%d"))
+    return send_file(buf, as_attachment=True, download_name=name,
+                     mimetype="application/zip")
