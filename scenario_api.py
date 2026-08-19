@@ -754,15 +754,16 @@ def _scenario_cards_for_excel(sc, year):
     return _scenario_year_cards(sc, year)
 
 
-def _scenario_year_book(sc, year):
-    """One workbook = Monthly year Excel: Year + Aug + Sep + Oct + Nov + Dec."""
+def _scenario_year_book(sc, year, achv=False):
+    """One workbook = Monthly year Excel: Year + Aug + Sep + Oct + Nov + Dec.
+    achv=True adds the engine's achievable next to every predicted figure."""
     import monthly_api as ma
     cards, err = _scenario_cards_for_excel(sc, year)
     if err:
         return None, err
     if not cards:
         return None, "no months to export for %s" % sc.get("id")
-    return ma._xlsx_year_book(year, cards), None
+    return ma._xlsx_year_book(year, cards, achv=achv), None
 
 
 def _export_filename(year, sid):
@@ -771,7 +772,7 @@ def _export_filename(year, sid):
     return "monthly_plan_%s_%s.xlsx" % (year, sid)
 
 
-def _xlsx_all_scenarios_zip(year):
+def _xlsx_all_scenarios_zip(year, achv=False):
     """Zip of one monthly_plan workbook per scenario — same files as Year board Excel."""
     import zipfile
     ids = ["S1"] + [s for s in _scenario_ids() if s != "S1"]
@@ -782,7 +783,7 @@ def _xlsx_all_scenarios_zip(year):
             sc = _load_scenario(sid)
             if not sc:
                 continue
-            wb, err = _scenario_year_book(sc, year)
+            wb, err = _scenario_year_book(sc, year, achv=achv)
             if err or wb is None:
                 continue
             inner = io.BytesIO()
@@ -984,20 +985,25 @@ def api_scenarios_export_full():
     year = (request.args.get("year") or str(datetime.utcnow().year)).strip()
     if not re.fullmatch(r"\d{4}", year):
         return jsonify({"ok": False, "error": "year=YYYY"}), 400
+    achv = (request.args.get("achv") or "").strip() in ("1", "true", "yes")
     sid = _safe_id(request.args.get("id") or "")
     if sid:
         sc = _load_scenario(sid)
         if not sc:
             return jsonify({"ok": False, "error": "no such scenario"}), 404
-        wb, err = _scenario_year_book(sc, year)
+        wb, err = _scenario_year_book(sc, year, achv=achv)
         if err:
             return jsonify({"ok": False, "error": err}), 404
-        return ma._xlsx_send(wb, _export_filename(year, sid))
-    buf, err = _xlsx_all_scenarios_zip(year)
+        name = _export_filename(year, sid)
+        if achv:
+            name = name.replace(".xlsx", "_achievable.xlsx")
+        return ma._xlsx_send(wb, name)
+    buf, err = _xlsx_all_scenarios_zip(year, achv=achv)
     if err:
         return jsonify({"ok": False, "error": err}), 404
+    zname = "monthly_plan_%s_all_scenarios%s.zip" % (year, "_achievable" if achv else "")
     return send_file(buf, as_attachment=True,
-                     download_name="monthly_plan_%s_all_scenarios.zip" % year,
+                     download_name=zname,
                      mimetype="application/zip")
 
 

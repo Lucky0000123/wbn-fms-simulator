@@ -88,6 +88,7 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
     <input type="number" id="mo-year" min="2025" max="2035" step="1" style="width:88px;margin-left:6px">
   </label>
   <button class="primary" onclick="moExportYear()">⬇ Download Excel</button>
+  <button class="primary" onclick="moExportYear(1)" title="Same workbook plus the engine's achievable (t/day) beside every predicted figure">⬇ with achievable</button>
 </header>
 <main>
 
@@ -130,6 +131,7 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
     <button onclick="scenImport()">Import scenarios from mine-plan Excel</button>
     <a class="primary" href="/api/scenarios/export" style="text-decoration:none"><button class="primary">⬇ Download comparison (Excel)</button></a>
     <button class="primary" onclick="scenExportFull()">⬇ Download monthly Excel (all scenarios)</button>
+    <button class="primary" onclick="scenExportFull(1)" title="Same zip plus the engine's achievable (t/day) in every month sheet">⬇ with achievable</button>
     <span class="status" id="mo-scen-status"></span>
   </div>
   <div class="mat-grid" id="mo-scen-summary" style="margin-top:12px"></div>
@@ -151,6 +153,7 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
         </select>
       </label>
       <button class="primary" onclick="moExportYear()">⬇ Download Excel</button>
+      <button class="primary" onclick="moExportYear(1)" title="Same workbook plus the engine's achievable (t/day) beside every predicted figure">⬇ with achievable</button>
     </div>
   </div>
   <p class="muted" id="mo-board-note" style="margin:0 0 8px">Load a matrix, then save Allocate DT on the Plan tab for each month.</p>
@@ -874,8 +877,8 @@ function moExport(){
   const m=_selMonth||month();
   if(m)window.location='/api/monthly/export?month='+m;
 }
-function moExportYear(){
-  window.location='/api/monthly/export-year?year='+year()+boardDay();
+function moExportYear(achv){
+  window.location='/api/monthly/export-year?year='+year()+boardDay()+(achv?'&achv=1':'');
 }
 
 async function moYearlyRefresh(){
@@ -1046,8 +1049,8 @@ async function scenImport(){
   scenRefresh();
 }
 
-function scenExportFull(){
-  window.location='/api/scenarios/export-full?year='+year();
+function scenExportFull(achv){
+  window.location='/api/scenarios/export-full?year='+year()+(achv?'&achv=1':'');
 }
 
 async function scenRefresh(){

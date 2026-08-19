@@ -818,8 +818,9 @@ def _xlsx_paint_cov(cell, pct, size=11):
     return cell
 
 
-def _xlsx_path_alloc_table(ws, r, rows, title, sub):
-    """Old vs new path table: WMT, DT, trips, plus trips/DT and WMT/DT."""
+def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
+    """Old vs new path table: WMT, DT, trips, plus trips/DT and WMT/DT.
+    achv=True appends the engine's achievable (t/day) old vs new."""
     box = _xlsx_sides()[0]
     mid = _xlsx_mid()
     rows = list(rows or [])
@@ -835,6 +836,8 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub):
         "WMT/DT old", "WMT/DT new",
         "Trips/DT old", "Trips/DT new",
     ]
+    if achv:
+        heads += ["Achievable old", "Achievable new"]
     _xlsx_headers(ws, r, heads, center=True)
     tot = {
         "tgt": 0, "dt_b": 0, "dt_a": 0, "tr_b": 0, "tr_a": 0,
@@ -854,6 +857,9 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub):
             rates["wmt_per_trip_before"], rates["wmt_per_trip_after"],
             rates["trips_per_dt_before"], rates["trips_per_dt_after"],
         ]
+        if achv:
+            vals += [_finite(row.get("achv_before")), _finite(row.get("achv_sim"))
+                     if _finite(row.get("achv_sim")) is not None else _finite(row.get("achv_after"))]
         for col, val in enumerate(vals, start=1):
             cell = ws.cell(row=r, column=col, value=val)
             cell.border = box
@@ -863,15 +869,22 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub):
                 cell.number_format = "0.00"
             elif col >= 5 and isinstance(val, (int, float)):
                 cell.number_format = "#,##0"
-            if col in (6, 8, 10, 12, 14):
+            if col in (6, 8, 10, 12, 14, 16):
                 cell.font = _xlsx_font(False, 9, _XLSX_MUTED)
             if col in (7, 9, 11, 13, 15):
                 cell.font = _xlsx_font(True, 9, _XLSX_PRED)
+            if col == 17:
+                cell.font = _xlsx_font(True, 9, "059669")
         tot["tgt"] += row.get("target") or 0
         tot["dt_b"] += row.get("dt_before") or 0
         tot["dt_a"] += row.get("dt_after") or 0
         tot["pr_b"] += row.get("pred_before") or 0
         tot["pr_a"] += row.get("pred_after") or 0
+        tot["av_b"] = tot.get("av_b", 0) + (_finite(row.get("achv_before")) or 0)
+        av_a = _finite(row.get("achv_sim"))
+        if av_a is None:
+            av_a = _finite(row.get("achv_after"))
+        tot["av_a"] = tot.get("av_a", 0) + (av_a or 0)
         if rates["trips_before"] is not None:
             tot["tr_b"] += rates["trips_before"]
         elif rates["trips_per_dt_before"] is not None and row.get("dt_before"):
@@ -893,9 +906,12 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub):
         tot["pr_b"] or None, tot["pr_a"] or None,
         pay_b, pay_a, tpd_b, tpd_a,
     ]
+    if achv:
+        tot_vals += [int(round(tot.get("av_b") or 0)) or None,
+                     int(round(tot.get("av_a") or 0)) or None]
     for col, val in enumerate(tot_vals, start=1):
         cell = ws.cell(row=r, column=col, value=val)
-        cell.font = _xlsx_font(True, 9, _XLSX_NAVY)
+        cell.font = _xlsx_font(True, 9, "059669" if col == 17 else _XLSX_NAVY)
         cell.alignment = mid
         _xlsx_total_border(cell)
         if col in (12, 13, 14, 15) and isinstance(val, (int, float)):
@@ -915,8 +931,9 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub):
     return r + 1
 
 
-def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None):
-    """One month: old vs optimized predicted plan, materials, path table. No DT-move list."""
+def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None, achv=False):
+    """One month: old vs optimized predicted plan, materials, path table. No DT-move list.
+    achv=True adds the engine's achievable everywhere predicted appears."""
     _xlsx_sheet_setup(ws)
     n_days = len(_days_in(month))
     src = alloc.get("source_date") or ""
@@ -941,12 +958,18 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None):
         ("Optimized predicted plan", alloc.get("new_pred_month"), _XLSX_PRED, "Month tonnes"),
         ("Optimized vs target", cov, "059669" if (cov or 0) >= 100 else "D97706", "pct"),
     ], start=1)
-    r = _xlsx_kpi_strip(ws, r, [
+    day_kpis = [
         ("Target", alloc.get("target_day"), _XLSX_TGT, "t / day"),
         ("Old predicted plan", alloc.get("old_pred_day"), _XLSX_MUTED, "t / day"),
         ("Optimized predicted plan", alloc.get("new_pred_day"), _XLSX_PRED, "t / day"),
         ("Fleet after allocate", alloc.get("dt_after"), _XLSX_INK, "DT"),
-    ], start=1)
+    ]
+    if achv:
+        av = alloc.get("new_achv_raw_day")
+        if av is None:
+            av = alloc.get("new_achv_day")
+        day_kpis.insert(3, ("Achievable (engine)", av, "059669", "t / day"))
+    r = _xlsx_kpi_strip(ws, r, day_kpis, start=1)
 
     mats = alloc.get("materials") or {}
     r = _xlsx_section(
@@ -961,6 +984,15 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None):
         ("Old DT", lambda k: (mats.get(k) or {}).get("dt_before"), alloc.get("dt_before"), _XLSX_MUTED, False),
         ("New DT", lambda k: (mats.get(k) or {}).get("dt_after"), alloc.get("dt_after"), _XLSX_INK, True),
     ]
+    if achv:
+        def _mat_achv(k):
+            m = mats.get(k) or {}
+            v = m.get("achv_after_raw_day")
+            return v if v is not None else m.get("achv_after_day")
+        av_tot = alloc.get("new_achv_raw_day")
+        if av_tot is None:
+            av_tot = alloc.get("new_achv_day")
+        metric.insert(3, ("Achievable (engine)", _mat_achv, av_tot, "059669", True))
     for lab, fn, tot, color, bold in metric:
         r += 1
         lab_c = ws.cell(row=r, column=1, value=lab)
@@ -1003,7 +1035,9 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None):
         r = _xlsx_path_alloc_table(
             ws, r, rows, "Paths — old predicted plan vs optimized predicted plan",
             "P1 SAP · P2 LIM-TOS · P3 LIM-LD. WMT is predicted tonnes. DT is trucks. "
-            "Trips are predicted trips. WMT/DT is tonnes per truck-trip (payload).")
+            "Trips are predicted trips. WMT/DT is tonnes per truck-trip (payload)."
+            + (" Achievable is /api/simulate (effective cycle + loader clip), t/day." if achv else ""),
+            achv=achv)
 
     r += 3
     days = _days_in(month)
@@ -1417,7 +1451,7 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix=""):
     ws.freeze_panes = "A4"
 
 
-def _xlsx_append_month_sheets(wb, year, cards, used, prefix=""):
+def _xlsx_append_month_sheets(wb, year, cards, used, prefix="", achv=False):
     """One old-vs-new sheet per month card. Cards may carry alloc_raw for scenarios."""
     for c in cards:
         month = c["month"]
@@ -1434,7 +1468,7 @@ def _xlsx_append_month_sheets(wb, year, cards, used, prefix=""):
         label = "%s %s" % (c.get("name") or "", year)
         if alloc:
             _xlsx_fill_month_alloc(
-                ws, month, "%s — old vs new" % label.strip(), alloc, st)
+                ws, month, "%s — old vs new" % label.strip(), alloc, st, achv=achv)
         elif st.get("prediction") or st.get("manual"):
             _xlsx_fill_month(ws, st, "%s — production, capacity & SAP" % label.strip())
         else:
@@ -1455,7 +1489,7 @@ def append_year_book_sheets(wb, year, cards, used=None, prefix=""):
     return used
 
 
-def _xlsx_year_book(year, cards):
+def _xlsx_year_book(year, cards, achv=False):
     """Key = year dashboard (five-clock line charts) then one old-vs-new sheet per month."""
     from openpyxl import Workbook
     wb = Workbook()
@@ -1463,7 +1497,7 @@ def _xlsx_year_book(year, cards):
     key.title = "Year"
     used = {"Year"}
     _xlsx_fill_year_dashboard(key, year, cards)
-    _xlsx_append_month_sheets(wb, year, cards, used, prefix="")
+    _xlsx_append_month_sheets(wb, year, cards, used, prefix="", achv=achv)
     return wb
 
 
@@ -1488,13 +1522,15 @@ def api_monthly_export_year():
         return jsonify({"ok": False, "error": "year=YYYY"}), 400
     day = (request.args.get("day") or "").strip()
     day = int(day) if re.fullmatch(r"[0-9]{1,2}", day) and 1 <= int(day) <= 28 else None
+    achv = (request.args.get("achv") or "").strip() in ("1", "true", "yes")
     _yearly, cards = _year_cards(year, day=day)
     if not cards:
         return jsonify({"ok": False, "error": "nothing stored for %s — load a matrix and build the year first" % year}), 404
     for c in cards:
         c["_alloc_day"] = day
-    name = "monthly_plan_%s.xlsx" % year if not day else "monthly_plan_%s_day%02d.xlsx" % (year, day)
-    return _xlsx_send(_xlsx_year_book(year, cards), name)
+    name = "monthly_plan_%s%s%s.xlsx" % (
+        year, "" if not day else "_day%02d" % day, "_achievable" if achv else "")
+    return _xlsx_send(_xlsx_year_book(year, cards, achv=achv), name)
 
 
 
