@@ -153,3 +153,34 @@ Congestion/corridor outputs are advisory and never clip tonnes (J53/J57).
 - GPS accumulation cron: `scripts/accumulate_gps_cron.sh` 07:00/19:00.
 - Commit style: explain the WHY, cite measurements; push `origin` + `mirror`
   (or `all`). Data files in data/saved_plans etc. are gitignored on purpose.
+
+## 12. Hybrid congestion model (2026-08-20, owner spec)
+
+`congestion/` package + `/api/congestion_model?route=TF>HUAFEI&n_trucks=590&n_loaders=4`.
+
+Three layers, physics PRIMARY (never a black-box ML extrapolation):
+1. **physics.py** — free-flow cycle from chainage distance; loaded speed
+   back-solved per route so physics matches the observed free-flow cycle
+   (p25 of per-truck trip gaps from HAULAGE_CLEAN, 2.34M tickets).
+2. **queueing.py** (Erlang-C M/M/c loader queue) + **bpr.py** (BPR/BPR2 road
+   penalty, v/c on DEMAND flow) + bunching variance term. Calibrated per
+   route by `scripts/calibrate_congestion.py` → `data/congestion_params.json`
+   (gitignored). A measured per-route **utilization** (~0.43–0.87) anchors
+   the hybrid to the dispatch day-rate basis at the median fleet, so both
+   engines agree at typical fleets and diverge only where physics says so.
+3. Uncertainty bands (±10% in observed fleet range → ±40% beyond),
+   `legacy_comparison` (the old divide model) in every response, components
+   breakdown (road / BPR penalty / queue / load / spot / dump / bunching).
+
+Key behaviours the old model could not express:
+- **n_loaders is an input**: 8 loaders vs 2 raises trips/DT (queue clears).
+- Nonlinear knee (not 1/N): decline elasticity varies with fleet.
+- rho >= 1 flags "overloaded", queue wait capped at half a shift.
+
+Verification: `scripts/verify_congestion.py` (gate **J73** in the suite):
+backtest on 3,940 real dispatch days → **R² 0.873, MAPE 9.0%** at the
+route × fleet-bucket expected-value level. Suite now **73/73**.
+
+Basis warning (the third "two 240s" lesson): ticket-basis trips/TRUCK_ID
+runs ~1.4× above dispatch-basis trips/NB_DT. Everything user-facing is
+dispatch basis; the calibration handles the mapping via utilization.

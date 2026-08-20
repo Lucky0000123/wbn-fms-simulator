@@ -199,15 +199,7 @@ def main():
         # This is the effective-cycle vs weigh-to-weigh distinction in
         # AGENTS.md: gaps say ~134 min but trucks do ~2.3 trips/shift on
         # KR>POS 12 - the rest of the shift is breaks/changeover/assignment.
-        utils = []
-        for r in rs:
-            if r.get("mean_gap_min") and r.get("trucks") and r.get("trips"):
-                u = (r["trips"] / r["trucks"]) * r["mean_gap_min"] / 720.0
-                if 0.05 <= u <= 1.5:
-                    utils.append(min(1.0, u))
-        utilization = _pctile(utils, 0.5) if utils else 0.7
         rec = {
-            "utilization": round(utilization, 3),
             "t_free_obs_min": round(t_free, 1),
             "load_min": load_min,
             "c_road_trucks_hr": round(c_road, 1) if c_road else None,
@@ -236,6 +228,39 @@ def main():
         print("%-14s %5d %7.0f %7.1f %7.1f %6s %6s %8s %6d %6s" % (
             route, len(rs), t_free, load_min, c_road or 0,
             rec["alpha"], rec["beta"], rec["bpr_fit_r2"], nfit, rec["cycle_sd_min"]))
+
+    # ── Anchor utilization to the DISPATCH day-rate basis ────────────────
+    # Gap-based cycles only sample trucks that did >=2 trips in a shift - a
+    # fast-biased subset. The rest of the app (legacy model, plan tab, DB
+    # reports) counts trips/DT on the NB_DT day basis. Re-derive utilization
+    # so the hybrid, run at the route's MEDIAN fleet and faces, reproduces
+    # the dispatch day rate exactly - physics keeps the SHAPE (loaders,
+    # knee, BPR), dispatch anchors the LEVEL. One basis, two engines agree.
+    json.dump({"generated_at": "tmp", "global": {}, "routes": routes_out},
+              open(PARAMS_PATH, "w"))
+    import importlib
+    from congestion import config as ccfg, predictor as cpred
+    ccfg._cache["data"] = None
+    for route, rec in routes_out.items():
+        rate = rec.get("day_rate")
+        if not rate:
+            continue
+        n_ref = rec.get("n_trucks_ref") or 30
+        faces = [r.get("faces") or 1 for r in byr[route]]
+        f_ref = max(1, round(_pctile(sorted(faces), 0.5)))
+        rec["n_loaders"] = f_ref
+        rec["utilization"] = 1.0
+        json.dump({"generated_at": "tmp", "global": {}, "routes": routes_out},
+                  open(PARAMS_PATH, "w"))
+        ccfg._cache["data"] = None
+        try:
+            p = cpred.predict(route, n_ref, f_ref)
+            raw = p["trips_per_DT_per_day"]
+            if raw > 0:
+                rec["utilization"] = round(min(1.0, max(0.2, rate / raw)), 3)
+        except Exception as exc:  # noqa: BLE001
+            rec["utilization"] = 0.7
+    ccfg._cache["data"] = None
 
     out = {
         "generated_at": __import__("datetime").datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),

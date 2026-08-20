@@ -541,5 +541,20 @@ chk $? "J72  scenario waterfall conserves fleet, BLB=RIM, 8 Mt cap" "see: python
 
 
 echo
+# J73 — hybrid congestion model (owner spec 2026-08-20): physics + Erlang-C +
+# BPR calibrated per route from HAULAGE_CLEAN trip gaps, anchored to the
+# dispatch day-rate basis. Backtest on ~3,900 real dispatch days must hold
+# R2 > 0.7 / MAPE < 15% at the route x fleet-bucket level; more loaders must
+# raise trips/DT; the decline past the knee must be nonlinear (not 1/N);
+# hybrid must differ from the legacy divide; no NaN/Inf on 1-1000 trucks.
+# Skips (not fails) when the calibration data is absent (fresh clone).
+if [ -f data/congestion_params.json ] && [ -f data/congestion_dayshift.json ]; then
+$PY scripts/verify_congestion.py >/dev/null 2>&1
+chk $? "J73  hybrid congestion model: backtest R2>0.7, loaders raise ceiling" "see: python scripts/verify_congestion.py"
+else
+echo "  SKIP J73  (no congestion calibration data — run scripts/calibrate_congestion.py --refresh)"
+fi
+
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"
 [ "$FAIL" = "0" ]
+

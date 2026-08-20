@@ -3100,3 +3100,48 @@ def api_plan_rain_suggest():
         "note": "No gauge / forecast / typical rain for this date — leaving 0 mm.",
         "apply": False,
     })
+
+
+@bp.route('/api/congestion_model', methods=['GET'])
+def api_congestion_model():
+    """Hybrid physics+queueing+BPR trips/DT prediction (owner spec 2026-08-20).
+
+    GET /api/congestion_model?route=TF>HUAFEI&n_trucks=590&n_loaders=4
+    Also accepts route=TF→HUAFEI or source/destination pair. Optional:
+    shift_hours, shifts_per_day, rain_mm, payload_t.
+    Returns the component breakdown (road / BPR penalty / queue / load /
+    fixed), congestion status, rho, uncertainty band and the legacy
+    divide-by-demonstrated-max comparison.
+    """
+    from congestion.predictor import predict
+    a = request.args
+    route = (a.get('route') or '').replace('→', '>').replace('%3E', '>').strip()
+    if not route and a.get('source') and a.get('destination'):
+        route = '%s>%s' % (_canon(a.get('source')), _canon(a.get('destination')))
+    else:
+        o, _, d = route.partition('>')
+        route = '%s>%s' % (_canon(o), _canon(d)) if o and d else route
+    try:
+        n_trucks = float(a.get('n_trucks') or '')
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "n_trucks must be a number"}), 400
+    n_loaders = a.get('n_loaders')
+    try:
+        n_loaders = int(n_loaders) if n_loaders not in (None, '') else None
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "n_loaders must be an integer"}), 400
+    kw = {}
+    for name, cast in (("shift_hours", float), ("shifts_per_day", int),
+                       ("rain_mm", float), ("payload_t", float)):
+        v = a.get(name)
+        if v not in (None, ''):
+            try:
+                kw[name] = cast(v)
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "error": "%s must be numeric" % name}), 400
+    try:
+        out = predict(route, n_trucks, n_loaders, **kw)
+    except (ValueError, ArithmeticError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    out["ok"] = True
+    return jsonify(out)

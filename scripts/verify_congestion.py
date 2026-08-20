@@ -32,29 +32,37 @@ def check(name, ok, detail=""):
         FAILS.append(name)
 
 
-print("=== 1 · backtest against measured day-shifts ===")
-rows = json.load(open(os.path.join(ROOT, "data", "congestion_dayshift.json")))
+print("=== 1 · backtest against measured DISPATCH days ===")
+# Basis matters (AGENTS.md: two 240 stories). The app's day_rate, the legacy
+# model and the anchor all live on the DISPATCH basis (RIT / NB_DT per day).
+# Ticket-basis trips/TRUCK_ID runs ~1.4x higher (fewer distinct IDs than
+# NB_DT). Score the hybrid on the dispatch basis it is anchored to.
 params = json.load(open(os.path.join(ROOT, "data", "congestion_params.json")))
 routes = set(params.get("routes") or {})
-pairs = []          # (actual trips/DT/shift, predicted)
+snap = json.load(open(os.path.join(ROOT, "data", "pr_snapshot.json")))
+from collections import defaultdict as _dd
+dayagg = _dd(lambda: [0.0, 0.0])
+for r in snap["rows"]:
+    k = "%s>%s" % (r["o"], r["dd"])
+    if k in routes:
+        a = dayagg[(k, r["d"])]
+        a[0] += r["dt"]; a[1] += r["trips"]
+rows = [{"route": k, "date": d, "trucks": v[0], "trips": v[1], "faces": None}
+        for (k, d), v in dayagg.items() if v[0] >= 3]
+pairs = []          # (actual trips/DT/day, predicted)
 by_route = {}
 for r in rows:
-    if r["route"] not in routes or not r.get("trucks") or not r.get("trips"):
-        continue
-    if r["trucks"] < 3:
-        continue
-    actual = r["trips"] / r["trucks"]           # per SHIFT
-    faces = max(1, r.get("faces") or 1)
+    actual = r["trips"] / r["trucks"]           # per DAY (dispatch basis)
     try:
-        p = predict(r["route"], r["trucks"], faces, shifts_per_day=1)
-    except Exception as exc:  # noqa: BLE001
+        p = predict(r["route"], r["trucks"], None)   # calibrated median faces
+    except Exception:  # noqa: BLE001
         continue
-    pred = p["trips_per_DT_per_day"]            # 1 shift => per shift
+    pred = p["trips_per_DT_per_day"]
     pairs.append((actual, pred))
     by_route.setdefault(r["route"], []).append((actual, pred))
 
 n = len(pairs)
-mape_ds = sum(abs(a - p) / a for a, p in pairs if a > 0) / n * 100
+mape_ds = sum(abs(a - p) / a for a, p in pairs if a > 0) / n * 100  # day-level
 # The model predicts EXPECTED trips/DT for a fleet size - individual
 # day-shifts carry breakdown/weather noise no fleet-size model can explain.
 # Score at the (route, fleet-bucket) level: mean actual vs mean predicted,
@@ -64,11 +72,7 @@ buck = defaultdict(list)
 for route, ps in by_route.items():
     pass
 for r in rows:
-    if r["route"] not in routes or not r.get("trucks") or not r.get("trips"):
-        continue
-    if r["trucks"] < 3:
-        continue
-    buck[(r["route"], r["trucks"] // 10 * 10)].append(r)
+    buck[(r["route"], int(r["trucks"]) // 10 * 10)].append(r)
 bpairs = []
 for (route, b), rs_b in buck.items():
     if len(rs_b) < 3:
@@ -77,8 +81,7 @@ for (route, b), rs_b in buck.items():
     preds = []
     for x in rs_b:
         try:
-            preds.append(predict(route, x["trucks"], max(1, x.get("faces") or 1),
-                                 shifts_per_day=1)["trips_per_DT_per_day"])
+            preds.append(predict(route, x["trucks"], None)["trips_per_DT_per_day"])
         except Exception:  # noqa: BLE001
             pass
     if not preds:
@@ -91,7 +94,7 @@ ma = sum(w * a for a, _, w in bpairs) / W
 sst = sum(w * (a - ma) ** 2 for a, _, w in bpairs)
 sse = sum(w * (a - p) ** 2 for a, p, w in bpairs)
 r2 = 1 - sse / sst if sst else 0
-print("  day-shifts scored: %d   buckets: %d" % (n, len(bpairs)))
+print("  dispatch days scored: %d   buckets: %d" % (n, len(bpairs)))
 print("  bucket-level  R2 %.3f   MAPE %.1f%%   (day-shift-level MAPE %.1f%% incl. daily noise)"
       % (r2, mape, mape_ds))
 check("backtest R2 > 0.7 (expected trips/DT per route x fleet bucket)", r2 > 0.7, "%.3f" % r2)
