@@ -18,6 +18,21 @@ import json
 import os
 import time
 
+# Load DB credentials from .env / secrets / SSD BEFORE importing simulator_api
+# (it snapshots FMS_DB_* into _DB at import time). Without this the server
+# silently served fixtures even with a reachable DB (found 2026-08-20).
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
+try:
+    from load_fms_env import load_fms_env
+    _env_path = load_fms_env()
+    if _env_path:
+        print("[serve] DB creds loaded from %s" % _env_path, flush=True)
+    else:
+        print("[serve] no .env found — will run on fixtures", flush=True)
+except Exception as _exc:  # noqa: BLE001
+    print("[serve] env load failed (%s) — will run on fixtures" % _exc, flush=True)
+
 import simulator_api
 
 BASE = os.path.dirname(os.path.abspath(__file__))

@@ -79,3 +79,5 @@ reports/dual_db_analysis_plan.md
 
 # Local server logs (jcode dev runner).
 logs/
+data/congestion_dayshift.json
+data/congestion_params.json
