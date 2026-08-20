@@ -24,6 +24,17 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, "/Users/lucky/wbn-fms-simulator")
 import pandas as pd
+
+# Load FMS_DB_* creds BEFORE importing simulator_api (it snapshots _DB at
+# import). Same fix as serve.py 2026-08-20; cron worked only when the env
+# was exported by the shell.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from load_fms_env import load_fms_env
+    load_fms_env()
+except Exception:  # noqa: BLE001
+    pass
+
 import simulator_api as sim
 
 ROOT = "/Users/lucky/wbn-fms-simulator"
