@@ -3145,3 +3145,86 @@ def api_congestion_model():
         return jsonify({"ok": False, "error": str(exc)}), 400
     out["ok"] = True
     return jsonify(out)
+
+
+@bp.route('/api/congestion_curve', methods=['GET'])
+def api_congestion_curve():
+    """Saturation curve: trips/DT vs fleet size for a route (hybrid model)."""
+    from congestion.predictor import predict
+    a = request.args
+    route = (a.get('route') or '').replace('→', '>').strip()
+    if not route:
+        return jsonify({"ok": False, "error": "route required"}), 400
+    o, _, d = route.partition('>')
+    route = '%s>%s' % (_canon(o), _canon(d)) if o and d else route
+    try:
+        n_loaders = int(a.get('n_loaders')) if a.get('n_loaders') not in (None, '') else None
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "n_loaders must be integer"}), 400
+    try:
+        max_trucks = min(1000, max(100, int(a.get('max_trucks') or 600)))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "max_trucks must be integer"}), 400
+    try:
+        rain_mm = float(a.get('rain_mm') or 0)
+    except (TypeError, ValueError):
+        rain_mm = 0.0
+    step = max(1, max_trucks // 80)
+    curve = []
+    for nt in range(1, max_trucks + 1, step):
+        try:
+            p = predict(route, float(nt), n_loaders, rain_mm=rain_mm)
+            curve.append({
+                "n_trucks": nt,
+                "trips_per_dt": p["trips_per_DT_per_day"],
+                "total_trips": p["total_trips_day"],
+                "total_tonnes": p["total_tonnes_day"],
+                "cycle_time_min": p["cycle_time_minutes"],
+                "rho": p["rho"],
+                "bottleneck": "road" if p.get("road_vc", 0) >= p.get("rho", 0) else "loader",
+                "p10": p["uncertainty"]["p10"],
+                "p90": p["uncertainty"]["p90"],
+            })
+        except (ValueError, ArithmeticError):
+            continue
+    knee = None
+    if curve:
+        base = curve[0]["trips_per_dt"]
+        for c in curve:
+            if c["trips_per_dt"] < 0.95 * base:
+                knee = c["n_trucks"]
+                break
+    from congestion.config import route_params
+    return jsonify({"ok": True, "route": route, "n_loaders": n_loaders,
+                    "calibrated_loaders": route_params(route).get("n_loaders"),
+                    "calibrated": bool(route_params(route).get("calibrated")),
+                    "curve": curve, "knee_dt": knee})
+
+
+@bp.route('/api/congestion_compare', methods=['GET'])
+def api_congestion_compare():
+    """Loader sweep: trips/DT vs loader count at fixed truck count."""
+    from congestion.predictor import predict
+    a = request.args
+    route = (a.get('route') or '').replace('→', '>').strip()
+    if not route:
+        return jsonify({"ok": False, "error": "route required"}), 400
+    o, _, d = route.partition('>')
+    route = '%s>%s' % (_canon(o), _canon(d)) if o and d else route
+    try:
+        n_trucks = float(a.get('n_trucks') or '')
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "n_trucks must be a number"}), 400
+    sweep = []
+    for nl in range(1, 13):
+        try:
+            p = predict(route, n_trucks, nl)
+            sweep.append({
+                "n_loaders": nl,
+                "trips_per_dt": p["trips_per_DT_per_day"],
+                "bottleneck": "road" if p.get("road_vc", 0) >= p.get("rho", 0) else "loader",
+                "queue_wait_min": p["components"]["queue_wait_minutes"] if p.get("components") else None,
+            })
+        except (ValueError, ArithmeticError):
+            continue
+    return jsonify({"ok": True, "route": route, "n_trucks": n_trucks, "sweep": sweep})

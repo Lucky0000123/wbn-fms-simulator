@@ -309,6 +309,50 @@ function planCongCell(e){
   if(h.bottleneck)bits.push('Bottleneck: '+h.bottleneck);
   return `<span class="plan-cong-badge ${h.congestionStatus}" title="${escH(bits.join(' · '))}">${escH(label)}</span>`;
 }
+// ── HYBRID congestion model wiring (owner, 2026-08-20) ──────────────────────
+// The Allocate-DT engine sizes fleets through planTripsPerDT, which is
+// synchronous and called in tight loops. The hybrid physics model lives on
+// the backend (/api/congestion_curve). Bridge: fetch the whole saturation
+// curve once per (route, loaders, rain bucket), cache it, interpolate
+// synchronously. Until the curve arrives the legacy divide model answers,
+// and the response is tagged modelVersion:'legacy_divide' vs 'hybrid'.
+const _planHybridCurves={};      // "key|loaders|rainB" -> {curve:[...], knee}
+const _planHybridPending={};
+function planHybridRainBucket(rain){return rain>=10?'wet':(rain>=1?'damp':'dry');}
+function planHybridCurveFor(key,nLoaders,rain){
+  const ck=key+'|'+nLoaders+'|'+planHybridRainBucket(rain);
+  const hit=_planHybridCurves[ck];
+  if(hit!==undefined)return hit;                 // null = fetch failed (legacy)
+  if(!_planHybridPending[ck]){
+    _planHybridPending[ck]=true;
+    const rainMm=rain>=10?12:(rain>=1?3:0);
+    fetch('/api/congestion_curve?route='+encodeURIComponent(key)
+          +'&n_loaders='+nLoaders+'&max_trucks=1000&rain_mm='+rainMm)
+      .then(r=>r.ok?r.json():null)
+      .then(d=>{
+        _planHybridCurves[ck]=(d&&d.ok&&d.curve&&d.curve.length)?d:null;
+        if(typeof computePlan==='function')computePlan();
+      })
+      .catch(()=>{_planHybridCurves[ck]=null;});
+  }
+  return undefined;                              // pending
+}
+function planHybridTripsAt(curveData,nTrucks){
+  const c=curveData.curve;
+  if(!c||!c.length)return null;
+  if(nTrucks<=c[0].n_trucks)return c[0];
+  for(let i=1;i<c.length;i++){
+    if(c[i].n_trucks>=nTrucks){
+      const a=c[i-1],b=c[i],f=(nTrucks-a.n_trucks)/Math.max(1,b.n_trucks-a.n_trucks);
+      const mix=(ka,kb)=>ka+(kb-ka)*f;
+      return {trips_per_dt:mix(a.trips_per_dt,b.trips_per_dt),
+              cycle_time_min:mix(a.cycle_time_min,b.cycle_time_min),
+              rho:mix(a.rho,b.rho),bottleneck:b.bottleneck,
+              p10:mix(a.p10,b.p10),p90:mix(a.p90,b.p90)};
+    }
+  }
+  return c[c.length-1];
+}
 function planTripsPerDT(key,dt,rain,contractor,opts){
   const m=_pathResp&&_pathResp[key];if(!m)return null;
   // ── Fleet-size response, DAY-LEVEL model (owner 2026-08-12 rebuild) ────────
@@ -378,6 +422,7 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
   // rows); each row keeps its proportional share. opts.selfId excludes the
   // row being priced from the "others" sum.
   let satFactor=1;
+  let _hybridInfo=null;
   if(Number.isFinite(m.dayTripsCap)&&m.dayTripsCap>0&&tr>0&&dt>0){
     let otherDt=0;
     if(typeof _planDraft!=='undefined'){
@@ -398,6 +443,21 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
     // the penalty — physically wrong). The demonstrated cap is a road
     // property; mud degrades the road, so capEff = cap × rain scale.
     const nLoaders=(opts&&Number.isFinite(opts.nLoaders)&&opts.nLoaders>=1)?Math.round(opts.nLoaders):2;
+    // HYBRID: when the backend saturation curve is cached, it REPLACES the
+    // divide-at-ceiling. tr becomes the physics trips/DT at the COMBINED
+    // fleet (x contractor factor; rain is inside the curve request).
+    const hyb=planHybridCurveFor(key,nLoaders,rain);
+    if(hyb){
+      const pt=planHybridTripsAt(hyb,nComb);
+      if(pt&&Number.isFinite(pt.trips_per_dt)&&pt.trips_per_dt>0){
+        const trHyb=pt.trips_per_dt*planContractorFactor(contractor);
+        satFactor=tr>0?Math.min(1,trHyb/tr):1;
+        tr=trHyb;
+        _hybridInfo={modelVersion:'hybrid',cycleTimeMin:Math.round(pt.cycle_time_min),
+          rho:+pt.rho.toFixed(2),bottleneck:pt.bottleneck,
+          p10:pt.p10,p90:pt.p90,knee:hyb.knee_dt};
+      }
+    }
     const capEff=m.dayTripsCap*Math.min(1,scale)*planLoaderCapScale(m,nLoaders);
     // HARD MIN, deliberately. A BPR volume-delay penalty lived here briefly on
     // 2026-08-12 — served = capEff/(1 + 0.15·over²) — and it had to come out:
@@ -415,7 +475,7 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
     // any decay past it is not. So saturate at the proven ceiling and stay
     // silent about what nobody has measured: extra trucks divide the same
     // demonstrated trips, they do not destroy them.
-    if(capEff>0&&linear>capEff){
+    if(!_hybridInfo&&capEff>0&&linear>capEff){
       satFactor=capEff/linear;
       tr*=satFactor;
     }
@@ -425,7 +485,7 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
     // path's measured rate, the floor holds. This is the same guard the model
     // always had; it also bounds how far beyond data the estimate can fall.
     const floorTr=.3*(hasDay?m.dayRate:m.avgTr)*Math.min(1,scale)*planContractorFactor(contractor);
-    if(tr<floorTr){
+    if(!_hybridInfo&&tr<floorTr){
       satFactor=satFactor*(floorTr/tr);
       tr=floorTr;
     }
@@ -446,9 +506,13 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
     else if(w)wbRows=w.rows;
   }
   const shiftServed=tr*sf*wbFactor;
-  const hint=planCongestionHint({satFactor});
+  const hint=planCongestionHint(_hybridInfo?{satFactor,congestionStatus:(_hybridInfo.rho>=1?'overloaded':(_hybridInfo.rho>=0.7?'saturated':'free')),bottleneck:_hybridInfo.bottleneck}:{satFactor});
   return {daily:tr,shift:shiftServed,shiftFree:tr*sf,rainDelta:rainDelta*sf,otherDelta:otherDelta*sf,
     secDelta:sec.delta*sf,secExcess:sec.excess,wbFactor,wbRows,slope,
+    modelVersion:_hybridInfo?'hybrid':'legacy_divide',
+    cycleTimeMin:_hybridInfo?_hybridInfo.cycleTimeMin:null,
+    rho:_hybridInfo?_hybridInfo.rho:null,
+    hybridKnee:_hybridInfo?_hybridInfo.knee:null,
     satFactor,dayBasis:hasDay,m,
     nLoaders:(opts&&Number.isFinite(opts.nLoaders)&&opts.nLoaders>=1)?Math.round(opts.nLoaders):2,
     congestionStatus:hint.congestionStatus,bottleneck:hint.bottleneck};
