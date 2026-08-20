@@ -113,6 +113,11 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
 <div class="card">
   <h2>Yearly matrix <span class="tag" style="background:rgba(34,197,94,.15);color:var(--ok)">one paste · every month</span></h2>
   <p class="muted" style="margin:4px 0 10px">Paste (or upload) the mine-planning matrix — ORIGIN / MATERIAL / DESTINATION / CONTRACTOR with <b>WMT/day</b> and <b>NB_DT_</b> per month. That is one typical day. We run that day across every calendar day of each month, then show target, old predicted plan and optimized predicted plan.</p>
+  <p class="muted" style="margin:4px 0 0;font-size:11px">
+    Loader count defaults to 2 per route. To override, add a "LOADERS" column
+    to your paste (after NB_DT_). Without it, the model uses the historical
+    average loader count per route.
+  </p>
   <textarea id="mo-yearly-paste" placeholder="Paste the matrix straight from Excel (tab-separated)…"></textarea>
   <div class="row" style="margin-top:6px">
     <button class="primary" onclick="moYearlyPaste()">Load matrix and build year</button>

@@ -27,10 +27,15 @@ function planDraftToPsPlans(){
     const source=(r.source||parts[0]||'').trim();
     const dest=(r.dest||parts[1]||'').trim();
     const foreign=!!r.foreign,gk=source+'>'+dest+(foreign?'|road':'');
-    const g=by[gk]||(by[gk]={route:source+'>'+dest,source:source,destination:dest,n_trucks:0,foreign});
+    const g=by[gk]||(by[gk]={route:source+'>'+dest,source:source,destination:dest,n_trucks:0,n_loaders:null,foreign});
     g.n_trucks+=dt;
+    const ld=typeof planNLoaders==='function'?planNLoaders(r):(r.loaders||2);
+    g.n_loaders=g.n_loaders==null?ld:Math.max(g.n_loaders,ld);
   });
-  return Object.values(by).filter(p=>p.n_trucks>0);
+  return Object.values(by).filter(p=>p.n_trucks>0).map(p=>{
+    if(!(p.n_loaders>0))p.n_loaders=2;
+    return p;
+  });
 }
 
 function planDraftToFlowSeed(){
@@ -65,7 +70,7 @@ function planPredictTotals(){
   let trips=0,wmt=0,dt=0;
   planDraftEntries().forEach(r=>{
     const c=typeof planContractor==='function'?planContractor(r.contractor):null;
-    const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rain,c,{selfId:r.id}):null;
+    const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rain,c,typeof planTripOpts==='function'?planTripOpts(r.id):{selfId:r.id,nLoaders:r.loaders||2}):null;
     const pay=typeof planPayload==='function'?planPayload(r.key,c):{tf:0};
     if(!e)return;
     const t=r.dt*e.shift;trips+=t;wmt+=t*(pay.tf||0);dt+=r.dt;
@@ -174,7 +179,7 @@ function planPredictByRoute(){
   planDraftEntries().forEach(r=>{
     const route=r.source+'>'+r.dest;
     const c=typeof planContractor==='function'?planContractor(r.contractor):null;
-    const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rain,c,{selfId:r.id}):null;
+    const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rain,c,typeof planTripOpts==='function'?planTripOpts(r.id):{selfId:r.id,nLoaders:r.loaders||2}):null;
     const pay=typeof planPayload==='function'?planPayload(r.key,c):{tf:0};
     const g=by[route]||(by[route]={dt:0,trips:0,wmt:0});
     g.dt+=r.dt;
@@ -598,7 +603,7 @@ function planPredictTotalsForDraft(draftObj){
   Object.keys(draftObj||{}).forEach(id=>{
     const r=draftObj[id];if(!r||!(r.dt>0)||!r.key)return;
     const c=typeof planContractor==='function'?planContractor(r.contractor):null;
-    const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rain,c,{selfId:id}):null;
+    const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rain,c,typeof planTripOpts==='function'?planTripOpts(id):{selfId:id,nLoaders:r.loaders||2}):null;
     const pay=typeof planPayload==='function'?planPayload(r.key,c):{tf:0};
     if(!e)return;
     const t=r.dt*e.shift;trips+=t;wmt+=t*(pay.tf||0);dt+=r.dt;
@@ -842,6 +847,7 @@ function planDraftToAnaloguePlans(){
   // Foreign / road-only rows have no WMT history, so they are not sent to analogues.
   return planDraftEntries().filter(r=>!r.foreign).map(r=>({
     source:r.source,destination:r.dest,n_trucks:Math.round(r.dt),
+    n_loaders:typeof planNLoaders==='function'?planNLoaders(r):(r.loaders||2),
     contractor:r.contractor||null,
   })).filter(p=>p.n_trucks>0&&p.source&&p.destination);
 }
@@ -889,6 +895,7 @@ function planCrowdToggleDay(el){
 function planFetchRoadCrowding(){
   const plans=planDraftEntries().map(r=>({
     source:r.source,destination:r.dest,n_trucks:Math.round(r.dt||0),
+    n_loaders:typeof planNLoaders==='function'?planNLoaders(r):(r.loaders||2),
     contractor:r.contractor||null,id:r.id,
   })).filter(p=>p.n_trucks>0&&p.source&&p.destination);
   const iwip=_planCrowdIncludeIwip?planCrowdIwipPlans():[];
@@ -1364,7 +1371,7 @@ function planOpenFullAssessment(){
   const plans=planDraftToPsPlans();
   if(!plans.length){alert('No holding plan to assess.');return;}
   planSyncWeatherToPs();
-  _psPlans=plans.map(p=>({route:p.route,source:p.source,destination:p.destination,n_trucks:p.n_trucks}));
+  _psPlans=plans.map(p=>({route:p.route,source:p.source,destination:p.destination,n_trucks:p.n_trucks,n_loaders:p.n_loaders||2,foreign:!!p.foreign}));
   // Carry analogue plans (with contractor) for assessment top-k / shared-road panels.
   if(typeof window!=='undefined'){
     window._paAnaloguePlans=planDraftToAnaloguePlans();
@@ -1465,11 +1472,13 @@ function planDraftSnapshot(){
     const r=_planDraft[id];
     if(!r||!r.key)return;
     paths[id]={
-      key:r.key,dt:r.dt,contractor:r.contractor||'',
+      key:r.key,dt:r.dt,loaders:typeof planNLoaders==='function'?planNLoaders(r):(r.loaders||2),
+      contractor:r.contractor||'',
       source:r.source||(r.key.split('>')[0]||''),
       dest:r.dest||(r.key.split('>')[1]||''),
       material:r.material||'',
       otype:r.otype||'',
+      foreign:!!r.foreign,
     };
   });
   return {

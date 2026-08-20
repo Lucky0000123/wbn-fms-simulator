@@ -41,7 +41,7 @@
       const r=draft[id];
       const rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0);
       const c=typeof planContractor==='function'?planContractor(r.contractor):null;
-      const e=typeof planTripsPerDT==='function'?planTripsPerDT(key,r.dt,rain,c,{selfId:id}):null;
+      const e=typeof planTripsPerDT==='function'?planTripsPerDT(key,r.dt,rain,c,typeof planTripOpts==='function'?planTripOpts(id):{selfId:id,nLoaders:r.loaders||2}):null;
       const pay=typeof planPayload==='function'?planPayload(key,c):null;
       if(!e||!pay)return;
       const hz=typeof planHorizonFactor==='function'?planHorizonFactor():1;

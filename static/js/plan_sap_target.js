@@ -394,7 +394,7 @@
     const rain=rainMm();
     const sf=typeof planShiftFactor==='function'?planShiftFactor():0.5;
     const perShift=targetDay*sf;
-    const dt=planDtForWmt(key,perShift,rain,contractor,{selfId:selfId});
+    const dt=planDtForWmt(key,perShift,rain,contractor,typeof planTripOpts==='function'?planTripOpts(selfId):{selfId:selfId});
     return dt?Math.ceil(dt):null;
   }
 
@@ -425,7 +425,7 @@
 
   function predDayFor(id,r){
     const c=typeof planContractor==='function'?planContractor(r.contractor):null;
-    const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rainMm(),c,{selfId:id}):null;
+    const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rainMm(),c,typeof planTripOpts==='function'?planTripOpts(id):{selfId:id,nLoaders:r.loaders||2}):null;
     const pay=typeof planPayload==='function'?planPayload(r.key,c):{tf:50};
     return e?r.dt*e.daily*pay.tf:null;
   }
@@ -704,7 +704,7 @@
   function lockHoldingPlan(){
     document.querySelectorAll('#plan-rows .plan-hold-dt').forEach(el=>{
       el.readOnly=true;
-      el.title='Original plan is locked. Unlock to edit DT, then Check capacity again.';
+      el.title='Original plan is locked. Unlock to edit DT / loaders, then Check capacity again.';
     });
     const scope=q('plan-scope');
     if(scope&&scope.textContent.indexOf('original · locked')<0){
@@ -728,7 +728,7 @@
     const n=dt!=null?dt:workingDt(r);
     const hzN=hz();
     const c=typeof planContractor==='function'?planContractor(r.contractor):null;
-    const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,n,rainMm(),c,{selfId:id}):null;
+    const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,n,rainMm(),c,typeof planTripOpts==='function'?planTripOpts(id):{selfId:id,nLoaders:r.loaders||2}):null;
     const pay=typeof planPayload==='function'?planPayload(r.key,c):{tf:50};
     if(!e)return {trips:null,pred:null};
     const trips=n*e.shift*hzN;
@@ -1443,7 +1443,8 @@
             :don.r.contractor+'|'+rec.r.key+'|LIM|TOS';
           let helper=d[helperId];
           if(!helper){
-            helper={key:rec.r.key,dt:0,contractor:don.r.contractor,
+            helper={key:rec.r.key,dt:0,loaders:typeof planNLoaders==='function'?planNLoaders(rec.r):(rec.r.loaders||2),
+              contractor:don.r.contractor,
               source:rec.r.source||srcPit,dest:rec.r.dest||String(rec.r.key||'').split('>')[1],
               material:'LIM',otype:'TOS',targetWmt:0,_targetManual:true,
               _preAlloc:{dt:0,pred:0,achv:0,achv_sim:0}};

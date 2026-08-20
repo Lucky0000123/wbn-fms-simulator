@@ -356,6 +356,7 @@ function renderCongModel(){
     ['Observations',fmt(seg.n,0),'hours','sample size — sparse'],
   ].map(c=>`<div class="effkpi"><div class="v">${c[1]} <span class="u">${c[2]}</span></div><div class="l">${c[0]} · ${c[3]}</div></div>`).join('');
   q('cong-note').innerHTML=`Blue dots = <b>measured</b> speed vs traffic for <b>${escH(seg.seg)}</b> (${seg.n} hours over ~${_congData.days} days). Amber = the <b>tunable model</b> speed = free-flow × (1 − (density/jam)<sup>n</sup>). Right now the dots are flat (no congestion at this fleet); as production grows and higher-traffic hours accumulate, the dots will start bending down and you calibrate jam/n to fit — that's when it graduates from assumption to measurement.`;
+  if(typeof renderCongCurve==='function')renderCongCurve();
 }
 // path-response is fetched inside load() so Apply refreshes the rain table with
 // the same filter bar. Do not also call loadPathResp() here — that doubled the

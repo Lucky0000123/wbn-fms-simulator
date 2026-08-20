@@ -330,6 +330,44 @@
         <div class="effkpis" id="cong-kpis"></div>
         <div class="card" style="position:relative;margin-top:10px"><svg id="cong-svg" viewBox="0 0 1000 340"></svg></div>
         <p class="lead muted" id="cong-note" style="margin-top:8px"></p>
+        <div class="card" style="margin-top:12px">
+          <h3 style="font-size:13px;margin:0 0 10px">Saturation curve — trips/DT vs fleet size</h3>
+          <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+            <label class="muted" style="font-size:12px">Route
+              <select id="cong-curve-route" onchange="renderCongCurve()" style="margin-left:6px"></select>
+            </label>
+            <label class="muted" style="font-size:12px">Loaders
+              <input id="cong-curve-loaders" type="range" min="1" max="12" value="2"
+                oninput="renderCongCurve()" style="margin-left:6px;width:120px">
+              <span id="cong-curve-loaders-v" style="font-weight:700">2</span>
+            </label>
+            <label class="muted" style="font-size:12px">Fleet
+              <input id="cong-curve-dt" type="range" min="10" max="600" value="80"
+                oninput="renderCongCurve()" style="margin-left:6px;width:140px">
+              <span id="cong-curve-dt-v" style="font-weight:700">80</span> DT
+            </label>
+            <span class="muted" style="font-size:11px" id="cong-curve-knee"></span>
+          </div>
+          <div id="cong-curve-chart" style="height:320px"></div>
+          <p class="muted" style="font-size:11px;margin-top:6px" id="cong-curve-note"></p>
+        </div>
+        <div class="card" style="margin-top:12px">
+          <h3 style="font-size:13px;margin:0 0 10px">Cycle time breakdown</h3>
+          <div id="cong-breakdown-chart" style="height:200px"></div>
+          <p class="muted" style="font-size:11px;margin-top:6px">
+            Where each trip's time goes: road travel (BPR congestion penalty),
+            loader queue wait, loading, dumping. Drag the fleet slider to see
+            the queue component grow as fleet size increases.
+          </p>
+        </div>
+        <div class="card" style="margin-top:12px">
+          <h3 style="font-size:13px;margin:0 0 10px">Loader sweep — does adding loaders help?</h3>
+          <div id="cong-loader-chart" style="height:240px"></div>
+          <p class="muted" style="font-size:11px;margin-top:6px" id="cong-loader-note">
+            If the curve flattens, the bottleneck has shifted from loader to road —
+            adding more loaders won't help; a second route is needed.
+          </p>
+        </div>
       </div><!-- /tab-cong -->
       <div id="tab-plan" class="plan-tab" style="display:none">
         <!-- Sticky plan nav. The Save controls used to sit in the date card at the
@@ -433,6 +471,12 @@
                     <button class="ms-btn plan-swap-inline" id="plan-swap-btn-wmt" type="button" onclick="planSwapMode()" title="Switch DT / WMT">⇄ DT</button>
                   </span>
                 </label>
+                <label class="plan-field" id="plan-input-loaders" title="Number of loaders (excavators/shovels) serving this route. More loaders = higher throughput ceiling, less queue time. The congestion model uses this to predict trips/DT.">
+                  <span class="k">Loaders</span>
+                  <span class="plan-dt-row">
+                    <input id="plan-loaders" type="number" min="1" step="1" value="2" oninput="planMarkFleetEdit()">
+                  </span>
+                </label>
               </div>
               <!-- Road-only / foreign (IWIP or Position): trucks load corridor, no WMT for us.
                    When checked, contractor + source/dest switch to measured non-plan paths. -->
@@ -503,9 +547,10 @@
               <div class="plan-holding-table"><table>
                 <thead><tr>
                   <th>Path</th><th>Contractor</th><th>Material</th><th class="r plan-hold-th-dt">DT</th>
-                  <th class="r">Trips</th><th class="r">WMT</th><th></th>
+                  <th class="r plan-hold-th-ld">Loaders</th>
+                  <th class="r">Trips</th><th class="r">WMT</th><th class="r">Cycle</th><th></th>
                 </tr></thead>
-                <tbody id="plan-rows"><tr><td colspan="7" class="muted plan-hold-empty">No paths yet. Pick a haul above and add it.</td></tr></tbody>
+                <tbody id="plan-rows"><tr><td colspan="9" class="muted plan-hold-empty">No paths yet. Pick a haul above and add it.</td></tr></tbody>
                 <tfoot id="plan-foot"></tfoot>
               </table></div>
               <div id="plan-warn"></div>
@@ -993,6 +1038,7 @@
 <script src="/static/js/plan_basis_note.js"></script>
 <script src="/static/js/plan_reconcile.js"></script>
 <script src="/static/js/plan_weighbridges.js"></script>
+<script src="/static/js/congestion_charts.js"></script>
 <script src="/static/js/main.js"></script>
 </body>
 </html>

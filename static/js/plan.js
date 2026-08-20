@@ -256,6 +256,59 @@ function planDtEnvelope(m){
   const cands=[m.dtMaxAll,m.dtMaxDayAll,m.dtMax].filter(Number.isFinite);
   return cands.length?Math.round(Math.max.apply(null,cands)):null;
 }
+function planNLoaders(r){
+  const n=parseInt(r&&r.loaders,10);
+  return (Number.isFinite(n)&&n>=1)?Math.round(n):2;
+}
+function planBuilderLoaders(){
+  const n=parseInt((q('plan-loaders')||{}).value,10);
+  return (Number.isFinite(n)&&n>=1)?Math.round(n):2;
+}
+function planTripOpts(id, extra){
+  const r=(typeof _planDraft!=='undefined'&&id!=null)?_planDraft[id]:null;
+  const o={nLoaders:r?planNLoaders(r):planBuilderLoaders()};
+  if(id!=null&&id!=='')o.selfId=id;
+  if(extra)for(const k in extra)o[k]=extra[k];
+  return o;
+}
+function planEnsureDraftLoaders(){
+  Object.keys(_planDraft||{}).forEach(id=>{
+    const r=_planDraft[id];
+    if(r)r.loaders=planNLoaders(r);
+  });
+}
+function planLoaderCapScale(m, nLoaders){
+  const n=(Number.isFinite(nLoaders)&&nLoaders>=1)?nLoaders:2;
+  const hist=Number.isFinite(m&&m.historicalLoaders)&&m.historicalLoaders>0?m.historicalLoaders
+    :(Number.isFinite(m&&m.nLoaders)&&m.nLoaders>0?m.nLoaders:2);
+  return n/Math.max(1,hist);
+}
+function planCongestionHint(e){
+  if(!e)return {congestionStatus:'',bottleneck:''};
+  if(e.congestionStatus)return {congestionStatus:e.congestionStatus,bottleneck:e.bottleneck||''};
+  const sat=Number.isFinite(e.satFactor)?e.satFactor:1;
+  if(sat<0.5)return {congestionStatus:'overloaded',bottleneck:'road'};
+  if(sat<0.85)return {congestionStatus:'saturated',bottleneck:'loader'};
+  return {congestionStatus:'free',bottleneck:'ok'};
+}
+function planLoaderEdit(id, val){
+  if(!_planDraft[id])return;
+  _planDraft[id].loaders=Math.max(1,parseInt(val,10)||2);
+  computePlan();
+}
+function planCongCell(e){
+  if(!e)return '';
+  const h=planCongestionHint(e);
+  if(!h.congestionStatus)return '';
+  const label=h.bottleneck==='road'?'road':h.bottleneck==='loader'?'loader':'ok';
+  const bits=['Ceiling '+(Number.isFinite(e.satFactor)?Math.round(e.satFactor*100)+'%':'—')];
+  if(e.cycleTimeMin!=null)bits.push('Cycle: '+e.cycleTimeMin+' min');
+  if(e.bprMin!=null)bits.push('Road: '+e.bprMin+' min');
+  if(e.queueMin!=null)bits.push('Queue: '+e.queueMin+' min');
+  if(e.loadMin!=null)bits.push('Load: '+e.loadMin+' min');
+  if(h.bottleneck)bits.push('Bottleneck: '+h.bottleneck);
+  return `<span class="plan-cong-badge ${h.congestionStatus}" title="${escH(bits.join(' · '))}">${escH(label)}</span>`;
+}
 function planTripsPerDT(key,dt,rain,contractor,opts){
   const m=_pathResp&&_pathResp[key];if(!m)return null;
   // ── Fleet-size response, DAY-LEVEL model (owner 2026-08-12 rebuild) ────────
@@ -344,7 +397,8 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
     // wet beat dry at over-saturation because rain lowered demand and thus
     // the penalty — physically wrong). The demonstrated cap is a road
     // property; mud degrades the road, so capEff = cap × rain scale.
-    const capEff=m.dayTripsCap*Math.min(1,scale);
+    const nLoaders=(opts&&Number.isFinite(opts.nLoaders)&&opts.nLoaders>=1)?Math.round(opts.nLoaders):2;
+    const capEff=m.dayTripsCap*Math.min(1,scale)*planLoaderCapScale(m,nLoaders);
     // HARD MIN, deliberately. A BPR volume-delay penalty lived here briefly on
     // 2026-08-12 — served = capEff/(1 + 0.15·over²) — and it had to come out:
     //   • It made output COLLAPSE, not plateau. Measured on TF>FENI KM0:
@@ -392,9 +446,12 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
     else if(w)wbRows=w.rows;
   }
   const shiftServed=tr*sf*wbFactor;
+  const hint=planCongestionHint({satFactor});
   return {daily:tr,shift:shiftServed,shiftFree:tr*sf,rainDelta:rainDelta*sf,otherDelta:otherDelta*sf,
     secDelta:sec.delta*sf,secExcess:sec.excess,wbFactor,wbRows,slope,
-    satFactor,dayBasis:hasDay,m};
+    satFactor,dayBasis:hasDay,m,
+    nLoaders:(opts&&Number.isFinite(opts.nLoaders)&&opts.nLoaders>=1)?Math.round(opts.nLoaders):2,
+    congestionStatus:hint.congestionStatus,bottleneck:hint.bottleneck};
 }
 // Payload: the contractor's own measured t/trip when we have it, else the path's.
 function planPayload(key,contractor){
@@ -418,7 +475,8 @@ function planDtForWmt(key,targetWmt,rain,contractor,opts){
     const sf=typeof planShiftFactor==='function'?planShiftFactor():0.5;
     const scale=typeof planRainScale==='function'?planRainScale(key,rain):1;
     const cf=typeof planContractorFactor==='function'?planContractorFactor(contractor):1;
-    const maxT=m.dayTripsCap*Math.min(1,scale)*sf*cf*pay;   // peak achievable/shift
+    const nLoaders=(opts&&Number.isFinite(opts.nLoaders)&&opts.nLoaders>=1)?opts.nLoaders:planBuilderLoaders();
+    const maxT=m.dayTripsCap*Math.min(1,scale)*sf*cf*pay*planLoaderCapScale(m,nLoaders);   // peak achievable/shift
     if(targetWmt>maxT*0.999){
       planDtForWmt._lastCeiling={maxT:Math.round(maxT),cap:m.dayTripsCap};
       return null;
@@ -481,11 +539,11 @@ function planAiContext(){
   const rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0);
   const c=planContractor();
   const m=(_pathResp&&_pathResp[key])||{};
-  const e=planTripsPerDT(key,dt,rain,c);
+  const e=planTripsPerDT(key,dt,rain,c,{nLoaders:planBuilderLoaders()});
   const pay=planPayload(key,c);
   const sf=typeof planShiftFactor==='function'?planShiftFactor():0.5;
   const plan=Object.keys(_planDraft||{}).map(id=>{const r=_planDraft[id];
-    return {path:r.key,contractor:r.contractor,dt:r.dt,foreign:!!r.foreign};});
+    return {path:r.key,contractor:r.contractor,dt:r.dt,loaders:planNLoaders(r),foreign:!!r.foreign};});
   const wb=(e&&e.wbRows)?e.wbRows.map(r=>({wb:r.wb,arrivals:Math.round(r.arrivals),cap:Math.round(r.cap),util:+(r.rho||0).toFixed(2)})):[];
   return {
     building:{path:key,contractor:c?c.name:null,dt,rain_mm:rain},
@@ -849,7 +907,7 @@ function planPathModelWmtAtRain(rainMm){
     const r=_planDraft[id];
     if(!r||r.foreign)return;
     const c=planContractor(r.contractor);
-    const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rainMm,c,{selfId:id}):null;
+    const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rainMm,c,planTripOpts(id)):null;
     const pay=typeof planPayload==='function'?planPayload(r.key,c):null;
     if(!e||!pay||!(pay.tf>0))return;
     wmt+=r.dt*e.shift*hz*(pay.tf||0);
@@ -1052,7 +1110,7 @@ function planAddMeasuredRoadOnly(){
     if(_planDraft[id])return;                     // don't duplicate
     // FOREIGN paths usually have no WBN route history — carry their MEASURED
     // trips/trucks from the tickets so the row renders honest numbers.
-    _planDraft[id]={key,dt:Math.max(1,Math.round(pth.trucks||1)),contractor:cont,
+    _planDraft[id]={key,dt:Math.max(1,Math.round(pth.trucks||1)),loaders:2,contractor:cont,
       source:sKey,dest:dKey,foreign:true,
       measTrips:Math.max(0,Math.round(pth.trips||0)),
       measTrucks:Math.max(1,Math.round(pth.trucks||1))};
@@ -1454,7 +1512,7 @@ function planPreview(){
   if(_planMode==='wmt'){
     const target=Math.max(0,parseFloat((q('plan-wmt')||{}).value)||0);
     if(!(target>0))return blank('Enter a target tonnage to size the fleet.');
-    dt=planDtForWmt(key,planWmtTargetShift(),rain,c);
+    dt=planDtForWmt(key,planWmtTargetShift(),rain,c,{nLoaders:planBuilderLoaders()});
     if(!dt){
       const ceil=planDtForWmt._lastCeiling;
       return blank(ceil
@@ -1464,7 +1522,7 @@ function planPreview(){
   }else{
     dt=Math.max(1,parseFloat((q('plan-dt')||{}).value)||1);
   }
-  e=planTripsPerDT(key,dt,rain,c);
+  e=planTripsPerDT(key,dt,rain,c,{nLoaders:planBuilderLoaders()});
   if(!e)return blank('No history for this path yet.');
   trips=dt*e.shift; wmt=trips*pay.tf;
   const swapped=_planMode==='wmt';
@@ -1729,7 +1787,7 @@ function planAddPath(){
     }
     const dt=Math.max(1,parseFloat((q('plan-dt')||{}).value)||1);
     // |road suffix keeps foreign rows separate from production on the same route.
-    _planDraft[name+'|'+key+'|road']={key,dt,contractor:name,source:s,dest:d,foreign:true,
+    _planDraft[name+'|'+key+'|road']={key,dt,loaders:planBuilderLoaders(),contractor:name,source:s,dest:d,foreign:true,
       material:((q('plan-material')||{}).value||'').trim(),
       measTrips:Math.max(0,Math.round(fp.trips||0)),
       measTrucks:Math.max(1,Math.round(fp.trucks||1))};
@@ -1741,7 +1799,7 @@ function planAddPath(){
   const c=planContractor(),name=c?c.name:'—',rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0);
   let dt;
   if(_planMode==='wmt'){
-    dt=planDtForWmt(key,planWmtTargetShift(),rain,c);
+    dt=planDtForWmt(key,planWmtTargetShift(),rain,c,{nLoaders:planBuilderLoaders()});
     if(!dt){
       const b=q('plan-preview');if(b)b.innerHTML='<span class="er">Could not size a fleet for that target on this path.</span>';
       if(btn){btn.classList.remove('is-busy');btn.disabled=false;}
@@ -1752,10 +1810,11 @@ function planAddPath(){
   const otRaw=((q('plan-otype')||{}).value||'TOS').toUpperCase();
   const otAdd=matAdd==='LIM'?(otRaw==='LD'?'LD':'TOS'):(matAdd==='SAP'?'TOS':'');
   const id=planDraftSlotId(name,key,{material:matAdd,otype:otAdd});
-  const row={key,dt,contractor:name,source:s,dest:d,foreign:false,
+  const row={key,dt,loaders:planBuilderLoaders(),contractor:name,source:s,dest:d,foreign:false,
     material:matAdd,otype:otAdd};
   if(_planDraft[id]){
     _planDraft[id].dt=dt;
+    _planDraft[id].loaders=planBuilderLoaders();
     _planDraft[id].material=matAdd;
     if(otAdd)_planDraft[id].otype=otAdd;
   }else{
@@ -1767,7 +1826,10 @@ function planAddPath(){
       if(exMat==='LIM'&&exOt===otAdd){
         existing.otype=otAdd;
         planMoveDraftId(bare,id);
-        if(_planDraft[id])_planDraft[id].dt=dt;
+        if(_planDraft[id]){
+          _planDraft[id].dt=dt;
+          _planDraft[id].loaders=planBuilderLoaders();
+        }
       }else if(exMat==='LIM'&&exOt&&exOt!==otAdd){
         const otherId=planDraftSlotId(name,key,{material:'LIM',otype:exOt});
         existing.otype=exOt;
@@ -1828,14 +1890,14 @@ function planHoldOriginSet(src){
 function computePlan(){
   const rows=q('plan-rows');if(!rows)return;
   if(typeof planMigrateLimIds==='function')planMigrateLimIds();
+  planEnsureDraftLoaders();
   const idsNow=Object.keys(_planDraft||{});
   if(idsNow.length&&typeof planPaintHero==='function')planPaintHero({calculating:true});
   planPreview();
   const rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0),wb=Math.max(1,parseFloat((q('plan-wb')||{}).value)||8),
     hours=Math.max(1,parseFloat((q('plan-hours')||{}).value)||12),ids=Object.keys(_planDraft),scope=q('plan-scope'),foot=q('plan-foot');
-  // Compact under-builder columns: Path · Contractor · DT · Trips · WMT · remove
   const legend=q('plan-src-legend');
-  if(!ids.length){rows.innerHTML='<tr><td colspan="7" class="muted plan-hold-empty">No paths yet. Pick a haul above and add it.</td></tr>';
+  if(!ids.length){rows.innerHTML='<tr><td colspan="9" class="muted plan-hold-empty">No paths yet. Pick a haul above and add it.</td></tr>';
     if(foot)foot.innerHTML='';const pk=q('plan-kpis');if(pk)pk.innerHTML='';const pw=q('plan-warn');if(pw)pw.innerHTML='';if(scope)scope.textContent='';
     if(legend){legend.innerHTML='';legend.hidden=true;}
     _planHoldOrigin='';
@@ -1844,47 +1906,49 @@ function computePlan(){
     if(typeof planRenderComingDays==='function')planRenderComingDays();
     return;}
   let totTrips=0,totWmt=0,totDt=0,beyond=false,hasForeign=false;
-  let visTrips=0,visWmt=0,visDt=0,visN=0;
+  let visTrips=0,visWmt=0,visDt=0,visLd=0,visN=0,totLd=0;
   const hz=planHorizonFactor();
   const srcsAll=[...new Set(ids.map(id=>planHoldSrc(_planDraft[id])).filter(Boolean))];
   if(_planHoldOrigin&&srcsAll.indexOf(_planHoldOrigin)<0)_planHoldOrigin='';
   const dtIn=id=>`<input type="number" min="0" step="1" value="${Math.round(_planDraft[id].dt)}" onchange="planSet('${escH(id)}',this.value)" class="plan-hold-dt" aria-label="Dump trucks" title="Dump trucks on this path">`;
+  const ldIn=id=>`<input type="number" min="1" step="1" value="${planNLoaders(_planDraft[id])}" onchange="planLoaderEdit('${escH(id)}',this.value)" class="plan-hold-dt plan-hold-ld" aria-label="Loaders" title="Loaders serving this path">`;
   const rm=id=>`<a class="plan-hold-rm" onclick="planRemove('${escH(id)}')" title="Remove path" role="button">\u2715</a>`;
-  const holdTr=(id,extra,pathHtml,tripsHtml,wmtHtml)=>{
+  const holdTr=(id,extra,pathHtml,tripsHtml,wmtHtml,e)=>{
     const r=_planDraft[id],src=planHoldSrc(r),col=planSrcColour(src);
     const cls=['plan-hold-src',extra].filter(Boolean).join(' ');
-    return `<tr class="${cls}" style="--src:${col}" title="Source ${escH(src)}"><td class="plan-hold-path"><span class="plan-hold-dot" aria-hidden="true"></span>${pathHtml}</td><td><span class="plan-hold-co">${escH(r.contractor)}</span></td><td class="plan-hold-mat">${planHoldMatHtml(id)}</td><td class="r plan-hold-dt-cell">${dtIn(id)}</td><td class="r plan-hold-num">${tripsHtml}</td><td class="r plan-hold-wmt">${wmtHtml}</td><td class="c">${rm(id)}</td></tr>`;
+    return `<tr class="${cls}" style="--src:${col}" title="Source ${escH(src)}"><td class="plan-hold-path"><span class="plan-hold-dot" aria-hidden="true"></span>${pathHtml}</td><td><span class="plan-hold-co">${escH(r.contractor)}</span></td><td class="plan-hold-mat">${planHoldMatHtml(id)}</td><td class="r plan-hold-dt-cell">${dtIn(id)}</td><td class="r plan-hold-dt-cell">${ldIn(id)}</td><td class="r plan-hold-num">${tripsHtml}</td><td class="r plan-hold-wmt">${wmtHtml}</td><td class="r plan-cong-cell">${planCongCell(e)}</td><td class="c">${rm(id)}</td></tr>`;
   };
   rows.innerHTML=ids.map(id=>{const r=_planDraft[id],m=_pathResp[r.key];
     const path=`<b>${escH(r.key.replace('>',' \u2192 '))}</b>`;
     const show=!_planHoldOrigin||planHoldSrc(r)===_planHoldOrigin;
     if(r.foreign)hasForeign=true;
+    totLd+=planNLoaders(r);
     if(!m&&r.foreign&&Number.isFinite(r.measTrips)){
       if(!show)return '';
-      visN+=1;visDt+=r.dt;
+      visN+=1;visDt+=r.dt;visLd+=planNLoaders(r);
       const rate=r.measTrucks?r.measTrips/r.measTrucks:0,ftrips=r.dt*rate*hz;
-      return holdTr(id,'plan-hold-road',path+' <span class="plan-hold-tag" title="Road-only: congestion, no WMT">road</span>',fmtExact(Math.round(ftrips)),'<span class="muted">\u2014</span>');
+      return holdTr(id,'plan-hold-road',path+' <span class="plan-hold-tag" title="Road-only: congestion, no WMT">road</span>',fmtExact(Math.round(ftrips)),'<span class="muted">\u2014</span>',null);
     }
     if(!m)return '';
-    const c=planContractor(r.contractor),e=planTripsPerDT(r.key,r.dt,rain,c,{selfId:id}),pay=planPayload(r.key,c);
+    const c=planContractor(r.contractor),e=planTripsPerDT(r.key,r.dt,rain,c,planTripOpts(id)),pay=planPayload(r.key,c);
     if(!e)return '';
     const env=planDtEnvelope(m);
     if(Number.isFinite(env)&&r.dt>env)beyond=true;
     const trips=r.dt*e.shift*hz,wmt=trips*pay.tf;
     if(r.foreign){
       if(!show)return '';
-      visN+=1;visDt+=r.dt;
-      return holdTr(id,'plan-hold-road',path+' <span class="plan-hold-tag" title="Road-only: congestion, no WMT">road</span>',fmtExact(Math.round(trips)),'<span class="muted">\u2014</span>');
+      visN+=1;visDt+=r.dt;visLd+=planNLoaders(r);
+      return holdTr(id,'plan-hold-road',path+' <span class="plan-hold-tag" title="Road-only: congestion, no WMT">road</span>',fmtExact(Math.round(trips)),'<span class="muted">\u2014</span>',e);
     }
     totTrips+=trips;totWmt+=wmt;totDt+=r.dt;
     if(!show)return '';
-    visN+=1;visTrips+=trips;visWmt+=wmt;visDt+=r.dt;
-    return holdTr(id,'',path,fmtExact(Math.round(trips)),fmtExact(Math.round(wmt))+' t');
+    visN+=1;visTrips+=trips;visWmt+=wmt;visDt+=r.dt;visLd+=planNLoaders(r);
+    return holdTr(id,'',path,fmtExact(Math.round(trips)),fmtExact(Math.round(wmt))+' t',e);
   }).join('');
   // Road-only / unmatched rows also honour the origin filter (they returned
   // holdTr already). If the filter hid everything, say so.
   if(_planHoldOrigin&&!visN&&!rows.querySelector('tr.plan-hold-src')){
-    rows.innerHTML=`<tr><td colspan="7" class="muted">No paths from ${escH(_planHoldOrigin)} — pick All or another origin</td></tr>`;
+    rows.innerHTML=`<tr><td colspan="9" class="muted">No paths from ${escH(_planHoldOrigin)} — pick All or another origin</td></tr>`;
   }
   if(legend){
     legend.hidden=!srcsAll.length;
@@ -1897,10 +1961,11 @@ function computePlan(){
   }
   const footN=_planHoldOrigin?visN:ids.length;
   const footDt=_planHoldOrigin?visDt:totDt;
+  const footLd=_planHoldOrigin?visLd:totLd;
   const footTr=_planHoldOrigin?visTrips:totTrips;
   const footWmt=_planHoldOrigin?visWmt:totWmt;
   const footLab=_planHoldOrigin?(_planHoldOrigin+(hz>1?' · day':'')):'TOTAL'+(hz>1?' · day':'');
-  if(foot)foot.innerHTML=`<tr class="plan-total-row"><td><b>${escH(footLab)}</b></td><td class="muted">${footN}</td><td></td><td class="r"><b>${fmtExact(Math.round(footDt))}</b></td><td class="r"><b>${fmtExact(Math.round(footTr))}</b></td><td class="r"><b>${fmtExact(Math.round(footWmt))} t</b></td><td></td></tr>`;
+  if(foot)foot.innerHTML=`<tr class="plan-total-row"><td><b>${escH(footLab)}</b></td><td class="muted">${footN}</td><td></td><td class="r"><b>${fmtExact(Math.round(footDt))}</b></td><td class="r"><b>${fmtExact(Math.round(footLd))}</b></td><td class="r"><b>${fmtExact(Math.round(footTr))}</b></td><td class="r"><b>${fmtExact(Math.round(footWmt))} t</b></td><td></td><td></td></tr>`;
   const names=[...new Set(ids.map(id=>_planDraft[id].contractor))];
   const mats=[...new Set(ids.map(id=>(_planDraft[id].material||'').trim()).filter(Boolean))];
   const otherN=Math.round(_planOtherTrips||0);

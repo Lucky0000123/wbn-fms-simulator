@@ -74,7 +74,7 @@
           // no free baseline to divide by, so they get no efficiency curve
           // rather than a fabricated 100%.
         }else{
-          const e=planTripsPerDT(r.key,dt,rain,c,{selfId:r.id});
+          const e=planTripsPerDT(r.key,dt,rain,c,typeof planTripOpts==='function'?planTripOpts(r.id):{selfId:r.id,nLoaders:r.loaders||2});
           if(!e)continue;
           tpd=e.shift;trips=dt*e.shift;wmt=trips*(pay.tf||0);
           // Efficiency = served rate / this path's UNCONSTRAINED rate, i.e. what

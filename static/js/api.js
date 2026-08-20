@@ -135,3 +135,26 @@ async function loadCongModel(){
     renderCongModel();
   }catch(e){if(note)note.textContent='Could not load: '+e.message;}
 }
+async function _congApiFetch(url){
+  try{
+    const r=await fetch(url,{cache:'no-store'});
+    if(r.status===404||r.status===501)return {ok:false,unavailable:true,status:r.status};
+    const d=await r.json();
+    if(!d)return {ok:false,unavailable:true};
+    return d;
+  }catch(e){
+    return {ok:false,unavailable:true,error:String((e&&e.message)||e)};
+  }
+}
+async function loadCongestionModel(route, nTrucks, nLoaders){
+  const p=new URLSearchParams({route:route||'',n_trucks:nTrucks,n_loaders:nLoaders});
+  return _congApiFetch('/api/congestion_model?'+p);
+}
+async function loadCongestionCurve(route, nLoaders, maxTrucks){
+  const p=new URLSearchParams({route:route||'',n_loaders:nLoaders,max_trucks:maxTrucks||600});
+  return _congApiFetch('/api/congestion_curve?'+p);
+}
+async function loadCongestionCompare(route, nTrucks){
+  const p=new URLSearchParams({route:route||'',n_trucks:nTrucks});
+  return _congApiFetch('/api/congestion_compare?'+p);
+}

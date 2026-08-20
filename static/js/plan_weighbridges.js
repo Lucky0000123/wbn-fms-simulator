@@ -232,7 +232,7 @@
       if (typeof planTripsPerDT === 'function'){
         const rain = Math.max(0, parseFloat((el('plan-rain') || {}).value) || 0);
         const c = typeof planContractor === 'function' ? planContractor(r.contractor) : null;
-        const e = planTripsPerDT(r.key, r.dt, rain, c, { noWb: true, selfId: id });
+        const e = planTripsPerDT(r.key, r.dt, rain, c, typeof planTripOpts==='function'?planTripOpts(id,{noWb:true}):{ noWb: true, selfId: id, nLoaders: r.loaders||2 });
         if (e) return r.dt * e.shift;
       }
     } catch (e) {}
@@ -370,7 +370,7 @@
         : '';
       const sub = document.createElement('tr');
       sub.className = 'pwb-row';
-      sub.innerHTML = `<td colspan="7"><div class="pwb-bar">`
+      sub.innerHTML = `<td colspan="9"><div class="pwb-bar">`
         + `<span class="pwb-k">WB</span>`
         + `<div class="pwb-chips">${assigned}${alternates}</div>`
         + `${toggle}${heavyWarn}</div></td>`;
