@@ -19,8 +19,17 @@ DEFAULTS = {
     "dump_min": 2.0,
     "rr_pct": 2.0,            # rolling resistance, maintained road
     "n_loaders": 2,           # per-route default; UI should supply the real one
-    "safe_headway_s": 60.0,
-    "n_lanes": 1,
+    # Geometry capacity: c_road = n_lanes_loaded * 3600 / headway_s.
+    # v in BPR is loaded-direction flow (one pass per cycle), so a two-way
+    # road is n_lanes_loaded=1. Headway is a documented following gap, not a
+    # dial for trips/DT. Long corridors (chainage >= long_haul_km) use 60 s
+    # (585 m at 35 km/h). Short hauls use 15 s (62 m at 15 km/h).
+    "n_lanes_loaded": 1,
+    "n_lanes": 1,                 # alias of n_lanes_loaded (bpr helper)
+    "headway_s": 60.0,            # long-corridor following gap
+    "headway_s_short": 15.0,      # short-haul following gap
+    "safe_headway_s": 60.0,       # predictor fallback if a route has no c_road
+    "long_haul_km": 50.0,
     "k_bunch": 0.03,
     "shifts_per_day": 2,
     "hours_per_shift": 12.0,

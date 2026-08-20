@@ -66,9 +66,16 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
     t_fixed = ff["t_load_min"] + ff["t_spot_min"] + ff["t_dump_min"]
 
     # ── Layer 2B: BPR road penalty (uses loaded-direction flow) ──────────
+    n_lanes = int(p.get("n_lanes_loaded") or p.get("n_lanes") or 1)
+    headway_s = p.get("headway_s")
     c_road = p.get("c_road_trucks_hr")
-    if not _finite(c_road) or c_road <= 0:
-        c_road = bpr.road_capacity_trucks_hr(int(p["n_lanes"]), float(p["safe_headway_s"]))
+    if not _finite(c_road) or c_road <= 0 or not _finite(headway_s):
+        c_road, n_lanes, headway_s = bpr.geometry_c_road(
+            dist,
+            n_lanes_loaded=n_lanes,
+            headway_s=float(p.get("headway_s") or p["safe_headway_s"]),
+            headway_s_short=float(p.get("headway_s_short") or 15.0),
+            long_haul_km=float(p.get("long_haul_km") or 50.0))
     mu_hr = 60.0 / float(p["load_min"])
     c_dump = p.get("c_dump_trucks_hr")
     c_link = min(c_road, n_loaders * mu_hr, c_dump if _finite(c_dump) and c_dump > 0 else float("inf"))
@@ -81,9 +88,10 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
         v_hr = n_trucks / (cyc / 60.0)          # trucks/hr entering the link
         bp = bpr.bpr_travel_min(t_free_road, v_hr, c_link,
                                 float(p["alpha"]), float(p["beta"]))
-        # Safety net: road time cannot exceed 3x free flow - even in gridlock
-        # trucks keep moving; they do not park for a whole shift (owner,
-        # 2026-08-20). With geometry-based c_road this rarely binds.
+        # Safety net: road time cannot exceed 3x free flow. Trucks keep
+        # moving in gridlock; they do not park for a whole shift. With
+        # geometry c_road this rarely binds — if it does, the BPR formula
+        # has left the physical range and the cap is a mask, not a model.
         max_road = t_free_road * 3.0
         if bp["t_road_min"] > max_road:
             bp = {**bp, "t_road_min": max_road,
@@ -97,11 +105,22 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
         cyc = cyc + 0.5 * (nxt - cyc)
 
     # ── bunching (variance) penalty ───────────────────────────────────────
+    # Linear in N/n_ref, so cap at 3x the reference-fleet term the same way
+    # road time is capped at 3x free flow.
     sd = p.get("cycle_sd_min")
     n_ref = p.get("n_trucks_ref") or 30
     bunch = 0.0
+    bunch_capped = False
     if _finite(sd) and sd > 0 and n_ref:
-        bunch = float(p["k_bunch"]) * float(sd) * (n_trucks / float(n_ref))
+        k_b = float(p["k_bunch"])
+        bunch_raw = k_b * float(sd) * (n_trucks / float(n_ref))
+        bunch_cap = 3.0 * k_b * float(sd)
+        if bunch_raw > bunch_cap:
+            bunch = bunch_cap
+            bunch_capped = True
+            warnings.append("bunching penalty capped at 3x the reference-fleet term")
+        else:
+            bunch = bunch_raw
         cyc += bunch
 
     # UTILIZATION: trucks cycle only part of the shift (breaks, changeover,
@@ -161,13 +180,18 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
             "bunching_penalty_minutes": round(bunch, 2),
         },
         "congestion_status": status,
+        "bpr_regime": bp.get("regime"),
+        "bunching_capped": bunch_capped,
         "rho": round(qq["rho"], 3),
         "road_vc": round(bp["vc"], 3),
         "link_capacity_trucks_hr": round(c_link, 1),
         "distance_km": round(dist, 1),
         "params": {"alpha": p["alpha"], "beta": p["beta"],
+                   "bpr_source": "literature_default",
                    "load_min": p["load_min"], "rr_pct": rr,
-                   "c_road_trucks_hr": round(c_road, 1)},
+                   "c_road_trucks_hr": round(c_road, 1),
+                   "headway_s": round(float(headway_s), 1),
+                   "n_lanes_loaded": n_lanes},
         "uncertainty": unc,
         "legacy_comparison": legacy,
         "warnings": warnings,

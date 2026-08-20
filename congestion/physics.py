@@ -30,12 +30,26 @@ NODE_KM = {
 # to FENI KM0 is ~19 km (measured cycle 165 min supports ~19 km at ~14 km/h
 # effective + dwell), NOT 67.8. Spur joins at ~2.5 km + 17.4 km spur length.
 SPUR_KM = {"BLB": 19.9}
+# Typical loaded mine-haul speed used only to translate a measured free-flow
+# cycle into an implied one-way distance (chainage sanity check).
+REF_SPEED_KMH = 15.0
+# POS 14/15/16 sit on the main stick at km ~26-32, so the naive spur formula
+# 17.4 + |dest - 2.5| yields 41 km. That is the wrong physical path from BLB:
+# WBN haulage records list "BLB to POS 14" as 20 km, and the measured
+# free-flow cycle (96-105 min) at 15 km/h is a 13-20 km haul, not 41 km
+# (which forced a back-solved 45-50 km/h). From BLB those plants are
+# coastal-side dumps, same order as FENI KM0 / HUAFEI.
+BLB_COASTAL_DEST = {
+    "POS 14", "POS14", "POS 15", "POS15", "POS 16", "POS16",
+}
 
 
 def route_distance_km(origin: str, dest: str) -> float | None:
     o = (origin or "").strip().upper()
     d = (dest or "").strip().upper()
     if o in SPUR_KM:
+        if d in BLB_COASTAL_DEST:
+            return SPUR_KM[o]
         base = NODE_KM.get(d)
         if base is None:
             return None
@@ -45,6 +59,15 @@ def route_distance_km(origin: str, dest: str) -> float | None:
     if ok is None or dk is None:
         return None
     return abs(ok - dk)
+
+
+def implied_one_way_km(t_free_min, load_min=5.0, spot_min=1.0, dump_min=2.0,
+                       speed_loaded_kmh=REF_SPEED_KMH):
+    """One-way km implied by a measured free-flow cycle at a reference speed."""
+    if not t_free_min or t_free_min <= 0 or speed_loaded_kmh <= 0:
+        return None
+    t_road = max(5.0, float(t_free_min) - (load_min + spot_min + dump_min))
+    return t_road / (60.0 * (1.0 + 1.0 / 1.25) / float(speed_loaded_kmh))
 
 
 def speed_from_rr(rr_pct: float) -> float:

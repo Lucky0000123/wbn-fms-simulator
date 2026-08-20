@@ -2,12 +2,10 @@
 """Calibrate the hybrid congestion model from WBN_DATABASE history.
 
 Fits, per route (>= 30 day-shifts):
-  mu / load_min      loader service time  <- p10 of per-truck trip gaps (the
-                     fastest turnarounds bound fixed time; queue is on top)
-  t_free_min         free-flow cycle      <- p10 of day-shift mean gaps
-  alpha, beta        BPR parameters       <- least squares on
-                     mean_gap = t_free * (1 + alpha*(v/c)^beta) day-shifts
-  c_road_trucks_hr   <- p95 of observed trucks/hr throughput
+  t_free_min         free-flow cycle      <- p25 of day-shift mean gaps
+  alpha, beta        BPR parameters       <- literature 0.15 / 4.0
+                     (historical v/c range is too narrow for LSQ)
+  c_road_trucks_hr   <- geometry: n_lanes_loaded * 3600 / headway_s
   cycle_sd_min       <- mean per-day-shift gap SD (bunching input)
   obs_dt_min/max     <- observed fleet envelope (uncertainty bands)
   payload_t, day_rate, day_trips_cap <- from the dispatch snapshot (legacy cmp)
@@ -183,53 +181,39 @@ def main():
         # throughput trucks/hr: trips per shift-hour
         tputs = [r["trips"] / 12.0 for r in rs if r["trips"]]
         c_road_obs = _pctile(tputs, 0.95) or 0
-        # c_road from ROAD GEOMETRY, not historical throughput: the p95 of
-        # observed trips/hr is the FLEET's demand, not the road's capacity
-        # (BLB>POS 14 max fleet ever was 79 trucks -> obs 15 trucks/hr, but
-        # the road passes far more). Headway by haul length; two-way mining
-        # road = 2 lanes. Observed p95 only serves as a floor when geometry
-        # data is missing (owner fix, 2026-08-20).
-        # Classify by MEASURED free-flow cycle, not chainage distance: the
-        # BLB spur arithmetic makes BLB>POS 14 look like a 41 km haul when
-        # its measured cycle (105 min) is that of a short road.
-        if t_free < 150:
-            _headway = 20.0     # short haul: slow, tight spacing
-            c_road = max(2 * 3600.0 / _headway, c_road_obs)
-        elif t_free < 200:
-            _headway = 30.0     # medium haul
-            c_road = max(2 * 3600.0 / _headway, c_road_obs)
-        else:
-            # LONG corridor (TF/KR to coast): one shared two-way road that
-            # genuinely saturates - geometry headway (160/hr) never binds
-            # and would predict zero congestion at 771 trucks. Owner-
-            # validated congestion levels (2026-08-20: 385 DT ~1.3-1.5,
-            # 771 DT ~0.8-1.2 trips/DT) calibrate to ~1.7x the observed
-            # p95 throughput: real capacity sits above what the modest
-            # historical fleets demanded, below free-flow geometry.
-            c_road = max(20.0, c_road_obs * 1.7)
+        # c_road from ROAD GEOMETRY. v in BPR is loaded-direction flow
+        # (one pass per cycle), so a two-way road is 1 loaded lane.
+        # Headway is a documented following gap (config), never inverted
+        # from a target trips/DT. Short vs long is chainage, not cycle time.
+        from congestion.config import DEFAULTS as _CFG
+        from congestion import physics as ph
+        from congestion import bpr as bprmod
+        o, _, d = route.partition(">")
+        dist = ph.route_distance_km(o, d)
+        c_road, n_lanes, headway_s = bprmod.geometry_c_road(
+            dist,
+            n_lanes_loaded=int(_CFG["n_lanes_loaded"]),
+            headway_s=float(_CFG["headway_s"]),
+            headway_s_short=float(_CFG["headway_s_short"]),
+            long_haul_km=float(_CFG["long_haul_km"]))
+        implied_km = ph.implied_one_way_km(t_free)
+        chainage_suspect = bool(
+            dist and implied_km and (
+                dist / implied_km > 2.0 or implied_km / dist > 2.0))
         # fleet envelope
         dts = [r["trucks"] for r in rs]
-        # v/c points for BPR fit. v must be DEMAND flow (exogenous):
-        # N trucks each wanting a trip every t_free minutes = N/(t_free/60)
-        # trucks/hr. Served flow (trips/hr) is endogenous - busy days have
-        # both high flow and low gaps, which fits a NEGATIVE alpha (measured
-        # 2026-08-20: all-route R2 < 0 with served flow).
-        # Standard BPR parameters (owner fix 2026-08-20): the per-route LSQ
-        # fit produced junk in both regimes (alpha 0.8-4.0 with negative R2)
-        # because observed v/c barely varies within history. alpha=0.15,
-        # beta=4 is the literature standard; the 3x free-flow cap in the
-        # predictor bounds the extreme tail.
+        # Historical v/c barely varies, so per-route LSQ on BPR is unidentified
+        # (negative R2 on both served flow and demand flow). Literature
+        # defaults; the 3x free-flow cap in the predictor bounds the tail.
         alpha, beta, r2, nfit = 0.15, 4.0, None, 0
         sd = sum(sds) / len(sds) if sds else None
-        # UTILIZATION: fraction of the shift a truck is actively cycling.
-        # Measured trips/truck x mean gap / 720. Median over day-shifts.
-        # This is the effective-cycle vs weigh-to-weigh distinction in
-        # AGENTS.md: gaps say ~134 min but trucks do ~2.3 trips/shift on
-        # KR>POS 12 - the rest of the shift is breaks/changeover/assignment.
         rec = {
             "t_free_obs_min": round(t_free, 1),
             "load_min": load_min,
             "c_road_trucks_hr": round(c_road, 1) if c_road else None,
+            "c_road_obs_p95": round(c_road_obs, 1) if c_road_obs else None,
+            "headway_s": round(headway_s, 1),
+            "n_lanes_loaded": n_lanes,
             "alpha": round(alpha, 4) if alpha is not None else None,
             "beta": beta,
             "bpr_fit_r2": round(r2, 3) if r2 is not None else None,
@@ -237,24 +221,23 @@ def main():
             "cycle_sd_min": round(sd, 1) if sd else None,
             "n_trucks_ref": round(_pctile(dts, 0.5)) if dts else None,
             "n_dayshifts": len(rs),
-            # calibrated loaded speed so the physics t_free matches the
-            # OBSERVED free-flow cycle (fixed times subtracted):
         }
         # back-solve speed from observed free-flow cycle
-        from congestion import physics as ph
-        o, _, d = route.partition(">")
-        dist = ph.route_distance_km(o, d)
         if dist and t_free:
             t_road = max(5.0, t_free - (load_min + 1.0 + 2.0))
-            # loaded + empty (empty 1.25x faster): t = 60d/v + 60d/(1.25v)
             v = (60.0 * dist * (1 + 1 / 1.25)) / t_road
             rec["speed_loaded_kmh"] = round(v, 1)
             rec["distance_km"] = round(dist, 1)
+        if implied_km:
+            rec["implied_distance_km"] = round(implied_km, 1)
+        rec["chainage_suspect"] = chainage_suspect
         rec.update(disp.get(route) or {})
         routes_out[route] = rec
-        print("%-14s %5d %7.0f %7.1f %7.1f %6s %6s %8s %6d %6s" % (
+        flag = " SUSPECT" if chainage_suspect else ""
+        print("%-14s %5d %7.0f %7.1f %7.1f %6s %6s %8s %6d %6s%s" % (
             route, len(rs), t_free, load_min, c_road or 0,
-            rec["alpha"], rec["beta"], rec["bpr_fit_r2"], nfit, rec["cycle_sd_min"]))
+            rec["alpha"], rec["beta"], rec["bpr_fit_r2"], nfit,
+            rec["cycle_sd_min"], flag))
 
     # ── Anchor utilization to the DISPATCH day-rate basis ────────────────
     # Gap-based cycles only sample trucks that did >=2 trips in a shift - a
@@ -265,7 +248,6 @@ def main():
     # knee, BPR), dispatch anchors the LEVEL. One basis, two engines agree.
     json.dump({"generated_at": "tmp", "global": {}, "routes": routes_out},
               open(PARAMS_PATH, "w"))
-    import importlib
     from congestion import config as ccfg, predictor as cpred
     ccfg._cache["data"] = None
     for route, rec in routes_out.items():
@@ -289,18 +271,52 @@ def main():
             rec["utilization"] = 0.7
     ccfg._cache["data"] = None
 
+    from congestion.config import DEFAULTS as _CFG
     out = {
         "generated_at": __import__("datetime").datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": "WBN_DATABASE.dbo.HAULAGE_CLEAN 2026-01-01.. (day-shift trip gaps)",
-        "method": "t_free=p10(day-shift mean gap); c_road=p95(trips/hr); "
-                  "alpha,beta=grid LSQ on gap=t_free*(1+a*(v/c)^b); "
-                  "speed back-solved so physics matches observed free flow",
-        "global": {},
+        "method": {
+            "alpha": "literature default 0.15 (insufficient v/c variation for LSQ fit)",
+            "beta": "literature default 4.0 (insufficient v/c variation for LSQ fit)",
+            "t_free": "p25 of day-shift mean gaps",
+            "c_road": "geometry: n_lanes_loaded * 3600 / headway_s",
+            "headway_s_long": _CFG["headway_s"],
+            "headway_s_short": _CFG["headway_s_short"],
+            "long_haul_km": _CFG["long_haul_km"],
+            "n_lanes_loaded": _CFG["n_lanes_loaded"],
+            "utilization": "SPC anchor at median fleet (dispatch day-rate)",
+        },
+        "global": {
+            "n_lanes_loaded": _CFG["n_lanes_loaded"],
+            "headway_s": _CFG["headway_s"],
+            "headway_s_short": _CFG["headway_s_short"],
+            "long_haul_km": _CFG["long_haul_km"],
+        },
         "routes": routes_out,
     }
     os.makedirs(os.path.dirname(PARAMS_PATH), exist_ok=True)
     json.dump(out, open(PARAMS_PATH, "w"), indent=1)
     print("\nwrote %s (%d routes)" % (PARAMS_PATH, len(routes_out)))
+    print("\n%-14s %8s %8s %7s %10s %6s %s" % (
+        "route", "chainage", "implied", "ratio", "c_road", "hdwy", "class"))
+    for route, rec in sorted(routes_out.items()):
+        dist = rec.get("distance_km")
+        imp = rec.get("implied_distance_km")
+        ratio = (dist / imp) if (dist and imp) else None
+        if dist is None:
+            klass = "unknown"
+        elif dist >= _CFG["long_haul_km"]:
+            klass = "LONG"
+        else:
+            klass = "short"
+        flag = "CHAINAGE SUSPECT" if rec.get("chainage_suspect") else ""
+        print("%-14s %8s %8s %7s %10.1f %6.0f %s %s" % (
+            route,
+            "—" if dist is None else ("%.1f" % dist),
+            "—" if imp is None else ("%.1f" % imp),
+            "—" if ratio is None else ("%.2f" % ratio),
+            rec.get("c_road_trucks_hr") or 0,
+            rec.get("headway_s") or 0, klass, flag))
 
 
 if __name__ == "__main__":
