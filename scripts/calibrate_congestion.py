@@ -182,7 +182,31 @@ def main():
         load_min = 5.0
         # throughput trucks/hr: trips per shift-hour
         tputs = [r["trips"] / 12.0 for r in rs if r["trips"]]
-        c_road = _pctile(tputs, 0.95)
+        c_road_obs = _pctile(tputs, 0.95) or 0
+        # c_road from ROAD GEOMETRY, not historical throughput: the p95 of
+        # observed trips/hr is the FLEET's demand, not the road's capacity
+        # (BLB>POS 14 max fleet ever was 79 trucks -> obs 15 trucks/hr, but
+        # the road passes far more). Headway by haul length; two-way mining
+        # road = 2 lanes. Observed p95 only serves as a floor when geometry
+        # data is missing (owner fix, 2026-08-20).
+        # Classify by MEASURED free-flow cycle, not chainage distance: the
+        # BLB spur arithmetic makes BLB>POS 14 look like a 41 km haul when
+        # its measured cycle (105 min) is that of a short road.
+        if t_free < 150:
+            _headway = 20.0     # short haul: slow, tight spacing
+            c_road = max(2 * 3600.0 / _headway, c_road_obs)
+        elif t_free < 200:
+            _headway = 30.0     # medium haul
+            c_road = max(2 * 3600.0 / _headway, c_road_obs)
+        else:
+            # LONG corridor (TF/KR to coast): one shared two-way road that
+            # genuinely saturates - geometry headway (160/hr) never binds
+            # and would predict zero congestion at 771 trucks. Owner-
+            # validated congestion levels (2026-08-20: 385 DT ~1.3-1.5,
+            # 771 DT ~0.8-1.2 trips/DT) calibrate to ~1.7x the observed
+            # p95 throughput: real capacity sits above what the modest
+            # historical fleets demanded, below free-flow geometry.
+            c_road = max(20.0, c_road_obs * 1.7)
         # fleet envelope
         dts = [r["trucks"] for r in rs]
         # v/c points for BPR fit. v must be DEMAND flow (exogenous):
@@ -190,9 +214,12 @@ def main():
         # trucks/hr. Served flow (trips/hr) is endogenous - busy days have
         # both high flow and low gaps, which fits a NEGATIVE alpha (measured
         # 2026-08-20: all-route R2 < 0 with served flow).
-        pts = [(r["trucks"] / (t_free / 60.0), r["mean_gap_min"]) for r in rs
-               if r["trucks"] and r["mean_gap_min"]]
-        alpha, beta, r2, nfit = fit_bpr(pts, t_free, c_road)
+        # Standard BPR parameters (owner fix 2026-08-20): the per-route LSQ
+        # fit produced junk in both regimes (alpha 0.8-4.0 with negative R2)
+        # because observed v/c barely varies within history. alpha=0.15,
+        # beta=4 is the literature standard; the 3x free-flow cap in the
+        # predictor bounds the extreme tail.
+        alpha, beta, r2, nfit = 0.15, 4.0, None, 0
         sd = sum(sds) / len(sds) if sds else None
         # UTILIZATION: fraction of the shift a truck is actively cycling.
         # Measured trips/truck x mean gap / 720. Median over day-shifts.

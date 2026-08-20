@@ -1,7 +1,7 @@
 """Layer 2B - BPR road congestion penalty.
 
 t_road = t_free_road * (1 + alpha * (v/c)^beta)          when v <= c
-t_road = t_free_road * (1 + alpha * (v/c)^(2*beta))      when v >  c  (BPR2)
+(BPR2 removed 2026-08-20: doubled exponent gave impossible penalties at mining v/c)
 
 v = trucks/hr on the link (both directions share one two-way road here),
 c = binding link capacity = min(road headway capacity, loader output, dump).
@@ -27,7 +27,11 @@ def bpr_travel_min(t_free_road_min: float, v_trucks_hr: float, c_link_hr: float,
         return {"t_road_min": t_free_road_min, "vc": 0.0, "penalty_min": 0.0,
                 "regime": "no-capacity"}
     vc = v_trucks_hr / c_link_hr
-    exp = beta if vc <= 1.0 else 2.0 * beta
+    # Regular BPR at ALL v/c. BPR2 (doubled exponent past capacity) was built
+    # for highway planning at v/c <= ~1.3; mining plans reach v/c 3-5 where
+    # it produced 985x penalties (physically impossible - removed 2026-08-20,
+    # owner: BLB>POS 14 @228 trucks must stay ~6-7 trips/DT, not 2.3).
+    exp = beta
     factor = 1.0 + alpha * (vc ** exp)
     t = t_free_road_min * factor
     return {"t_road_min": t, "vc": vc, "penalty_min": t - t_free_road_min,

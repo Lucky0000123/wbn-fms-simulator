@@ -81,6 +81,13 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
         v_hr = n_trucks / (cyc / 60.0)          # trucks/hr entering the link
         bp = bpr.bpr_travel_min(t_free_road, v_hr, c_link,
                                 float(p["alpha"]), float(p["beta"]))
+        # Safety net: road time cannot exceed 3x free flow - even in gridlock
+        # trucks keep moving; they do not park for a whole shift (owner,
+        # 2026-08-20). With geometry-based c_road this rarely binds.
+        max_road = t_free_road * 3.0
+        if bp["t_road_min"] > max_road:
+            bp = {**bp, "t_road_min": max_road,
+                  "penalty_min": max_road - t_free_road, "regime": "capped"}
         qq = queueing.erlang_c(n_trucks, cyc / 60.0, float(p["load_min"]),
                                n_loaders, sh)
         nxt = bp["t_road_min"] + t_fixed + qq["wq_min"]
