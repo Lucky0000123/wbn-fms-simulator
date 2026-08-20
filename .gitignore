@@ -83,3 +83,5 @@ data/congestion_dayshift.json
 data/congestion_params.json
 output/
 tmp/
+data/s3_results.json
+data/s3_results.csv
