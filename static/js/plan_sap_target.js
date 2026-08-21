@@ -459,7 +459,14 @@
 
   function predDayFor(id,r){
     const c=typeof planContractor==='function'?planContractor(r.contractor):null;
-    const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rainMm(),c,typeof planTripOpts==='function'?planTripOpts(id):{selfId:id,nLoaders:r.loaders||2}):null;
+    const opts=typeof planTripOpts==='function'?planTripOpts(id):{selfId:id,nLoaders:r.loaders||2};
+    // §10.9 breaks a circularity: loaders follow the fleet, pricing follows
+    // loaders. Price every sizing walk with the loaders the EVALUATED dt
+    // implies, so applying loaders after Allocate reprices nothing —
+    // without this the trimmed P2 row re-landed at 88%/115% of target
+    // whenever the walk crossed a loader bucket (measured 2026-09-04).
+    if(_tplCache[r.key]>0)opts.nLoaders=planRulesLoadersFor(r.dt,_tplCache[r.key]);
+    const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rainMm(),c,opts):null;
     const pay=typeof planPayload==='function'?planPayload(r.key,c):{tf:50};
     return e?r.dt*e.daily*pay.tf:null;
   }
@@ -1624,6 +1631,85 @@
         }
       });
     })();
+    // ── Final trim to target (owner, 2026-08-21) ─────────────────────────
+    // Rows priced on a SHARED corridor drift above target when later moves
+    // change the combined fleet: the P2 fill sized TF>HUAFEI·SMA against a
+    // corridor still carrying the whole LD block; the LD split/rescue then
+    // took trucks off it, trips/DT rose, and Predicted landed 129% of
+    // target with no pass left to hand the surplus back. Re-walk every
+    // targeted P1/P2 row down to ~100% AFTER all moves settle and give the
+    // freed trucks to the same contractor's TF LD rows (feeding the short
+    // side of the S4 50/50 on a day-04 plan). Trim only — shortages stay
+    // with the rounds and the warnings.
+    (function finalTrim(){
+      const dd=draft();
+      const pitOf=x=>canonSrc(String(x.r.key||'').split('>')[0]||'');
+      const destOf=x=>canonDest(String(x.r.key||'').split('>')[1]||'');
+      const brokenWall=x=>{
+        const w=(((window.PLANNING_RULES||{}).contractors)||{})[pitOf(x)];
+        return !!(w&&canonCo(x.r.contractor)!==canonCo(w));
+      };
+      for(let round=0;round<4;round++){
+        let trimmed=0;
+        const all=Object.keys(dd).map(id=>({id,r:dd[id]})).filter(x=>x.r&&!x.r.foreign);
+        const byCo={};
+        all.forEach(x=>{(byCo[String(x.r.contractor)]=byCo[String(x.r.contractor)]||[]).push(x);});
+        Object.keys(byCo).forEach(cont=>{
+          const rows=byCo[cont];
+          const ldRows=()=>rows.filter(x=>prioOf(x.r)===3&&pitOf(x)==='TF'&&!brokenWall(x));
+          function receiver(){
+            let lds=ldRows();
+            if(!lds.length){
+              const hid=(typeof planDraftSlotId==='function')
+                ?planDraftSlotId(cont,'TF>HUAFEI',{material:'LIM',otype:'LD'})
+                :cont+'|TF>HUAFEI|LIM|LD';
+              if(!dd[hid]){
+                dd[hid]={key:'TF>HUAFEI',dt:0,loaders:2,contractor:cont,
+                  source:'TF',dest:'HUAFEI',material:'LIM',otype:'LD',
+                  targetWmt:0,_targetManual:true,
+                  _preAlloc:{dt:0,pred:0,achv:0,achv_sim:0}};
+                rows.push({id:hid,r:dd[hid]});
+              }
+              lds=ldRows();
+            }
+            if(planRulesS4Active()&&lds.length>1){
+              const pos=lds.filter(x=>destOf(x)==='POS 12');
+              const hb=lds.filter(x=>destOf(x)!=='POS 12');
+              const sum=l=>l.reduce((a,x)=>a+x.r.dt,0);
+              if(pos.length&&sum(pos)<sum(hb))return pos[0];
+              if(hb.length)return hb[0];
+            }
+            return lds.slice().sort((a,b)=>b.r.dt-a.r.dt)[0];
+          }
+          rows.forEach(x=>{
+            const p=prioOf(x.r);
+            if((p!==1&&p!==2)||!(x.r.targetWmt>0)||x.r.dt<=1)return;
+            const tgt=x.r.targetWmt;
+            if(!((predDayFor(x.id,x.r)||0)>tgt*1.01))return;
+            const rec=receiver();
+            if(!rec||rec.id===x.id)return;
+            let took=0,guard=0;
+            while(x.r.dt>1&&guard++<400){
+              const down=predDayAt(x.id,x.r,x.r.dt-1);
+              if(down==null||down<tgt*0.995)break;
+              x.r.dt-=1;rec.r.dt+=1;took+=1;
+            }
+            if(took>0){
+              moved+=took;trimmed+=took;
+              _allocMoves.push({contractor:cont,trucks:took,
+                from:x.r.key,from_mat:x.r.material||'',from_otype:x.r.otype||'',
+                to:rec.r.key,to_mat:rec.r.material||'',to_otype:rec.r.otype||'',
+                tag:'final trim to target → LD',reason:'final trim to target',
+                same_origin:pitOf(x)===canonSrc(String(rec.r.key).split('>')[0]),
+                dropped:false});
+              movesTxt.push(cont+' '+took+' DT: '+x.r.key+' → '+rec.r.key
+                +' (final trim — Predicted drifted over target after corridor moves)');
+            }
+          });
+        });
+        if(!trimmed)break;
+      }
+    })();
     // Restore display DT to the pre-alloc plan; the allocation lives in
     // _allocDt. Iterate the DRAFT, not `rows` - crossRescue may have added
     // helper rows that must get the same treatment (their preAlloc dt is 0).
@@ -2000,11 +2086,22 @@
   // hybrid curves must be ready BEFORE it runs — cold curves drop pricing
   // onto the clamped legacy path. Callers are fire-and-forget (button,
   // refreeze script), so going async here is safe.
+  //
+  // §10.9 is also CIRCULAR with allocation: loaders follow the allocated
+  // fleet, pricing follows loaders. Without the second pass, rows were
+  // sized on the saved plan's loaders and then repriced after Allocate —
+  // measured 2026-09-04: the trimmed P2 row re-landed at 88% of target.
+  // One relaxation pass closes it: allocate, set loaders from that
+  // allocation's DT, allocate again on the loaders the plan will show.
   {
     const _allocCoreRun=window.planAllocatePriority;
     window.planAllocatePriority=async function(){
       try{await window.planRulesPrepare();}catch(e){}
-      return _allocCoreRun.apply(this,arguments);
+      const r1=_allocCoreRun.apply(this,arguments);
+      try{
+        await window.planRulesPrepare();   // applyLoaders reads _allocDt now
+        return _allocCoreRun.apply(this,arguments);
+      }catch(e){return r1;}
     };
   }
 

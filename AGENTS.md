@@ -1092,7 +1092,7 @@ preserve_stamp()` carries `generated_at` forward when nothing else changed, so
 - Forward planning and achievable tonnes belong on Plan Step 2 / `/api/simulate`; Capability Shift Road is for historical replay and illustration, not the planning estimate.
 - Keep the schematic chainage stick always visible with the map; Run should scroll both visuals into view so the user can watch what is playing.
 - Best past days / analogues: filter by selected contractor; rank nearby trip count first, then trips/DT; color wet vs dry; show a loading state while searching; omit “ops only / no haul GPS” caveats from that list. When a day is selected, show that day’s figures — do not label Jan–May season averages as that day’s DT/trips.
-- Keep Plan Step 1 sparse: default haul Source **TF** / Destination **FENI KM0**; Day (not shift) is the default grain and must apply page-wide; date + rain in conditions; estimated output beside plan date; best-past-days collapsed behind a dropdown under conditions; collapse the 16-day Open-Meteo rain outlook under the forecast line and auto-fill rainfall mm when a day is chosen; Conditions and Add-haul-path cards stay compact; holding plan listed under the builder; rainfall moves Step 1 WMT. Loaders on the builder and holding table (`_planDraft.loaders`, default 2); Cycle badge is text road/loader/ok, not emoji. Road-only mode uses **IWIP / POSITION** contractors and measured non-plan locations (no WMT); highlight **+ Road-only paths** as adding average IWIP/Position rows for bridge load and road congestion. Estimate card: WMT stays clear at any width; warnings sit full-width below and never crush tonnage; do not show `est-warn` under plan-preview tonnage. No Auto-balance trucks strip — bridge-over-70% warning sits next to add/change WB.
+- Keep Plan Step 1 sparse: default haul Source **TF** / Destination **FENI KM0**; Shift/Day is the planning **horizon** (one 12h shift vs one day), not shift length — Day is default and must apply page-wide; date + rain in conditions; estimated output beside plan date; best-past-days collapsed behind a dropdown under conditions; rain outlook at the top of Plan (`#plan-sec-outlook`) is the rainfall picker (auto-fills mm when a day is chosen) — do not add a second Open-Meteo “Use mm” row under Scenario; Conditions and Add-haul-path cards stay compact; holding plan listed under the builder; rainfall moves Step 1 WMT. Loaders on the builder and holding table (`_planDraft.loaders`, default 2); Cycle badge is text road/loader/ok, not emoji. Road-only mode uses **IWIP / POSITION** contractors and measured non-plan locations (no WMT); highlight **+ Road-only paths** as adding average IWIP/Position rows for bridge load and road congestion. Estimate card: WMT stays clear at any width; warnings sit full-width below and never crush tonnage; do not show `est-warn` under plan-preview tonnage. No Auto-balance trucks strip — bridge-over-70% warning sits next to add/change WB.
 - On Run Scenario (Step 2), do **not** show an A · Shift outcomes block. Lettering is **A** Production & capacity, **B** Fleet sensitivity, **C** Road crowding by hour, **D** Full assessment, **E** Insights from history; lead with production/capacity and a professional loading state; defer the road/GPS corridor until after the corridor run; hour-of-day charts must show which hour is selected; prefer decision-oriented outcomes over repeating tables. Keep planned WMT vs achievable/adjusted consistent — never average predict + simulate + history into one total, and do not manually floor/min Prediction vs Achievable. Keep each engine's own number. Do not cap Plan achievable to target. Year board Excel hides old/new achievable (keep target, old predicted, optimized predicted); the dedicated achievable Excel download shows achievable on the Year sheet and month sheets.
 - Plan-impacts: hide weighbridge status rows (Bridge load board owns that); keep ✦ AI analysis but never attribute or name the model underneath; use simple fleet-size language and drop the fleet-size row when AI already covers the same point.
 - Planning goal: best production with less congestion using the minimum required trucks — support edit-from-outcomes once verdicts exist.
@@ -1108,7 +1108,7 @@ preserve_stamp()` carries `generated_at` forward when nothing else changed, so
 - Capability Shift Road is illustration/replay; particles are not production. Flow speeds default to measured GPS; posted limits are overlay only. Offline API payloads live in `fixtures/`; models, GPS archive, snapshots, and saved plans live in `data/` (disk snapshots `cap_snapshot.json` / `pr_snapshot.json` sit between memory and fixtures).
 - **DB roles:** `WBN_DATABASE` = ops truth; `FMS_DB` = location. Haul GPS (`FMS_CONGESTION_SEG` / `FMS_GPS_Historical`) from **2026-07-15** only. Playback Feb+ is HRM/support (**0%** haul plate overlap) — never for haul V·C or analogue replay; `/api/plan/playback-truth` documents that. Grow haul history with `scripts/accumulate_gps.py` (cron 07:00/19:00); `FMS_EQUIPMENTS.plateNumber` joins weighbridge.
 - Capability defaults `2026-01-01` → `2026-05-31` (peak). Jul GPS V/C is struggle-season illustration only. Plan analogues (`/api/plan/analogues`) match contractor; rank trips then trips/DT. HRM impact on trips/DT is ~0 (r≈0.0006) — keep excluded. **Peak road proxy:** `/api/plan/peak-road-proxy` — Jan–May section DT/trips from weighbridge path-days (ops pressure); `speeds_kmh` is always null. Not Playback and must not be presented as a selected analogue day’s averages.
-- Shift length calibrated at **720 min** (~98.5% of shifts); other lengths raise `shift_minutes_extrapolated` (J60). Holding plans save locally via `/api/plan/saved` → `data/saved_plans/{date}.json`. A saved reallocation stores old + new allocation, predictions, targets, and DT moves (for monthly report); the on-screen Your plan stays the original.
+- Shift length is locked at **720 min** (`#ps-shift` stays hidden); Shift/Day on Scenario is horizon only — do not show a visible Shift minutes metric. J60 asserts **zero** editable shift/hours inputs (~98.5% of shifts are 720; other lengths would raise `shift_minutes_extrapolated`). Holding plans save locally via `/api/plan/saved` → `data/saved_plans/{date}.json`. A saved reallocation stores old + new allocation, predictions, targets, and DT moves (for monthly report); the on-screen Your plan stays the original.
 - Mine-plan scenarios: pit × material monthly ROM only; fleet is yearly-matrix DT. Waterfall P1 SAP → P2 LIM-TOS → leftover DT to P3 LIM-LD (Tofu dump → Huafei); 8 Mt is a sales target line, never a clip. S1 is live yearly matrix (not importable). LIM-LD is leftover output, not a typed target. LIM-LD (TF>HUAFEI) shares TOS’s demonstrated path ceiling; breakage = N* − TOS already on the path. `/api/monthly/export-year` writes `monthly_plan_YYYY.xlsx` (Year + Aug–Dec; same Target / Old predicted / Optimized predicted clocks; charts under tables; no DT-move list; month path table includes WMT, DT, trips). `/api/scenarios/export-full` zips one such workbook per scenario (`monthly_plan_2026.xlsx`, `monthly_plan_2026_S2.xlsx`, …); S2/S3 Excel is synthesized from the waterfall.
 - Hide the Capability filter header (`.top`) on Plan and Production Simulator tabs; keep the sim-tab strip so users can leave Plan.
 - Never invent pre-2026-07-15 haul speeds from Playback; path-response main-cluster trips/DT will sit below a single best past day by design (trimmed mean, not the peak day).
@@ -1293,3 +1293,31 @@ read them as km. /api/congestion_curve serves the frozen JSON tagged
 servedFrom:"reference" when a reference route has no live calibration
 (fresh clone/fixtures) so charts and plan pricing agree everywhere.
 Regenerate after any recalibration.
+
+## 2026-08-21 — P2 drifted 129% over target on shared corridors; two causes
+
+Owner (screenshot, TF>HUAFEI·SMA LIM-TOS): "why allocate more trucks
+there — predicted tonnage more than our target." Predicted was 7,149 vs
+5,533 target with +48 trucks. Two mechanisms, both fixed:
+
+1. **Rows priced on a shared corridor drift after later moves.** The P2
+   fill sized the row while TF>HUAFEI still carried the whole LD block;
+   the S4 split/rescue then took trucks off the corridor, trips/DT rose
+   for everyone left, and no pass handed the surplus back. There is now a
+   `finalTrim` pass AFTER crossRescue: every targeted P1/P2 row re-walks
+   down to ~100% and the freed trucks go to the contractor's TF LD rows
+   (feeding the short side of the S4 50/50 on day-04).
+2. **§10.9 loaders were circular with allocation.** Loaders follow the
+   allocated fleet, pricing follows loaders — rows were sized on the
+   saved plan's loaders and repriced after Allocate (measured: the
+   trimmed row re-landed at 88%, then 115% when the walk crossed a
+   loader bucket). `predDayFor` now prices every sizing walk with the
+   loaders the EVALUATED dt implies (round(dt/tpl) from _tplCache), and
+   planAllocatePriority runs one loaders-relaxation pass, so applying
+   loaders after Allocate reprices nothing.
+
+Residual overshoot is quantization only (integer trucks, loader
+buckets): a row sits at 104% when removing one truck would fall below
+0.995x target. All 13 saves re-frozen; LIM-TOS now lands within ~0.3% of
+its day target every month, and the freed P2 trucks lifted LD (S4
+Oct/Nov/Dec 8.55/12.75/11.53 Mt — PASS vs 8 Mt).
