@@ -1434,3 +1434,19 @@ same hours (alloc table sort helpers; the per-row PASS/WARN/FAIL badge
 the rules work). plan_sap_target.js is deliberately left uncommitted
 with BOTH edit sets in the tree; whoever commits next must re-check the
 badges render.
+
+## 2026-08-21 — BLB +250 kt/month LIM-TOS: it was NEVER in the plans
+
+Owner: "I asked you to add 1 Mt in BLB to get 4.6 Mt of TOS LIM — right
+now LIM total is 3.6." Measured: all eight S3/S4 saves carried only the
+scenario BASE on BLB>HUAFEI LIM-TOS (11,954/18,028/27,789/25,728 t/day
+= 2.55 Mt/4-mo) and the all-pit LIM-TOS target total was 3.57 Mt — the
+owner's 3.6. The +250,000 t/month is an ADDITION on top of the imported
+base (their arithmetic: 3.6 + 1.0 = 4.6), applied to the eight saved
+plans (+8,333 t/day 30-day months, +8,065 31-day; `_targetManual` set so
+the stamp never reverts it) and to data/scenarios/S3.json (with a note
+field) so draft-plan regeneration keeps it. stampYearlyTargets never
+overwrites a positive target — file edits to `targetWmt` are load-safe.
+Re-frozen: LIM-TOS met EVERY month in both scenarios; delivered 4-mo
+actuals ≈ 4.64 Mt (S3) / 4.65 Mt (S4); BLB>HUAFEI runs 68/87/121/113 DT
+(was 40/60/93/86); S4 LD still PASSES Oct–Dec (8.58/12.69/11.72 Mt).

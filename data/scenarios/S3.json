@@ -7,7 +7,7 @@
    "pit": "BLB",
    "mat": "LIM",
    "month": 9,
-   "wmt_day": 11953.9
+   "wmt_day": 20287.2
   },
   {
    "pit": "BLB",
@@ -43,7 +43,7 @@
    "pit": "BLB",
    "mat": "LIM",
    "month": 10,
-   "wmt_day": 18027.5
+   "wmt_day": 26092.0
   },
   {
    "pit": "BLB",
@@ -79,7 +79,7 @@
    "pit": "BLB",
    "mat": "LIM",
    "month": 11,
-   "wmt_day": 27789.3
+   "wmt_day": 36122.6
   },
   {
    "pit": "BLB",
@@ -115,7 +115,7 @@
    "pit": "BLB",
    "mat": "LIM",
    "month": 12,
-   "wmt_day": 25727.6
+   "wmt_day": 33792.1
   },
   {
    "pit": "BLB",
@@ -148,5 +148,6 @@
    "wmt_day": 16877.0
   }
  ],
- "loaded_at": "2026-08-18T08:06:47Z"
+ "loaded_at": "2026-08-18T08:06:47Z",
+ "note_blb_limtos": "owner 2026-08-21: +250,000 t/month BLB->HUAFEI LIM-TOS on top of the imported scenario base (1 Mt over Sep-Dec, lifting total LIM-TOS ~3.6 -> ~4.6 Mt)"
 }
