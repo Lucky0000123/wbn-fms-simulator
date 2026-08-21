@@ -456,15 +456,32 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
   let satFactor=1;
   let _hybridInfo=null;
   if(tr>0&&dt>0){
-    let otherDt=0,otherLd=0;
+    let otherDt=0,otherLd=0,sharedDt=0;
+    // Owner (2026-08-21): "they are using the same window for going — see it
+    // as a complete one-day plan, not one row." Different route KEYS that
+    // share the corridor (TF>HUAFEI vs TF>POS 12 after the S4 split; IWIP
+    // POS→FeNi transit) load the same road, so their trucks join the hybrid
+    // evaluation fleet weighted by chainage-span overlap. Same-key rows stay
+    // at weight 1 (otherDt); the legacy cap keeps the same-key basis only —
+    // its demonstrated day cap is a PATH property, not a corridor one.
+    const spanSelf=typeof _planSpan==='function'?_planSpan(key):null;
+    const spanLen=spanSelf?Math.max(1e-6,spanSelf[1]-spanSelf[0]):null;
     if(typeof _planDraft!=='undefined'){
+      const frozen=typeof planAllocFrozen==='function'&&planAllocFrozen();
       Object.keys(_planDraft).forEach(id=>{
         if(opts&&opts.selfId&&id===opts.selfId)return;
         const r2=_planDraft[id];
-        if(r2&&r2.key===key&&!r2.foreign){
-          const n=(typeof planAllocFrozen==='function'&&planAllocFrozen()
-            &&r2._allocDt!=null)?r2._allocDt:r2.dt;
-          if(n>0){otherDt+=n;otherLd+=planNLoaders(r2);}
+        if(!r2||!r2.key)return;
+        const n=(frozen&&r2._allocDt!=null)?r2._allocDt:r2.dt;
+        if(!(n>0))return;
+        if(r2.key===key&&!r2.foreign){
+          otherDt+=n;otherLd+=planNLoaders(r2);
+        }else if(spanSelf){
+          const s2=_planSpan(r2.key);
+          if(s2){
+            const ov=Math.min(spanSelf[1],s2[1])-Math.max(spanSelf[0],s2[0]);
+            if(ov>0)sharedDt+=n*Math.min(1,ov/spanLen);
+          }
         }
       });
     }
@@ -486,7 +503,7 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
     const nLoadersComb=nLoaders+otherLd;
     const hyb=planHybridCurveFor(key,nLoadersComb,rain);
     if(hyb){
-      const pt=planHybridTripsAt(hyb,nComb);
+      const pt=planHybridTripsAt(hyb,nComb+sharedDt);
       if(pt&&Number.isFinite(pt.trips_per_dt)&&pt.trips_per_dt>0){
         const trHyb=pt.trips_per_dt*planContractorFactor(contractor);
         satFactor=tr>0?Math.min(1,trHyb/tr):1;

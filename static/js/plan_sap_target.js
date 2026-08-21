@@ -634,7 +634,7 @@
       +'<th class="r">Achievable</th><th class="r">Allocated DT</th><th class="r">Required DT</th><th style="text-align:left">Status</th></tr>'
       +body+'</table>'
       +'<div style="margin-top:8px">'
-      +'<button type="button" class="ms-btn" onclick="planAllocatePriority()" '
+      +'<button type="button" class="ms-btn" id="plan-alloc-priority-btn" onclick="planAllocatePriority()" '
       +'title="SAP is sized to target. Leftover same-contractor trucks go to LIM-TOS (may exceed target) then LIM-LD. Same contractor, same origin first.">'
       +'⚡ Allocate DT as per priority requirements</button>'
       +'<span class="muted" id="plan-alloc-status" style="font-size:11px;margin-left:9px"></span>'
@@ -1528,6 +1528,11 @@
       });
       p3.forEach(rec=>{
         if(!(rec.r.targetWmt>0))return;
+        // On an S4 (day-04) plan the split BELOW moves half of a targeted LD
+        // row's trucks to the other destination on purpose — its own-row
+        // shortfall is the what-if working, not a warning. LD attainment is
+        // judged at the bucket level in the validation summary.
+        if(planRulesS4Active())return;
         const pred=predOf(rec);
         if(pred==null||pred>=rec.r.targetWmt*0.995)return;
         movesTxt.push('⚠ '+cont+' LIM-LD short '+fmt(rec.r.targetWmt-pred)+' t/day on '+rec.r.key
@@ -1550,10 +1555,13 @@
         const destOf=x=>canonDest(String(x.r.key||'').split('>')[1]||'');
         const isPos12=x=>destOf(x)==='POS 12';
         const isHb=x=>destOf(x)==='HUAFEI'||destOf(x)==='BSE';
-        // Split only capacity beyond supplied P3 targets. Targeted LD rows were
-        // sized immediately above and must not be pulled short by the S4 what-if.
-        const tfLd=p3.filter(x=>originOf(x)==='TF'&&!(x.r.targetWmt>0)
-          &&(isPos12(x)||isHb(x)));
+        // ALL TF LD trucks split — targeted rows included. Owner (twice,
+        // 2026-08-21): "all same as S3, just the LIM-LD trucks divided 50-50
+        // to these places". A targets-only filter briefly lived here and
+        // killed the split outright, because every scenario LD row carries a
+        // target: the split is about WHERE the LD trucks drive, and LD
+        // attainment is judged on the bucket (both destinations count).
+        const tfLd=p3.filter(x=>originOf(x)==='TF'&&(isPos12(x)||isHb(x)));
         const total=tfLd.reduce((a,x)=>a+x.r.dt,0);
         if(total<2)return;
         const wantPos=Math.round(total*split.pos12);
@@ -2113,17 +2121,31 @@
     };
   }
 
+  // Frozen-plan edits used to be swallowed SILENTLY (only Add alerted): the
+  // user deleted a row, saw nothing happen internally, and Allocate rebuilt
+  // the untouched frozen baseline — "it's showing the old plan, this is
+  // nonsense" (owner, 2026-08-21). An edit on a locked plan now offers to
+  // unlock and apply in one step, so Check capacity always follows the plan
+  // as built on top.
+  function _frozenEditGate(what){
+    if(!_allocFrozen)return true;
+    if(!confirm('Original plan is locked after Allocate. Unlock and '+what
+      +'? The New Allocation Plan will be cleared — run Check capacity again after editing.'))return false;
+    unfreezeOriginal();
+    if(typeof planSetScenarioBtn==='function')planSetScenarioBtn();
+    return true;
+  }
   if(typeof window.planSet==='function'){
     const _origSet=window.planSet;
     window.planSet=function(){
-      if(_allocFrozen)return;
+      if(!_frozenEditGate('change this DT'))return;
       return _origSet.apply(this,arguments);
     };
   }
   if(typeof window.planRemove==='function'){
     const _origRm=window.planRemove;
     window.planRemove=function(){
-      if(_allocFrozen)return;
+      if(!_frozenEditGate('remove this path'))return;
       return _origRm.apply(this,arguments);
     };
   }
@@ -2151,13 +2173,48 @@
   // allocation's DT, allocate again on the loaders the plan will show.
   {
     const _allocCoreRun=window.planAllocatePriority;
+    let _allocRunning=false;
+    function planSetAllocFrontBusy(on){
+      const overlay=q('plan-alloc-frontload');
+      if(overlay)overlay.hidden=!on;
+      const btn=q('plan-alloc-priority-btn');
+      if(btn){
+        btn.disabled=!!on;
+        btn.setAttribute('aria-busy',on?'true':'false');
+      }
+      const wrap=q('plan-alloc-wrap');
+      const panel=q('plan-scenario-panel');
+      const busy=q('plan-alloc-busy');
+      if(on){
+        if(panel)panel.style.display='block';
+        if(wrap)wrap.style.display='';
+        if(busy)busy.classList.add('is-busy');
+      }else if(busy){
+        busy.classList.remove('is-busy');
+      }
+    }
     window.planAllocatePriority=async function(){
-      try{await window.planRulesPrepare();}catch(e){}
-      const r1=_allocCoreRun.apply(this,arguments);
+      if(_allocRunning)return;
+      _allocRunning=true;
+      planSetAllocFrontBusy(true);
       try{
-        await window.planRulesPrepare();   // applyLoaders reads _allocDt now
-        return _allocCoreRun.apply(this,arguments);
-      }catch(e){return r1;}
+        try{await window.planRulesPrepare();}catch(e){}
+        const r1=_allocCoreRun.apply(this,arguments);
+        try{
+          await window.planRulesPrepare();   // applyLoaders reads _allocDt now
+          const r2=_allocCoreRun.apply(this,arguments);
+          if(typeof window.planWhenScenarioIdle==='function'){
+            await window.planWhenScenarioIdle();
+          }
+          return r2;
+        }catch(e){return r1;}
+      }finally{
+        if(typeof window.planWhenScenarioIdle==='function'){
+          try{await window.planWhenScenarioIdle();}catch(e){}
+        }
+        planSetAllocFrontBusy(false);
+        _allocRunning=false;
+      }
     };
   }
 

@@ -1096,7 +1096,7 @@ preserve_stamp()` carries `generated_at` forward when nothing else changed, so
 - On Run Scenario (Step 2), do **not** show an A · Shift outcomes block. Lettering is **A** Production & capacity, **B** Fleet sensitivity, **C** Road crowding by hour, **D** Full assessment, **E** Insights from history; lead with production/capacity and a professional loading state; defer the road/GPS corridor until after the corridor run; hour-of-day charts must show which hour is selected; prefer decision-oriented outcomes over repeating tables. Keep planned WMT vs achievable/adjusted consistent — never average predict + simulate + history into one total, and do not manually floor/min Prediction vs Achievable. Keep each engine's own number. Do not cap Plan achievable to target. Year board Excel hides old/new achievable (keep target, old predicted, optimized predicted); the dedicated achievable Excel download shows achievable on the Year sheet and month sheets.
 - Plan-impacts: hide weighbridge status rows (Bridge load board owns that); keep ✦ AI analysis but never attribute or name the model underneath; use simple fleet-size language and drop the fleet-size row when AI already covers the same point.
 - Planning goal: best production with less congestion using the minimum required trucks — support edit-from-outcomes once verdicts exist.
-- Allocate DT as per priority (Plan Check capacity): leave original Production & capacity / Your plan frozen (unlock to edit DTs after a saved allocate). Separate New Allocation Plan underneath. Same contractor only — trucks never cross contractors. Size P1 SAP so Predicted sits at ~100% of target (never well above); P2 LIM-TOS likewise is sized to target, NOT fed extras. EVERY leftover truck goes to P3 LIM-LD (owner 2026-08-19: “LIM-LD is the only place extra trucks go — it has no kind of cap”; the 8 Mt figure is a sales target line, never a clip). Cross-contractor rescue: when a contractor's fleet is exhausted and its LIM-TOS is still short, the OTHER contractor's LD-buffer trucks cover the pending tonnage as a NEW path row under their own contractor (trucks never change owner); helper rows carry targetWmt 0 so bucket targets don't double-count. Hard wall: no non-RIM truck ever enters BLB. P3 LIM-LD is first donor and leftover sink; if LD is dry, take from LIM-TOS (LIM may short). Do not fill P2 or dump extras onto LIM while any same-contractor P1 is still below Predicted target. Size SAP shortfall/surplus from Predicted vs target, not requiredDt inverse (requiredDt can read “already sized” while Predicted is still thousands short). When P1 is still short, drain P2/P3 to 0 DT (do not leave 1 truck to keep the path); drop 0-DT paths from the table. Keep tonnage/target on every path including LIM-LD. LIM-TOS vs LIM-LD to the same plant stay separate rows. Table: Target next to Predicted; P1/P2/P3 filters; hero is New predicted + New achievable + one Before/After line. A mine-plan scenario is pit × material monthly ROM targets only (fleet stays the yearly matrix). LIM-LD is leftover DT to Tofu dump → Huafei (8 Mt is a sales target line, never a clip), not a typed scenario target. LIM-LD (TF>HUAFEI) shares the path ceiling with TOS — breakage is N* minus TOS already on that haul; do not overlay S1/S2/S3 on one LIM-LD graph (one graph set per scenario). Per-scenario Excel must match Year board `/api/monthly/export-year` (`monthly_plan_YYYY.xlsx`: Year + Aug–Dec; same Target / Old predicted plan / Optimized predicted plan clocks on Year and month sheets; SAP · LIM-TOS · LIM-LD; path table with WMT, DT, trips — WMT/DT is payload t/trip ~50 t, not pred/dt; charts under their tables; no DT-move list) — not a combined Compare workbook.
+- Allocate DT as per strict target priority (Plan Check capacity): **P1 SAP → P2 LIM-TOS → P3 LIM-LD**. Every supplied target is real, including typed/imported LIM-LD; P3 is filled only after P1/P2. Fleet beyond all targets is reported as unused/excess capacity and must not be credited as production. Leave original Production & capacity / Your plan frozen (unlock to edit DTs after a saved allocate), with a separate New Allocation Plan underneath. Same contractor first; cross-contractor rescue creates a new helper path under the truck's real contractor. Hard walls still apply (BLB=RIM, KR=SMA). P3 remains the first donor when P1/P2 are short. Size target shortfall/surplus from Predicted vs target, not the requiredDt inverse. Keep LIM-TOS and LIM-LD as separate rows even at the same destination. Frozen allocations must contain raw `/api/simulate` achievable values for every active row; target-credited prediction is a separate clock and may never masquerade as achievable.
 
 ## Learned Workspace Facts
 
@@ -1109,7 +1109,7 @@ preserve_stamp()` carries `generated_at` forward when nothing else changed, so
 - **DB roles:** `WBN_DATABASE` = ops truth; `FMS_DB` = location. Haul GPS (`FMS_CONGESTION_SEG` / `FMS_GPS_Historical`) from **2026-07-15** only. Playback Feb+ is HRM/support (**0%** haul plate overlap) — never for haul V·C or analogue replay; `/api/plan/playback-truth` documents that. Grow haul history with `scripts/accumulate_gps.py` (cron 07:00/19:00); `FMS_EQUIPMENTS.plateNumber` joins weighbridge.
 - Capability defaults `2026-01-01` → `2026-05-31` (peak). Jul GPS V/C is struggle-season illustration only. Plan analogues (`/api/plan/analogues`) match contractor; rank trips then trips/DT. HRM impact on trips/DT is ~0 (r≈0.0006) — keep excluded. **Peak road proxy:** `/api/plan/peak-road-proxy` — Jan–May section DT/trips from weighbridge path-days (ops pressure); `speeds_kmh` is always null. Not Playback and must not be presented as a selected analogue day’s averages.
 - Shift length is locked at **720 min** (`#ps-shift` stays hidden); Shift/Day on Scenario is horizon only — do not show a visible Shift minutes metric. J60 asserts **zero** editable shift/hours inputs (~98.5% of shifts are 720; other lengths would raise `shift_minutes_extrapolated`). Holding plans save locally via `/api/plan/saved` → `data/saved_plans/{date}.json`. A saved reallocation stores old + new allocation, predictions, targets, and DT moves (for monthly report); the on-screen Your plan stays the original.
-- Mine-plan scenarios: pit × material monthly ROM only; fleet is yearly-matrix DT. Waterfall P1 SAP → P2 LIM-TOS → leftover DT to P3 LIM-LD (Tofu dump → Huafei); 8 Mt is a sales target line, never a clip. S1 is live yearly matrix (not importable). LIM-LD is leftover output, not a typed target. LIM-LD (TF>HUAFEI) shares TOS’s demonstrated path ceiling; breakage = N* − TOS already on the path. `/api/monthly/export-year` writes `monthly_plan_YYYY.xlsx` (Year + Aug–Dec; same Target / Old predicted / Optimized predicted clocks; charts under tables; no DT-move list; month path table includes WMT, DT, trips). `/api/scenarios/export-full` zips one such workbook per scenario (`monthly_plan_2026.xlsx`, `monthly_plan_2026_S2.xlsx`, …); S2/S3 Excel is synthesized from the waterfall.
+- Mine-plan scenarios: fleet is the yearly-matrix DT. Waterfall targets run P1 SAP → P2 LIM-TOS → P3 LIM-LD; 8 Mt is the default horizon P3 target, and imported `Type Ore = LD` rows are explicit monthly P3 targets. Capacity beyond target remains visible as unused/excess. S1 is live yearly matrix (not importable). `/api/monthly/export-year` writes `monthly_plan_YYYY.xlsx`; `/api/scenarios/export-full` builds one workbook per active scenario (S2 is deleted).
 - Hide the Capability filter header (`.top`) on Plan and Production Simulator tabs; keep the sim-tab strip so users can leave Plan.
 - Never invent pre-2026-07-15 haul speeds from Playback; path-response main-cluster trips/DT will sit below a single best past day by design (trimmed mean, not the peak day).
 
@@ -1352,3 +1352,55 @@ rows land so the engine's Achievable carries their corridor drag —
 planDraftToPsPlans was already _allocDt-aware. Verified: all TF>HUAFEI
 rows now price identically per contractor (RIM 2.46 / SMA 1.69 at the
 Sep S4 division) and Achievable moves with the split (65,828 → 77,078 t).
+
+## 2026-08-21 — parallel-agent audit: the S4 split was killed inside MY commit
+
+Owner asked for a review of another model's uncommitted changes ("looks
+broken"). Findings, in order of severity:
+
+1. **The S4 split was dead.** A `!(x.r.targetWmt>0)` filter appeared in
+   splitLeftoverLd ("only untargeted P3 excess") — and every scenario LD
+   row carries a target, so the split never ran again. Worse: that edit
+   was already sitting on disk when I staged plan_sap_target.js for
+   commit 77c6a42, so it shipped INSIDE my commit unnoticed. Lesson: in a
+   parallel-agent repo, `git diff --cached` the file you THINK you wrote
+   before committing — a clean `git status` after `git add` proves
+   nothing about authorship. Restored: ALL TF LD trucks split on day-04
+   (owner, twice: "the LIM-LD trucks divided 50-50"); LD attainment is
+   judged at the bucket level; the per-row LD-short warning is gated off
+   on S4 days (its shortfall is the what-if working).
+2. **Frozen saves now REQUIRE raw achv_sim** (their /api/plan/saved 409
+   guard). Aligned with the honesty doctrine, but it rejects saves fired
+   before the async engine lands — scripted refreezes must poll the
+   allocation payload for finite achv_sim before planSaveForDate().
+3. **Doctrine reversals for the OWNER to confirm** (left in place,
+   uncommitted): the 8 Mt LD line is now a CLIP on planned production
+   (waterfall parks trucks beyond it as "unused") — reversing the
+   recorded 2026-08-19 owner rule "never a clip; every free truck hauls
+   LD"; the append-only AGENTS.md bullets and the owner-authored
+   planning_rules.md §4 were REWRITTEN to match. Route-alias fixes in
+   prediction_api (canonical_area everywhere), monthly achievable=raw-sim
+   relabel ("credited prediction" separate), and the predictor
+   uncertainty warnings are good and suite-green (74/74 with their 74th
+   gate).
+
+## 2026-08-21 — one road, one window: span-weighted shared-road pricing
+
+Owner: "they are using the same window for going — see it as a complete
+one-day plan, not one row." Different route KEYS sharing a corridor
+(TF>HUAFEI vs TF>POS 12 after the split; IWIP POS→FeNi) were priced
+independently. planTripsPerDT now adds other rows' trucks (foreign
+included) into the hybrid evaluation fleet weighted by chainage-span
+overlap (_planSpan); same-key rows stay at weight 1, and the legacy cap
+keeps its same-key basis (the demonstrated day cap is a PATH property).
+Backend runners still couple by key only — noted gap.
+
+## 2026-08-21 — frozen-plan edits must not be silently swallowed
+
+planRemove/planSet returned silently while _allocFrozen (only Add
+alerted). The owner deleted a row, the draft kept it, and Allocate
+rebuilt the untouched baseline — "showing precalculated figures, this is
+nonsense." Edits on a locked plan now confirm once, unlock, and apply,
+so Check capacity always follows the plan as built on top. Verified:
+delete on frozen 09-01 → prompt → row gone → re-allocate does not
+resurrect it.
