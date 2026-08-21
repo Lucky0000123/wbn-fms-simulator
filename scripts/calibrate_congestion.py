@@ -197,8 +197,9 @@ def main():
             headway_s_short=float(_CFG["headway_s_short"]),
             long_haul_km=float(_CFG["long_haul_km"]))
         implied_km = ph.implied_one_way_km(t_free)
+        measured = (o, d) in ph.MEASURED_HAUL_KM
         chainage_suspect = bool(
-            dist and implied_km and (
+            dist and implied_km and not measured and (
                 dist / implied_km > 2.0 or implied_km / dist > 2.0))
         # fleet envelope
         dts = [r["trucks"] for r in rs]
@@ -228,6 +229,8 @@ def main():
             v = (60.0 * dist * (1 + 1 / 1.25)) / t_road
             rec["speed_loaded_kmh"] = round(v, 1)
             rec["distance_km"] = round(dist, 1)
+            rec["distance_source"] = ph.HAUL_KM_SOURCE.get(
+                (o, d), "chainage stick")
         if implied_km:
             rec["implied_distance_km"] = round(implied_km, 1)
         rec["chainage_suspect"] = chainage_suspect

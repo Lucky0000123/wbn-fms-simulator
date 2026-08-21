@@ -30,15 +30,38 @@ NODE_KM = {
 # to FENI KM0 is ~19 km (measured cycle 165 min supports ~19 km at ~14 km/h
 # effective + dwell), NOT 67.8. Spur joins at ~2.5 km + 17.4 km spur length.
 SPUR_KM = {"BLB": 19.9}
+# Measured one-way haul km. GPS tracks cannot verify these routes:
+# FMS_GPS_Historical only covers 2026-07-15..08-07, while BLB>POS 14
+# tickets end 2026-07-06 and TF>HUAFEI tickets end 2026-03-06.
+# Values are DISTANCE_HAULING median, corroborated where possible by
+# DISPATCH ROADS gross km and survey-polyline snap (BLB pit km 19.82
+# -> POS 14 dumps at BLB km ~6.3 is 6.55 km of polyline).
+# POS 15/16 have no DISTANCE_HAULING row and no named geofence; they
+# inherit POS 14 (same coastal dump cluster, t_free 96-105 min).
+MEASURED_HAUL_KM = {
+    ("BLB", "POS 14"): 6.7,
+    ("BLB", "POS14"): 6.7,
+    ("BLB", "POS 15"): 6.7,
+    ("BLB", "POS15"): 6.7,
+    ("BLB", "POS 16"): 6.7,
+    ("BLB", "POS16"): 6.7,
+    ("TF", "HUAFEI"): 63.7,
+    ("TOFU", "HUAFEI"): 63.7,
+}
+HAUL_KM_SOURCE = {
+    ("BLB", "POS 14"): "DISTANCE_HAULING p50 6.7 km (n=2204) + survey polyline 6.55 km",
+    ("BLB", "POS14"): "DISTANCE_HAULING p50 6.7 km (n=2204) + survey polyline 6.55 km",
+    ("BLB", "POS 15"): "inherited from BLB>POS 14 (no DISTANCE_HAULING / geofence / GPS overlap)",
+    ("BLB", "POS15"): "inherited from BLB>POS 14 (no DISTANCE_HAULING / geofence / GPS overlap)",
+    ("BLB", "POS 16"): "inherited from BLB>POS 14 (no DISTANCE_HAULING / geofence / GPS overlap)",
+    ("BLB", "POS16"): "inherited from BLB>POS 14 (no DISTANCE_HAULING / geofence / GPS overlap)",
+    ("TF", "HUAFEI"): "DISTANCE_HAULING p50 63.7 km (n=51); DISPATCH ROADS 63.1-63.4",
+    ("TOFU", "HUAFEI"): "DISTANCE_HAULING p50 63.7 km (n=51); DISPATCH ROADS 63.1-63.4",
+}
 # Typical loaded mine-haul speed used only to translate a measured free-flow
 # cycle into an implied one-way distance (chainage sanity check).
 REF_SPEED_KMH = 15.0
-# POS 14/15/16 sit on the main stick at km ~26-32, so the naive spur formula
-# 17.4 + |dest - 2.5| yields 41 km. That is the wrong physical path from BLB:
-# WBN haulage records list "BLB to POS 14" as 20 km, and the measured
-# free-flow cycle (96-105 min) at 15 km/h is a 13-20 km haul, not 41 km
-# (which forced a back-solved 45-50 km/h). From BLB those plants are
-# coastal-side dumps, same order as FENI KM0 / HUAFEI.
+# Kept for FENI/HUAFEI BLB hauls that still use the spur formula.
 BLB_COASTAL_DEST = {
     "POS 14", "POS14", "POS 15", "POS15", "POS 16", "POS16",
 }
@@ -47,6 +70,9 @@ BLB_COASTAL_DEST = {
 def route_distance_km(origin: str, dest: str) -> float | None:
     o = (origin or "").strip().upper()
     d = (dest or "").strip().upper()
+    measured = MEASURED_HAUL_KM.get((o, d))
+    if measured is not None:
+        return measured
     if o in SPUR_KM:
         if d in BLB_COASTAL_DEST:
             return SPUR_KM[o]

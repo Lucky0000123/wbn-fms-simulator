@@ -3,12 +3,13 @@
 per month (Sep-Dec 2026), Monthly-page columns, plus a summary.
 
 Shared-road coupling: combined DT on a route key is priced once, split by
-share. Default loaders = the calibrated historical count (the real faces).
-Pass --loaders-scale to grow loaders with fleet (historical trucks-per-loader
-ratio) — that is a what-if, not the default.
+share. Default loaders scale with fleet using the historical trucks-per-loader
+ratio (the site average). Pass --loaders-calibrated to freeze the real face
+count instead — that shows the queue-dominated what-if, not the plan.
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import os
@@ -40,18 +41,18 @@ def loader_ratios():
             for route, pts in byr.items() if len(pts) >= 10}
 
 
-def n_loaders_for(route, cdt, scale, params, ratios):
+def n_loaders_for(route, cdt, calibrated, params, ratios):
     rec = (params.get('routes') or {}).get(route) or {}
     cal = int(rec.get('n_loaders') or 2)
     hist_max = rec.get('obs_dt_max') or 0
-    if scale:
-        tpl = ratios.get(route, DEFAULT_TPL)
-        nl = max(1, round(cdt / tpl))
-        return nl, cal, hist_max
-    return cal, cal, hist_max
+    if calibrated:
+        return cal, cal, hist_max
+    tpl = ratios.get(route, DEFAULT_TPL)
+    nl = max(1, round(cdt / tpl))
+    return nl, cal, hist_max
 
 
-def month_rows(m, scale, params, ratios, warnings):
+def month_rows(m, calibrated, params, ratios, warnings):
     fn = os.path.join(ROOT, 'data', 'saved_plans', '2026-%02d-03.json' % m)
     if not os.path.isfile(fn):
         return None
@@ -65,19 +66,18 @@ def month_rows(m, scale, params, ratios, warnings):
             comb[p['key']] += dt
     priced = {}
     for route, cdt in comb.items():
-        nl, cal, hist_max = n_loaders_for(route, cdt, scale, params, ratios)
+        nl, cal, hist_max = n_loaders_for(route, cdt, calibrated, params, ratios)
         if hist_max and cdt > 2 * hist_max:
-            if scale:
+            if calibrated:
                 warnings.append(
-                    "NOTE: %s at %.0f trucks using %d scaled loaders "
-                    "(historical max %s DT, calibrated faces %d)."
-                    % (route, cdt, nl, hist_max, cal))
+                    "WARNING: %s at %.0f trucks with %d calibrated loaders "
+                    "(historical max was %s). Queue will dominate. Default "
+                    "run uses proportional loaders so the road is the variable."
+                    % (route, cdt, nl, hist_max))
             else:
                 warnings.append(
-                    "WARNING: %s at %.0f trucks with %d loaders "
-                    "(historical max was %s with %d calibrated loaders). "
-                    "Queue will dominate. If the site plans to add loaders, "
-                    "re-run with --loaders-scale."
+                    "NOTE: %s at %.0f trucks using %d proportional loaders "
+                    "(historical max %s DT, calibrated faces %d)."
                     % (route, cdt, nl, hist_max, cal))
         priced[route] = (predict(route, cdt, nl), nl)
     rows = []
@@ -140,16 +140,17 @@ def fmt_table(m, rows, mode):
                  'n_road': sum(1 for r in rows if r['bottleneck'] == 'road')}
 
 
-def run(scale):
+def run(calibrated):
     params = load_params()
     ratios = loader_ratios()
-    mode = 'proportional loaders (--loaders-scale)' if scale else 'calibrated loaders (default)'
+    mode = ('calibrated loaders (--loaders-calibrated)' if calibrated
+            else 'proportional loaders (default)')
     warnings = []
     all_rows = {}
     lines = []
     summary = []
     for m in (9, 10, 11, 12):
-        rows = month_rows(m, scale, params, ratios, warnings)
+        rows = month_rows(m, calibrated, params, ratios, warnings)
         if rows is None:
             lines.append('  (no S3 plan for month %d)' % m)
             continue
@@ -179,7 +180,7 @@ def run(scale):
         lines.append('')
         lines += warn_lines
     print('\n'.join(lines))
-    suffix = '_scale' if scale else ''
+    suffix = '_calibrated' if calibrated else ''
     json.dump(all_rows, open(os.path.join(ROOT, 'data', 's3_results%s.json' % suffix), 'w'), indent=1)
     fields = ['month', 'path', 'contractor', 'material', 'dt', 'loaders',
               'route_combined_dt', 'trips_per_dt', 'wmt_per_dt', 'trips_day',
@@ -195,8 +196,14 @@ def run(scale):
 
 
 def main():
-    scale = '--loaders-scale' in sys.argv
-    run(scale)
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        '--loaders-calibrated', action='store_true',
+        help='Use the calibrated historical loader count (e.g. 3 on TF>HUAFEI) '
+             'instead of proportional scaling. Shows what happens if you add '
+             'trucks without adding loaders.')
+    args = ap.parse_args()
+    run(args.loaders_calibrated)
 
 
 if __name__ == '__main__':
