@@ -226,6 +226,15 @@ Sequence of fixes after the first S3 run, each owner-driven:
 4. **Geometry honesty pass** (commit 12dee29, second agent): 1-lane headway
    geometry, no owner-target fudge factors, S3 runner defaults to calibrated
    loader counts. Backtest after all of it: **R2 0.909, MAPE 6.5%**.
+5. **Overhead-per-trip formula** (2026-08-21, owner: "this whole table is a
+   lie"): trips = 1440/(road_congested + ops + queue + bunching +
+   overhead_per_trip) replaces trips = U*1440/cycle. The U anchor made
+   high-fleet trips physically impossible (<1 trip/day); overhead now
+   attaches to trips, anchored so the model equals the dispatch day-rate
+   exactly at the median fleet (TF>HUAFEI overhead 384.5 min). trips/DT
+   can no longer fall below ~1.2 on TF>HUAFEI at any fleet. Backtest:
+   **R2 0.925, MAPE 5.9%** — improved. See AGENTS.md for the weighbridge
+   timestamp trap and the flow-basis warning.
 
 Current S3 picture (hybrid, honest physics): LD Sep-Dec ~ 2.8-3 Mt of the
 8 Mt target; TF>HUAFEI is the binding corridor (v/c ~ 1.4-1.8 at planned

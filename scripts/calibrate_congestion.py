@@ -91,6 +91,38 @@ HAVING COUNT(*) >= 5
     return out
 
 
+def gps_corridor_speeds():
+    """Measured GPS road speeds per origin corridor, split by direction.
+
+    data/congestion_seg_by_dir.csv (FMS_CONGESTION_SEG aggregate): 'down'
+    chainage = LOADED (verified 100.0% of loaded corridor hauls run
+    down-chainage, AGENTS.md), 'up' = empty return. Weighted by travel
+    observations. Used as a CROSS-CHECK on road_free_min, not as pricing —
+    corridor-mean speed over the prefix is not the route's exact path.
+    """
+    path = os.path.join(ROOT, "data", "congestion_seg_by_dir.csv")
+    if not os.path.isfile(path):
+        return {}
+    import csv
+    agg = defaultdict(lambda: [0.0, 0.0])   # (prefix, dir) -> [sum speed*w, sum w]
+    with open(path) as fh:
+        for row in csv.DictReader(fh):
+            seg = row["SEG_ID"].split(" KM")[0].strip()
+            try:
+                spd = float(row["speed_kmh"])
+                w = float(row["trav_n"] or 0)
+            except ValueError:
+                continue
+            if spd > 0 and w > 0:
+                a = agg[(seg, row["DIR"])]
+                a[0] += spd * w
+                a[1] += w
+    out = {}
+    for (seg, d), (sw, w) in agg.items():
+        out.setdefault(seg, {})[d] = sw / w
+    return out
+
+
 def fit_bpr(points, t_free, c_link):
     """Least-squares alpha, beta for mean_gap = t_free*(1+alpha*(v/c)^beta).
 
@@ -160,6 +192,7 @@ def main():
         byr[r["route"]].append(r)
 
     routes_out = {}
+    gps_speeds = gps_corridor_speeds()
     print("\n%-14s %5s %7s %7s %7s %6s %6s %8s %6s %6s" % (
         "route", "days", "t_free", "load", "c_road", "alpha", "beta", "R2(fit)", "nfit", "sd"))
     for route, rs in sorted(byr.items(), key=lambda kv: -len(kv[1])):
@@ -234,6 +267,21 @@ def main():
         if implied_km:
             rec["implied_distance_km"] = round(implied_km, 1)
         rec["chainage_suspect"] = chainage_suspect
+        # ── road running time (owner, 2026-08-21) ────────────────────────
+        # The physical constraint BPR multiplies. Weighbridge stamps cannot
+        # split the legs here (TIME_LOADED/TIME_EMPTY are weigh events;
+        # measured: TF routes have no usable TIME_EMPTY, BLB>POS 14 shows
+        # 90 min "loaded leg" on a 6.7 km haul — see AGENTS.md weigh-to-weigh
+        # note), so road_free = observed UNCONGESTED cycle (p25 of day-shift
+        # trip gaps) minus the fixed ops. GPS corridor speeds × measured km
+        # give the independent cross-check column.
+        ops_min = load_min + 1.0 + 2.0            # load + spot + dump
+        rec["ops_min"] = round(ops_min, 1)
+        rec["road_free_min"] = round(max(5.0, t_free - ops_min), 1)
+        gps = gps_speeds.get(o)
+        if gps and dist and gps.get("down") and gps.get("up"):
+            rec["gps_road_min"] = round(60.0 * dist / gps["down"]
+                                        + 60.0 * dist / gps["up"], 1)
         rec.update(disp.get(route) or {})
         routes_out[route] = rec
         flag = " SUSPECT" if chainage_suspect else ""
@@ -242,13 +290,20 @@ def main():
             rec["alpha"], rec["beta"], rec["bpr_fit_r2"], nfit,
             rec["cycle_sd_min"], flag))
 
-    # ── Anchor utilization to the DISPATCH day-rate basis ────────────────
-    # Gap-based cycles only sample trucks that did >=2 trips in a shift - a
-    # fast-biased subset. The rest of the app (legacy model, plan tab, DB
-    # reports) counts trips/DT on the NB_DT day basis. Re-derive utilization
-    # so the hybrid, run at the route's MEDIAN fleet and faces, reproduces
-    # the dispatch day rate exactly - physics keeps the SHAPE (loaders,
-    # knee, BPR), dispatch anchors the LEVEL. One basis, two engines agree.
+    # ── Anchor OVERHEAD-PER-TRIP to the DISPATCH day-rate basis ──────────
+    # (owner, 2026-08-21 — replaces the utilization anchor.) The old
+    # trips = U*1440/cycle treated non-productive time as a FIXED share of
+    # the day, so once the congested cycle exceeded U*1440 the model said a
+    # dispatched truck cannot finish ONE trip in 24 h — physically
+    # impossible. Overhead (breaks, dispatch wait, shift change, refuel) is
+    # attached to TRIPS, not to the clock:
+    #     trips = 1440 / (cycle + overhead_per_trip)
+    # cycle = road_congested + ops + queue + bunching (productive time).
+    # Anchor: run the model at the route's MEDIAN fleet and faces with
+    # overhead 0 -> cyc_ref; overhead = 1440/day_rate - cyc_ref, so the
+    # hybrid still reproduces the dispatch day rate exactly at the anchor —
+    # physics keeps the SHAPE, dispatch anchors the LEVEL, and trips can
+    # never fall below 1440/(3*road_free + ops + queue_cap + overhead).
     json.dump({"generated_at": "tmp", "global": {}, "routes": routes_out},
               open(PARAMS_PATH, "w"))
     from congestion import config as ccfg, predictor as cpred
@@ -261,24 +316,42 @@ def main():
         faces = [r.get("faces") or 1 for r in byr[route]]
         f_ref = max(1, round(_pctile(sorted(faces), 0.5)))
         rec["n_loaders"] = f_ref
-        rec["utilization"] = 1.0
+        rec["overhead_per_trip_min"] = 0.0
         json.dump({"generated_at": "tmp", "global": {}, "routes": routes_out},
                   open(PARAMS_PATH, "w"))
         ccfg._cache["data"] = None
         try:
             p = cpred.predict(route, n_ref, f_ref)
-            raw = p["trips_per_DT_per_day"]
-            if raw > 0:
-                rec["utilization"] = round(min(1.0, max(0.2, rate / raw)), 3)
+            cyc_ref = p["cycle_time_minutes"]
+            if cyc_ref and cyc_ref > 0:
+                ovh = 1440.0 / rate - cyc_ref
+                if ovh < 0:
+                    print("  NOTE %s: modeled cycle at ref fleet (%.0f min) already "
+                          "slower than dispatch day rate implies (%.0f min) — "
+                          "overhead clamped to 0" % (route, cyc_ref, 1440.0 / rate))
+                rec["overhead_per_trip_min"] = round(max(0.0, ovh), 1)
+                # kept for reference only — predict() no longer reads it
+                rec["utilization"] = round(min(1.0, max(0.2, rate * cyc_ref / 1440.0)), 3)
         except Exception as exc:  # noqa: BLE001
-            rec["utilization"] = 0.7
+            print("  WARN %s: anchor failed (%s) — overhead left at 0" % (route, exc))
     ccfg._cache["data"] = None
+    ovhs = [r["overhead_per_trip_min"] for r in routes_out.values()
+            if r.get("overhead_per_trip_min")]
+    overhead_default = round(_pctile(sorted(ovhs), 0.5), 1) if ovhs else 240.0
 
     from congestion.config import DEFAULTS as _CFG
     out = {
         "generated_at": __import__("datetime").datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": "WBN_DATABASE.dbo.HAULAGE_CLEAN 2026-01-01.. (day-shift trip gaps)",
         "method": {
+            "trips_formula": "1440 / (road_congested + ops + queue + bunching + overhead_per_trip)",
+            "road_free": "p25 of day-shift trip gaps minus ops (weighbridge stamps cannot "
+                         "split the legs — measured 2026-08-21); gps_road_min = measured km / "
+                         "GPS corridor speeds by direction, cross-check only",
+            "ops": "loader service 5 + spot 1 + dump 2 min",
+            "overhead_per_trip": "anchored: 1440/dispatch day_rate - modeled cycle at median "
+                                 "fleet+faces (exact at the anchor; clamped >= 0)",
+            "bpr": "applied to road_free only, capped at 3x",
             "alpha": "literature default 0.15 (insufficient v/c variation for LSQ fit)",
             "beta": "literature default 4.0 (insufficient v/c variation for LSQ fit)",
             "t_free": "p25 of day-shift mean gaps",
@@ -287,13 +360,17 @@ def main():
             "headway_s_short": _CFG["headway_s_short"],
             "long_haul_km": _CFG["long_haul_km"],
             "n_lanes_loaded": _CFG["n_lanes_loaded"],
-            "utilization": "SPC anchor at median fleet (dispatch day-rate)",
+            "loaders": "proportional: round(DT / historical trucks-per-loader)",
+            "utilization": "LEGACY reference only — predict() no longer reads it",
         },
         "global": {
             "n_lanes_loaded": _CFG["n_lanes_loaded"],
             "headway_s": _CFG["headway_s"],
             "headway_s_short": _CFG["headway_s_short"],
             "long_haul_km": _CFG["long_haul_km"],
+            # uncalibrated routes (no dispatch day_rate) use the median
+            # calibrated overhead so the new formula applies everywhere
+            "overhead_per_trip_min": overhead_default,
         },
         "routes": routes_out,
     }

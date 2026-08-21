@@ -64,6 +64,23 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
         dump_min=float(p["dump_min"]))
     t_free_road = ff["t_haul_loaded_min"] + ff["t_haul_empty_min"]
     t_fixed = ff["t_load_min"] + ff["t_spot_min"] + ff["t_dump_min"]
+    # Calibrated road running time (owner, 2026-08-21): p25 uncongested cycle
+    # minus fixed ops, from dispatch records. Rain still scales it through the
+    # physics speed ratio so wet cycles stay slower than dry.
+    if _finite(p.get("road_free_min")) and p["road_free_min"] > 0:
+        rain_scale = 1.0
+        if rain_mm >= 1:
+            ff_dry = physics.free_flow_cycle_min(
+                dist, rr_pct=float(p["rr_pct"]),
+                speed_loaded_kmh=p.get("speed_loaded_kmh"),
+                load_min=float(p["load_min"]), spot_min=float(p["spot_min"]),
+                dump_min=float(p["dump_min"]))
+            dry_road = ff_dry["t_haul_loaded_min"] + ff_dry["t_haul_empty_min"]
+            if dry_road > 0:
+                rain_scale = t_free_road / dry_road
+        t_free_road = float(p["road_free_min"]) * rain_scale
+    if _finite(p.get("ops_min")) and p["ops_min"] > 0:
+        t_fixed = float(p["ops_min"])
 
     # ── Layer 2B: BPR road penalty (uses loaded-direction flow) ──────────
     n_lanes = int(p.get("n_lanes_loaded") or p.get("n_lanes") or 1)
@@ -123,11 +140,20 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
             bunch = bunch_raw
         cyc += bunch
 
-    # UTILIZATION: trucks cycle only part of the shift (breaks, changeover,
-    # assignment waits). Measured per route (median (trips*gap)/shift); the
-    # congestion physics lives in cyc, the ops discipline lives in U.
-    util = p.get("utilization") or 0.7
-    trips_dt_day = util * day_minutes / cyc if cyc > 0 else 0.0
+    # OVERHEAD PER TRIP (owner, 2026-08-21 — replaces trips = U*1440/cyc):
+    # breaks, dispatch wait, shift change and refuelling attach to TRIPS,
+    # not to the clock. The old U anchor turned non-productive time into a
+    # fixed share of the day, so past U*1440 < cycle the model claimed a
+    # dispatched truck cannot finish even one trip in 24 h. Now:
+    #     trips = day_minutes / (cyc + overhead_per_trip)
+    # cyc is productive time only (road_congested + ops + queue + bunching),
+    # so trips stays >= day/(3*road_free + ops + caps + overhead) — always
+    # physically possible. Calibration anchors overhead so the model equals
+    # the dispatch day rate exactly at the median fleet.
+    overhead = p.get("overhead_per_trip_min")
+    if not _finite(overhead) or overhead < 0:
+        overhead = 240.0  # fresh-clone fallback; calibration writes the real one
+    trips_dt_day = day_minutes / (cyc + overhead) if cyc > 0 else 0.0
     total_trips = trips_dt_day * n_trucks
     pay = payload_t if _finite(payload_t) and payload_t > 0 else p.get("payload_t") or 0.0
 
@@ -178,6 +204,7 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
             "t_dump": round(ff["t_dump_min"], 1),
             "queue_wait_minutes": round(qq["wq_min"], 1),
             "bunching_penalty_minutes": round(bunch, 2),
+            "overhead_per_trip_minutes": round(float(overhead), 1),
         },
         "congestion_status": status,
         "bpr_regime": bp.get("regime"),

@@ -1235,3 +1235,33 @@ cap rescale) × proportional loaders reported 37 trips/DT on BLB>POS 14
 is now clamped to [0.5, 2] and allocation awaits `planRulesPrepare()`
 (loaders + WARM hybrid curves) before pricing. If a plan's numbers look
 3x too good, check which pricing path served them FIRST.
+
+## 2026-08-21 — trips = 1440/(cycle + overhead_per_trip); the U anchor was lying
+
+Owner called the saturation table "a lie" and was right about the tail:
+`trips = U*1440/cycle` treats breaks/dispatch/shift-change as a FIXED share
+of the day, so once the congested cycle exceeded U*1440 (TF>HUAFEI @771:
+640 > 527) the model claimed a dispatched truck cannot finish ONE trip in
+24 h. Overhead attaches to TRIPS, not the clock:
+
+    trips = 1440 / (road_congested + ops + queue + bunching + overhead_per_trip)
+
+- road_free_min = p25 uncongested day-shift cycle − ops. The weighbridge
+  stamps CANNOT give the legs: measured 2026-08-21, TF routes have no
+  usable TIME_EMPTY and BLB>POS 14 shows a 90-min "loaded leg" on 6.7 km —
+  TIME_LOADED/TIME_EMPTY are weigh events, see the weigh-to-weigh note
+  above. GPS corridor speeds × measured km ship as `gps_road_min`
+  (cross-check only; corridor means include congested traffic, so they run
+  high — TF 464 vs 209 free-flow).
+- overhead_per_trip anchored so predict() at the median fleet+faces equals
+  the dispatch day-rate EXACTLY (TF>HUAFEI 384.5 min ≈ the 390 the owner's
+  spec predicted). `utilization` stays in params as reference; predict()
+  no longer reads it. Uncalibrated routes use the global median (131.5).
+- Result: trips can never fall below 1440/(3·road_free + ops + caps +
+  overhead) — TF>HUAFEI min 1.20 over 50..800 DT. Backtest IMPROVED:
+  bucket R2 0.909 → 0.925, MAPE 6.5% → 5.9%. The physically-wrong tail
+  was costing fit, not buying it.
+- The flow term in the BPR/queue iteration still uses the PRODUCTIVE cycle
+  (demand flow), matching the owner's worked example (3x cap engages at
+  saturation). Do not "fix" it to n/(cyc+overhead) without re-anchoring —
+  it halves v/c and un-saturates every corridor.

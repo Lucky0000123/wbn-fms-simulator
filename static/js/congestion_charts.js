@@ -204,6 +204,7 @@ function renderCongBreakdown(route, nTrucks, nLoaders){
       {name:'Loading',v:c.t_load||c.load_min||c.loadMin||c.loading_min},
       {name:'Dump / spot',v:((c.t_dump||0)+(c.t_spot||0))||c.dump_min||c.dumpMin||c.spot_min},
       {name:'Bunching',v:c.bunching_penalty_minutes||c.bunching_min||c.bunchingMin},
+      {name:'Overhead (breaks/dispatch, per trip)',v:c.overhead_per_trip_minutes},
     ].filter(p=>Number.isFinite(p.v)&&p.v>0);
     if(!parts.length){
       _congChartEl('cong-breakdown-chart',empty);
@@ -218,7 +219,7 @@ function renderCongBreakdown(route, nTrucks, nLoaders){
       yAxis:Object.assign({type:'category',data:[route.replace('>',' → ')]},axis),
       series:parts.map((p,i)=>({name:p.name,type:'bar',stack:'cycle',barWidth:28,
         data:[+Number(p.v).toFixed(1)],
-        itemStyle:{color:['#38bdf8','#f59e0b','#22c55e','#a78bfa','#f472b6','#eab308'][i%6]}})),
+        itemStyle:{color:['#38bdf8','#f59e0b','#22c55e','#a78bfa','#f472b6','#eab308','#64748b'][i%7]}})),
       legend:{data:parts.map(p=>p.name),textStyle:{color:'#8b98a5',fontSize:10},bottom:0},
     });
   }).catch(()=>_congChartEl('cong-breakdown-chart',empty));
