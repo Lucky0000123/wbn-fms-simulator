@@ -1,4 +1,17 @@
-# WBN FMS Simulator — Project Handoff (2026-08-20)
+# WBN FMS Simulator — Project Handoff (updated 2026-08-21)
+
+> **Parallel work protocol**: multiple agents work this repo concurrently.
+> 1. git pull BEFORE starting; commit small and often; push to BOTH remotes
+>    (git push origin main && git push mirror main).
+> 2. Run bash scripts/verify_phase2.sh (73 gates) before AND after your work.
+>    A transient J56/J70/J64 failure usually means the site VPN/DB dropped -
+>    re-run before investigating.
+> 3. Never edit another agent's in-flight files without pulling first; check
+>    git log --oneline -5 for surprises. AGENTS.md is the shared memory -
+>    append lessons there, never delete.
+> 4. The dev server on :5055 is shared state. Snapshots warm from disk.
+>    After changing congestion params, RESTART the server (long-running
+>    processes hold stale route params past the 60 s config cache).
 
 Written for onboarding another agent. Everything below is verifiable in the
 repo; AGENTS.md is the deep memory file (read it first, it is authoritative).
@@ -184,3 +197,54 @@ route × fleet-bucket expected-value level. Suite now **73/73**.
 Basis warning (the third "two 240s" lesson): ticket-basis trips/TRUCK_ID
 runs ~1.4× above dispatch-basis trips/NB_DT. Everything user-facing is
 dispatch basis; the calibration handles the mapping via utilization.
+
+
+## 13. Congestion model refinements (2026-08-20 evening -> 2026-08-21)
+
+Sequence of fixes after the first S3 run, each owner-driven:
+
+1. **Proportional loaders** (scripts/run_scenarios_hybrid.py,
+   scripts/run_s3_hybrid.py): loaders scale with trucks by each route's
+   measured trucks-per-loader (median fleet / median active loading faces;
+   6.5-22.8 across routes). rho stays ~0.15-0.25 at any fleet; queue ~ 0.
+   Owner: "loading is not the issue; the truck on the road is."
+2. **Shared-road coupling**: rows sharing a route key are priced at the
+   COMBINED fleet, output split by DT share. Without this the two-road
+   analysis was a no-op.
+3. **BPR sanity fixes** (commit ec66e4d): c_road from geometry not observed
+   fleet throughput; BPR2 removed (985x penalties at mining v/c 3-5);
+   road time capped at 3x free flow. Owner-validated ranges:
+   BLB>POS 14 @228 ~ 6-7 trips/DT; TF>HUAFEI @771 ~ 0.9-1.2; @385 ~ 1.5-1.7.
+4. **Geometry honesty pass** (commit 12dee29, second agent): 1-lane headway
+   geometry, no owner-target fudge factors, S3 runner defaults to calibrated
+   loader counts. Backtest after all of it: **R2 0.909, MAPE 6.5%**.
+
+Current S3 picture (hybrid, honest physics): LD Sep-Dec ~ 2.8-3 Mt of the
+8 Mt target; TF>HUAFEI is the binding corridor (v/c ~ 1.4-1.8 at planned
+fleets); a second HUAFEI corridor is worth ~ +73% LD tonnage. BLB routes
+run near-free at any planned fleet.
+
+## 14. Current state / open threads (for the parallel agent)
+
+Done and verified (73/73 as of 2026-08-21 morning):
+- Hybrid model live end-to-end: /api/congestion_model, /api/congestion_curve,
+  /api/congestion_compare; Allocate-DT engine consumes the curve cache
+  (plan.js planHybridCurveFor); congestion charts JS exists
+  (static/js/congestion_charts.js, from the frontend agent).
+- Scenario system: S1/S2/S3 via day-of-month saves (01/02/03); Monthly page
+  scenario selector; Excel exports incl. achievable variant; 24 h road
+  crowding; scenario reports (scripts/run_s3_hybrid.py prints the
+  Monthly-style tables).
+
+Open threads someone can pick up:
+- **Re-freeze S2/S3 allocations under the hybrid model**: the saved plans'
+  frozen allocations predate the hybrid wiring; re-running Check capacity ->
+  Allocate -> Save on the 02/03 dates re-sizes DT with hybrid pricing.
+- **KR>POS 12 backtest MAPE ~43%** (worst route): trips/DT history is
+  bimodal (shift pattern?); worth a dedicated look.
+- **Uncertainty bands in UI**: P10/P90 are in the API but not rendered on
+  the Plan tab yet.
+- **Residual ML layer** (spec: XGBoost within observed range): deliberately
+  skipped (<1% MAPE gain); revisit only if the owner asks.
+- **Deploy**: public site still stale (see "Deploying"); owner decision
+  pending.
