@@ -2784,6 +2784,35 @@ def _saved_plan_path(date_s):
     return os.path.join(_SAVED_PLANS_DIR, date_s + ".json")
 
 
+def _frozen_allocation_error(alloc):
+    """Return a clear error when a frozen plan lacks raw simulation clocks.
+
+    A target-capped prediction must never stand in for /api/simulate.  Active
+    production rows and the allocation total therefore need finite achv_sim
+    values before the snapshot can be called frozen and saved.
+    """
+    import math
+
+    def finite(v):
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+    new = alloc.get("new") or {}
+    if not finite(new.get("achv_sim")):
+        return "run Check capacity after Allocate: raw simulated achievable total is missing"
+    missing = []
+    for row in alloc.get("rows") or []:
+        if row.get("foreign") or not finite(row.get("dt_after")) or row.get("dt_after") <= 0:
+            continue
+        if not finite(row.get("achv_sim")):
+            missing.append(str(row.get("id") or row.get("key") or "unknown row"))
+    if missing:
+        return "raw simulated achievable is missing for: %s" % ", ".join(missing[:5])
+    status = alloc.get("calculation_status")
+    if status not in (None, "complete"):
+        return "allocation calculation is not complete (%s)" % status
+    return None
+
+
 @bp.route('/api/plan/saved', methods=['GET', 'POST', 'DELETE'])
 def api_plan_saved():
     """Save / load / delete a holding plan for a calendar date (local JSON)."""
@@ -2833,6 +2862,11 @@ def api_plan_saved():
     }
     alloc = body.get("allocation")
     if isinstance(alloc, dict) and alloc.get("frozen"):
+        alloc_error = _frozen_allocation_error(alloc)
+        if alloc_error:
+            return jsonify({"ok": False, "error": alloc_error,
+                            "calculation_status": "simulation_pending"}), 409
+        alloc["calculation_status"] = "complete"
         plan["allocation"] = alloc
     try:
         os.makedirs(_SAVED_PLANS_DIR, exist_ok=True)
@@ -3248,6 +3282,29 @@ def api_congestion_curve():
                     "calibrated_loaders": route_params(route).get("n_loaders"),
                     "calibrated": bool(route_params(route).get("calibrated")),
                     "curve": curve, "knee_dt": knee})
+
+
+@bp.route('/api/congestion_plan', methods=['POST'])
+def api_congestion_plan():
+    """Section-resolved pricing for a WHOLE plan (owner, 2026-08-21).
+
+    POST {rows:[{route, dt, loaders?, foreign?}], rain_mm?} -> per-route
+    trips/DT with the shared-road correction (plan flows vs own flows on
+    each chainage window) and the per-section table: trucks on the window,
+    flow vs measured capacity, v/c, measured speed. The plan builder
+    multiplies the calibrated curve by shared_road_ratio so every row is
+    priced as one day on one road network, not row by row."""
+    from congestion.sections import price_plan
+    body = request.get_json(silent=True) or {}
+    try:
+        rain = float(body.get('rain_mm') or 0)
+    except (TypeError, ValueError):
+        rain = 0.0
+    try:
+        out = price_plan(body.get('rows') or [], rain_mm=rain)
+    except Exception as exc:  # noqa: BLE001 — pricing must not 500 the builder
+        return jsonify({"ok": False, "error": str(exc)[:200]})
+    return jsonify(out)
 
 
 @bp.route('/api/congestion_compare', methods=['GET'])

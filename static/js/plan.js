@@ -503,6 +503,15 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
     const nLoadersComb=nLoaders+otherLd;
     const hyb=planHybridCurveFor(key,nLoadersComb,rain);
     if(hyb){
+      // A section-v/c ratio briefly multiplied the curve here (2026-08-21)
+      // and came straight back out, owner: "BLB trips falls like hell — go
+      // back to what we were doing before." Its capacity basis was each
+      // section's median OBSERVED peak — the dayTripsCap trap again ("the
+      // most we ever did" read as "the most we can do"), so normal plans
+      // scored v/c ~2 everywhere and every route was punished twice (the
+      // calibrated curve already carries real-day cross-traffic, backtest
+      // R2 0.926). The span-weighted fleet below is the shared-road term;
+      // the /api/congestion_plan windows table stays VISIBILITY ONLY.
       const pt=planHybridTripsAt(hyb,nComb+sharedDt);
       if(pt&&Number.isFinite(pt.trips_per_dt)&&pt.trips_per_dt>0){
         const trHyb=pt.trips_per_dt*planContractorFactor(contractor);
