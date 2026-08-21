@@ -1265,3 +1265,31 @@ of the day, so once the congested cycle exceeded U*1440 (TF>HUAFEI @771:
   (demand flow), matching the owner's worked example (3x cap engages at
   saturation). Do not "fix" it to n/(cyc+overhead) without re-anchoring —
   it halves v/c and un-saturates every corridor.
+
+## 2026-08-21 — reference saturation curves + the sawtooth was the SOLVER
+
+Owner: "these curves didn't even look like curves." Correct — trips/DT
+ROSE in places as trucks were added. Not physics, not the formula: the
+predictor solved the cycle↔flow feedback with a damped Picard iteration
+that oscillates between the free and saturated branches near loader
+saturation and exited after 50 rounds with NO convergence check, landing
+on whichever branch iteration 50 happened to touch. nxt(cyc) is strictly
+decreasing in cyc, so the fixed point is UNIQUE — it is now found by
+bisection. Monotonicity sweep at 5-DT steps: zero violations on both
+reference routes. Backtest ticked up again (R2 0.926, MAPE 5.8%). If a
+model curve ever wiggles, suspect the solver before the physics.
+
+Reference curves (owner request): scripts/export_saturation_curves.py
+freezes TF>HUAFEI and BLB>POS 14 into reports/saturation_curves.{json,
+svg} + SATURATION_CURVES.md — committed like speed_density_fit.json
+(model outputs, not tonnages). Each route carries TWO bases: `curve` =
+loaders FIXED at calibrated faces (what /api/congestion_curve and the
+Congestion tab show; BLB falls hard at ~60 DT because 3 faces saturate,
+the knee is the LOADER wall), `curve_proportional` = loaders scale
+1-per-trucks_per_loader (rules §10.9 — the plan builder's basis; only
+the road congests). The "N ÷ 23.3 / N ÷ 6.3" legend numbers are measured
+trucks-per-loader ratios, NOT distances — relabelled after the owner
+read them as km. /api/congestion_curve serves the frozen JSON tagged
+servedFrom:"reference" when a reference route has no live calibration
+(fresh clone/fixtures) so charts and plan pricing agree everywhere.
+Regenerate after any recalibration.

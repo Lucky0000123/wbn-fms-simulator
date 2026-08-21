@@ -3161,6 +3161,29 @@ def api_congestion_model():
     return jsonify(out)
 
 
+_SAT_REF_CACHE = {"at": 0.0, "data": None}
+
+
+def _saturation_reference():
+    """Frozen reference curves (reports/saturation_curves.json, committed).
+
+    Served when a route has no live calibration (fresh clone / fixtures
+    mode) so the Congestion-tab chart and the plan builder still price the
+    owner's reference corridors from the same curve everywhere."""
+    import time as _t
+    if _SAT_REF_CACHE["data"] is not None and _t.time() - _SAT_REF_CACHE["at"] < 60:
+        return _SAT_REF_CACHE["data"]
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "reports", "saturation_curves.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = (json.load(fh) or {}).get("routes") or {}
+    except (OSError, ValueError):
+        data = {}
+    _SAT_REF_CACHE.update(at=_t.time(), data=data)
+    return data
+
+
 @bp.route('/api/congestion_curve', methods=['GET'])
 def api_congestion_curve():
     """Saturation curve: trips/DT vs fleet size for a route (hybrid model)."""
@@ -3183,6 +3206,18 @@ def api_congestion_curve():
         rain_mm = float(a.get('rain_mm') or 0)
     except (TypeError, ValueError):
         rain_mm = 0.0
+    from congestion.config import route_params as _route_params
+    if not _route_params(route).get("calibrated"):
+        ref = _saturation_reference().get(route)
+        if ref:
+            return jsonify({
+                "ok": True, "route": route, "n_loaders": n_loaders,
+                "calibrated_loaders": ref.get("n_loaders_calibrated"),
+                "calibrated": True, "servedFrom": "reference",
+                "curve": ref["curve"], "knee_dt": ref.get("knee_dt"),
+                "note": "Frozen reference curve (reports/saturation_curves.json) — "
+                        "no live calibration on this machine"
+                        + ("; requested n_loaders ignored" if n_loaders else "")})
     step = max(1, max_trucks // 80)
     curve = []
     for nt in range(1, max_trucks + 1, step):

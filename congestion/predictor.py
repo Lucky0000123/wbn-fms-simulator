@@ -97,29 +97,45 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
     c_dump = p.get("c_dump_trucks_hr")
     c_link = min(c_road, n_loaders * mu_hr, c_dump if _finite(c_dump) and c_dump > 0 else float("inf"))
 
-    # Iterate: flow depends on cycle, cycle on BPR + queue.
-    cyc = ff["t_free_min"]
-    bp = {"t_road_min": t_free_road, "vc": 0.0, "penalty_min": 0.0, "regime": "free"}
-    qq = {"wq_min": 0.0, "rho": 0.0, "overloaded": False}
-    for _ in range(50):
-        v_hr = n_trucks / (cyc / 60.0)          # trucks/hr entering the link
-        bp = bpr.bpr_travel_min(t_free_road, v_hr, c_link,
-                                float(p["alpha"]), float(p["beta"]))
+    # Flow depends on cycle, cycle on BPR + queue. nxt(cyc) is strictly
+    # decreasing in cyc (longer cycle -> fewer arrivals/hr -> less BPR
+    # penalty and less queue), so g(cyc) = nxt(cyc) - cyc has exactly one
+    # root: solve by BISECTION. The damped Picard iteration used before
+    # oscillated between the free and saturated branches near loader
+    # saturation and exited after 50 rounds with NO convergence check —
+    # the owner's saturation chart showed it as sawtooth dips, trips/DT
+    # RISING when trucks were added (2026-08-21).
+    def _nxt(cyc_try):
+        v_hr = n_trucks / (cyc_try / 60.0)      # trucks/hr entering the link
+        b = bpr.bpr_travel_min(t_free_road, v_hr, c_link,
+                               float(p["alpha"]), float(p["beta"]))
         # Safety net: road time cannot exceed 3x free flow. Trucks keep
         # moving in gridlock; they do not park for a whole shift. With
         # geometry c_road this rarely binds — if it does, the BPR formula
         # has left the physical range and the cap is a mask, not a model.
         max_road = t_free_road * 3.0
-        if bp["t_road_min"] > max_road:
-            bp = {**bp, "t_road_min": max_road,
-                  "penalty_min": max_road - t_free_road, "regime": "capped"}
-        qq = queueing.erlang_c(n_trucks, cyc / 60.0, float(p["load_min"]),
-                               n_loaders, sh)
-        nxt = bp["t_road_min"] + t_fixed + qq["wq_min"]
-        if abs(nxt - cyc) < 0.05:
-            cyc = nxt
-            break
-        cyc = cyc + 0.5 * (nxt - cyc)
+        if b["t_road_min"] > max_road:
+            b = {**b, "t_road_min": max_road,
+                 "penalty_min": max_road - t_free_road, "regime": "capped"}
+        q = queueing.erlang_c(n_trucks, cyc_try / 60.0, float(p["load_min"]),
+                              n_loaders, sh)
+        return b["t_road_min"] + t_fixed + q["wq_min"], b, q
+
+    lo = max(1.0, ff["t_free_min"])
+    hi = t_free_road * 3.0 + t_fixed + sh * 60.0 * 0.5 + 1.0
+    nxt_lo, bp, qq = _nxt(lo)
+    if nxt_lo <= lo + 0.05:
+        cyc = lo                                 # free flow, no feedback
+    else:
+        for _ in range(50):
+            mid = 0.5 * (lo + hi)
+            nm, _, _ = _nxt(mid)
+            if nm > mid:
+                lo = mid
+            else:
+                hi = mid
+        nxt_mid, bp, qq = _nxt(0.5 * (lo + hi))
+        cyc = bp["t_road_min"] + t_fixed + qq["wq_min"]
 
     # ── bunching (variance) penalty ───────────────────────────────────────
     # Linear in N/n_ref, so cap at 3x the reference-fleet term the same way
