@@ -105,7 +105,7 @@
     return ''
       +'<td class="r plan-hold-num">'+fmt(o.tgt)+'</td>'
       +'<td class="r">'+pairHtml(o.dtOld, o.dtNew, {delta:true})+'</td>'
-      +'<td class="r">'+pairHtml(o.tpdOld, o.tpdNew, {fmt:fmt2, extra:o.valHtml||''})+'</td>'
+      +'<td class="r">'+pairHtml(o.tpdOld, o.tpdNew, {fmt:fmt2})+'</td>'
       +'<td class="r">'+pairHtml(o.wpdOld, o.wpdNew, {fmt:fmt2})+'</td>'
       +'<td class="r">'+pairHtml(o.predOld, o.predNew, {extra:vs.extra, tone:vs.tone})+'</td>'
       +'<td class="r">'+pairHtml(o.achvOld, o.achvNew, simNote)+'</td>';
@@ -236,6 +236,28 @@
       .replace('KM 0','KM0').replace('KM 15','KM15').replace('KM 10','KM10');
   }
   function canonCo(c){return String(c||'').trim().toUpperCase();}
+  function allocOriginOf(r){
+    if(!r)return '';
+    if(typeof planHoldSrc==='function')return canonSrc(planHoldSrc(r));
+    return canonSrc(r.source||String(r.key||'').split('>')[0]||'');
+  }
+  function allocPrioRank(r){
+    const p=r&&(r.prio!=null?r.prio:prioOf(r));
+    return p===1?1:p===2?2:p===3?3:9;
+  }
+  function allocIsRoadOnly(r){
+    return !!(r&&(r.foreign||r._posTransit));
+  }
+  function allocRowCmp(a,b){
+    const ra=a.r||a, rb=b.r||b;
+    // IWIP / POS-transit rows are road-only (no WMT). Keep them after the
+    // production block so POS 12 → FeNi does not sit in the middle of KR/TF.
+    return (allocIsRoadOnly(ra)?1:0)-(allocIsRoadOnly(rb)?1:0)
+      ||allocOriginOf(ra).localeCompare(allocOriginOf(rb))
+      ||allocPrioRank(ra)-allocPrioRank(rb)
+      ||String(ra.contractor||'').localeCompare(rb.contractor||'')
+      ||String(ra.key||'').localeCompare(rb.key||'');
+  }
 
   // planning_rules.md §3 — pit→contractor walls (BLB=RIM, KR=SMA, TF open).
   // Mutates row.contractor to the pit's owner when the wall is broken. Only
@@ -371,6 +393,16 @@
     window.planLoadDraft=function(){
       unfreezeOriginal();
       const r=_origLoad.apply(this,arguments);
+      // Saved path JSON embeds the last Allocate's _preAlloc / _allocDt.
+      // That is the FILE's original, not the live holding plan. Strip it
+      // here; planRestoreAllocation puts it back only when the save is
+      // actually frozen. Otherwise Allocate would reset DT to the file.
+      Object.keys(draft()).forEach(id=>{
+        const row=draft()[id];
+        if(!row)return;
+        delete row._preAlloc;
+        delete row._allocDt;
+      });
       stampYearlyTargets();
       return r;
     };
@@ -639,7 +671,6 @@
       +'⚡ Allocate DT as per priority requirements</button>'
       +'<span class="muted" id="plan-alloc-status" style="font-size:11px;margin-left:9px"></span>'
       +'</div>'
-      +(_allocMsg?('<div class="muted" style="font-size:11px;margin-top:5px;white-space:pre-wrap">'+esc(_allocMsg)+'</div>'):'')
       +'</div>';
   }
 
@@ -714,7 +745,7 @@
     }
     const wrap=q('plan-alloc-wrap');
     if(wrap)wrap.style.display='none';
-    ['plan-alloc-hero','plan-alloc-buckets','plan-alloc-holding','plan-alloc-moves','plan-alloc-estimate']
+    ['plan-alloc-hero','plan-alloc-buckets','plan-alloc-holding','plan-rules-validation','plan-alloc-estimate']
       .forEach(id=>{const el=q(id);if(el)el.innerHTML='';});
     setUnlockVisible(false);
     unlockCapacityBtn();
@@ -935,13 +966,7 @@
     const hold=q('plan-alloc-holding');
     if(hold){
       const ids=Object.keys(draft()).map(id=>({id,r:draft()[id]})).filter(x=>x.r)
-        .sort((a,b)=>{
-          const pa=prioOf(a.r), pb=prioOf(b.r);
-          const ra=pa===1?1:pa===2?2:pa===3?3:9;
-          const rb=pb===1?1:pb===2?2:pb===3?3:9;
-          return ra-rb||String(a.r.contractor||'').localeCompare(b.r.contractor||'')
-            ||String(a.r.key||'').localeCompare(b.r.key||'');
-        });
+        .sort(allocRowCmp);
       const srcOf=r=>typeof planHoldSrc==='function'?planHoldSrc(r):(r.source||(r.key||'').split('>')[0]||'');
       const colOf=src=>typeof planSrcColour==='function'?planSrcColour(src):'#64748b';
       const body=ids.map(({id,r})=>{
@@ -980,8 +1005,7 @@
             tpdOld:rpOld.tpd, tpdNew:rpNew.tpd,
             wpdOld:rpOld.wpd, wpdNew:rpNew.wpd,
             predOld:clkOld.pred, predNew:clkNew.pred,
-            achvOld:achvOld, achvNew:achv,
-            valHtml:r.foreign?'':planRulesRowBadgeHtml(planRulesRowCheck(id,r,dtNow))
+            achvOld:achvOld, achvNew:achv
           })
           +'</tr>';
       }).join('');
@@ -999,8 +1023,6 @@
         +'</table></div>';
       applyAllocPrioFilter();
     }
-    const mv=q('plan-alloc-moves');
-    if(mv)mv.textContent=_allocMsg||'';
     try{renderRulesValidation();}catch(e){}
   }
   window.planRenderAllocView=renderAllocView;
@@ -1125,12 +1147,7 @@
   }
   function savedRowsTable(rows, phase, hzLab){
     const after=phase==='after';
-    const sorted=(rows||[]).slice().sort((a,b)=>{
-      const pa=a.prio===1?1:a.prio===2?2:a.prio===3?3:9;
-      const pb=b.prio===1?1:b.prio===2?2:b.prio===3?3:9;
-      return pa-pb||String(a.contractor||'').localeCompare(b.contractor||'')
-        ||String(a.key||'').localeCompare(b.key||'');
-    });
+    const sorted=(rows||[]).slice().sort(allocRowCmp);
     const body=sorted.map(r=>{
       const dtNew=r.dt_after, dtOld=r.dt_before;
       if(after&&!(dtNew>0))return '';
@@ -1218,12 +1235,7 @@
       +savedRowsTable(alloc.rows||[], 'after', hzLab);
       applyAllocPrioFilter();
     }
-    const mv=q('plan-alloc-moves');
-    if(mv){
-      const n=alloc.moved_total!=null?alloc.moved_total
-        :(alloc.moves||[]).reduce((a,m)=>a+(m.trucks||0),0);
-      mv.textContent=(n?n+' DT moved\n':'')+(alloc.notes||'');
-    }
+    try{renderRulesValidation();}catch(e){}
   }
 
   window.planRestoreAllocation=function(alloc){
@@ -1257,15 +1269,25 @@
 
   window.planAllocatePriority=function(){
     const d=draft();
-    const rows=Object.keys(d).map(id=>({id,r:d[id]})).filter(x=>x.r&&!x.r.foreign);
+    // Drop leftover allocation helpers and zeroed paths so a previous save
+    // cannot revive a row the planner already removed from Your plan.
+    Object.keys(d).forEach(id=>{
+      const r=d[id];
+      if(!r||r.foreign)return;
+      if(!(r.dt>0)){delete d[id];return;}
+      delete r._preAlloc;
+      delete r._allocDt;
+    });
+    const rows=Object.keys(d).map(id=>({id,r:d[id]})).filter(x=>x.r&&!x.r.foreign&&x.r.dt>0);
     if(!rows.length)return;
     const rain=rainMm();
     const firstPass=!_allocFrozen;
     _allocMoves=[];
     _savedAlloc=null;
+    // Baseline is the holding plan Check capacity just used — never a
+    // leftover snapshot from the saved file.
     rows.forEach(({id,r})=>{
-      if(!r._preAlloc)r._preAlloc=snapshotRow(id,r);
-      r.dt=r._preAlloc.dt;
+      r._preAlloc=snapshotRow(id,r);
       delete r._allocDt;
     });
     if(firstPass)captureOrigTotals();
@@ -1760,6 +1782,150 @@
         if(!trimmed)break;
       }
     })();
+    // ── Stage F: priority re-verify + clawback (owner, 2026-08-21) ───────
+    // "The system should do things in steps and do these steps carefully."
+    // Every stage above can change SHARED-ROAD pricing after a priority row
+    // was sized: the LD dump floods the TF corridor, the S4 split loads the
+    // POS 12 sections, the rescue and trim move blocks between corridors.
+    // Measured on the 2026-11-04 save: TF>FENI KM15 was sized at 72 DT for
+    // 10,000 t on a quiet corridor, then 623 LD trucks landed on TF>HUAFEI /
+    // TF>POS 12 and the SAME 72 DT re-priced at 6,910 t (sat 0.72) while
+    // LIM-LD sat at 121% of target — and the board said "fleet exhausted".
+    // The waterfall rounds could not see it: they finish BEFORE the split /
+    // rescue / trim, so nothing ever re-read P1 under the final traffic.
+    //
+    // This stage is the allocator's LAST word on priorities. After all
+    // moves settle it re-prices every targeted P1 then P2 row under the
+    // FINAL corridor fleet and pulls trucks back from LD ONE AT A TIME,
+    // re-pricing after every truck — the corridor decongests as each truck
+    // leaves LD, so batch sizing overshoots. Sweeps repeat (max 6) because
+    // fixing one row shifts load onto another's sections. Trucks only flow
+    // TOWARD priorities here, so sweeps terminate. A truck that fails to
+    // add ≥0.5 t/day to the short row is handed straight back: that row is
+    // at its road ceiling and needs a second path, not more trucks.
+    (function reverifyPriorities(){
+      const dd=draft();
+      const pitOf=x=>canonSrc(String(x.r.key||'').split('>')[0]||'');
+      const broken=x=>{
+        const w=(((window.PLANNING_RULES||{}).contractors)||{})[pitOf(x)];
+        return !!(w&&canonCo(x.r.contractor)!==canonCo(w));
+      };
+      const shortOf=x=>{
+        if(!(x.r.targetWmt>0))return 0;
+        const p=predDayFor(x.id,x.r);
+        return (p==null||p>=x.r.targetWmt*0.995)?0:(x.r.targetWmt-p);
+      };
+      const claw={};   // donor→receiver pair totals, one moves-log line each
+      let steps=0;
+      const ceilinged={};
+      for(let sweep=0;sweep<6;sweep++){
+        let movedThisSweep=0;
+        const all=Object.keys(dd).map(id=>({id,r:dd[id]})).filter(x=>x.r&&!x.r.foreign);
+        const byCo={};
+        all.forEach(x=>{(byCo[String(x.r.contractor)]=byCo[String(x.r.contractor)]||[]).push(x);});
+        Object.keys(byCo).forEach(cont=>{
+          const rows=byCo[cont];
+          const ldRows=()=>rows.filter(x=>prioOf(x.r)===3&&x.r.dt>0);
+          const tosRows=()=>rows.filter(x=>prioOf(x.r)===2&&x.r.dt>0);
+          // Donor order = the waterfall's own priority doctrine: untargeted
+          // LD, then targeted LD (on a day-04 plan drain the fatter side of
+          // the TF 50/50 so the split stays balanced without a rebalance
+          // pass), then — for P1 only, SAP is must-move — LIM-TOS surplus,
+          // then LIM-TOS outright.
+          function donorFor(prio,recId){
+            const not=x=>x.id!==recId;
+            const unt=ldRows().filter(x=>not(x)&&!(x.r.targetWmt>0))
+              .sort((a,b)=>b.r.dt-a.r.dt)[0];
+            if(unt)return unt;
+            let lds=ldRows().filter(not);
+            if(planRulesS4Active()){
+              const tf=lds.filter(x=>pitOf(x)==='TF');
+              if(tf.length>1)return tf.sort((a,b)=>b.r.dt-a.r.dt)[0];
+            }
+            if(lds.length)return lds.sort((a,b)=>b.r.dt-a.r.dt)[0];
+            if(prio===1){
+              const sur=tosRows().filter(not).find(x=>{
+                if(!(x.r.targetWmt>0))return true;
+                if(x.r.dt<=1)return false;
+                const down=predDayAt(x.id,x.r,x.r.dt-1);
+                return down!=null&&down>=x.r.targetWmt*0.995;
+              });
+              if(sur)return sur;
+              return tosRows().filter(not).sort((a,b)=>b.r.dt-a.r.dt)[0]||null;
+            }
+            return null;
+          }
+          [1,2].forEach(prio=>{
+            rows.filter(x=>prioOf(x.r)===prio&&!broken(x)&&x.r.targetWmt>0)
+              .sort((a,b)=>shortOf(b)-shortOf(a))
+              .forEach(rec=>{
+                let guard=0;
+                while(shortOf(rec)>0&&guard++<400&&steps<800){
+                  const don=donorFor(prio,rec.id);
+                  if(!don)break;
+                  const p0=predDayFor(rec.id,rec.r)||0;
+                  don.r.dt-=1;rec.r.dt+=1;
+                  const p1v=predDayFor(rec.id,rec.r)||0;
+                  if(!(p1v>p0+0.5)){
+                    // no gain: the row is at its road ceiling — hand the
+                    // truck back and stop feeding this receiver
+                    don.r.dt+=1;rec.r.dt-=1;
+                    ceilinged[rec.id]=true;
+                    break;
+                  }
+                  moved+=1;steps+=1;movedThisSweep+=1;
+                  const k=don.id+'\u2192'+rec.id;
+                  if(!claw[k])claw[k]={don,rec,n:0};
+                  claw[k].n+=1;
+                }
+              });
+          });
+        });
+        if(!movedThisSweep)break;
+      }
+      Object.keys(claw).forEach(k=>{
+        const c=claw[k];
+        const same=pitOf(c.don)===pitOf(c.rec);
+        _allocMoves.push({
+          contractor:c.rec.r.contractor,trucks:c.n,
+          from:c.don.r.key,from_mat:c.don.r.material||'',from_otype:c.don.r.otype||'',
+          to:c.rec.r.key,to_mat:c.rec.r.material||'',to_otype:c.rec.r.otype||'',
+          tag:'priority re-verify \u2014 corridor re-priced after LD placement',
+          reason:'priority re-verify',same_origin:same,dropped:c.don.r.dt===0});
+        movesTxt.push(c.rec.r.contractor+' '+c.n+' DT: '+c.don.r.key+' \u2192 '+c.rec.r.key
+          +' (re-verify \u2014 P'+prioOf(c.rec.r)+' went short after LD landed on its road'
+          +(same?' · same origin':' · cross plan')
+          +(c.don.r.dt===0?' · path dropped':'')+')');
+      });
+      // Re-verify is the final truth on shortfalls: drop earlier "still
+      // short" warnings for rows that are now met, and speak plainly about
+      // the ones that are not.
+      const met={};
+      Object.keys(dd).forEach(id=>{
+        const r=dd[id];
+        if(!r||r.foreign||!(r.targetWmt>0))return;
+        const p=predDayFor(id,r);
+        if(p!=null&&p>=r.targetWmt*0.995)met[r.key]=true;
+      });
+      for(let i=movesTxt.length-1;i>=0;i--){
+        const t=movesTxt[i];
+        if(t.charAt(0)==='\u26a0'&&t.indexOf('short')>=0
+          &&Object.keys(met).some(key=>t.indexOf(key)>=0))movesTxt.splice(i,1);
+      }
+      Object.keys(dd).forEach(id=>{
+        const r=dd[id];
+        if(!r||r.foreign||!(r.targetWmt>0))return;
+        const p=prioOf(r);
+        if(p!==1&&p!==2)return;
+        const pred=predDayFor(id,r);
+        if(pred==null||pred>=r.targetWmt*0.995)return;
+        movesTxt.push('\u26a0 '+r.contractor+' '+(p===1?'SAP':'LIM-TOS')+' still short '
+          +fmt(Math.round(r.targetWmt-pred))+' t/day on '+r.key+' after re-verify \u2014 '
+          +(ceilinged[id]
+            ?'road ceiling: more trucks add congestion, not tonnes. Split this target onto a second path.'
+            :'no LIM trucks left for '+r.contractor+'.'));
+      });
+    })();
     // Restore display DT to the pre-alloc plan; the allocation lives in
     // _allocDt. Iterate the DRAFT, not `rows` - crossRescue may have added
     // helper rows that must get the same treatment (their preAlloc dt is 0).
@@ -1841,29 +2007,59 @@
     const rain=rainMm();
     const rows=Object.keys(d).map(id=>d[id])
       .filter(r=>r&&r.key&&workingDt(r)>0);
-    // planTripsPerDT prices each route at its COMBINED loaders (rows share
-    // the road and its faces), so warm exactly those keys — per-row keys
-    // would warm curves nothing asks for.
-    const comb={};
-    rows.forEach(r=>{
-      if(!r.foreign)comb[r.key]=(comb[r.key]||0)+(r.loaders||2);
-    });
-    rows.forEach(r=>{if(comb[r.key]==null)comb[r.key]=r.loaders||2;});
+    // planTripsPerDT prices each route on the PROPORTIONAL saturation curve
+    // (rules §10.9 — loaders scale with fleet, only the road congests).
+    const keys={};
+    rows.forEach(r=>{if(r&&r.key)keys[r.key]=true;});
     for(let i=0;i<60;i++){
       let pending=false;
-      Object.keys(comb).forEach(key=>{
-        if(planHybridCurveFor(key, comb[key], rain)===undefined)pending=true;
+      Object.keys(keys).forEach(key=>{
+        if(planHybridCurveFor(key, 0, rain, {proportional:true})===undefined)pending=true;
       });
       if(!pending)return;
       await new Promise(res=>setTimeout(res,250));
     }
   }
+  // ── section-resolved plan pricing (owner, 2026-08-21) ────────────────
+  // "See how many trucks are moving in each window — each section of the
+  // route — and what speed that section allows." /api/congestion_plan
+  // prices the WHOLE plan over chainage windows; each route's calibrated
+  // curve is multiplied by shared_road_ratio (plan flows vs own flows on
+  // its windows), so cross-route traffic in a shared window drags every
+  // route in it. The window table renders in the validation panel.
+  // VISIBILITY ONLY (owner revert, 2026-08-21): the shared_road_ratio in
+  // this payload briefly multiplied the pricing curve and collapsed every
+  // route ("BLB trips falls like hell") because its capacity basis was the
+  // median OBSERVED peak per section. Pricing stays on the calibrated
+  // curves; do not re-wire this into planTripsPerDT.
+  let _secPricing=null;    // {routes:{...}, sections:[...]} — window table data
+  async function planRulesSectionPricing(){
+    const d=draft();
+    const rows=[];
+    Object.keys(d).forEach(id=>{
+      const r=d[id];
+      if(!r||!r.key)return;
+      const dt=workingDt(r);
+      if(!(dt>0))return;
+      rows.push({route:r.key,dt:dt,loaders:r.loaders||0,foreign:!!r.foreign});
+    });
+    if(!rows.length){_secPricing=null;return;}
+    try{
+      const resp=await fetch('/api/congestion_plan',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({rows:rows,rain_mm:rainMm()})});
+      const j=resp.ok?await resp.json():null;
+      _secPricing=(j&&j.ok)?j:null;
+    }catch(e){_secPricing=null;}
+  }
+
   // One call for "make the draft rules-clean and priced on warm curves":
-  // loaders per §10.9, then hybrid curves resolved. Used by the allocate
-  // flow and by scripted re-saves.
+  // loaders per §10.9, hybrid curves resolved, then the section pricing for
+  // the current division. Used by the allocate flow and scripted re-saves.
   window.planRulesPrepare=async function(){
     await planRulesApplyLoaders();
     await planRulesWarmCurves();
+    await planRulesSectionPricing();
   };
   // Per-DAY tonnes at an explicit fleet — horizon-independent on purpose: the
   // validation bands and POS flows are daily figures whatever the UI shows.
@@ -1953,11 +2149,13 @@
           _preAlloc:{dt:est.dt,pred:0,achv:0,achv_sim:0}};
       }
     }
-    // IWIP trucks are on the road now: recompute so the plan table, road
-    // crowding (▶ Run) and the validation summary all see them — and
-    // RE-SIMULATE, because planRunScenario fetched the engine before these
-    // rows existed and Achievable must carry their corridor drag too
-    // (owner, 2026-08-21: every aspect follows the allocated division).
+    // IWIP trucks are on the road now: refresh the section pricing (they
+    // occupy windows), then recompute so the plan table, road crowding
+    // (▶ Run) and the validation summary all see them — and RE-SIMULATE,
+    // because planRunScenario fetched the engine before these rows existed
+    // and Achievable must carry their corridor drag too (owner, 2026-08-21:
+    // every aspect follows the allocated division).
+    await planRulesSectionPricing();
     try{if(typeof computePlan==='function')computePlan();}catch(e){}
     try{renderAllocView();}catch(e){}
     try{renderRulesValidation();}catch(e){}
@@ -2004,34 +2202,20 @@
     const T=((window.PLANNING_RULES||{}).targets)||{};
     const rows=Object.keys(draft()).map(id=>({id,r:draft()[id]}))
       .filter(x=>x.r&&!x.r.foreign&&workingDt(x.r)>0);
-    const ranges={BLB:[],TF:[]};
     let sapTgt=0,sapPred=0,tosTgt=0,tosPred=0,ldPred=0;
     rows.forEach(({id,r})=>{
       const dt=workingDt(r);
-      const chk=planRulesRowCheck(id,r,dt);
-      if(chk){
-        const pit=canonSrc(String(r.key||'').split('>')[0]||'');
-        if(ranges[pit])ranges[pit].push(chk);
-      }
       const pred=predDayAt(id,r,dt)||0;
       const p=prioOf(r);
       if(p===1){sapTgt+=r.targetWmt||0;sapPred+=pred;}
       else if(p===2){tosTgt+=r.targetWmt||0;tosPred+=pred;}
       else if(p===3){ldPred+=pred;}
     });
-    function rangeLine(pit){
-      const l=ranges[pit];
-      if(!l.length)return {txt:'no '+pit+' routes in plan',status:'—'};
-      const mn=Math.min.apply(null,l.map(c=>c.tpd)),mx=Math.max.apply(null,l.map(c=>c.tpd));
-      const st=l.some(c=>c.status==='FAIL')?'FAIL':l.some(c=>c.status==='WARN')?'WARN':'PASS';
-      return {txt:mn.toFixed(2)+' - '+mx.toFixed(2),status:st};
-    }
     // Sep-Dec 2026 = 122 days; the 4-month totals are PROJECTIONS at this
     // plan's day-rate, labelled as such — one day cannot measure a quarter.
     const DAYS=122;
     const pt=_posTransitInfo||{rows:[],input:0,output:0};
     return {
-      blb:rangeLine('BLB'), tf:rangeLine('TF'),
       sap:{tgt:sapTgt,pred:sapPred,met:sapTgt>0?sapPred>=sapTgt*0.995:null},
       tos:{tgt:tosTgt,pred:tosPred,met:tosTgt>0?tosPred>=tosTgt*0.995:null,
         proj:tosPred*DAYS,target4mo:T.limTosTotal||4600000},
@@ -2042,14 +2226,8 @@
     };
   }
   function renderRulesValidation(){
-    const moves=q('plan-alloc-moves');
-    if(!moves)return;
-    let host=q('plan-rules-validation');
-    if(!host){
-      host=document.createElement('div');
-      host.id='plan-rules-validation';
-      moves.insertAdjacentElement('afterend',host);
-    }
+    const host=q('plan-rules-validation');
+    if(!host)return;
     if(!_allocFrozen){host.innerHTML='';return;}
     const s=planRulesSummary();
     const yn=v=>v==null?'n/a':v?'YES':'NO';
@@ -2057,8 +2235,6 @@
     const pre=
       'VALIDATION SUMMARY\n'
       +'==================\n'
-      +'BLB trips/DT range:  '+s.blb.txt+'  ['+s.blb.status+']\n'
-      +'TF trips/DT range:   '+s.tf.txt+'  ['+s.tf.status+']\n'
       +'SAP target met:      '+yn(s.sap.met)+'  (target: '+fmt(Math.round(s.sap.tgt))
         +' t/day, actual: '+fmt(Math.round(s.sap.pred))+' t/day)\n'
       +'LIM-TOS target met:  '+yn(s.tos.met)+'  (day target: '+fmt(Math.round(s.tos.tgt))
@@ -2090,6 +2266,24 @@
         +s.walls.map(w=>esc(w.key)+' is '+esc(w.contractor)+' (must be '+esc(w.want)+')').join(' · ')
         +'</div>'
       :'';
+    // the owner's "windows": trucks, flow vs measured capacity and speed on
+    // every chainage section this plan loads
+    const secs=(_secPricing&&_secPricing.sections)||[];
+    const winTable=secs.length
+      ?'<table style="margin-top:8px"><thead><tr><th>Road window (section)</th>'
+        +'<th class="r">km</th><th class="r">Trucks on it</th><th class="r">Flow/hr</th>'
+        +'<th class="r">Cap/hr</th><th class="r">v/c</th><th class="r">Speed</th></tr></thead><tbody>'
+        +secs.map(x=>'<tr><td>'+esc(x.section)+'</td>'
+          +'<td class="r">'+x.km+'</td><td class="r">'+x.trucks+'</td>'
+          +'<td class="r">'+x.flow_hr+'</td><td class="r">'+x.cap_hr+'</td>'
+          +'<td class="r"'+(x.vc>=1?' style="color:#ef4444"':(x.vc>=0.7?' style="color:#facc15"':''))+'>'+x.vc+'</td>'
+          +'<td class="r">'+x.speed_free_kmh+(x.speed_cong_kmh?' → '+x.speed_cong_kmh:'')+' km/h</td></tr>').join('')
+        +'</tbody></table>'
+        +'<div class="muted" style="font-size:11px;margin-top:4px">Road windows are INFORMATION '
+        +'only: trucks and flow per chainage section at measured GPS speeds. Cap/hr is the median '
+        +'observed peak (what the section has demonstrated, not a limit); pricing stays on the '
+        +'calibrated per-route curves.</div>'
+      :'';
     const s4=planRulesS4Active()
       ?' <span class="plan-cong-badge saturated" title="Day-04 plan = Scenario 4: same as S3 '
         +'but leftover LD trucks split 50/50 HUAFEI/BSE vs POS 12. Compare NEW PREDICTED '
@@ -2100,7 +2294,7 @@
       +'<span class="muted">(<a href="/planning_rules.md" target="_blank" '
       +'style="color:inherit">planning_rules.md</a> §7 · projections at this day-rate)</span></div>'
       +'<pre style="font-size:11.5px;line-height:1.5;margin:6px 0 0;white-space:pre-wrap">'
-      +esc(pre)+'</pre>'+posRows+walls;
+      +esc(pre)+'</pre>'+posRows+winTable+walls;
   }
 
   const _origCompute=window.computePlan;
