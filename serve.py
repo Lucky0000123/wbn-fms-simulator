@@ -13,7 +13,7 @@ No backend platform code, no database credentials committed.
 Run:  pip install flask  &&  python serve.py     then open  http://127.0.0.1:5055/simulator
 Optional real data:  FMS_DB_HOST=... FMS_DB_USER=... FMS_DB_PASS=... python serve.py
 """
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, send_from_directory
 import json
 import os
 import time
@@ -149,6 +149,15 @@ def simulator():
 @app.route("/monthly")
 def monthly_page():
     return render_template("monthly.html")
+
+
+@app.route("/planning_rules.md")
+def planning_rules_md():
+    """Owner's mine-plan rules. static/js/planning_rules.js fetches this at
+    startup and the plan builder enforces it; keep the file at the repo root
+    so the owner can edit it without touching code."""
+    return send_from_directory(BASE, "planning_rules.md",
+                               mimetype="text/markdown; charset=utf-8")
 
 @app.route("/health")
 def health():

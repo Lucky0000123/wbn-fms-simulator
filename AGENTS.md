@@ -1142,3 +1142,50 @@ looked like an expected offline state; nothing failed loudly. Same family
 as "count drawn canvases": the check that caught it was canvas-count 0 in
 `#cong-breakdown-chart` while its two sibling charts drew 1 each. If a
 degraded-mode note ships, gate on the healthy path rendering at least once.
+
+## 2026-08-21 — planning_rules.md: the owner's rules are now data the app enforces
+
+`planning_rules.md` (repo root, served at `/planning_rules.md` by serve.py)
+is the owner's rule sheet. `static/js/planning_rules.js` (loads right after
+api.js) exposes `window.PLANNING_RULES`, fetches the .md on startup and
+re-parses every enforced number from it (walls, fixed routes, validation
+bands, targets, the P3 split). The literals in the JS are the offline
+fallback only — edit the .md, not the JS, to change a rule; keep both in
+step. The navbar badge says which copy is live ("ACTIVE" = parsed file).
+
+Enforcement lives in plan_sap_target.js, one point per rule:
+- **Walls** (BLB=RIM, KR=SMA): `enforceContractor()` corrects rows at
+  CREATION (the builder's contractor select is switched before planAddPath
+  so the slot id `contractor|key|material` is born correct — never rename
+  an existing row's contractor, its slot id embeds it). Loaded rows that
+  break a wall are flagged in the validation summary instead of mutated.
+  crossRescue's donor filter now reads the wall table (it only had the BLB
+  half hardcoded).
+- **P1→P2→P3** was already the allocator; unchanged.
+- **POS transit** (§5): after Allocate, whatever the plan tips into
+  POS 12/14/15/16 gets IWIP rows POS→FeNi sized from /api/congestion_model
+  (re-asked once at the implied fleet — trips/DT falls with fleet, the
+  first guess under-sizes). The rows are ROAD-ONLY (`foreign:true`,
+  `_posTransit:true`, slot `IWIP|route|road`) — the app's existing
+  IWIP/Position mechanism — so they count in road crowding and never in
+  production WMT. Rebuilt (delete+recreate) on every Allocate.
+- **Validation** (§7): summary + per-row PASS/WARN/FAIL badges (reusing
+  .plan-cong-badge classes) render under the alloc moves log.
+
+**S4 = day-04 saves** (scenario-by-day, like 01=S1/03=S3): identical to S3
+except leftover TF LD trucks split 50/50 HUAFEI/BSE vs POS 12 (§4 P3).
+The split runs ONLY when the plan date is day 04, so S3 stays comparable.
+Measured Sep: LD 4,395 → 13,059 t/day (0.54 → 1.59 Mt at 122-day rate) —
+TF>POS 12 runs 3.58 trips/DT where the saturated HUAFEI corridor runs
+0.63. Saves exist for 2026-09..12-04. **2026-08-04 predates the
+convention** — a legacy daily plan, not S4 (it has no frozen allocation,
+so the year board's day=4 view correctly skips it).
+
+Traps hit while building this:
+- `rowClocks().pred` is HORIZON-scaled (day = 2 shifts). The validation
+  bands and POS flows are daily; use `predDayAt(id,r,dt)` (predDayFor at
+  an explicit fleet), not pred/hz().
+- The rules file contradicts itself on POS: §2 calls it Permanent Ore
+  Storage, §5 says transit with input = output. §5 is the operative rule
+  (owner spec) and is what the code implements; raise it with the owner
+  before "fixing" either.

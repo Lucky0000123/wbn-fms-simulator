@@ -47,11 +47,15 @@ the leftover-truck sink, uncapped; 8,000,000 t is a sales *target line*).
 ### Local data (gitignored, NOT on GitHub — back these up separately)
 - `data/saved_plans/YYYY-MM-DD.json` — Plan-tab saved daily plans **with
   frozen Allocate-DT snapshots**. Scenario convention: **day 01 = S1,
-  day 03 = S3** of each month (day 02 held S2 until it was deleted from the
-  app on 2026-08-21, owner request; a copy sits in
-  `data/saved_plans/_deleted_s2_backup_2026-08-21/`). Current inventory:
-  Aug: 01 (S1 only, by owner request), plus legacy 04/05/07/13.
-  Sep–Dec: 01/03 each.
+  day 03 = S3, day 04 = S4** of each month (day 02 held S2 until it was
+  deleted from the app on 2026-08-21, owner request; a copy sits in
+  `data/saved_plans/_deleted_s2_backup_2026-08-21/`). S4 (owner,
+  2026-08-21) = S3 with the leftover LD trucks split 50/50 HUAFEI/BSE vs
+  POS 12 (`planning_rules.md` §4 P3); the allocator applies the split
+  automatically on any day-04 plan date. Current inventory:
+  Aug: 01 (S1 only, by owner request), plus legacy 04/05/07/13 — the
+  Aug 04 file PREDATES the S4 convention and is a plain daily plan.
+  Sep–Dec: 01/03/04 each.
 - `data/monthly_plans/` — month states (2026-08…2026-12.json) +
   `yearly_matrix.json` (the pasted mine-plan matrix = S1 targets + DT pools).
 - `data/gps_archive/` — accumulated haul GPS (cron 07:00/19:00 via
@@ -85,6 +89,7 @@ the leftover-truck sink, uncapped; 8,000,000 t is a sales *target line*).
 | `static/js/plan.js`, `plan_scenario.js`, `plan_sap_target.js` | Plan tab: builder, Step-2 outcomes, Allocate-DT |
 | `static/js/flow_sim.js` | GPS corridor + chainage-stick animation (dual host) |
 | `templates/simulator.html`, `monthly.html` | The two pages |
+| `planning_rules.md` + `static/js/planning_rules.js` | Owner's plan rules (repo root, served at /planning_rules.md); parsed on load, enforced by plan_sap_target.js |
 | `scripts/verify_phase2.sh` | **The gate suite — 72 gates, run before/after everything** |
 | `AGENTS.md` | Project memory: every lesson, invariant, and owner preference |
 

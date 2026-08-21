@@ -27,6 +27,13 @@
   function draft(){return (typeof _planDraft!=='undefined')?_planDraft:{};}
   function hz(){return typeof planHorizonFactor==='function'?planHorizonFactor():1;}
   function rainMm(){return Math.max(0,parseFloat((q('plan-rain')||{}).value)||0);}
+  // Day-04 plan dates are Scenario 4 (S4): S3 plus the 50/50 LD split of
+  // planning_rules.md §4 P3. NOTE 2026-08-04 predates the convention — it is
+  // a legacy August daily plan, not S4; re-allocating it would apply the
+  // split, so leave the August legacy dates alone.
+  function planRulesS4Active(){
+    return /^\d{4}-\d{2}-04$/.test(((q('plan-date')||{}).value||'').trim());
+  }
 
   let _allocFrozen=false;
   let _allocMsg='';
@@ -36,6 +43,7 @@
   let _yearlyRows=null;
   let _yearlyMonth=null;
   let _allocPrioFilter='';
+  let _posTransitInfo=null;   // planning_rules.md §5 — last POS→FeNi IWIP sizing
   window.planAllocFrozen=function(){return _allocFrozen;};
 
   function allocTableHead(){
@@ -96,7 +104,7 @@
     return ''
       +'<td class="r plan-hold-num">'+fmt(o.tgt)+'</td>'
       +'<td class="r">'+pairHtml(o.dtOld, o.dtNew, {delta:true})+'</td>'
-      +'<td class="r">'+pairHtml(o.tpdOld, o.tpdNew, {fmt:fmt2})+'</td>'
+      +'<td class="r">'+pairHtml(o.tpdOld, o.tpdNew, {fmt:fmt2, extra:o.valHtml||''})+'</td>'
       +'<td class="r">'+pairHtml(o.wpdOld, o.wpdNew, {fmt:fmt2})+'</td>'
       +'<td class="r">'+pairHtml(o.predOld, o.predNew, {extra:vs.extra, tone:vs.tone})+'</td>'
       +'<td class="r">'+pairHtml(o.achvOld, o.achvNew, simNote)+'</td>';
@@ -227,6 +235,32 @@
       .replace('KM 0','KM0').replace('KM 15','KM15').replace('KM 10','KM10');
   }
   function canonCo(c){return String(c||'').trim().toUpperCase();}
+
+  // planning_rules.md §3 — pit→contractor walls (BLB=RIM, KR=SMA, TF open).
+  // Mutates row.contractor to the pit's owner when the wall is broken. Only
+  // for rows being CREATED: an existing row's slot id embeds its contractor,
+  // so loaded rows are flagged by the validation summary instead of renamed.
+  function enforceContractor(row){
+    if(!row||row.foreign)return row;
+    const walls=((window.PLANNING_RULES||{}).contractors)||{};
+    const pit=canonSrc(String(row.key||'').split('>')[0]||row.source||'');
+    const want=walls[pit];
+    if(want&&canonCo(row.contractor)!==canonCo(want))row.contractor=want;
+    return row;
+  }
+  function contractorWallViolations(){
+    const walls=((window.PLANNING_RULES||{}).contractors)||{};
+    const out=[];
+    Object.keys(draft()).forEach(id=>{
+      const r=draft()[id];
+      if(!r||r.foreign||!(workingDt(r)>0))return;
+      const pit=canonSrc(String(r.key||'').split('>')[0]||'');
+      const want=walls[pit];
+      if(want&&canonCo(r.contractor)!==canonCo(want))
+        out.push({key:r.key,contractor:r.contractor,want:want});
+    });
+    return out;
+  }
 
   // P1 SAP, P2 LIM TOS, P3 LIM LD (and anything else that is not protected).
   // Origin type from the year matrix wins; a missing chip does not turn SAP
@@ -933,7 +967,8 @@
             tpdOld:rpOld.tpd, tpdNew:rpNew.tpd,
             wpdOld:rpOld.wpd, wpdNew:rpNew.wpd,
             predOld:clkOld.pred, predNew:clkNew.pred,
-            achvOld:achvOld, achvNew:achv
+            achvOld:achvOld, achvNew:achv,
+            valHtml:r.foreign?'':planRulesRowBadgeHtml(planRulesRowCheck(id,r,dtNow))
           })
           +'</tr>';
       }).join('');
@@ -953,6 +988,7 @@
     }
     const mv=q('plan-alloc-moves');
     if(mv)mv.textContent=_allocMsg||'';
+    try{renderRulesValidation();}catch(e){}
   }
   window.planRenderAllocView=renderAllocView;
 
@@ -1412,6 +1448,64 @@
         movesTxt.push('⚠ '+cont+' LIM-TOS short '+fmt(rec.r.targetWmt-pred)+' t/day on '+rec.r.key
           +' — leftover after SAP (must-move) was not enough');
       });
+      // planning_rules.md §4 P3 — the S4 scenario (owner, 2026-08-21): same
+      // plan as S3 except the leftover LD trucks at TF split 50/50 between
+      // HUAFEI/BSE and POS 12, to see whether tonnage rises when the
+      // leftovers stop piling onto one saturated corridor. Day-04 saves ARE
+      // S4 (scenario-by-day convention, like day 01=S1 / 03=S3), so the
+      // split runs ONLY on a day-04 plan date; S3 allocation is untouched
+      // and the two save files compare tonnage like-for-like. Runs AFTER
+      // P1/P2 are settled so it only moves genuine leftovers; same owner,
+      // and the new row carries targetWmt 0 (LD is the buffer, not a typed
+      // target — same rule as rescue helpers).
+      (function splitLeftoverLd(){
+        if(!planRulesS4Active())return;
+        const split=(((window.PLANNING_RULES||{}).limLd)||{}).split;
+        if(!split||!(split.pos12>0))return;
+        const dd=draft();
+        const destOf=x=>canonDest(String(x.r.key||'').split('>')[1]||'');
+        const isPos12=x=>destOf(x)==='POS 12';
+        const isHb=x=>destOf(x)==='HUAFEI'||destOf(x)==='BSE';
+        const tfLd=p3.filter(x=>originOf(x)==='TF'&&(isPos12(x)||isHb(x)));
+        const total=tfLd.reduce((a,x)=>a+x.r.dt,0);
+        if(total<2)return;
+        const wantPos=Math.round(total*split.pos12);
+        const posRows=tfLd.filter(isPos12);
+        const hbRows=tfLd.filter(isHb);
+        const havePos=()=>posRows.reduce((a,x)=>a+x.r.dt,0);
+        function helper(key){
+          const hid=(typeof planDraftSlotId==='function')
+            ?planDraftSlotId(cont,key,{material:'LIM',otype:'LD'})
+            :cont+'|'+key+'|LIM|LD';
+          if(!dd[hid]){
+            dd[hid]=enforceContractor({key:key,dt:0,loaders:2,contractor:cont,
+              source:key.split('>')[0],dest:key.split('>')[1],
+              material:'LIM',otype:'LD',targetWmt:0,_targetManual:true,
+              _preAlloc:{dt:0,pred:0,achv:0,achv_sim:0}});
+            const hx={id:hid,r:dd[hid]};
+            p3.push(hx);crows.push(hx);tfLd.push(hx);
+            (isPos12(hx)?posRows:hbRows).push(hx);
+          }
+          return {id:hid,r:dd[hid]};
+        }
+        if(havePos()<wantPos&&!posRows.length)helper('TF>POS 12');
+        if(havePos()>wantPos&&!hbRows.length)helper('TF>HUAFEI');
+        let guard=0;
+        while(havePos()<wantPos&&guard++<500){
+          const don=hbRows.filter(x=>x.r.dt>0).sort((a,b)=>b.r.dt-a.r.dt)[0];
+          const rec=posRows.slice().sort((a,b)=>a.r.dt-b.r.dt)[0];
+          if(!don||!rec)break;
+          if(transfer(don,rec,Math.min(wantPos-havePos(),don.r.dt),
+            'P3 50/50 split — leftovers → POS 12 (planning rules §4)',true)<=0)break;
+        }
+        while(havePos()>wantPos&&guard++<500){
+          const don=posRows.filter(x=>x.r.dt>0).sort((a,b)=>b.r.dt-a.r.dt)[0];
+          const rec=hbRows.slice().sort((a,b)=>a.r.dt-b.r.dt)[0];
+          if(!don||!rec)break;
+          if(transfer(don,rec,Math.min(havePos()-wantPos,don.r.dt),
+            'P3 50/50 rebalance — POS 12 → HUAFEI/BSE (planning rules §4)',true)<=0)break;
+        }
+      })();
       const after=crows.reduce((a,x)=>a+x.r.dt,0);
       if(Math.abs(after-before)>0.01)movesTxt.push('⚠ '+cont+' fleet drift '+Math.round(after-before)+' DT');
     });
@@ -1434,8 +1528,13 @@
         const srcPit=String(rec.r.key||'').split('>')[0];
         let missing=rec.r.targetWmt-(predDayFor(rec.id,rec.r)||0);
         if(missing<=0)return;
-        const donors=all.filter(x=>prioOf(x.r)===3&&x.r.contractor!==rec.r.contractor&&x.r.dt>0
-          &&!(srcPit==='BLB'&&String(x.r.contractor).toUpperCase()!=='RIM'));
+        const donors=all.filter(x=>{
+          if(prioOf(x.r)!==3||x.r.contractor===rec.r.contractor||!(x.r.dt>0))return false;
+          // planning_rules.md §3: a rescue row lands ON the short route's pit,
+          // so the pit's wall applies to the DONOR contractor (BLB=RIM, KR=SMA).
+          const wall=(((window.PLANNING_RULES||{}).contractors)||{})[canonSrc(srcPit)];
+          return !wall||canonCo(x.r.contractor)===canonCo(wall);
+        });
         donors.forEach(don=>{
           if(missing<=0)return;
           const helperId=(typeof planDraftSlotId==='function')
@@ -1510,7 +1609,234 @@
     if(st)st.textContent='recalculating…';
     if(typeof planRunScenario==='function')planRunScenario({preserveFinalize:true,fromAlloc:true});
     else renderAllocView();
+    // planning_rules.md §5: whatever this allocation tips into POS must leave
+    // for FeNi on IWIP trucks — size them and put them on the road (async;
+    // re-renders the alloc view and validation summary when the rows land).
+    planRulesPosTransit();
   };
+
+  // ── planning_rules.md §5 — POS transit: size IWIP trucks for POS→FeNi ────
+  // POS is a transit stockpile: whatever the plan tips into POS 12/14/15/16
+  // must leave again for the FeNi plants, moved by IWIP (not contractor)
+  // trucks. Those trucks are real road traffic, so they enter the draft as
+  // ROAD-ONLY rows (foreign:true — the exact mechanism the app already uses
+  // for IWIP/Position traffic): counted by road crowding and shared-section
+  // spans, never in production WMT, never touched by the allocator.
+  function planRulesPosDumps(){return ['POS 12','POS 14','POS 15','POS 16'];}
+  // Per-DAY tonnes at an explicit fleet — horizon-independent on purpose: the
+  // validation bands and POS flows are daily figures whatever the UI shows.
+  function predDayAt(id,r,dt){
+    const saved=r.dt;
+    r.dt=dt;
+    const p=predDayFor(id,r);
+    r.dt=saved;
+    return p;
+  }
+  async function planRulesTripsFor(key,tonnesDay){
+    const pay=((typeof planPayload==='function'?planPayload(key,null):null)||{}).tf||50;
+    let tpd=null,calibrated=false,cycle=null,src='default';
+    async function ask(n){
+      const r=await fetch('/api/congestion_model?route='+encodeURIComponent(key)
+        +'&n_trucks='+n+'&n_loaders=2',{cache:'no-store'});
+      if(!r.ok)return null;
+      const j=await r.json();
+      return (j&&j.ok&&j.trips_per_DT_per_day>0)?j:null;
+    }
+    try{
+      let j=await ask(Math.max(1,Math.ceil(tonnesDay/(pay*3))));
+      if(j){
+        // re-ask at the implied fleet once: trips/DT falls with fleet, so the
+        // first guess under-sizes on congested POS corridors
+        const dt1=Math.max(1,Math.ceil(tonnesDay/(j.trips_per_DT_per_day*pay)));
+        j=(await ask(dt1))||j;
+        tpd=j.trips_per_DT_per_day;calibrated=!!j.calibrated;
+        cycle=j.cycle_time_minutes;src='hybrid';
+      }
+    }catch(e){}
+    if(!(tpd>0)&&typeof planTripsPerDT==='function'){
+      const e=planTripsPerDT(key,Math.max(1,Math.ceil(tonnesDay/(pay*3))),0,null,{nLoaders:2});
+      if(e&&e.daily>0){tpd=e.daily;src='path model';}
+    }
+    if(!(tpd>0))tpd=2; // conservative site figure; row is flagged estimated
+    return {tripsPerDt:tpd,payload:pay,calibrated:calibrated,cycle:cycle,src:src,
+      dt:Math.max(1,Math.ceil(tonnesDay/(tpd*pay)))};
+  }
+  async function planRulesPosTransit(){
+    const R=window.PLANNING_RULES||{};
+    if(!((R.posTransit||{}).enabled))return;
+    const d=draft();
+    Object.keys(d).forEach(id=>{if(d[id]&&d[id]._posTransit)delete d[id];});
+    const inflow={};
+    Object.keys(d).forEach(id=>{
+      const r=d[id];
+      if(!r||r.foreign)return;
+      const dest=canonDest(String(r.key||'').split('>')[1]||'');
+      if(planRulesPosDumps().indexOf(dest)<0)return;
+      const dt=workingDt(r);
+      if(!(dt>0))return;
+      const p=predDayAt(id,r,dt);
+      if(p>0)inflow[dest]=(inflow[dest]||0)+p;
+    });
+    const dumps=Object.keys(inflow);
+    _posTransitInfo={rows:[],input:0,output:0};
+    for(const dump of dumps){
+      // only dumps that actually receive material get outflow rows (§5), and
+      // a dump's outflow splits evenly across its listed FeNi routes
+      const routes=(R.posTransit.routes||[]).filter(k=>k.indexOf(dump+'>')===0);
+      if(!routes.length)continue;
+      const share=inflow[dump]/routes.length;
+      for(const key of routes){
+        const est=await planRulesTripsFor(key,share);
+        _posTransitInfo.rows.push({dump:dump,key:key,tonnes:share,dt:est.dt,
+          tripsPerDt:est.tripsPerDt,payload:est.payload,cycle:est.cycle,
+          calibrated:est.calibrated,src:est.src});
+        _posTransitInfo.input+=share;
+        _posTransitInfo.output+=share;
+        const id='IWIP|'+key+'|road';
+        d[id]={key:key,dt:est.dt,loaders:2,contractor:'IWIP',
+          source:key.split('>')[0],dest:key.split('>')[1],
+          foreign:true,_posTransit:true,_allocDt:est.dt,
+          _preAlloc:{dt:est.dt,pred:0,achv:0,achv_sim:0}};
+      }
+    }
+    // IWIP trucks are on the road now: recompute so the plan table, road
+    // crowding (▶ Run) and the validation summary all see them.
+    try{if(typeof computePlan==='function')computePlan();}catch(e){}
+    try{renderAllocView();}catch(e){}
+    try{renderRulesValidation();}catch(e){}
+  }
+
+  // ── planning_rules.md §7 — validation bands + post-run summary ───────────
+  function planRulesDailyTpd(id,r,dt){
+    const c=typeof planContractor==='function'?planContractor(r.contractor):null;
+    const e=typeof planTripsPerDT==='function'
+      ?planTripsPerDT(r.key,dt,rainMm(),c,
+        typeof planTripOpts==='function'?planTripOpts(id):{selfId:id,nLoaders:r.loaders||2})
+      :null;
+    return (e&&e.daily>0)?e.daily:null;
+  }
+  function planRulesRowCheck(id,r,dt){
+    const V=((window.PLANNING_RULES||{}).validation)||{};
+    const pit=canonSrc(String(r.key||'').split('>')[0]||'');
+    const dest=canonDest(String(r.key||'').split('>')[1]||'');
+    let band=null;
+    if(pit==='BLB'&&V.BLB)band={warn:V.BLB.warnBelow,fail:V.BLB.failBelow,
+      lbl:'BLB expects '+V.BLB.minTrips+'–'+V.BLB.maxTrips+' trips/DT/day'};
+    else if(pit==='TF'&&V.TF&&(V.TF.routes||[]).some(x=>canonDest(x)===dest))
+      band={warn:V.TF.warnBelow,fail:V.TF.failBelow,impossible:true,
+        lbl:'TF long haul must stay above '+V.TF.minTrips+' trips/DT/day'};
+    if(!band)return null;
+    const tpd=planRulesDailyTpd(id,r,dt);
+    if(tpd==null)return null;
+    const st=tpd<band.fail?'FAIL':tpd<band.warn?'WARN':'PASS';
+    return {status:st,tpd:tpd,
+      why:tpd.toFixed(2)+' trips/DT/day · '+band.lbl
+        +(st==='FAIL'&&band.impossible?' — below '+band.fail+' is impossible':'')};
+  }
+  function planRulesRowBadgeHtml(chk){
+    if(!chk)return '';
+    const cls=chk.status==='PASS'?'free':chk.status==='WARN'?'saturated':'overloaded';
+    return ' <span class="plan-cong-badge '+cls+'" title="'+esc(chk.why)
+      +'">'+chk.status+'</span>';
+  }
+  function planRulesSummary(){
+    const V=((window.PLANNING_RULES||{}).validation)||{};
+    const T=((window.PLANNING_RULES||{}).targets)||{};
+    const rows=Object.keys(draft()).map(id=>({id,r:draft()[id]}))
+      .filter(x=>x.r&&!x.r.foreign&&workingDt(x.r)>0);
+    const ranges={BLB:[],TF:[]};
+    let sapTgt=0,sapPred=0,tosTgt=0,tosPred=0,ldPred=0;
+    rows.forEach(({id,r})=>{
+      const dt=workingDt(r);
+      const chk=planRulesRowCheck(id,r,dt);
+      if(chk){
+        const pit=canonSrc(String(r.key||'').split('>')[0]||'');
+        if(ranges[pit])ranges[pit].push(chk);
+      }
+      const pred=predDayAt(id,r,dt)||0;
+      const p=prioOf(r);
+      if(p===1){sapTgt+=r.targetWmt||0;sapPred+=pred;}
+      else if(p===2){tosTgt+=r.targetWmt||0;tosPred+=pred;}
+      else if(p===3){ldPred+=pred;}
+    });
+    function rangeLine(pit){
+      const l=ranges[pit];
+      if(!l.length)return {txt:'no '+pit+' routes in plan',status:'—'};
+      const mn=Math.min.apply(null,l.map(c=>c.tpd)),mx=Math.max.apply(null,l.map(c=>c.tpd));
+      const st=l.some(c=>c.status==='FAIL')?'FAIL':l.some(c=>c.status==='WARN')?'WARN':'PASS';
+      return {txt:mn.toFixed(2)+' - '+mx.toFixed(2),status:st};
+    }
+    // Sep-Dec 2026 = 122 days; the 4-month totals are PROJECTIONS at this
+    // plan's day-rate, labelled as such — one day cannot measure a quarter.
+    const DAYS=122;
+    const pt=_posTransitInfo||{rows:[],input:0,output:0};
+    return {
+      blb:rangeLine('BLB'), tf:rangeLine('TF'),
+      sap:{tgt:sapTgt,pred:sapPred,met:sapTgt>0?sapPred>=sapTgt*0.995:null},
+      tos:{tgt:tosTgt,pred:tosPred,met:tosTgt>0?tosPred>=tosTgt*0.995:null,
+        proj:tosPred*DAYS,target4mo:T.limTosTotal||4600000},
+      ld:{pred:ldPred,proj:ldPred*DAYS,target4mo:T.limLdTotal||8000000},
+      pos:{input:pt.input,output:pt.output,rows:pt.rows,
+        balanced:Math.abs(pt.input-pt.output)<1},
+      walls:contractorWallViolations()
+    };
+  }
+  function renderRulesValidation(){
+    const moves=q('plan-alloc-moves');
+    if(!moves)return;
+    let host=q('plan-rules-validation');
+    if(!host){
+      host=document.createElement('div');
+      host.id='plan-rules-validation';
+      moves.insertAdjacentElement('afterend',host);
+    }
+    if(!_allocFrozen){host.innerHTML='';return;}
+    const s=planRulesSummary();
+    const yn=v=>v==null?'n/a':v?'YES':'NO';
+    const mt=t=>(t/1e6).toFixed(2)+' Mt';
+    const pre=
+      'VALIDATION SUMMARY\n'
+      +'==================\n'
+      +'BLB trips/DT range:  '+s.blb.txt+'  ['+s.blb.status+']\n'
+      +'TF trips/DT range:   '+s.tf.txt+'  ['+s.tf.status+']\n'
+      +'SAP target met:      '+yn(s.sap.met)+'  (target: '+fmt(Math.round(s.sap.tgt))
+        +' t/day, actual: '+fmt(Math.round(s.sap.pred))+' t/day)\n'
+      +'LIM-TOS target met:  '+yn(s.tos.met)+'  (day target: '+fmt(Math.round(s.tos.tgt))
+        +' t/day, actual: '+fmt(Math.round(s.tos.pred))+' t/day · 4-mo projection '
+        +mt(s.tos.proj)+' vs '+mt(s.tos.target4mo)+')\n'
+      +'LIM-LD total:        '+mt(s.ld.proj)+' projected  (target: '+mt(s.ld.target4mo)+')  ['
+        +(s.ld.proj>=s.ld.target4mo?'PASS':'FAIL')+']\n'
+      +'POS transit balanced: '+(s.pos.rows.length?yn(s.pos.balanced):'n/a — no POS inflow')
+        +(s.pos.rows.length?'  (input: '+fmt(Math.round(s.pos.input))
+          +' t, output: '+fmt(Math.round(s.pos.output))+' t)':'');
+    const posRows=s.pos.rows.length
+      ?'<table style="margin-top:6px"><thead><tr><th>POS transit (IWIP)</th>'
+        +'<th class="r">t/day</th><th class="r">trips/DT</th><th class="r">DT</th>'
+        +'<th>basis</th></tr></thead><tbody>'
+        +s.pos.rows.map(p=>'<tr><td>'+esc(p.key.replace('>',' → '))+'</td>'
+          +'<td class="r">'+fmt(Math.round(p.tonnes))+'</td>'
+          +'<td class="r">'+p.tripsPerDt.toFixed(2)+'</td>'
+          +'<td class="r">'+p.dt+'</td>'
+          +'<td class="muted">'+esc(p.src)+(p.calibrated?'':' · estimated')+'</td></tr>').join('')
+        +'</tbody></table>'
+      :'';
+    const walls=s.walls.length
+      ?'<div style="color:#ef4444;margin-top:6px">⚠ contractor wall broken: '
+        +s.walls.map(w=>esc(w.key)+' is '+esc(w.contractor)+' (must be '+esc(w.want)+')').join(' · ')
+        +'</div>'
+      :'';
+    const s4=planRulesS4Active()
+      ?' <span class="plan-cong-badge saturated" title="Day-04 plan = Scenario 4: same as S3 '
+        +'but leftover LD trucks split 50/50 HUAFEI/BSE vs POS 12. Compare NEW PREDICTED '
+        +'against the day-03 save to see the tonnage effect.">S4 · LD split 50/50</span>'
+      :'';
+    host.innerHTML=
+      '<div class="plan-s2-label" style="margin-top:14px">Planning rules validation'+s4+' '
+      +'<span class="muted">(<a href="/planning_rules.md" target="_blank" '
+      +'style="color:inherit">planning_rules.md</a> §7 · projections at this day-rate)</span></div>'
+      +'<pre style="font-size:11.5px;line-height:1.5;margin:6px 0 0;white-space:pre-wrap">'
+      +esc(pre)+'</pre>'+posRows+walls;
+  }
 
   const _origCompute=window.computePlan;
   if(typeof _origCompute==='function'){
@@ -1552,6 +1878,31 @@
         return;
       }
       return _origAddFrozen.apply(this,arguments);
+    };
+  }
+
+  // planning_rules.md §3 — pick the pit's contractor BEFORE the row is
+  // created, so the draft slot id (contractor|key|material) is born correct
+  // instead of renamed afterwards. Road-only rows are exempt: the walls
+  // govern contractor haulage, not IWIP/Position traffic.
+  if(typeof window.planAddPath==='function'){
+    const _origAddWall=window.planAddPath;
+    window.planAddPath=function(){
+      try{
+        const foreign=typeof planForeignOn==='function'&&planForeignOn();
+        const src=canonSrc(((q('plan-src')||{}).value)||'');
+        const want=(((window.PLANNING_RULES||{}).contractors)||{})[src];
+        const sel=q('plan-contractor');
+        if(!foreign&&want&&sel&&canonCo(sel.value)!==canonCo(want)){
+          const opt=Array.prototype.find.call(sel.options||[],
+            o=>canonCo(o.value)===canonCo(want));
+          if(opt){
+            sel.value=opt.value;
+            sel.dispatchEvent(new Event('change',{bubbles:true}));
+          }
+        }
+      }catch(e){}
+      return _origAddWall.apply(this,arguments);
     };
   }
 
