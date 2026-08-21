@@ -1450,3 +1450,23 @@ overwrites a positive target — file edits to `targetWmt` are load-safe.
 Re-frozen: LIM-TOS met EVERY month in both scenarios; delivered 4-mo
 actuals ≈ 4.64 Mt (S3) / 4.65 Mt (S4); BLB>HUAFEI runs 68/87/121/113 DT
 (was 40/60/93/86); S4 LD still PASSES Oct–Dec (8.58/12.69/11.72 Mt).
+
+## 2026-08-21 — deep scan for the road-model rework: three measured facts
+
+Full plan: reports/ROAD_CONGESTION_MODEL_PLAN.md (owner-ordered: geometry
+first, then contractor baselines from matched history, then shared-window
+loads on a REAL capacity basis, side-by-side before wire-in). The facts
+that must not be re-derived:
+1. **NODE_KM pins BLB at 67.8 = TOFU's chainage.** Every span/section
+   computation puts BLB trucks on the whole mainline; BLB is a 19.9 km
+   spur joining low. This poisoned span-sharing AND the section pricer.
+2. **TF corridor distances are unsettled**: chainage 63.7/52.8 km vs
+   cycle-implied 29.0/28.6 (calibration's chainage_suspect flag). Flow
+   density, spans and section attribution inherit whichever is wrong.
+3. **The global contractor factor is INVERTED on TF**: matched same-day
+   pairs (n=469, both fleets ≥5 trucks, identical road conditions) give
+   RIM/SMA = 0.60 trips/DT (RIM 1.88, SMA 3.19) while the app applies
+   RIM 1.085×. Raw contractor averages are fleet-size-confounded (RIM
+   ~140 trucks/day vs SMA ~58); only matched days isolate the effect.
+   TF>POS 12 specifically has ~no direct paired history — the app's
+   RIM-ahead numbers there are pure factor artifact.
