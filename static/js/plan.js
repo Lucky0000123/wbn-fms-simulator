@@ -296,9 +296,13 @@ function planCongestionHint(e){
   if(sat<0.85)return {congestionStatus:'saturated',bottleneck:'loader'};
   return {congestionStatus:'free',bottleneck:'ok'};
 }
+function planDraftTouch(){
+  window._planDraftEpoch=(window._planDraftEpoch||0)+1;
+}
 function planLoaderEdit(id, val){
   if(!_planDraft[id])return;
   _planDraft[id].loaders=Math.max(1,parseInt(val,10)||2);
+  planDraftTouch();
   computePlan();
 }
 function planCongCell(e){
@@ -466,7 +470,10 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
     // its demonstrated day cap is a PATH property, not a corridor one.
     const spanSelf=typeof _planSpan==='function'?_planSpan(key):null;
     const spanLen=spanSelf?Math.max(1e-6,spanSelf[1]-spanSelf[0]):null;
-    if(typeof _planDraft!=='undefined'){
+    // opts.solo: this path's own fleet only (Fleet sensitivity). The rest of
+    // the day's trucks stay out so the curve is the measured path response,
+    // not "this row on top of 800 other DT".
+    if(!(opts&&opts.solo)&&typeof _planDraft!=='undefined'){
       const frozen=typeof planAllocFrozen==='function'&&planAllocFrozen();
       Object.keys(_planDraft).forEach(id=>{
         if(opts&&opts.selfId&&id===opts.selfId)return;
@@ -501,7 +508,7 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
     // 25 on its neighbour — same road, trips/DT 25% apart (owner-caught,
     // 2026-08-21). Same combined basis as scripts/run_scenarios_hybrid.py.
     const nLoadersComb=nLoaders+otherLd;
-    const hyb=planHybridCurveFor(key,nLoadersComb,rain);
+    const hyb=(opts&&opts.noHybrid)?null:planHybridCurveFor(key,nLoadersComb,rain);
     if(hyb){
       // A section-v/c ratio briefly multiplied the curve here (2026-08-21)
       // and came straight back out, owner: "BLB trips falls like hell — go
@@ -596,21 +603,36 @@ function planPayload(key,contractor){
 function planDtForWmt(key,targetWmt,rain,contractor,opts){
   const pay=planPayload(key,contractor).tf;if(!(pay>0)||!(targetWmt>0))return null;
   const m=_pathResp&&_pathResp[key];let dt=Math.max(1,(m&&m.avgDt)||30);
-  // UNREACHABLE TARGET (harsh-test 2026-08-12): with the demonstrated
-  // throughput ceiling, tonnage MAXES OUT near N* — a target above that peak
-  // has no fixed point and the solver used to fail with a generic message.
-  // Detect it up front and report the ceiling so the planner learns the
-  // actual limit instead of "could not size".
-  // opts.selfId is load-bearing: without it planTripsPerDT counts this row
-  // twice in the combined-fleet cap and Required DT over-asks on ceiling paths.
-  if(m&&Number.isFinite(m.dayTripsCap)&&m.dayTripsCap>0){
-    const sf=typeof planShiftFactor==='function'?planShiftFactor():0.5;
+  // UNREACHABLE TARGET — HYBRID-FIRST (owner, 2026-08-21: "when you place a
+  // new location it must size DTs from the NEW model, and STOP when the
+  // priorities cannot be filled"). The peak deliverable tonnage now comes
+  // from the hybrid saturation curve when it is cached: total tonnes rise
+  // with fleet, saturate, then flatten/fall — the maximum over the curve IS
+  // the physics ceiling for this road. The legacy dayTripsCap pre-check
+  // remains only as the fallback before the curve arrives, so the "target
+  // unreachable" notification can never disagree with the model that prices
+  // the plan (the J71 two-renderers lesson).
+  const nLoaders=(opts&&Number.isFinite(opts.nLoaders)&&opts.nLoaders>=1)?opts.nLoaders:planBuilderLoaders();
+  const sf=typeof planShiftFactor==='function'?planShiftFactor():0.5;
+  const cf=typeof planContractorFactor==='function'?planContractorFactor(contractor):1;
+  const hybCurve=typeof planHybridCurveFor==='function'?planHybridCurveFor(key,nLoaders,rain):undefined;
+  if(hybCurve&&hybCurve.curve&&hybCurve.curve.length){
+    let peakT=0,peakN=0;
+    for(const pt of hybCurve.curve){
+      // day tonnes -> this shift's tonnes (sf), contractor factor applied
+      const tShift=(pt.total_tonnes!=null?pt.total_tonnes:pt.total_trips*pay)*sf*cf;
+      if(tShift>peakT){peakT=tShift;peakN=pt.n_trucks;}
+    }
+    if(targetWmt>peakT*0.999){
+      planDtForWmt._lastCeiling={maxT:Math.round(peakT),cap:m&&m.dayTripsCap||null,
+        peakDt:peakN,model:'hybrid'};
+      return null;
+    }
+  }else if(m&&Number.isFinite(m.dayTripsCap)&&m.dayTripsCap>0){
     const scale=typeof planRainScale==='function'?planRainScale(key,rain):1;
-    const cf=typeof planContractorFactor==='function'?planContractorFactor(contractor):1;
-    const nLoaders=(opts&&Number.isFinite(opts.nLoaders)&&opts.nLoaders>=1)?opts.nLoaders:planBuilderLoaders();
     const maxT=m.dayTripsCap*Math.min(1,scale)*sf*cf*pay*planLoaderCapScale(m,nLoaders);   // peak achievable/shift
     if(targetWmt>maxT*0.999){
-      planDtForWmt._lastCeiling={maxT:Math.round(maxT),cap:m.dayTripsCap};
+      planDtForWmt._lastCeiling={maxT:Math.round(maxT),cap:m.dayTripsCap,model:'legacy_divide'};
       return null;
     }
   }
@@ -953,16 +975,14 @@ function planBiasLensToggle(){
 function planDateChange(opts){
   opts=opts||{};
   _planRainManual=false;
-  const el=q('plan-date'), note=q('plan-date-note'), sug=q('plan-rain-suggest');
+  const el=q('plan-date'), note=q('plan-date-note');
   const date=(el&&el.value)||'';
   if(!date){
     if(note)note.textContent='';
-    if(sug)sug.innerHTML='';
     if(typeof planRefreshSaveButtons==='function')planRefreshSaveButtons();
     return;
   }
   if(note)note.textContent='Looking up rain…';
-  if(sug)sug.innerHTML='';
   planFetchGpsCoverage(date);
   planFetchPlaybackTruth(date);
   planFetchPeakProxy();
@@ -981,8 +1001,16 @@ function planDateChange(opts){
     }
   }
   if(typeof planCheckSavedExists==='function'){
+    const epoch=window._planDraftEpoch||0;
+    const dateAtStart=date;
     planCheckSavedExists(date).then(exists=>{
       if(!exists)return;
+      if(opts.skipSavedAutoLoad)return;
+      // A late auto-load must not put a saved September file back after the
+      // planner already deleted a row or changed DT (owner, 2026-08-21).
+      if((window._planDraftEpoch||0)!==epoch)return;
+      const cur=((q('plan-date')||{}).value||'').trim();
+      if(cur!==dateAtStart)return;
       const n=typeof planDraftEntries==='function'?planDraftEntries().length:0;
       const st=q('plan-save-status');
       if(n<1){
@@ -1002,11 +1030,8 @@ function planDateChange(opts){
     .then(res=>{
       if(!res||!res.ok){ if(note)note.textContent=''; return; }
       if(note)note.textContent=(res.label||'')+(res.mm!=null?' · '+Math.round(res.mm)+' mm':'');
-      if(sug){
-        sug.innerHTML=escH(res.note||'')
-          +(res.apply?` <button type="button" class="ms-btn" onclick="planApplyRainSuggest(${Number(res.mm)||0})">Use ${Math.round(res.mm)} mm</button>`:'');
-      }
-      // Auto-apply when user hasn't typed rain manually
+      // Auto-fill Rain from the date's forecast. The 16-day strip at the top
+      // is the picker; this row no longer duplicates a Use-mm button.
       if(!_planRainManual&&res.apply&&res.mm!=null){
         const rain=q('plan-rain');
         if(rain){ rain.value=String(Math.round(res.mm)); computePlan(); }
@@ -1014,17 +1039,11 @@ function planDateChange(opts){
     })
     .catch(()=>{ if(note)note.textContent='Rain lookup failed'; });
 }
-function planApplyRainSuggest(mm){
-  _planRainManual=false;
-  const rain=q('plan-rain');
-  if(rain)rain.value=String(Math.max(0,Math.round(mm)));
-  computePlan();
-}
 
 // ── 16-day site rain outlook (Open-Meteo forecast, no key) ───────────────────
 // One strip for the whole planning horizon so "when should we plan the big
 // push?" is answerable at a glance. Clicking a day sets the plan date; the
-// existing rain-suggest flow then applies that day's forecast mm to Step 1.
+// rain-suggest fetch then applies that day's forecast mm to Step 1.
 let _planRainOutlook=null;
 function planFetchRainOutlook(){
   fetch('/api/plan/rain-outlook',{cache:'no-store'})
@@ -1047,6 +1066,20 @@ function planPathModelWmtAtRain(rainMm){
   });
   return any?wmt:null;
 }
+function planOutlookDayLabel(iso){
+  const p=String(iso||'').split('-').map(Number);
+  if(p.length<3||!p[0])return {text:iso||'',title:iso||''};
+  const dt=new Date(p[0],p[1]-1,p[2]);
+  const mo=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][dt.getMonth()];
+  const wd=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dt.getDay()];
+  return {text:dt.getDate()+' '+mo,title:wd+' '+dt.getDate()+' '+mo};
+}
+function planOutlookCompactT(w){
+  if(w==null||!(w>0))return '';
+  if(w>=10000)return Math.round(w/1000)+'k t';
+  if(w>=1000)return (w/1000).toFixed(1).replace(/\.0$/,'')+'k t';
+  return Math.round(w)+' t';
+}
 function planRenderComingDays(){
   const box=q('plan-coming-days');
   if(!box)return;
@@ -1058,24 +1091,30 @@ function planRenderComingDays(){
   }
   const sel=(q('plan-date')||{}).value||'';
   const hasPlan=Object.keys(_planDraft||{}).some(id=>_planDraft[id]&&!_planDraft[id].foreign);
-  const wmts=days.map(d=>planPathModelWmtAtRain(Math.max(0,Number(d.mm)||0)));
-  const finite=wmts.filter(n=>n!=null&&n>0);
-  const max=finite.length?Math.max.apply(null,finite):1;
+  const wmts=hasPlan?days.map(d=>planPathModelWmtAtRain(Math.max(0,Number(d.mm)||0))):[];
+  const maxMm=Math.max(10,...days.map(d=>Number(d.mm)||0));
   box.innerHTML=`<div class="plan-coming-strip">${days.map((d,i)=>{
-    const mm=d.mm==null?null:d.mm;
+    const mm=d.mm==null?null:Number(d.mm);
     const wet=mm!=null&&mm>=10,damp=mm!=null&&mm>=2&&mm<10;
-    const w=wmts[i];
-    const h=hasPlan&&w!=null?Math.max(10,Math.round(72*w/max)):8;
     const cls='plan-coming-chip'+(wet?' wet':damp?' damp':'')+(d.date===sel?' on':'');
-    const wmtTxt=(!hasPlan||w==null)?'—':fmtExact(Math.round(w));
+    const lab=planOutlookDayLabel(d.date);
     const mmTxt=mm!=null?(mm>=1?Math.round(mm):mm>0?'&lt;1':'0'):'—';
-    return `<button type="button" class="${cls}" data-date="${d.date}"
-      title="${d.date} · ${mm!=null?mm+' mm':''} · ${wmtTxt} t predicted (path model · rain moves trips)"
+    const rainPct=mm!=null&&mm>=2?Math.max(18,Math.round(100*Math.min(1,mm/maxMm))):0;
+    const rainLine=rainPct>0
+      ?`<span class="rain" aria-hidden="true"><span class="fill" style="width:${rainPct}%"></span></span>`
+      :'';
+    const w=hasPlan?wmts[i]:null;
+    const tTxt=planOutlookCompactT(w);
+    const tLine=tTxt?`<span class="t">${tTxt}</span>`:'';
+    const tip=[lab.title||d.date,
+      mm!=null?mm+' mm rain':'no rain figure',
+      tTxt?tTxt+' predicted at that rain':'click to set the plan date and rainfall'].join(' · ');
+    return `<button type="button" class="${cls}" data-date="${d.date}" title="${tip}"
       onclick="planPickOutlookDay('${d.date}')">
-      <span class="d">${d.date.slice(5)}</span>
-      <span class="bar-wrap"><span class="bar" style="height:${h}%"></span></span>
-      <span class="t">${wmtTxt}</span>
+      <span class="d">${lab.text}</span>
       <span class="mm">${mmTxt} mm</span>
+      ${rainLine}
+      ${tLine}
     </button>`;
   }).join('')}</div>`;
 }
@@ -1647,6 +1686,11 @@ function planPreview(){
     dt=planDtForWmt(key,planWmtTargetShift(),rain,c,{nLoaders:planBuilderLoaders()});
     if(!dt){
       const ceil=planDtForWmt._lastCeiling;
+      if(ceil&&ceil.model==='hybrid'){
+        return blank('\u26d4 STOP: this road maxes out at ~'+fmtExact(ceil.maxT*planHorizonFactor())+' t/'+planHorizonLabel()
+          +(ceil.peakDt?' (reached near '+fmtExact(ceil.peakDt)+' DT \u2014 more trucks past that add congestion, not tonnes)':'')
+          +'. Lower this path\u2019s target or split the tonnage onto another road, then continue to the next priority.');
+      }
       return blank(ceil
         ?('Target above this path\u2019s demonstrated ceiling: best ever is ~'+fmtExact(ceil.maxT*planHorizonFactor())+' t/'+planHorizonLabel()+' ('+fmtExact(ceil.cap)+' trips/day). Lower the target or split across paths.')
         :'Could not size a fleet for that target on this path.');
@@ -1923,6 +1967,7 @@ function planAddPath(){
       material:((q('plan-material')||{}).value||'').trim(),
       measTrips:Math.max(0,Math.round(fp.trips||0)),
       measTrucks:Math.max(1,Math.round(fp.trucks||1))};
+    planDraftTouch();
     computePlan();
     setTimeout(()=>{if(btn){btn.classList.remove('is-busy');btn.disabled=false;}},320);
     return;
@@ -1974,12 +2019,13 @@ function planAddPath(){
       _planDraft[id]=row;
     }
   }
+  planDraftTouch();
   computePlan();
   // Brief busy flash so “Add to plan” feels acknowledged while tables refresh
   setTimeout(()=>{if(btn){btn.classList.remove('is-busy');btn.disabled=false;}},320);
 }
-function planRemove(id){delete _planDraft[id];computePlan();}
-function planSet(id,v){const r=_planDraft[id];if(r){r.dt=Math.max(0,parseFloat(v)||0);computePlan();}}
+function planRemove(id){delete _planDraft[id];planDraftTouch();computePlan();}
+function planSet(id,v){const r=_planDraft[id];if(r){r.dt=Math.max(0,parseFloat(v)||0);planDraftTouch();computePlan();}}
 /** Stable colour per loading source so holding-plan rows are easy to scan. */
 const PLAN_SRC_COLOURS={
   TF:'#38bdf8',KR:'#f59e0b',BLB:'#a78bfa',CSW:'#22c55e',EOS:'#f472b6',LOYPOLOY:'#2dd4bf',
