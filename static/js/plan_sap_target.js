@@ -1,8 +1,8 @@
 // ── Priority targets in the plan (owner 2026-08-13 / 2026-08-14) ─────────────
 // P1 = SAP (must-move). Predicted sits AT the target, never well above.
-// P2 = LIM from TOS. Filled after SAP. MAY exceed its target when a
-//      contractor still has leftover trucks (they have to live somewhere).
-// P3 = LIM from LD (lowest priority; first donor; leftover trucks land here).
+// P2 = LIM from TOS. Filled after SAP.
+// P3 = LIM from LD. A supplied target is filled after P1/P2; without a target
+//      it remains the lowest-priority capacity sink for leftover trucks.
 // Allocate: same contractor, same origin first.
 //   1. SAP extra → SAP still short.
 //   2. Remaining SAP shortfall from LIM-LD, then LIM-TOS, until Predicted
@@ -12,7 +12,8 @@
 //   4. Remaining LIM-TOS shortfall from LIM-LD, then SAP extra.
 //   5. Trim SAP to Predicted ≈ target. Leftover trucks → TOS short, then LD,
 //      then any same-contractor P2 even if that P2 is already over.
-//   6. P2 surplus is only dumped to other TOS shorts or LD — never back to SAP.
+//   6. Fill targeted P3 rows from untargeted/surplus LD, then leave any fleet
+//      beyond all supplied targets on untargeted LD as visible excess capacity.
 // Original Check-capacity card stays frozen; New Allocation Plan paints below.
 // Predicted and Achievable stay two clocks — never averaged.
 // Allocate sizes Predicted ≈ target. Achievable is /api/simulate (raw),
@@ -264,7 +265,8 @@
 
   // P1 SAP, P2 LIM TOS, P3 LIM LD (and anything else that is not protected).
   // Origin type from the year matrix wins; a missing chip does not turn SAP
-  // into a donor, and a typed target does not protect LD limonite.
+// into a donor. A typed LD target is a real P3 goal, but P1/P2 can still draw
+// from it because priority order is strict.
   function prioOf(r){
     if(!r||r.foreign)return 9;
     const mat=String(r.material||'').toUpperCase();
@@ -277,7 +279,7 @@
     return 9;
   }
   function isDonor(r){return prioOf(r)===3;}
-  function isProtected(r){const p=prioOf(r);return p===1||p===2;}
+  function isProtected(r){const p=prioOf(r);return p===1||p===2||(p===3&&r.targetWmt>0);}
 
   // Show the builder target field for every production row (SAP, LIM-TOS, LIM-LD, others).
   function syncTargetVisibility(){
@@ -290,7 +292,7 @@
     if(inp){
       const otVal=((q('plan-otype')||{}).value||'TOS').toUpperCase();
       inp.title=v==='LIM'&&otVal==='LD'
-        ?'LIM from LD — t/day target for this row. Allocate still treats LD as lowest priority.'
+        ?'LIM from LD — priority-3 t/day target, filled after SAP and LIM-TOS.'
         :v==='LIM'?'LIM from TOS — t/day target for this row.'
         :v==='SAP'?'SAP — tonnes/day this path must deliver.'
         :'Tonnes/day target for this path.';
@@ -487,7 +489,7 @@
                :['rgba(148,163,184,.12)','#94a3b8','rgba(148,163,184,.3)'];
       const tip=p===1?'SAP is fixed supply (P1) — click to set the t/day target'
                :p===2?'LIM from TOS is priority 2 — click to set the t/day target'
-               :p===3?'LIM from LD — click to set the t/day target. Allocate still treats LD as lowest priority.'
+               :p===3?'LIM from LD — click to set the priority-3 t/day target. It fills after SAP and LIM-TOS.'
                :'Click to set the t/day target for this path.';
       if(existing){
         if(!existing.querySelector('input')){
@@ -787,11 +789,11 @@
   function fillBuckets(){
     const hzLab=typeof planHorizonLabel==='function'?planHorizonLabel():'day';
     const B={
-      sap:{key:'sap',label:'SAP · must-move',cls:'sap',target:0,pred:0,achv:0,achvSim:0,dt:0,n:0,dtWas:0,predWas:0,achvWas:0},
-      tos:{key:'tos',label:'LIM-TOS · priority 2',cls:'tos',target:0,pred:0,achv:0,achvSim:0,dt:0,n:0,dtWas:0,predWas:0,achvWas:0},
-      ld:{key:'ld',label:'Other LIM · LD buffer',cls:'ld',target:0,pred:0,achv:0,achvSim:0,dt:0,n:0,dtWas:0,predWas:0,achvWas:0}
+      sap:{key:'sap',label:'SAP · must-move',cls:'sap',target:0,pred:0,achv:0,achvSim:0,simComplete:true,dt:0,n:0,dtWas:0,predWas:0,achvWas:0},
+      tos:{key:'tos',label:'LIM-TOS · priority 2',cls:'tos',target:0,pred:0,achv:0,achvSim:0,simComplete:true,dt:0,n:0,dtWas:0,predWas:0,achvWas:0},
+      ld:{key:'ld',label:'LIM-LD · priority 3',cls:'ld',target:0,pred:0,achv:0,achvSim:0,simComplete:true,dt:0,n:0,dtWas:0,predWas:0,achvWas:0}
     };
-    let fleet=0,fleetWas=0,hasWas=false,predTotal=0,achvTotal=0,achvSimTotal=0;
+    let fleet=0,fleetWas=0,hasWas=false,predTotal=0,achvTotal=0,achvSimTotal=0,simComplete=true;
     Object.keys(draft()).forEach(id=>{
       const r=draft()[id];
       if(!r||r.foreign)return;
@@ -802,7 +804,8 @@
       const clk=rowClocks(id,r,dtNow);
       predTotal+=clk.pred||0;
       achvTotal+=clk.achv||0;
-      achvSimTotal+=clk.sim||0;
+      if(dtNow>0&&!Number.isFinite(clk.sim))simComplete=false;
+      else achvSimTotal+=clk.sim||0;
       const k=bucketOf(r);
       if(!k)return;
       const b=B[k];
@@ -811,7 +814,8 @@
       b.target+=r.targetWmt>0?r.targetWmt:0;
       b.pred+=clk.pred||0;
       b.achv+=clk.achv||0;
-      b.achvSim+=clk.sim||0;
+      if(dtNow>0&&!Number.isFinite(clk.sim))b.simComplete=false;
+      else b.achvSim+=clk.sim||0;
       if(r._preAlloc){
         b.dtWas+=r._preAlloc.dt||0;
         b.predWas+=r._preAlloc.pred||0;
@@ -820,7 +824,9 @@
         b.dtWas+=r.dt||0;
       }
     });
-    return {B:B,hzLab:hzLab,fleet:fleet,fleetWas:fleetWas,hasWas:hasWas,predTotal:predTotal,achvTotal:achvTotal,achvSimTotal:achvSimTotal};
+    return {B:B,hzLab:hzLab,fleet:fleet,fleetWas:fleetWas,hasWas:hasWas,
+      predTotal:predTotal,achvTotal:achvTotal,achvSimTotal:achvSimTotal,
+      simComplete:simComplete};
   }
   function bucketStatusNote(k,target,pred,hzLab){
     if(!(target>0)||pred==null||!Number.isFinite(pred))return '';
@@ -1004,7 +1010,7 @@
       dt_before:Math.round(b.dtWas||0), dt_after:Math.round(b.dt||0),
       pred_before:Math.round(b.predWas||0), pred_after:Math.round(b.pred||0),
       achv_before:Math.round(b.achvWas||0), achv_after:Math.round(b.achv||0),
-      achv_sim:Math.round(b.achvSim||0)};
+      achv_sim:b.simComplete?Math.round(b.achvSim||0):null};
   }
   function buildAllocationPayload(){
     if(!_allocFrozen)return null;
@@ -1028,7 +1034,7 @@
         pred_after:Math.round(clk.pred||0),
         achv_before:Math.round(pre.achv||0),
         achv_after:Math.round(clk.achv||0),
-        achv_sim:Math.round(clk.sim||0),
+        achv_sim:Number.isFinite(clk.sim)?Math.round(clk.sim):null,
         trips:Math.round(clk.trips||0),
         trips_before:Math.round(clkOld.trips||0)
       };
@@ -1045,7 +1051,12 @@
       horizon:hzLab,
       old:_origTotals||{pred:null,achv:null,dt:filled.fleetWas},
       cap:'none',
-      new:{pred:newPred, achv:newAchv, achv_sim:filled.achvSimTotal||null, dt:filled.fleet, target:goals.total},
+      new:{pred:newPred, achv:newAchv,
+        achv_sim:filled.simComplete?Math.round(filled.achvSimTotal):null,
+        dt:filled.fleet, target:goals.total},
+      calculation_status:filled.simComplete?'complete':'simulation_pending',
+      engine:{allocator:'priority-target-v3',priority:['SAP','LIM-TOS','LIM-LD'],
+        prediction:'planTripsPerDT',achievable:'api/simulate'},
       fleet:{before:filled.fleetWas, after:filled.fleet},
       goals:goals,
       moved_total:movedTotal,
@@ -1062,7 +1073,7 @@
     const meta={
       sap:{label:'SAP · must-move',cls:'sap'},
       tos:{label:'LIM-TOS · priority 2',cls:'tos'},
-      ld:{label:'Other LIM · LD buffer',cls:'ld'}
+      ld:{label:'LIM-LD · priority 3',cls:'ld'}
     };
     const cards=['sap','tos','ld'].map(k=>{
       const b=packed[k]||{};
@@ -1344,11 +1355,18 @@
         const p=prioOf(x.r);
         if(p===1)return extraDtForTarget(x, donorSpare(p3.concat(p2), 0));
         if(p===2)return extraDtForTarget(x, donorSpare(p3, 1));
+        if(p===3)return extraDtForTarget(x,
+          p3.reduce((a,y)=>a+(y.id===x.id?0:surplusOf(y)),0)
+          +p2.reduce((a,y)=>a+surplusOf(y),0)
+          +p1.reduce((a,y)=>a+surplusOf(y),0));
         return 0;
       }
       function surplusOf(x){
         const p=prioOf(x.r);
-        if(p===3)return Math.max(0,x.r.dt-1);
+        if(p===3){
+          if(x.r.targetWmt>0)return Math.max(0,Math.floor(x.r.dt-minDtForTarget(x)));
+          return Math.max(0,x.r.dt);
+        }
         if(p===1||p===2)return Math.max(0,Math.floor(x.r.dt-minDtForTarget(x)));
         return 0;
       }
@@ -1391,6 +1409,8 @@
       }
       function sapShort(){return p1.filter(x=>belowNeed(x)>0).sort((a,b)=>belowNeed(b)-belowNeed(a));}
       function tosShort(){return p2.filter(x=>belowNeed(x)>0).sort((a,b)=>belowNeed(b)-belowNeed(a));}
+      function ldShort(){return p3.filter(x=>x.r.targetWmt>0&&belowNeed(x)>0)
+        .sort((a,b)=>belowNeed(b)-belowNeed(a));}
 
       // §3 walls first: old rescues only walled BLB, so saved plans can carry
       // rows like KR>HUAFEI · RIM (18-30 DT in the Oct-Dec S1 saves). Those
@@ -1465,13 +1485,26 @@
               {list:p1, tag:'SAP extra → LIM-TOS', spare:surplusOf}
             ]);
           });
+          // P3 targets are real targets too, but are considered only after
+          // every reachable SAP and LIM-TOS target is settled. They may use
+          // untargeted LD, surplus above another P3 target, then genuine
+          // P2/P1 surplus (never production still needed by a higher target).
+          ldShort().forEach(rec=>{
+            fill(rec, belowNeed(rec), [
+              {list:p3.filter(x=>!(x.r.targetWmt>0)), tag:'untargeted LD → LIM-LD target',
+                spare:x=>Math.max(0,x.r.dt), drain:true},
+              {list:p3, tag:'LIM-LD surplus → LIM-LD target', spare:surplusOf},
+              {list:p2, tag:'LIM-TOS surplus → LIM-LD target', spare:surplusOf},
+              {list:p1, tag:'SAP surplus → LIM-LD target', spare:surplusOf}
+            ]);
+          });
           dumpExtra(p1, (origin)=>
             orderDonors(tosShort(), origin)
-              .concat(orderDonors(p3.filter(x=>!wallBroken(x)), origin)),
+              .concat(orderDonors(p3.filter(x=>!wallBroken(x)&&!(x.r.targetWmt>0)), origin)),
             'trim SAP to target → LD (extras haul LIM-LD)');
           dumpExtra(p2, (origin)=>
             orderDonors(tosShort(), origin)
-              .concat(orderDonors(p3.filter(x=>!wallBroken(x)), origin)),
+              .concat(orderDonors(p3.filter(x=>!wallBroken(x)&&!(x.r.targetWmt>0)), origin)),
             'trim LIM-TOS to target → LD (extras haul LIM-LD)');
         }
         if(moved===before)break;
@@ -1493,6 +1526,13 @@
         movesTxt.push('⚠ '+cont+' LIM-TOS short '+fmt(rec.r.targetWmt-pred)+' t/day on '+rec.r.key
           +' — leftover after SAP (must-move) was not enough');
       });
+      p3.forEach(rec=>{
+        if(!(rec.r.targetWmt>0))return;
+        const pred=predOf(rec);
+        if(pred==null||pred>=rec.r.targetWmt*0.995)return;
+        movesTxt.push('⚠ '+cont+' LIM-LD short '+fmt(rec.r.targetWmt-pred)+' t/day on '+rec.r.key
+          +' — P1 SAP and P2 LIM-TOS consumed the available fleet first');
+      });
       // planning_rules.md §4 P3 — the S4 scenario (owner, 2026-08-21): same
       // plan as S3 except the leftover LD trucks at TF split 50/50 between
       // HUAFEI/BSE and POS 12, to see whether tonnage rises when the
@@ -1501,8 +1541,7 @@
       // split runs ONLY on a day-04 plan date; S3 allocation is untouched
       // and the two save files compare tonnage like-for-like. Runs AFTER
       // P1/P2 are settled so it only moves genuine leftovers; same owner,
-      // and the new row carries targetWmt 0 (LD is the buffer, not a typed
-      // target — same rule as rescue helpers).
+      // and only untargeted P3 excess is eligible for this network split.
       (function splitLeftoverLd(){
         if(!planRulesS4Active())return;
         const split=(((window.PLANNING_RULES||{}).limLd)||{}).split;
@@ -1511,7 +1550,10 @@
         const destOf=x=>canonDest(String(x.r.key||'').split('>')[1]||'');
         const isPos12=x=>destOf(x)==='POS 12';
         const isHb=x=>destOf(x)==='HUAFEI'||destOf(x)==='BSE';
-        const tfLd=p3.filter(x=>originOf(x)==='TF'&&(isPos12(x)||isHb(x)));
+        // Split only capacity beyond supplied P3 targets. Targeted LD rows were
+        // sized immediately above and must not be pulled short by the S4 what-if.
+        const tfLd=p3.filter(x=>originOf(x)==='TF'&&!(x.r.targetWmt>0)
+          &&(isPos12(x)||isHb(x)));
         const total=tfLd.reduce((a,x)=>a+x.r.dt,0);
         if(total<2)return;
         const wantPos=Math.round(total*split.pos12);
@@ -1720,7 +1762,7 @@
       if(r._preAlloc&&r._preAlloc.dt!=null)r.dt=r._preAlloc.dt;
     });
     _allocMsg=moved
-      ?(movesTxt.join('\n')+'\nAllocator v2 · extras → LIM-LD only · P1/P2 trimmed to ~100% of target\nEngine recalculating for new achievable…')
+      ?(movesTxt.join('\n')+'\nAllocator v3 · targets run P1 SAP → P2 LIM-TOS → P3 LIM-LD · P1/P2 trimmed to ~100%\nEngine recalculating for new achievable…')
       :(movesTxt.filter(t=>t.indexOf('⚠')===0).length
         ?movesTxt.join('\n')
         :'No moves — SAP is covered, or this contractor has no LIM trucks left to draw from.');
@@ -1791,10 +1833,18 @@
     const rain=rainMm();
     const rows=Object.keys(d).map(id=>d[id])
       .filter(r=>r&&r.key&&workingDt(r)>0);
+    // planTripsPerDT prices each route at its COMBINED loaders (rows share
+    // the road and its faces), so warm exactly those keys — per-row keys
+    // would warm curves nothing asks for.
+    const comb={};
+    rows.forEach(r=>{
+      if(!r.foreign)comb[r.key]=(comb[r.key]||0)+(r.loaders||2);
+    });
+    rows.forEach(r=>{if(comb[r.key]==null)comb[r.key]=r.loaders||2;});
     for(let i=0;i<60;i++){
       let pending=false;
-      rows.forEach(r=>{
-        if(planHybridCurveFor(r.key, r.loaders||2, rain)===undefined)pending=true;
+      Object.keys(comb).forEach(key=>{
+        if(planHybridCurveFor(key, comb[key], rain)===undefined)pending=true;
       });
       if(!pending)return;
       await new Promise(res=>setTimeout(res,250));
@@ -1896,10 +1946,16 @@
       }
     }
     // IWIP trucks are on the road now: recompute so the plan table, road
-    // crowding (▶ Run) and the validation summary all see them.
+    // crowding (▶ Run) and the validation summary all see them — and
+    // RE-SIMULATE, because planRunScenario fetched the engine before these
+    // rows existed and Achievable must carry their corridor drag too
+    // (owner, 2026-08-21: every aspect follows the allocated division).
     try{if(typeof computePlan==='function')computePlan();}catch(e){}
     try{renderAllocView();}catch(e){}
     try{renderRulesValidation();}catch(e){}
+    if(_posTransitInfo&&_posTransitInfo.rows.length&&typeof planRunScenario==='function'){
+      try{planRunScenario({preserveFinalize:true,fromAlloc:true});}catch(e){}
+    }
   }
 
   // ── planning_rules.md §7 — validation bands + post-run summary ───────────

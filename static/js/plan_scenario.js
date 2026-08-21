@@ -5,10 +5,13 @@
 const PLAN_FLOW_COLOURS=['#38bdf8','#f59e0b','#a78bfa','#22c55e','#f472b6','#2dd4bf','#fb923c','#eab308'];
 
 function planDraftEntries(){
+  // Allocation helper rows (S4 50/50 split, rescues) carry their trucks in
+  // _allocDt with display dt 0 — keep them visible to frozen-aware
+  // consumers. Consumers reading r.dt still see 0 and skip them, as before.
   return Object.keys(_planDraft||{}).map(id=>{
     const r=_planDraft[id],parts=(r.key||'').split('>');
     return {id,...r,source:(r.source||parts[0]||'').trim(),dest:(r.dest||parts[1]||'').trim()};
-  }).filter(r=>r.key&&r.dt>0);
+  }).filter(r=>r.key&&(r.dt>0||(r._allocDt!=null&&r._allocDt>0)));
 }
 
 function planDraftToPsPlans(){
@@ -849,8 +852,13 @@ function planRenderOutcomes(sim,predict){
 function planDraftToAnaloguePlans(){
   // Keep contractor (unlike simulate). Aggregate DT per contractor|route.
   // Foreign / road-only rows have no WMT history, so they are not sent to analogues.
+  // After Allocate, match history against the ALLOCATED fleet (S4's 50/50
+  // split rows live in _allocDt with display dt 0) — owner, 2026-08-21:
+  // every aspect of the plan reads the division, not the pre-alloc draft.
+  const frozen=typeof planAllocFrozen==='function'&&planAllocFrozen();
   return planDraftEntries().filter(r=>!r.foreign).map(r=>({
-    source:r.source,destination:r.dest,n_trucks:Math.round(r.dt),
+    source:r.source,destination:r.dest,
+    n_trucks:Math.round((frozen&&r._allocDt!=null)?r._allocDt:r.dt),
     n_loaders:typeof planNLoaders==='function'?planNLoaders(r):(r.loaders||2),
     contractor:r.contractor||null,
   })).filter(p=>p.n_trucks>0&&p.source&&p.destination);
@@ -897,8 +905,12 @@ function planCrowdToggleDay(el){
   planFetchRoadCrowding();
 }
 function planFetchRoadCrowding(){
+  // Road crowding must see the ALLOCATED division (S4 split rows, IWIP) —
+  // owner, 2026-08-21: every aspect follows the 50/50 truck division.
+  const frozen=typeof planAllocFrozen==='function'&&planAllocFrozen();
   const plans=planDraftEntries().map(r=>({
-    source:r.source,destination:r.dest,n_trucks:Math.round(r.dt||0),
+    source:r.source,destination:r.dest,
+    n_trucks:Math.round(((frozen&&r._allocDt!=null)?r._allocDt:r.dt)||0),
     n_loaders:typeof planNLoaders==='function'?planNLoaders(r):(r.loaders||2),
     contractor:r.contractor||null,id:r.id,
   })).filter(p=>p.n_trucks>0&&p.source&&p.destination);

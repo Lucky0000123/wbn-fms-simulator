@@ -1321,3 +1321,34 @@ buckets): a row sits at 104% when removing one truck would fall below
 0.995x target. All 13 saves re-frozen; LIM-TOS now lands within ~0.3% of
 its day target every month, and the freed P2 trucks lifted LD (S4
 Oct/Nov/Dec 8.55/12.75/11.53 Mt — PASS vs 8 Mt).
+
+## 2026-08-21 — TF>HUAFEI rows priced the same road three different ways
+
+Owner: "TF>HUAFEI still using old calculations — fix for all new plans and
+capacity checks." Three real defects behind it:
+
+1. **Per-row loader keys on a shared road.** planTripsPerDT fetched each
+   row's hybrid curve at the ROW's loaders and evaluated it at the
+   COMBINED fleet: 929 trucks priced against 4 faces on one row, 25 on its
+   neighbour — same road, same contractor, trips/DT 25% apart. Curves are
+   now keyed on the route's COMBINED loaders (rows share the road AND its
+   faces; same basis as run_scenarios_hybrid). planRulesWarmCurves warms
+   exactly those combined keys.
+2. **Failed curve fetches cached null FOREVER.** One server blip mid-
+   session silently dropped a route to the legacy divide until full page
+   reload — with the many restarts that day, this is what the owner saw.
+   Failures retry after 30 s, and while the exact loaders pair loads the
+   NEAREST cached loader count serves as interim (loaders mostly move the
+   queue term; far closer than the divide fallback).
+3. **Hybrid gated on dayTripsCap.** Thin-day routes never consulted the
+   physics curve at all and rode the linear regression. Ungated; the
+   legacy ceiling still applies only where a day cap was demonstrated.
+
+Same session, owner: S4 must carry the 50/50 division through EVERY
+aspect including Achievable. planDraftEntries no longer drops helper rows
+(display dt 0, trucks in _allocDt); road crowding and analogues are
+frozen-aware; and planRulesPosTransit re-runs planRunScenario after IWIP
+rows land so the engine's Achievable carries their corridor drag —
+planDraftToPsPlans was already _allocDt-aware. Verified: all TF>HUAFEI
+rows now price identically per contractor (RIM 2.46 / SMA 1.69 at the
+Sep S4 division) and Achievable moves with the split (65,828 → 77,078 t).

@@ -323,24 +323,51 @@ function planCongCell(e){
 // and the response is tagged modelVersion:'legacy_divide' vs 'hybrid'.
 const _planHybridCurves={};      // "key|loaders|rainB" -> {curve:[...], knee}
 const _planHybridPending={};
+const _planHybridFailedAt={};    // ck -> ms; failures RETRY, they are not verdicts
 function planHybridRainBucket(rain){return rain>=10?'wet':(rain>=1?'damp':'dry');}
 function planHybridCurveFor(key,nLoaders,rain){
-  const ck=key+'|'+nLoaders+'|'+planHybridRainBucket(rain);
+  const bucket=planHybridRainBucket(rain);
+  const ck=key+'|'+nLoaders+'|'+bucket;
   const hit=_planHybridCurves[ck];
-  if(hit!==undefined)return hit;                 // null = fetch failed (legacy)
-  if(!_planHybridPending[ck]){
+  if(hit)return hit;
+  // A failed fetch used to cache null FOREVER, so one server blip mid-
+  // session silently repriced the route on the legacy divide until a full
+  // page reload (owner, 2026-08-21: "TF>HUAFEI still using the old
+  // calculations"). Failures now retry after 30 s, and while the exact
+  // (loaders) pair loads we serve the NEAREST cached loader count for the
+  // same route+rain — loaders mostly move the queue term, so that is far
+  // closer to the truth than the divide-at-ceiling fallback.
+  const failedRecently=hit===null&&Date.now()-(_planHybridFailedAt[ck]||0)<30000;
+  if(!failedRecently&&!_planHybridPending[ck]){
     _planHybridPending[ck]=true;
     const rainMm=rain>=10?12:(rain>=1?3:0);
     fetch('/api/congestion_curve?route='+encodeURIComponent(key)
           +'&n_loaders='+nLoaders+'&max_trucks=1000&rain_mm='+rainMm)
       .then(r=>r.ok?r.json():null)
       .then(d=>{
-        _planHybridCurves[ck]=(d&&d.ok&&d.curve&&d.curve.length)?d:null;
+        const ok=!!(d&&d.ok&&d.curve&&d.curve.length);
+        _planHybridCurves[ck]=ok?d:null;
+        if(!ok)_planHybridFailedAt[ck]=Date.now();
+        _planHybridPending[ck]=false;
         if(typeof computePlan==='function')computePlan();
       })
-      .catch(()=>{_planHybridCurves[ck]=null;});
+      .catch(()=>{
+        _planHybridCurves[ck]=null;
+        _planHybridFailedAt[ck]=Date.now();
+        _planHybridPending[ck]=false;
+      });
   }
-  return undefined;                              // pending
+  let best=null,bestD=Infinity;
+  for(const k in _planHybridCurves){
+    const c=_planHybridCurves[k];
+    if(!c)continue;
+    const p=k.split('|');
+    if(p[0]!==key||p[2]!==bucket)continue;
+    const dL=Math.abs((parseInt(p[1],10)||0)-nLoaders);
+    if(dL<bestD){bestD=dL;best=c;}
+  }
+  if(best)return best;
+  return undefined;                              // nothing cached yet
 }
 function planHybridTripsAt(curveData,nTrucks){
   const c=curveData.curve;
@@ -428,8 +455,8 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
   // row being priced from the "others" sum.
   let satFactor=1;
   let _hybridInfo=null;
-  if(Number.isFinite(m.dayTripsCap)&&m.dayTripsCap>0&&tr>0&&dt>0){
-    let otherDt=0;
+  if(tr>0&&dt>0){
+    let otherDt=0,otherLd=0;
     if(typeof _planDraft!=='undefined'){
       Object.keys(_planDraft).forEach(id=>{
         if(opts&&opts.selfId&&id===opts.selfId)return;
@@ -437,7 +464,7 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
         if(r2&&r2.key===key&&!r2.foreign){
           const n=(typeof planAllocFrozen==='function'&&planAllocFrozen()
             &&r2._allocDt!=null)?r2._allocDt:r2.dt;
-          if(n>0)otherDt+=n;
+          if(n>0){otherDt+=n;otherLd+=planNLoaders(r2);}
         }
       });
     }
@@ -451,7 +478,13 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
     // HYBRID: when the backend saturation curve is cached, it REPLACES the
     // divide-at-ceiling. tr becomes the physics trips/DT at the COMBINED
     // fleet (x contractor factor; rain is inside the curve request).
-    const hyb=planHybridCurveFor(key,nLoaders,rain);
+    // The curve is priced at the route's COMBINED loaders too: rows share
+    // one road AND its loading faces. Keying each row's curve on its OWN
+    // loaders priced 929 trucks against 4 faces on one TF>HUAFEI row and
+    // 25 on its neighbour — same road, trips/DT 25% apart (owner-caught,
+    // 2026-08-21). Same combined basis as scripts/run_scenarios_hybrid.py.
+    const nLoadersComb=nLoaders+otherLd;
+    const hyb=planHybridCurveFor(key,nLoadersComb,rain);
     if(hyb){
       const pt=planHybridTripsAt(hyb,nComb);
       if(pt&&Number.isFinite(pt.trips_per_dt)&&pt.trips_per_dt>0){
@@ -463,7 +496,11 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
           p10:pt.p10,p90:pt.p90,knee:hyb.knee_dt};
       }
     }
-    const capEff=m.dayTripsCap*Math.min(1,scale)*planLoaderCapScale(m,nLoaders);
+    // Legacy ceiling only exists where a day cap was demonstrated; hybrid
+    // pricing above no longer requires it (thin-day routes still have a
+    // physics curve — they were silently stuck on the linear rate before).
+    const capEff=(Number.isFinite(m.dayTripsCap)&&m.dayTripsCap>0)
+      ?m.dayTripsCap*Math.min(1,scale)*planLoaderCapScale(m,nLoaders):0;
     // HARD MIN, deliberately. A BPR volume-delay penalty lived here briefly on
     // 2026-08-12 — served = capEff/(1 + 0.15·over²) — and it had to come out:
     //   • It made output COLLAPSE, not plateau. Measured on TF>FENI KM0:
