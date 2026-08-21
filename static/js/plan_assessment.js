@@ -120,7 +120,10 @@ function paChart(id, option, emptyNote) {
   // then 1, then 0, while the wrapper divs were recreated each time and looked
   // fine to anything counting elements.
   let c = _paCharts[id];
-  if (c && (c.isDisposed() || c.getDom() !== el || !c.getDom().isConnected)) {
+  // No canvas under the root = the instance's inner DOM was wiped (innerHTML)
+  // while the root stayed connected; getDom() checks alone cannot see that.
+  if (c && (c.isDisposed() || c.getDom() !== el || !c.getDom().isConnected
+      || !el.querySelector('canvas'))) {
     try { c.dispose(); } catch (e) {}
     c = null;
     delete _paCharts[id];

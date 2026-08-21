@@ -1,5 +1,7 @@
 #!/usr/bin/env python
-"""Run S1/S2/S3 saved plans through the hybrid congestion model.
+"""Run S1/S3 saved plans through the hybrid congestion model.
+
+(S2 was deleted from the app 2026-08-21; day-02 saves are no longer read.)
 
 v2 (owner, 2026-08-20): loaders scale PROPORTIONALLY with trucks using each
 route's measured historical trucks-per-loader ratio (median fleet / median
@@ -19,7 +21,7 @@ from statistics import median
 BASE = 'http://127.0.0.1:5055'
 DAYS = {9: 30, 10: 31, 11: 30, 12: 31}
 MON = {9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
-SCEN_DAY = {1: 'S1', 2: 'S2', 3: 'S3'}
+SCEN_DAY = {1: 'S1', 3: 'S3'}
 DEFAULT_TPL = 15.0   # Burt & Caccetta 2007 balanced match factor when unmeasured
 
 
@@ -137,7 +139,7 @@ def report(results, uncal):
     w('HYBRID CONGESTION MODEL v2 - PROPORTIONAL LOADERS '
       '(measured trucks/loader per route; rho held ~constant)')
     w('=' * 104)
-    for scen in ('S1', 'S2', 'S3'):
+    for scen in ('S1', 'S3'):
         for m in (9, 10, 11, 12):
             rows = results.get(scen, {}).get(m)
             if not rows:
@@ -161,7 +163,7 @@ def report(results, uncal):
     w('%-5s %-4s %8s %10s %12s %10s %6s %6s %8s' % (
         'Mon', 'Scen', 'TotDT', 'Trips/d', 'Tonnes/d', 'AvgT/DT', '#Over', '#Road', '#Loader'))
     summary = []
-    for scen in ('S1', 'S2', 'S3'):
+    for scen in ('S1', 'S3'):
         for m in (9, 10, 11, 12):
             rows = [r for r in results.get(scen, {}).get(m, []) if 'error' not in r]
             if not rows:
@@ -184,7 +186,7 @@ def report(results, uncal):
     w('%-5s %-4s %7s %10s %12s %10s %9s' % (
         'Mon', 'Scen', 'LD DT', 'Trips/d', 'Tonnes/d', 'Mt/month', 'cum Mt'))
     ld_tot = {}
-    for scen in ('S1', 'S2', 'S3'):
+    for scen in ('S1', 'S3'):
         cum = 0
         for m in (9, 10, 11, 12):
             rows = [r for r in results.get(scen, {}).get(m, []) if 'error' not in r
@@ -202,7 +204,7 @@ def report(results, uncal):
     w()
     w('D . SCENARIO COMPARISON (Sep-Dec)')
     w('%-4s %14s %8s %10s %10s' % ('Scen', 'LD Mt Sep-Dec', 'pct8Mt', 'AvgT/DT', 'WorstOver'))
-    for scen in ('S1', 'S2', 'S3'):
+    for scen in ('S1', 'S3'):
         months = results.get(scen, {})
         tr = d = 0
         wover = 0
@@ -215,7 +217,7 @@ def report(results, uncal):
             scen, ld_tot.get(scen, 0), 100 * ld_tot.get(scen, 0) / 8, tr / max(1, d), wover))
     w()
     w('E . BOTTLENECK STORY - TF>HUAFEI LD (Nov, proportional loaders)')
-    for scen in ('S1', 'S2', 'S3'):
+    for scen in ('S1', 'S3'):
         rows = [r for r in results.get(scen, {}).get(11, []) if 'error' not in r
                 and r['route'] == 'TF>HUAFEI' and 'LD' in (r['material'] or '')]
         for r in rows:

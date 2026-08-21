@@ -1112,3 +1112,33 @@ preserve_stamp()` carries `generated_at` forward when nothing else changed, so
 - Mine-plan scenarios: pit × material monthly ROM only; fleet is yearly-matrix DT. Waterfall P1 SAP → P2 LIM-TOS → leftover DT to P3 LIM-LD (Tofu dump → Huafei); 8 Mt is a sales target line, never a clip. S1 is live yearly matrix (not importable). LIM-LD is leftover output, not a typed target. LIM-LD (TF>HUAFEI) shares TOS’s demonstrated path ceiling; breakage = N* − TOS already on the path. `/api/monthly/export-year` writes `monthly_plan_YYYY.xlsx` (Year + Aug–Dec; same Target / Old predicted / Optimized predicted clocks; charts under tables; no DT-move list; month path table includes WMT, DT, trips). `/api/scenarios/export-full` zips one such workbook per scenario (`monthly_plan_2026.xlsx`, `monthly_plan_2026_S2.xlsx`, …); S2/S3 Excel is synthesized from the waterfall.
 - Hide the Capability filter header (`.top`) on Plan and Production Simulator tabs; keep the sim-tab strip so users can leave Plan.
 - Never invent pre-2026-07-15 haul speeds from Playback; path-response main-cluster trips/DT will sit below a single best past day by design (trimmed mean, not the peak day).
+
+## 2026-08-21 — S2 deleted from the app; S3 is the scenario of record
+
+Owner request: S2 removed everywhere the app offers it. Deleted:
+`data/scenarios/S2.json` (git rm), `data/saved_plans/2026-{09..12}-02.json`
+(gitignored; copies in `data/saved_plans/_deleted_s2_backup_2026-08-21/`),
+and the "Scenario 2 · day 2" option in the /monthly Year-board selector.
+`data/s2_results.*` never existed — nothing referenced it. The scenario
+system itself is data-driven (`_scenario_ids()` lists `data/scenarios/*.json`),
+so no `scenario_api.py` change was needed. J72 now pins S3 (workbook, draft
+plans, year-board day=3) and asserts BOTH directions per the J71 lesson:
+S3 workbook present AND S2 workbook absent; day=2 resolves nothing.
+Day 02 stays reserved — do not save a new plan there.
+
+**Trap while doing it:** most `s2` hits in the frontend are *Step 2* blocks
+(`plan-s2-block`, `plan-s2-illust`, …) or a sum-of-squares local, not
+Scenario 2. Grep for `'S2'`/`scenarios/S2`/`-02.json`, not bare `s2`.
+
+## 2026-08-21 — Cycle Breakdown chart consumed field names the API never sent
+
+`renderCongBreakdown()` read `c.bpr_min || c.queue_min || …` while
+`/api/congestion_model` sends `components.{t_free_road, bpr_penalty_minutes,
+queue_wait_minutes, t_load, t_spot, t_dump, bunching_penalty_minutes}`.
+Zero keys matched, so the filter left no parts and the chart showed its
+"Backend not ready" note on every render — with a healthy backend and a
+clean console. A graceful fallback turned a contract mismatch into what
+looked like an expected offline state; nothing failed loudly. Same family
+as "count drawn canvases": the check that caught it was canvas-count 0 in
+`#cong-breakdown-chart` while its two sibling charts drew 1 each. If a
+degraded-mode note ships, gate on the healthy path rendering at least once.

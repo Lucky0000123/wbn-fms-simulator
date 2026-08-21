@@ -47,9 +47,11 @@ the leftover-truck sink, uncapped; 8,000,000 t is a sales *target line*).
 ### Local data (gitignored, NOT on GitHub — back these up separately)
 - `data/saved_plans/YYYY-MM-DD.json` — Plan-tab saved daily plans **with
   frozen Allocate-DT snapshots**. Scenario convention: **day 01 = S1,
-  day 02 = S2, day 03 = S3** of each month. Current inventory:
+  day 03 = S3** of each month (day 02 held S2 until it was deleted from the
+  app on 2026-08-21, owner request; a copy sits in
+  `data/saved_plans/_deleted_s2_backup_2026-08-21/`). Current inventory:
   Aug: 01 (S1 only, by owner request), plus legacy 04/05/07/13.
-  Sep–Dec: 01/02/03 each.
+  Sep–Dec: 01/03 each.
 - `data/monthly_plans/` — month states (2026-08…2026-12.json) +
   `yearly_matrix.json` (the pasted mine-plan matrix = S1 targets + DT pools).
 - `data/gps_archive/` — accumulated haul GPS (cron 07:00/19:00 via
@@ -62,7 +64,8 @@ the leftover-truck sink, uncapped; 8,000,000 t is a sales *target line*).
   Copied from LUCKY_SSD via `scripts/sync_creds_from_ssd.sh`. NEVER commit.
 
 ### Committed data (in the repo)
-- `data/scenarios/S2.json`, `S3.json` — imported scenario targets.
+- `data/scenarios/S3.json` — imported scenario targets (S2.json deleted
+  2026-08-21 with the rest of S2; backup beside the saved plans above).
 - `fixtures/` — offline API payload snapshots (app runs without the DB).
 - `data/haul_road_chainage*.csv` — the committed road centreline (J63).
 

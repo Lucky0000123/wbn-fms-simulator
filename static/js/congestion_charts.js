@@ -8,6 +8,13 @@ let _congCurveSeq=0;
 function _congChartEl(id, note){
   const el=document.getElementById(id);
   if(!el)return null;
+  // innerHTML guts a live ECharts instance while its root (el) stays connected,
+  // so reuse guards keyed on getDom() never notice. Dispose before wiping.
+  if(typeof echarts!=='undefined'){
+    const c=echarts.getInstanceByDom(el);
+    if(c){try{c.dispose();}catch(e){}}
+  }
+  if(el._congChart){try{el._congChart.dispose();}catch(e){} el._congChart=null;}
   el.innerHTML='<div class="muted" style="padding:16px;font-size:12px;border:1px dashed var(--line);border-radius:8px">'
     +(note||'Loading…')+'</div>';
   return el;
@@ -188,12 +195,15 @@ function renderCongBreakdown(route, nTrucks, nLoaders){
       return;
     }
     const c=d.components||d.cycle||d;
+    // /api/congestion_model sends t_free_road / bpr_penalty_minutes / … ;
+    // the *_min names never shipped but are kept in case an older payload did.
     const parts=[
-      {name:'Road (BPR)',v:c.bpr_min||c.bprMin||c.road_min||c.travel_min},
-      {name:'Loader queue',v:c.queue_min||c.queueMin||c.wait_min},
-      {name:'Loading',v:c.load_min||c.loadMin||c.loading_min},
-      {name:'Dump / spot',v:c.dump_min||c.dumpMin||c.spot_min},
-      {name:'Bunching',v:c.bunching_min||c.bunchingMin},
+      {name:'Road (free flow)',v:c.t_free_road||c.road_min||c.travel_min},
+      {name:'Road (BPR penalty)',v:c.bpr_penalty_minutes||c.bpr_min||c.bprMin},
+      {name:'Loader queue',v:c.queue_wait_minutes||c.queue_min||c.queueMin||c.wait_min},
+      {name:'Loading',v:c.t_load||c.load_min||c.loadMin||c.loading_min},
+      {name:'Dump / spot',v:((c.t_dump||0)+(c.t_spot||0))||c.dump_min||c.dumpMin||c.spot_min},
+      {name:'Bunching',v:c.bunching_penalty_minutes||c.bunching_min||c.bunchingMin},
     ].filter(p=>Number.isFinite(p.v)&&p.v>0);
     if(!parts.length){
       _congChartEl('cong-breakdown-chart',empty);
@@ -208,7 +218,7 @@ function renderCongBreakdown(route, nTrucks, nLoaders){
       yAxis:Object.assign({type:'category',data:[route.replace('>',' → ')]},axis),
       series:parts.map((p,i)=>({name:p.name,type:'bar',stack:'cycle',barWidth:28,
         data:[+Number(p.v).toFixed(1)],
-        itemStyle:{color:['#38bdf8','#f59e0b','#22c55e','#a78bfa','#f472b6'][i%5]}})),
+        itemStyle:{color:['#38bdf8','#f59e0b','#22c55e','#a78bfa','#f472b6','#eab308'][i%6]}})),
       legend:{data:parts.map(p=>p.name),textStyle:{color:'#8b98a5',fontSize:10},bottom:0},
     });
   }).catch(()=>_congChartEl('cong-breakdown-chart',empty));

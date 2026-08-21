@@ -1,7 +1,8 @@
 """Gate J72: the scenario waterfall respects fleet, contractor and cap invariants.
 
 The scenario feature (2026-08-18) lets the owner load alternative mine plans
-(S2, S3, ...) and re-allocate the SAME fleet by priority:
+(S3, ...; S2 was deleted from the app 2026-08-21) and re-allocate the SAME
+fleet by priority:
 P1 SAP -> P2 LIM-TOS -> P3 LIM-LD (Tofu dump -> Huafei), 8 Mt cap.
 
 What must always hold, per scenario and per month:
@@ -230,25 +231,25 @@ try:
     c = app.test_client()
     yr = "2026"
     want = ["Year", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    rv = c.get("/api/scenarios/export-full?year=%s&id=S2" % yr)
-    check("S2 monthly workbook returns xlsx", rv.status_code == 200 and rv.data[:2] == b"PK",
+    rv = c.get("/api/scenarios/export-full?year=%s&id=S3" % yr)
+    check("S3 monthly workbook returns xlsx", rv.status_code == 200 and rv.data[:2] == b"PK",
           rv.status_code)
     if rv.status_code == 200:
         wb = load_workbook(_io.BytesIO(rv.data), read_only=True)
         # "Paths" (the all-months path list, added 2026-08-19) is optional;
         # the month sheets must be Year-then-months in order.
         got = [s for s in wb.sheetnames if s != "Paths"]
-        check("S2 sheets are Year + months (Paths sheet optional)",
+        check("S3 sheets are Year + months (Paths sheet optional)",
               got == want, wb.sheetnames)
         sep = wb["Sep"]
         a1 = sep["A1"].value or ""
-        check("S2 Sep title is 'Sep 2026 — old vs new'",
+        check("S3 Sep title is 'Sep 2026 — old vs new'",
               a1.startswith("Sep 2026"), a1)
         rows = list(sep.iter_rows(min_row=1, max_row=40, max_col=13, values_only=True))
         heads = [r for r in rows if r and r[0] == "P"]
-        check("S2 Sep has the path table header", bool(heads), heads[:1])
+        check("S3 Sep has the path table header", bool(heads), heads[:1])
         p3 = [r for r in rows if r and r[0] == "P3"]
-        check("S2 Sep has P3 LIM-LD path rows (leftover DT)", bool(p3), p3[:1])
+        check("S3 Sep has P3 LIM-LD path rows (leftover DT)", bool(p3), p3[:1])
         wb.close()
     rvz = c.get("/api/scenarios/export-full?year=" + yr)
     check("all-scenarios zip returns", rvz.status_code == 200 and rvz.data[:2] == b"PK",
@@ -257,8 +258,10 @@ try:
         z = zipfile.ZipFile(_io.BytesIO(rvz.data))
         names = z.namelist()
         check("zip has monthly_plan_2026.xlsx (S1)", "monthly_plan_2026.xlsx" in names, names)
-        check("zip has monthly_plan_2026_S2.xlsx", "monthly_plan_2026_S2.xlsx" in names, names)
         check("zip has monthly_plan_2026_S3.xlsx", "monthly_plan_2026_S3.xlsx" in names, names)
+        # S2 was deleted from the app 2026-08-21: its workbook must NOT come back.
+        check("zip has no S2 workbook (S2 deleted)",
+              "monthly_plan_2026_S2.xlsx" not in names, names)
         for fn in names:
             inner = load_workbook(_io.BytesIO(z.read(fn)), read_only=True)
             check("%s sheets start with Year" % fn, inner.sheetnames[0] == "Year",
@@ -283,7 +286,7 @@ try:
     app3.register_blueprint(sim3.bp)
     c3 = app3.test_client()
     # generate into a throwaway date (day 28, unlikely to be used) then clean up
-    rv = c3.post("/api/scenarios/S2/draft-plans", json={
+    rv = c3.post("/api/scenarios/S3/draft-plans", json={
         "year": 2026, "day": 28, "months": [9]})
     d = rv.get_json()
     wrote = d.get("ok") and d.get("written")
@@ -306,7 +309,7 @@ try:
                   "%s vs %s" % (tot, pool))
             check("draft has no non-RIM at BLB", not blb_bad, blb_bad)
             # existing date is refused without overwrite
-            rv2 = c3.post("/api/scenarios/S2/draft-plans", json={
+            rv2 = c3.post("/api/scenarios/S3/draft-plans", json={
                 "year": 2026, "day": 28, "months": [9]})
             d2 = rv2.get_json()
             check("existing date refused without overwrite",
@@ -350,13 +353,15 @@ try:
         r = c5.get(url).get_json()
         srcs[d] = [(c["month"], (c.get("alloc") or {}).get("source_date"))
                    for c in r["cards"] if c.get("has_alloc")]
-    for d in (1, 2, 3):
+    for d in (1, 3):
         got = srcs.get(d) or []
         check("day=%d only resolves day-%02d saves" % (d, d),
               got and all(s and s.endswith("-%02d" % d) for _, s in got),
               got[:3])
-    check("day=1 and day=2 resolve different plans (not the same copy)",
-          srcs[1] and srcs[2] and srcs[1] != srcs[2])
+    # S2 (day 2) was deleted 2026-08-21: its slot must resolve nothing.
+    check("day=2 resolves no saves (S2 deleted)", not srcs.get(2), srcs.get(2))
+    check("day=1 and day=3 resolve different plans (not the same copy)",
+          srcs[1] and srcs[3] and srcs[1] != srcs[3])
     check("day omitted keeps the old latest-save rule",
           bool(srcs[None]))
 except ImportError as e:
