@@ -3144,6 +3144,20 @@ def api_congestion_model():
     except (ValueError, ArithmeticError) as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     out["ok"] = True
+    # Owner 2026-08-21: loader counts follow the measured trucks-per-loader
+    # ratio (calibration n_trucks_ref / n_loaders at the reference fleet);
+    # 15 where unmeasured (Burt & Caccetta 2007 balanced match factor) —
+    # the same defaults scripts/run_scenarios_hybrid.py uses. The plan
+    # builder sizes every row's loaders from this.
+    try:
+        from congestion.config import route_params
+        rp = route_params(route)
+        ref_t, ref_l = rp.get("n_trucks_ref"), rp.get("n_loaders")
+        out["trucks_per_loader"] = (round(float(ref_t) / float(ref_l), 1)
+                                    if rp.get("calibrated") and ref_t and ref_l
+                                    else 15.0)
+    except (OSError, ValueError, TypeError, ZeroDivisionError):
+        out["trucks_per_loader"] = 15.0
     return jsonify(out)
 
 

@@ -1279,6 +1279,13 @@
           return p!=null&&p<x.r.targetWmt*0.995;
         });
       }
+      // planning_rules.md §3 (owner, 2026-08-21): SMA trucks work KR and TF
+      // only, RIM trucks work BLB and TF only — trucks never change owner
+      // and never sit on a pit their contractor cannot enter.
+      function wallBroken(x){
+        const wall=(((window.PLANNING_RULES||{}).contractors)||{})[canonSrc(originOf(x))];
+        return !!(wall&&canonCo(x.r.contractor)!==canonCo(wall));
+      }
       function donorSpare(list, keep){
         const k=keep==null?0:keep;
         return list.reduce((a,x)=>a+Math.max(0,x.r.dt-k),0);
@@ -1323,6 +1330,7 @@
         return spare;
       }
       function belowNeed(x){
+        if(wallBroken(x))return 0; // never feed trucks onto an illegal pit
         if(!(x.r.targetWmt>0))return 0;
         const pred=predOf(x);
         if(pred!=null&&pred>=x.r.targetWmt*0.995)return 0;
@@ -1377,6 +1385,35 @@
       function sapShort(){return p1.filter(x=>belowNeed(x)>0).sort((a,b)=>belowNeed(b)-belowNeed(a));}
       function tosShort(){return p2.filter(x=>belowNeed(x)>0).sort((a,b)=>belowNeed(b)-belowNeed(a));}
 
+      // §3 walls first: old rescues only walled BLB, so saved plans can carry
+      // rows like KR>HUAFEI · RIM (18-30 DT in the Oct-Dec S1 saves). Those
+      // trucks are evacuated to this contractor's TF LD row — extras always
+      // land at TF — and the rounds below redistribute them legally.
+      // wallBroken() rows can donate but never receive.
+      (function evacuateWallBreakers(){
+        const dd=draft();
+        const breakers=crows.filter(x=>wallBroken(x)&&x.r.dt>0);
+        if(!breakers.length)return;
+        let rec=p3.find(x=>originOf(x)==='TF');
+        if(!rec){
+          const hid=(typeof planDraftSlotId==='function')
+            ?planDraftSlotId(cont,'TF>HUAFEI',{material:'LIM',otype:'LD'})
+            :cont+'|TF>HUAFEI|LIM|LD';
+          if(!dd[hid]){
+            dd[hid]={key:'TF>HUAFEI',dt:0,loaders:2,contractor:cont,
+              source:'TF',dest:'HUAFEI',material:'LIM',otype:'LD',
+              targetWmt:0,_targetManual:true,
+              _preAlloc:{dt:0,pred:0,achv:0,achv_sim:0}};
+            const hx={id:hid,r:dd[hid]};
+            p3.push(hx);crows.push(hx);
+          }
+          rec={id:hid,r:dd[hid]};
+        }
+        breakers.forEach(don=>{
+          transfer(don,rec,don.r.dt,
+            'contractor wall — '+cont+' cannot work '+originOf(don)+', trucks back to TF (rules §3)',true);
+        });
+      })();
       // Repeat: combined-fleet on a shared route changes Predicted.
       // SAP is filled to Predicted ≈ target from P3 then P2 before any
       // leftover sits on LIM. P2/P3 may drop to 0 DT when SAP still needs
@@ -1423,10 +1460,11 @@
           });
           dumpExtra(p1, (origin)=>
             orderDonors(tosShort(), origin)
-              .concat(orderDonors(p3, origin)),
+              .concat(orderDonors(p3.filter(x=>!wallBroken(x)), origin)),
             'trim SAP to target → LD (extras haul LIM-LD)');
           dumpExtra(p2, (origin)=>
-            orderDonors(tosShort(), origin).concat(orderDonors(p3, origin)),
+            orderDonors(tosShort(), origin)
+              .concat(orderDonors(p3.filter(x=>!wallBroken(x)), origin)),
             'trim LIM-TOS to target → LD (extras haul LIM-LD)');
         }
         if(moved===before)break;
@@ -1623,6 +1661,66 @@
   // for IWIP/Position traffic): counted by road crowding and shared-section
   // spans, never in production WMT, never touched by the allocator.
   function planRulesPosDumps(){return ['POS 12','POS 14','POS 15','POS 16'];}
+  // planning_rules.md §10.9 — loaders per row = round(DT / trucks-per-loader),
+  // the route's measured calibration ratio (n_trucks_ref / n_loaders) served
+  // by /api/congestion_model, 15 when unmeasured. "We have to imagine we are
+  // using the same number of loaders" (owner, 2026-08-21) — there is no
+  // detailed loader plan yet, so this OVERRIDES per-row loader edits on
+  // every Allocate.
+  const _tplCache={};
+  async function planRulesTpl(key){
+    if(_tplCache[key]>0)return _tplCache[key];
+    const dflt=(((window.PLANNING_RULES||{}).loaders)||{}).trucksPerLoaderDefault||15;
+    let tpl=dflt;
+    try{
+      const r=await fetch('/api/congestion_model?route='+encodeURIComponent(key)
+        +'&n_trucks=10',{cache:'no-store'});
+      if(r.ok){
+        const j=await r.json();
+        if(j&&j.ok&&j.trucks_per_loader>0)tpl=j.trucks_per_loader;
+      }
+    }catch(e){}
+    _tplCache[key]=tpl;
+    return tpl;
+  }
+  function planRulesLoadersFor(dt,tpl){return Math.max(1,Math.round(dt/(tpl||15)));}
+  async function planRulesApplyLoaders(){
+    const d=draft();
+    for(const id of Object.keys(d)){
+      const r=d[id];
+      if(!r||!r.key)continue;
+      const dt=workingDt(r);
+      if(!(dt>0))continue;
+      r.loaders=planRulesLoadersFor(dt, await planRulesTpl(r.key));
+    }
+  }
+  // planHybridCurveFor returns undefined while its fetch is in flight and
+  // callers fall back to the legacy cap-scale path. New loader counts mean
+  // cold caches, and pricing a whole plan on the legacy path during that
+  // window is how the 2026-08-21 blowup got into four saved plans. Wait for
+  // every (route, loaders) curve to resolve before anything prices the plan.
+  async function planRulesWarmCurves(){
+    if(typeof planHybridCurveFor!=='function')return;
+    const d=draft();
+    const rain=rainMm();
+    const rows=Object.keys(d).map(id=>d[id])
+      .filter(r=>r&&r.key&&workingDt(r)>0);
+    for(let i=0;i<60;i++){
+      let pending=false;
+      rows.forEach(r=>{
+        if(planHybridCurveFor(r.key, r.loaders||2, rain)===undefined)pending=true;
+      });
+      if(!pending)return;
+      await new Promise(res=>setTimeout(res,250));
+    }
+  }
+  // One call for "make the draft rules-clean and priced on warm curves":
+  // loaders per §10.9, then hybrid curves resolved. Used by the allocate
+  // flow and by scripted re-saves.
+  window.planRulesPrepare=async function(){
+    await planRulesApplyLoaders();
+    await planRulesWarmCurves();
+  };
   // Per-DAY tonnes at an explicit fleet — horizon-independent on purpose: the
   // validation bands and POS flows are daily figures whatever the UI shows.
   function predDayAt(id,r,dt){
@@ -1634,10 +1732,13 @@
   }
   async function planRulesTripsFor(key,tonnesDay){
     const pay=((typeof planPayload==='function'?planPayload(key,null):null)||{}).tf||50;
+    const tpl=await planRulesTpl(key);
     let tpd=null,calibrated=false,cycle=null,src='default';
+    // loaders scale with the asked fleet (§10.9 proportional loaders), so the
+    // queue term stays honest at any IWIP fleet size
     async function ask(n){
       const r=await fetch('/api/congestion_model?route='+encodeURIComponent(key)
-        +'&n_trucks='+n+'&n_loaders=2',{cache:'no-store'});
+        +'&n_trucks='+n+'&n_loaders='+planRulesLoadersFor(n,tpl),{cache:'no-store'});
       if(!r.ok)return null;
       const j=await r.json();
       return (j&&j.ok&&j.trips_per_DT_per_day>0)?j:null;
@@ -1654,18 +1755,25 @@
       }
     }catch(e){}
     if(!(tpd>0)&&typeof planTripsPerDT==='function'){
-      const e=planTripsPerDT(key,Math.max(1,Math.ceil(tonnesDay/(pay*3))),0,null,{nLoaders:2});
+      const guess=Math.max(1,Math.ceil(tonnesDay/(pay*3)));
+      const e=planTripsPerDT(key,guess,0,null,{nLoaders:planRulesLoadersFor(guess,tpl)});
       if(e&&e.daily>0){tpd=e.daily;src='path model';}
     }
     if(!(tpd>0))tpd=2; // conservative site figure; row is flagged estimated
+    const dt=Math.max(1,Math.ceil(tonnesDay/(tpd*pay)));
     return {tripsPerDt:tpd,payload:pay,calibrated:calibrated,cycle:cycle,src:src,
-      dt:Math.max(1,Math.ceil(tonnesDay/(tpd*pay)))};
+      dt:dt,loaders:planRulesLoadersFor(dt,tpl)};
   }
   async function planRulesPosTransit(){
     const R=window.PLANNING_RULES||{};
     if(!((R.posTransit||{}).enabled))return;
     const d=draft();
     Object.keys(d).forEach(id=>{if(d[id]&&d[id]._posTransit)delete d[id];});
+    // §10.9 first: loaders on every row follow the historical ratio, and the
+    // POS inflow below must be priced with those loaders on WARM hybrid
+    // curves — the legacy fallback path is what inflated the Dec saves
+    await planRulesApplyLoaders();
+    await planRulesWarmCurves();
     const inflow={};
     Object.keys(d).forEach(id=>{
       const r=d[id];
@@ -1688,12 +1796,14 @@
       for(const key of routes){
         const est=await planRulesTripsFor(key,share);
         _posTransitInfo.rows.push({dump:dump,key:key,tonnes:share,dt:est.dt,
-          tripsPerDt:est.tripsPerDt,payload:est.payload,cycle:est.cycle,
-          calibrated:est.calibrated,src:est.src});
+          loaders:est.loaders,tripsPerDt:est.tripsPerDt,payload:est.payload,
+          cycle:est.cycle,calibrated:est.calibrated,src:est.src});
         _posTransitInfo.input+=share;
         _posTransitInfo.output+=share;
         const id='IWIP|'+key+'|road';
-        d[id]={key:key,dt:est.dt,loaders:2,contractor:'IWIP',
+        // dt is IWIP's OWN fleet (planning_rules.md §10.8) — foreign:true
+        // keeps it out of every contractor fleet counter and WMT total
+        d[id]={key:key,dt:est.dt,loaders:est.loaders,contractor:'IWIP',
           source:key.split('>')[0],dest:key.split('>')[1],
           foreign:true,_posTransit:true,_allocDt:est.dt,
           _preAlloc:{dt:est.dt,pred:0,achv:0,achv_sim:0}};
@@ -1812,13 +1922,18 @@
     const posRows=s.pos.rows.length
       ?'<table style="margin-top:6px"><thead><tr><th>POS transit (IWIP)</th>'
         +'<th class="r">t/day</th><th class="r">trips/DT</th><th class="r">DT</th>'
-        +'<th>basis</th></tr></thead><tbody>'
+        +'<th class="r">Loaders</th><th>basis</th></tr></thead><tbody>'
         +s.pos.rows.map(p=>'<tr><td>'+esc(p.key.replace('>',' → '))+'</td>'
           +'<td class="r">'+fmt(Math.round(p.tonnes))+'</td>'
           +'<td class="r">'+p.tripsPerDt.toFixed(2)+'</td>'
           +'<td class="r">'+p.dt+'</td>'
+          +'<td class="r">'+(p.loaders||'—')+'</td>'
           +'<td class="muted">'+esc(p.src)+(p.calibrated?'':' · estimated')+'</td></tr>').join('')
         +'</tbody></table>'
+        +'<div class="muted" style="font-size:11px;margin-top:4px">IWIP DT are the IWIP '
+        +'fleet’s own trucks (rules §10.8) — not drawn from, or counted in, the '
+        +'contractor fleet. Loaders on every row = DT ÷ historical trucks-per-loader '
+        +'(route ratio; 15 when unmeasured, rules §10.9).</div>'
       :'';
     const walls=s.walls.length
       ?'<div style="color:#ef4444;margin-top:6px">⚠ contractor wall broken: '
@@ -1878,6 +1993,18 @@
         return;
       }
       return _origAddFrozen.apply(this,arguments);
+    };
+  }
+
+  // Allocation prices the whole plan synchronously, so loaders (§10.9) and
+  // hybrid curves must be ready BEFORE it runs — cold curves drop pricing
+  // onto the clamped legacy path. Callers are fire-and-forget (button,
+  // refreeze script), so going async here is safe.
+  {
+    const _allocCoreRun=window.planAllocatePriority;
+    window.planAllocatePriority=async function(){
+      try{await window.planRulesPrepare();}catch(e){}
+      return _allocCoreRun.apply(this,arguments);
     };
   }
 

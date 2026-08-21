@@ -1189,3 +1189,49 @@ Traps hit while building this:
   Storage, §5 says transit with input = output. §5 is the operative rule
   (owner spec) and is what the code implements; raise it with the owner
   before "fixing" either.
+
+## 2026-08-21 — IWIP is its OWN fleet; loaders are proportional everywhere
+
+Two owner clarifications, both now rules §10.8/§10.9 in planning_rules.md:
+
+- **IWIP DT never come from the contractor pools.** The POS-transit rows
+  were already foreign:true (so the allocator/buckets skip them), but two
+  counters leaked: `planNavSync` summed ALL rows into the navbar "X DT"
+  (now "581 DT + 27 IWIP"), and `planPredictTotals` had no foreign filter —
+  older road-only rows dodged that sum only because their routes were
+  OUTSIDE the path model, POS 12>FENI KM0 is not. If you add a consumer of
+  `planDraftEntries()`, decide foreign-handling explicitly; it does not
+  filter.
+- **Loaders on every row = round(DT / trucks-per-loader)** — the route's
+  measured calibration ratio (n_trucks_ref/n_loaders, e.g. TF>POS 12 14.4,
+  TF>HUAFEI 23.3), 15 when unmeasured (Burt & Caccetta, same as the
+  runners). Served as `trucks_per_loader` on /api/congestion_model;
+  applied by planRulesApplyLoaders() on every Allocate, OVERRIDING per-row
+  loader edits — there is no detailed loader plan yet, owner: "we have to
+  imagine we are using the same number of loaders". Revisit if a real
+  loader plan ever exists. This moved predictions (trips/DT reprices with
+  loaders), so all eight S3/S4 saves were re-frozen 2026-08-21; the
+  pre-change files are in
+  data/saved_plans/_backup_2026-08-21_pre_proportional_loaders/.
+
+## 2026-08-21 — contractor walls are TRUCK MOBILITY, and the old rescue broke them
+
+Owner: "from KR you can attribute only SMA trucks… extra SMA from KR can
+move to TF but not BLB; RIM moves between BLB and TF but never KR." The
+walls constrain where each fleet may WORK; trucks never change owner and
+are never renamed. Two fixes in planAllocatePriority:
+- `wallBroken()` rows can donate but never receive (belowNeed 0, dumpExtra
+  receivers filtered), and rows that START with trucks on an illegal pit
+  are evacuated to the contractor's TF LD row before the rounds.
+- The measured damage: cross-rescue before 2026-08-21 walled only BLB, so
+  the Oct/Nov/Dec S1 saves (and 2026-08-01) carried `KR>HUAFEI · RIM`
+  helper rows of 7-30 DT. All S1 plans re-frozen clean 2026-08-21; the
+  legacy Aug dailies (08-04/05/07: PPP and RIM at KR) are historical
+  records, left as-is — the validation panel flags them if loaded.
+
+Also from the same session: unbounded `planLoaderCapScale` (n/hist legacy
+cap rescale) × proportional loaders reported 37 trips/DT on BLB>POS 14
+(owner range 6-7) and poisoned four saves before being caught — the scale
+is now clamped to [0.5, 2] and allocation awaits `planRulesPrepare()`
+(loaders + WARM hybrid curves) before pricing. If a plan's numbers look
+3x too good, check which pricing path served them FIRST.

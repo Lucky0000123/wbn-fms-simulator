@@ -42,6 +42,20 @@
 
 The plan builder must enforce these contractor assignments. If a plan row has origin=BLB, contractor must be RIM. If origin=KR, contractor must be SMA.
 
+**Truck mobility (owner, 2026-08-21).** These walls are about where each
+fleet's trucks may physically work — trucks never change owner:
+
+- SMA trucks may work **KR and TF only**. Extra SMA trucks from KR move to
+  TF, never to BLB.
+- RIM trucks may work **BLB and TF only**. Extra RIM trucks move between
+  BLB and TF, never to KR.
+
+If a plan carries trucks on a pit their contractor cannot enter (old plans
+did: cross-contractor rescues before 2026-08-21 only walled BLB, leaving
+rows like KR>HUAFEI · RIM), the allocator must move those trucks back to a
+legal pit (TF) and redistribute them — never rename the contractor, and
+never refill the illegal row.
+
 ---
 
 ## 4. Priority Allocation System
@@ -204,3 +218,11 @@ These rules are not suggestions. The plan builder must:
 5. Calculate POS transit and add IWIP trucks to the plan.
 6. Run validation checks and display results.
 7. Flag any route that fails the trips/DT validation bands.
+8. IWIP DT are the IWIP fleet's own trucks (owner, 2026-08-21). They are
+   never taken from, and never counted against, the contractor (RIM/SMA)
+   DT pools — the plan's fleet total excludes them.
+9. Loaders on every plan row follow the route's historical
+   trucks-per-loader average (the measured calibration ratio;
+   15 trucks/loader when unmeasured) until a detailed loader plan exists
+   (owner, 2026-08-21: "we have to imagine we are using the same number
+   of loaders").

@@ -281,7 +281,12 @@ function planLoaderCapScale(m, nLoaders){
   const n=(Number.isFinite(nLoaders)&&nLoaders>=1)?nLoaders:2;
   const hist=Number.isFinite(m&&m.historicalLoaders)&&m.historicalLoaders>0?m.historicalLoaders
     :(Number.isFinite(m&&m.nLoaders)&&m.nLoaders>0?m.nLoaders:2);
-  return n/Math.max(1,hist);
+  // The demonstrated day cap was OBSERVED at the historical loader count; a
+  // linear n/hist rescale is only credible near it. Unbounded, proportional
+  // loaders (rules §10.9: 17+ on big fleets, hist often 2) multiplied the cap
+  // 8-27x and reported 37 trips/DT on BLB>POS 14 whose owner-validated range
+  // is 6-7 (2026-08-21). Beyond the clamp the hybrid curve owns the answer.
+  return Math.min(2, Math.max(0.5, n/Math.max(1,hist)));
 }
 function planCongestionHint(e){
   if(!e)return {congestionStatus:'',bottleneck:''};

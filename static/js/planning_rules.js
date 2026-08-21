@@ -62,6 +62,12 @@ window.PLANNING_RULES = {
     limTosTotal: 4600000, // 4.6 Mt
     period: 'Sep-Dec 2026'
   },
+  loaders: {
+    // §10.9 — loaders per row = round(DT / trucks-per-loader). Per-route
+    // measured ratios come from /api/congestion_model (trucks_per_loader);
+    // this is the unmeasured-route fallback.
+    trucksPerLoaderDefault: 15
+  },
   fileStatus: 'loading', // 'active' | 'fallback'
   sourceUrl: '/planning_rules.md'
 };
@@ -120,6 +126,9 @@ function planRulesParseMd(md){
   if(mTos){R.targets.limTosTotal=R.limTos.totalTarget=Math.round(parseFloat(mTos[1])*1e6);touched=true;}
   const mBlbTos=md.match(/([\d,]+)\s*t\/month/);
   if(mBlbTos){R.limTos.blbTarget=parseInt(mBlbTos[1].replace(/,/g,''),10);touched=true;}
+  // §10.9 loader fallback: "15 trucks/loader when unmeasured"
+  const mTpl=md.match(/(\d+(?:\.\d+)?)\s*trucks\/loader when unmeasured/);
+  if(mTpl){R.loaders.trucksPerLoaderDefault=parseFloat(mTpl[1]);touched=true;}
   return touched&&/Status:.*ACTIVE/.test(md);
 }
 

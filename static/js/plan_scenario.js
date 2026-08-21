@@ -69,6 +69,10 @@ function planPredictTotals(){
   const rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0);
   let trips=0,wmt=0,dt=0;
   planDraftEntries().forEach(r=>{
+    // Road-only rows (user IWIP paths, POS-transit IWIP) are not our fleet
+    // and move no WMT for us. Older road-only rows dodged this sum only
+    // because their routes were outside the path model; POS→FeNi is not.
+    if(r.foreign)return;
     const c=typeof planContractor==='function'?planContractor(r.contractor):null;
     const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rain,c,typeof planTripOpts==='function'?planTripOpts(r.id):{selfId:r.id,nLoaders:r.loaders||2}):null;
     const pay=typeof planPayload==='function'?planPayload(r.key,c):{tf:0};
@@ -631,7 +635,7 @@ function planBiasAdjustedAchievable(raw,summary){
 
 function planCaptureOptLock(){
   /** Snapshot holding-plan DT after Finalize — Optimize must not re-suggest until unlock. */
-  return planDraftEntries().map(r=>({
+  return planDraftEntries().filter(r=>!r.foreign).map(r=>({
     id:r.id,
     key:r.key,
     label:(r.source||'')+' → '+(r.dest||''),
@@ -1515,11 +1519,15 @@ function planRefreshSaveButtons(){
 function planNavSync(){
   const date=((q('plan-date')||{}).value||'').trim();
   const rows=planDraftEntries();
-  const dt=rows.reduce((a,r)=>a+(+r.dt||0),0);
+  // Contractor fleet only — IWIP road-only trucks are a separate fleet
+  // (planning_rules.md §10.8) and must not read as allocatable DT.
+  const dt=rows.filter(r=>!r.foreign).reduce((a,r)=>a+(+r.dt||0),0);
+  const iwip=rows.filter(r=>r.foreign).reduce((a,r)=>a+(+r.dt||0),0);
   const d=q('plan-nav-date'); if(d)d.textContent=date||'no date set';
   const s=q('plan-nav-summary');
   if(s)s.textContent=rows.length
     ? rows.length+' path'+(rows.length===1?'':'s')+' · '+Math.round(dt)+' DT'
+      +(iwip>0?' + '+Math.round(iwip)+' IWIP':'')
     : 'no paths yet';
 }
 
