@@ -1581,3 +1581,29 @@ plan_shared_flow rebuilt on the current model, keeping the API shape:
   POS 10–FENI 0-17 section no longer exists).
 D18b flapped once during a server-restart race on the shared box —
 probe /api/predict aliases directly before investigating. Suite 74/74.
+
+## 2026-08-22 — road crowding: plan of record + real-plan verification
+
+Owner: "fix all this, make a detailed plan, make it real plans and real
+physics." The four physics defects were already fixed (cc40b41); this
+round added the plan document + closed the real-plan gaps:
+- reports/ROAD_CROWDING_BY_HOUR_PLAN.md is the plan of record: defect
+  table, physics basis, what the card sends, acceptance criteria, and
+  the LATER-PHASE list (measured-vs-sim hourly overlay, synchronized
+  breaks, loader-face schedule) so they are not invented ad hoc.
+- _norm_plans canonicalises via prediction_pipeline.canonical_area (the
+  ONE normaliser) — an alias row ("TOFU>…") used to build a route key
+  calibration never saw and price on DEFAULT params, J52-shaped.
+- The card caption now renders the server's `note` (self-described
+  basis) instead of a hardcoded description — it still said "Jul+
+  section speeds, staggered releases" a full model generation later.
+  A hardcoded basis caption is densityFit all over again.
+- VERIFIED on the real 2026-09-03 save in the browser: 12 paths incl.
+  both POS-transit IWIP rows, S1–S4 + BLB spur on official caps, peaks
+  207–286 concurrent (v/c 0.17–0.36, 17:00 bin), cadence matches
+  pricing (BLB>HUAFEI interval 4.92 h ≈ 4.9 trips/day), phase
+  des_segment_model_roundtrip_2shift, clips false.
+- plan_scenario.js: ONLY the caption hunk is committed; the co-agent's
+  in-flight planWhenScenarioIdle/load-flow work stays uncommitted in
+  the tree (partial-stage via checkout-reapply, both copies node-checked).
+Suite 74/74.

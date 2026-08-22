@@ -53,8 +53,9 @@ check("multi occupancy > single on shared section",
       peak(r2, sec) > peak(r1, sec),
       "single=%s multi=%s" % (peak(r1, sec), peak(r2, sec)))
 
-# TOFU load should resolve via TF alias (not silent wrong 10 unless TF missing)
-tofu = next((p for p in (r2.get("paths") or []) if "TOFU" in (p.get("source") or "").upper()), None)
+# TOFU input canonicalises to TF (one normaliser, prediction_pipeline.canonical_area)
+# and must land on measured TF dwell, not the bare 10-min fallback
+tofu = next((p for p in (r2.get("paths") or []) if (p.get("source") or "").upper() in ("TF", "TOFU")), None)
 check("TOFU path present", tofu is not None)
 if tofu:
     check("TOFU load uses measured TF (not bare fallback)",

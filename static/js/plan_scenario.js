@@ -995,8 +995,7 @@ function planRenderRoadCrowding(data,meta){
     <div class="muted" style="font-size:10.5px;margin-top:6px">
       Trucks on each section per hour \u2014 our ${meta.nPlan||0} plan path(s)${iwipNote}${data.whole_day?' · full day: 07:00 day + 19:00 night shift, releases re-staggered at changeover':''}.
       Cell colour: green &lt;70% of section capacity · amber \u226570% · red \u2265100%.
-      Measured load/dump dwell + Jul+ section speeds, staggered releases.
-      Advisory only \u2014 never changes simulate tonnes.
+      ${escH(data.note||'Advisory only \u2014 never changes simulate tonnes.')}
     </div>`;
 }
 

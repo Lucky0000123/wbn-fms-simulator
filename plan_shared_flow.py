@@ -154,12 +154,17 @@ def _point_dwell_min(point: str, kind: str, wet: bool) -> Tuple[float, str]:
 
 
 def _norm_plans(plans: Optional[List[dict]]) -> List[dict]:
+    # canonical_area is the repo's ONE normaliser (see CLAUDE.md). Without it
+    # an alias row ("TOFU>FENI KM0") builds a route key the calibration has
+    # never seen and predict() silently prices it on DEFAULT params — the
+    # J52 shape: wrong physics with a healthy-looking answer.
+    from prediction_pipeline import canonical_area
     out = []
     for i, p in enumerate(plans or []):
         if not isinstance(p, dict):
             continue
-        src = str(p.get("source") or p.get("origin") or "").strip()
-        dst = str(p.get("destination") or p.get("dest") or "").strip()
+        src = canonical_area(str(p.get("source") or p.get("origin") or "").strip())
+        dst = canonical_area(str(p.get("destination") or p.get("dest") or "").strip())
         dt = _f(p.get("n_trucks") if p.get("n_trucks") is not None else p.get("dt"), 0) or 0
         if not src or not dst or dt <= 0:
             continue
