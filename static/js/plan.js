@@ -329,24 +329,46 @@ const _planHybridCurves={};      // "key|loaders|rainB" -> {curve:[...], knee}
 const _planHybridPending={};
 const _planHybridFailedAt={};    // ck -> ms; failures RETRY, they are not verdicts
 function planHybridRainBucket(rain){return rain>=10?'wet':(rain>=1?'damp':'dry');}
-function planHybridCurveFor(key,nLoaders,rain){
+// Plan background for SEGMENT-BASED curves (owner, 2026-08-22: every
+// scenario calculates on the segment model). plan_sap_target's prepare
+// snapshots the draft {route: DT, foreign included}; curves are then
+// fetched conditioned on the OTHER routes' traffic, so shared windows
+// carry everyone. Snapshot semantics on purpose: refreshed per Allocate
+// pass, not per walk step, so the cache stays warm during sizing walks.
+let _planSegBg=null, _planSegBgSig='';
+function planSetSegBackground(bg){
+  _planSegBg=bg&&Object.keys(bg).length?bg:null;
+  _planSegBgSig=_planSegBg
+    ?Object.keys(_planSegBg).sort().map(k=>k+':'+Math.round(_planSegBg[k])).join(',')
+    :'';
+}
+function planSegOthersFor(key){
+  if(!_planSegBg)return null;
+  const o={};
+  Object.keys(_planSegBg).forEach(k=>{if(k!==key)o[k]=_planSegBg[k];});
+  return o;
+}
+function planHybridCurveFor(key,nLoaders,rain,opts){
   const bucket=planHybridRainBucket(rain);
-  const ck=key+'|'+nLoaders+'|'+bucket;
+  const prop=!!(opts&&opts.proportional);
+  const ck=key+'|'+(prop?'prop':String(nLoaders))+'|'+bucket+'|'+_planSegBgSig;
   const hit=_planHybridCurves[ck];
   if(hit)return hit;
   // A failed fetch used to cache null FOREVER, so one server blip mid-
   // session silently repriced the route on the legacy divide until a full
   // page reload (owner, 2026-08-21: "TF>HUAFEI still using the old
   // calculations"). Failures now retry after 30 s, and while the exact
-  // (loaders) pair loads we serve the NEAREST cached loader count for the
-  // same route+rain — loaders mostly move the queue term, so that is far
-  // closer to the truth than the divide-at-ceiling fallback.
+  // pair loads we serve the NEAREST cached curve for the same route+rain.
   const failedRecently=hit===null&&Date.now()-(_planHybridFailedAt[ck]||0)<30000;
   if(!failedRecently&&!_planHybridPending[ck]){
     _planHybridPending[ck]=true;
     const rainMm=rain>=10?12:(rain>=1?3:0);
-    fetch('/api/congestion_curve?route='+encodeURIComponent(key)
-          +'&n_loaders='+nLoaders+'&max_trucks=1000&rain_mm='+rainMm)
+    const others=planSegOthersFor(key);
+    const qs=(prop
+      ?('route='+encodeURIComponent(key)+'&proportional=1&max_trucks=800&rain_mm='+rainMm)
+      :('route='+encodeURIComponent(key)+'&n_loaders='+nLoaders+'&max_trucks=1000&rain_mm='+rainMm))
+      +(others?'&others='+encodeURIComponent(JSON.stringify(others)):'');
+    fetch('/api/congestion_curve?'+qs)
       .then(r=>r.ok?r.json():null)
       .then(d=>{
         const ok=!!(d&&d.ok&&d.curve&&d.curve.length);
@@ -354,6 +376,7 @@ function planHybridCurveFor(key,nLoaders,rain){
         if(!ok)_planHybridFailedAt[ck]=Date.now();
         _planHybridPending[ck]=false;
         if(typeof computePlan==='function')computePlan();
+        if(typeof planSensRefresh==='function')planSensRefresh();
       })
       .catch(()=>{
         _planHybridCurves[ck]=null;
@@ -361,14 +384,20 @@ function planHybridCurveFor(key,nLoaders,rain){
         _planHybridPending[ck]=false;
       });
   }
-  let best=null,bestD=Infinity;
+  // Interim while the exact pair loads: same loaders basis; prefer the
+  // current plan background — a stale-background curve still beats the
+  // legacy divide fallback.
+  let best=null,bestScore=Infinity;
   for(const k in _planHybridCurves){
     const c=_planHybridCurves[k];
     if(!c)continue;
     const p=k.split('|');
     if(p[0]!==key||p[2]!==bucket)continue;
-    const dL=Math.abs((parseInt(p[1],10)||0)-nLoaders);
-    if(dL<bestD){bestD=dL;best=c;}
+    const isProp=p[1]==='prop';
+    if(prop!==isProp)continue;
+    const score=(prop?0:Math.abs((parseInt(p[1],10)||0)-nLoaders))
+      +((p[3]||'')===_planSegBgSig?0:1000);
+    if(score<bestScore){bestScore=score;best=c;}
   }
   if(best)return best;
   return undefined;                              // nothing cached yet
@@ -508,7 +537,7 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
     // 25 on its neighbour — same road, trips/DT 25% apart (owner-caught,
     // 2026-08-21). Same combined basis as scripts/run_scenarios_hybrid.py.
     const nLoadersComb=nLoaders+otherLd;
-    const hyb=(opts&&opts.noHybrid)?null:planHybridCurveFor(key,nLoadersComb,rain);
+    const hyb=(opts&&opts.noHybrid)?null:planHybridCurveFor(key,nLoadersComb,rain,{proportional:true});
     if(hyb){
       // A section-v/c ratio briefly multiplied the curve here (2026-08-21)
       // and came straight back out, owner: "BLB trips falls like hell — go
@@ -519,12 +548,34 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
       // calibrated curve already carries real-day cross-traffic, backtest
       // R2 0.926). The span-weighted fleet below is the shared-road term;
       // the /api/congestion_plan windows table stays VISIBILITY ONLY.
-      const pt=planHybridTripsAt(hyb,nComb+sharedDt);
+      // Segment-based curves (owner, 2026-08-22): when the curve was fetched
+      // with the plan background, the SERVER already carries every other
+      // route's trucks on the shared windows — evaluate at the same-key
+      // fleet only, or the cross traffic would be priced twice. The client
+      // span-weighted fleet remains solely as the cold-start fallback.
+      const segBased=!!hyb.segment_based;
+      const pt=planHybridTripsAt(hyb,segBased?nComb:nComb+sharedDt);
       if(pt&&Number.isFinite(pt.trips_per_dt)&&pt.trips_per_dt>0){
-        const trHyb=pt.trips_per_dt*planContractorFactor(contractor);
+        let trHyb;
+        // Per-contractor baseline (matched-day calibration) replaces the
+        // fleet-global factor when the route has one — exact transform:
+        // cyc(n) = 1440/trips - ovh_pooled; trips_c = 1440/(cyc + ovh_c).
+        // The global factor was measured fleet-wide and is INVERTED on the
+        // TF corridor (RIM/SMA matched-day 0.60 vs applied 1.085).
+        const coName=contractor&&contractor.name?String(contractor.name).toUpperCase()
+          :(typeof contractor==='string'?contractor.toUpperCase():null);
+        const cInfo=coName&&hyb.contractors&&hyb.contractors[coName];
+        if(cInfo&&Number.isFinite(cInfo.overhead_per_trip_min)
+           &&Number.isFinite(hyb.overhead_per_trip_min)){
+          const cyc=Math.max(1,1440/pt.trips_per_dt-hyb.overhead_per_trip_min);
+          trHyb=1440/(cyc+cInfo.overhead_per_trip_min);
+        }else{
+          trHyb=pt.trips_per_dt*planContractorFactor(contractor);
+        }
         satFactor=tr>0?Math.min(1,trHyb/tr):1;
         tr=trHyb;
-        _hybridInfo={modelVersion:'hybrid',cycleTimeMin:Math.round(pt.cycle_time_min),
+        _hybridInfo={modelVersion:segBased?'hybrid_segment':'hybrid',
+          cycleTimeMin:Math.round(pt.cycle_time_min),
           rho:+pt.rho.toFixed(2),bottleneck:pt.bottleneck,
           p10:pt.p10,p90:pt.p90,knee:hyb.knee_dt};
       }
@@ -584,7 +635,7 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
   const hint=planCongestionHint(_hybridInfo?{satFactor,congestionStatus:(_hybridInfo.rho>=1?'overloaded':(_hybridInfo.rho>=0.7?'saturated':'free')),bottleneck:_hybridInfo.bottleneck}:{satFactor});
   return {daily:tr,shift:shiftServed,shiftFree:tr*sf,rainDelta:rainDelta*sf,otherDelta:otherDelta*sf,
     secDelta:sec.delta*sf,secExcess:sec.excess,wbFactor,wbRows,slope,
-    modelVersion:_hybridInfo?'hybrid':'legacy_divide',
+    modelVersion:_hybridInfo?_hybridInfo.modelVersion:'legacy_divide',
     cycleTimeMin:_hybridInfo?_hybridInfo.cycleTimeMin:null,
     rho:_hybridInfo?_hybridInfo.rho:null,
     hybridKnee:_hybridInfo?_hybridInfo.knee:null,
@@ -615,7 +666,7 @@ function planDtForWmt(key,targetWmt,rain,contractor,opts){
   const nLoaders=(opts&&Number.isFinite(opts.nLoaders)&&opts.nLoaders>=1)?opts.nLoaders:planBuilderLoaders();
   const sf=typeof planShiftFactor==='function'?planShiftFactor():0.5;
   const cf=typeof planContractorFactor==='function'?planContractorFactor(contractor):1;
-  const hybCurve=typeof planHybridCurveFor==='function'?planHybridCurveFor(key,nLoaders,rain):undefined;
+  const hybCurve=typeof planHybridCurveFor==='function'?planHybridCurveFor(key,nLoaders,rain,{proportional:true}):undefined;
   if(hybCurve&&hybCurve.curve&&hybCurve.curve.length){
     let peakT=0,peakN=0;
     for(const pt of hybCurve.curve){

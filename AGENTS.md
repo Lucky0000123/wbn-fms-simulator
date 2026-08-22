@@ -1506,3 +1506,44 @@ The road-model plan's P0-P2, implemented per the joint spec:
 - NOT yet wired: the frontend still prices via per-route curves with the
   span-weighted approximation (and its NODE_KM BLB=67.8 span bug). Next:
   serve segment pricing to the app (P3 side-by-side), then re-freeze.
+
+## 2026-08-22 — the app runs on segment pricing; capacities are now OFFICIAL
+
+Two rounds in one day, both owner-driven:
+
+1. **UI wiring (segment model live in the app).** /api/congestion_curve
+   and /api/congestion_model accept `others=<JSON {route: dt}>`; the
+   curve is then computed under the PLAN's background traffic (segment
+   fleet = others + the sweep fleet at every point). plan.js snapshots
+   the draft per Allocate pass (`planSetSegBackground`, foreign/IWIP
+   included) and keys the curve cache on route|loaders|rain|bgSig; when
+   a curve is segment-based the client evaluates at the SAME-KEY fleet
+   only (the server owns cross-traffic — never price it twice; the
+   span-weighted fleet remains solely the cold-start fallback).
+   Per-contractor baselines ride the same response: the client transform
+   trips_c = 1440/(1440/trips − ovh_pooled + ovh_c) is EXACT, replacing
+   the fleet-global planContractorFactor wherever calibration has a
+   matched-day ratio. TRAPS hit: (a) warm loops must warm the SAME key
+   family pricing consumes (prop keys, current bg) AND check
+   c.segment_based — an interim (stale-bg) curve is not undefined;
+   (b) planTripsPerDT's return hard-coded modelVersion 'hybrid' and hid
+   the segment tag.
+2. **Official capacities (owner documents).** congestion/speed_limits.py
+   encodes the 2025-08-11 speed-limit sheets as SEPARATE directional
+   tables (ARAH MUATAN = loaded = down-chainage; KOSONGAN = empty = up)
+   plus geometry: 15 m, one lane per direction, separate loaded/empty
+   lanes, no overtaking. Segment capacity = MIN bin speed / 50 m
+   following (a 20 km/h stretch bounds the chain — averaging overstates):
+   S1–S3 600/hr, S4 400/hr. The old 60/240 headway classes were 2.5–10x
+   LOW — the "S1 bottleneck" (v/c 2.4) was an assumption artifact,
+   owner-caught. Real plan v/c: 0.19–0.26. Consequence the owner should
+   see plainly: at official capacities the ROAD does not collapse at
+   planned fleets; TF>HUAFEI holds ~2.2–2.4 trips/DT even at 800+ trucks
+   and the binding constraints move to loaders/ops/overhead. Free-time
+   shares per segment follow the limit-implied times; the route TOTAL
+   stays dispatch-anchored (limit round-trip 238 min vs calibrated
+   208.7 on TF>HUAFEI — documents, dispatch and distances mutually
+   consistent within ~7–14%). /api/road_segments serves the segments
+   with speeds, capacity basis, following distance and the source PDF.
+   Backtest R2 0.926 / MAPE 5.8%; suite 74/74; all 13 saves re-frozen
+   (partly by the co-agent working the same task concurrently).

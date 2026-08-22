@@ -30,15 +30,32 @@ NODE_KM = {
     'FENI KM0': 0.0, 'FENI 0': 0.0, 'HUAFEI': 0.0, 'BSE': 0.0,
 }
 
+# Capacity now comes from the OFFICIAL speed-limit sheets + road geometry
+# (speed_limits.py; owner documents 2026-08-22): one loaded lane, no
+# overtaking, capacity = slowest bin speed / following distance. The old
+# 60/240 headway-class numbers were assumptions and sat 2.5-10x LOW — the
+# "S1 bottleneck" at v/c 2.4 was an assumption artifact, owner-caught.
+from .speed_limits import (span_capacity_hr, span_speeds, span_times_min,
+                           FOLLOWING_DISTANCE_M, SOURCE_DOC)
+
+def _seg(id_, label, top, bottom):
+    caps = span_capacity_hr(bottom, top)
+    spd = span_speeds(bottom, top)
+    tl, te = span_times_min(bottom, top)
+    return {'id': id_, 'label': label, 'top_km': top, 'bottom_km': bottom,
+            'length_km': round(top - bottom, 1),
+            'cap_hr': caps or 240.0,
+            'speeds': spd,
+            'limit_time_loaded_min': round(tl, 1) if tl else None,
+            'limit_time_empty_min': round(te, 1) if te else None,
+            'following_m': FOLLOWING_DISTANCE_M,
+            'source': SOURCE_DOC}
+
 SEGMENTS = [
-    {'id': 'S1', 'label': 'TF–KR',        'top_km': 67.8, 'bottom_km': 39.0,
-     'length_km': 28.8, 'cap_hr': 60.0},
-    {'id': 'S2', 'label': 'KR–POS 12',    'top_km': 39.0, 'bottom_km': 27.0,
-     'length_km': 12.0, 'cap_hr': 240.0},
-    {'id': 'S3', 'label': 'POS 12–KM15',  'top_km': 27.0, 'bottom_km': 15.0,
-     'length_km': 12.0, 'cap_hr': 240.0},
-    {'id': 'S4', 'label': 'KM15–coast',   'top_km': 15.0, 'bottom_km': 0.0,
-     'length_km': 15.0, 'cap_hr': 240.0},
+    _seg('S1', 'TF–KR',       67.8, 39.0),
+    _seg('S2', 'KR–POS 12',   39.0, 27.0),
+    _seg('S3', 'POS 12–KM15', 27.0, 15.0),
+    _seg('S4', 'KM15–coast',  15.0,  0.0),
 ]
 
 

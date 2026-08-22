@@ -3173,6 +3173,15 @@ def api_congestion_model():
                 kw[name] = cast(v)
             except (TypeError, ValueError):
                 return jsonify({"ok": False, "error": "%s must be numeric" % name}), 400
+    _others = _parse_others(a.get('others'))
+    if _others:
+        from congestion.segments import segment_trucks
+        fleet = dict(_others)
+        fleet[route] = fleet.get(route, 0.0) + float(n_trucks)
+        kw['segment_fleet'] = segment_trucks(fleet)
+    ctr = (a.get('contractor') or '').strip().upper()
+    if ctr:
+        kw['contractor'] = ctr
     try:
         out = predict(route, n_trucks, n_loaders, **kw)
     except (ValueError, ArithmeticError) as exc:
@@ -3218,9 +3227,46 @@ def _saturation_reference():
     return data
 
 
+def _parse_others(raw):
+    """others = JSON [{route, dt}...] or {route: dt} -> {canonical route: dt}.
+
+    The plan's OTHER routes: with these, the curve/model endpoints price the
+    route under the whole plan's segment traffic (owner, 2026-08-22: every
+    scenario calculates on the segment-based model)."""
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    if isinstance(data, dict):
+        items = data.items()
+    elif isinstance(data, list):
+        items = ((str(x.get("route") or ""), x.get("dt"))
+                 for x in data if isinstance(x, dict))
+    else:
+        return {}
+    out = {}
+    for route, dt in items:
+        r = str(route).replace('→', '>').strip()
+        try:
+            v = float(dt or 0)
+        except (TypeError, ValueError):
+            continue
+        if '>' in r and v > 0:
+            o, _, d = r.partition('>')
+            key = '%s>%s' % (_canon(o), _canon(d))
+            out[key] = out.get(key, 0.0) + v
+    return out
+
+
 @bp.route('/api/congestion_curve', methods=['GET'])
 def api_congestion_curve():
-    """Saturation curve: trips/DT vs fleet size for a route (hybrid model)."""
+    """Saturation curve: trips/DT vs fleet size for a route (hybrid model).
+
+    Optional others=<JSON {route: dt}>: price the curve under the plan's
+    background traffic — at every fleet size on the sweep, the segment
+    fleet is others + this route's n, so shared windows carry everyone."""
     from congestion.predictor import predict
     a = request.args
     route = (a.get('route') or '').replace('→', '>').strip()
@@ -3240,23 +3286,44 @@ def api_congestion_curve():
         rain_mm = float(a.get('rain_mm') or 0)
     except (TypeError, ValueError):
         rain_mm = 0.0
+    proportional = str(a.get("proportional") or "").strip().lower() in (
+        "1", "true", "yes")
+    others = _parse_others(a.get('others'))
+    others.pop(route, None)          # the route's own fleet is the sweep axis
     from congestion.config import route_params as _route_params
-    if not _route_params(route).get("calibrated"):
+    rp = _route_params(route)
+    if not rp.get("calibrated") and not others:
         ref = _saturation_reference().get(route)
         if ref:
+            src = (ref.get("curve_proportional") if proportional
+                   and ref.get("curve_proportional") else ref["curve"])
             return jsonify({
                 "ok": True, "route": route, "n_loaders": n_loaders,
                 "calibrated_loaders": ref.get("n_loaders_calibrated"),
                 "calibrated": True, "servedFrom": "reference",
-                "curve": ref["curve"], "knee_dt": ref.get("knee_dt"),
+                "loaders_basis": ("proportional" if proportional
+                                  else "calibrated_faces"),
+                "curve": src, "knee_dt": ref.get("knee_dt"),
                 "note": "Frozen reference curve (reports/saturation_curves.json) — "
                         "no live calibration on this machine"
                         + ("; requested n_loaders ignored" if n_loaders else "")})
+    tpl = 15.0
+    ref_t, ref_l = rp.get("n_trucks_ref"), rp.get("n_loaders")
+    if rp.get("calibrated") and ref_t and ref_l:
+        tpl = float(ref_t) / float(ref_l)
+    from congestion.segments import segment_trucks
     step = max(1, max_trucks // 80)
     curve = []
     for nt in range(1, max_trucks + 1, step):
         try:
-            p = predict(route, float(nt), n_loaders, rain_mm=rain_mm)
+            nl = (max(1, int(round(nt / tpl))) if proportional else n_loaders)
+            segf = None
+            if others:
+                fleet = dict(others)
+                fleet[route] = fleet.get(route, 0.0) + float(nt)
+                segf = segment_trucks(fleet)
+            p = predict(route, float(nt), nl, rain_mm=rain_mm,
+                        segment_fleet=segf)
             curve.append({
                 "n_trucks": nt,
                 "trips_per_dt": p["trips_per_DT_per_day"],
@@ -3278,10 +3345,44 @@ def api_congestion_curve():
                 knee = c["n_trucks"]
                 break
     from congestion.config import route_params
+    # per-contractor calibration for the CLIENT transform: trips_c(n) =
+    # 1440 / (cyc(n) + ovh_c) where cyc(n) = 1440/trips(n) - ovh_pooled —
+    # exact, no second fetch per contractor. Read the RAW route record:
+    # route_params() deliberately strips the contractors dict from merges.
+    from congestion.config import load_params as _load_params
+    _raw = ((_load_params().get("routes") or {}).get(route) or {})
+    _contractors = {name: {"ratio": v.get("ratio"),
+                           "overhead_per_trip_min": v.get("overhead_per_trip_min")}
+                    for name, v in (_raw.get("contractors") or {}).items()}
     return jsonify({"ok": True, "route": route, "n_loaders": n_loaders,
                     "calibrated_loaders": route_params(route).get("n_loaders"),
                     "calibrated": bool(route_params(route).get("calibrated")),
+                    "segment_based": bool(others),
+                    "others_n": len(others),
+                    "overhead_per_trip_min": rp.get("overhead_per_trip_min"),
+                    "contractors": _contractors,
+                    "loaders_basis": ("proportional" if proportional
+                                      else "calibrated_faces"),
                     "curve": curve, "knee_dt": knee})
+
+
+@bp.route('/api/road_segments', methods=['GET'])
+def api_road_segments():
+    """The stick segments with OFFICIAL speed limits, capacity basis and
+    provenance (owner, 2026-08-22: the user must see what speed and
+    following distance were used)."""
+    from congestion.segments import SEGMENTS
+    from congestion import speed_limits as sl
+    return jsonify({
+        "ok": True,
+        "source": sl.SOURCE_DOC,
+        "road": {"width_m": sl.ROAD_WIDTH_M, "surface": sl.ROAD_SURFACE,
+                 "overtaking": sl.OVERTAKING, "separate_lanes": sl.SEPARATE_LANES,
+                 "following_distance_m": sl.FOLLOWING_DISTANCE_M},
+        "capacity_basis": "min bin speed x 1000 / following distance, one loaded lane",
+        "assumptions": sl.ASSUMPTIONS,
+        "segments": SEGMENTS,
+    })
 
 
 @bp.route('/api/congestion_plan', methods=['POST'])

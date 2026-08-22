@@ -105,7 +105,7 @@
     return ''
       +'<td class="r plan-hold-num">'+fmt(o.tgt)+'</td>'
       +'<td class="r">'+pairHtml(o.dtOld, o.dtNew, {delta:true})+'</td>'
-      +'<td class="r">'+pairHtml(o.tpdOld, o.tpdNew, {fmt:fmt2})+'</td>'
+      +'<td class="r">'+pairHtml(o.tpdOld, o.tpdNew, {fmt:fmt2, extra:o.valHtml||''})+'</td>'
       +'<td class="r">'+pairHtml(o.wpdOld, o.wpdNew, {fmt:fmt2})+'</td>'
       +'<td class="r">'+pairHtml(o.predOld, o.predNew, {extra:vs.extra, tone:vs.tone})+'</td>'
       +'<td class="r">'+pairHtml(o.achvOld, o.achvNew, simNote)+'</td>';
@@ -502,8 +502,41 @@
     if(_tplCache[r.key]>0)opts.nLoaders=planRulesLoadersFor(r.dt,_tplCache[r.key]);
     const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,r.dt,rainMm(),c,opts):null;
     const pay=typeof planPayload==='function'?planPayload(r.key,c):{tf:50};
-    return e?r.dt*e.daily*pay.tf:null;
+    // WEIGHBRIDGE INCLUDED (owner bug, 2026-08-21): this function priced
+    // dt×daily while the saved clocks price dt×shift×hz — the difference is
+    // wbFactor. The §5 IWIP POS-transit trucks push the POS 12 bridge to
+    // wb≈0.8 AFTER allocation, so the allocator called KR>POS 12 'met' at
+    // 6,186 t and the saved board showed 5,184 t. One question, one model:
+    // the allocator must judge targets on the same served tonnage the board
+    // reports, or Stage F stops one truck short of the real target.
+    return e?r.dt*e.daily*(e.wbFactor||1)*pay.tf:null;
   }
+  // debug/scripting handle: the allocator's own row pricing (payload +
+  // §10.9 loader override included) — scripts must never re-derive it
+  window.planPredDayFor=function(id){const r=draft()[id];return r?predDayFor(id,r):null;};
+  // Targeted P1/P2 rows short at their ALLOCATED fleet, priced with the
+  // full final traffic (weighbridges included). The allocate wrapper polls
+  // this between passes: a non-empty answer means some traffic landed
+  // after Stage F (async IWIP bridge shares) and one more pass is needed.
+  window.planAllocShortfalls=function(){
+    const d=draft();
+    const out=[];
+    Object.keys(d).forEach(id=>{
+      const r=d[id];
+      if(!r||r.foreign||!(r.targetWmt>0))return;
+      const p=prioOf(r);
+      if(p!==1&&p!==2)return;
+      const n=(r._allocDt!=null)?r._allocDt:r.dt;
+      if(!(n>0))return;
+      const sv=r.dt;r.dt=n;
+      const pred=predDayFor(id,r);
+      r.dt=sv;
+      if(pred!=null&&pred<r.targetWmt*0.995)
+        out.push({id,key:r.key,contractor:r.contractor,prio:p,
+          target:r.targetWmt,pred:Math.round(pred)});
+    });
+    return out;
+  };
 
   function decorateRowTargets(rows){
     const d=draft();
@@ -1003,6 +1036,7 @@
           +allocMetricTds({
             tgt:tgt, dtOld:dtOld, dtNew:dtNow,
             tpdOld:rpOld.tpd, tpdNew:rpNew.tpd,
+            valHtml:r.foreign?'':planRulesRowBadgeHtml(planRulesRowCheck(id,r,dtNow)),
             wpdOld:rpOld.wpd, wpdNew:rpNew.wpd,
             predOld:clkOld.pred, predNew:clkNew.pred,
             achvOld:achvOld, achvNew:achv
@@ -1952,7 +1986,10 @@
     // planning_rules.md §5: whatever this allocation tips into POS must leave
     // for FeNi on IWIP trucks — size them and put them on the road (async;
     // re-renders the alloc view and validation summary when the rows land).
-    planRulesPosTransit();
+    // The promise is exposed so the allocate wrapper can AWAIT it between
+    // passes: pass 2's Stage F must see these trucks (they saturate the POS
+    // weighbridges — wb 0.8 on KR>POS 12) or it re-verifies a fiction.
+    window._planPosTransitP=planRulesPosTransit();
   };
 
   // ── planning_rules.md §5 — POS transit: size IWIP trucks for POS→FeNi ────
@@ -2014,7 +2051,13 @@
     for(let i=0;i<60;i++){
       let pending=false;
       Object.keys(keys).forEach(key=>{
-        if(planHybridCurveFor(key, 0, rain, {proportional:true})===undefined)pending=true;
+        const c=planHybridCurveFor(key, 0, rain, {proportional:true});
+        if(c===undefined){pending=true;return;}
+        // an INTERIM (stale-background) curve is not undefined — when this
+        // plan has background traffic the exact segment-conditioned curve
+        // must land before pricing, or walks run on the wrong road state
+        const others=typeof planSegOthersFor==='function'?planSegOthersFor(key):null;
+        if(others&&Object.keys(others).length&&!c.segment_based)pending=true;
       });
       if(!pending)return;
       await new Promise(res=>setTimeout(res,250));
@@ -2058,6 +2101,21 @@
   // the current division. Used by the allocate flow and scripted re-saves.
   window.planRulesPrepare=async function(){
     await planRulesApplyLoaders();
+    // Segment background (owner, 2026-08-22): snapshot the whole draft's
+    // per-route trucks (foreign/IWIP included — they occupy the road) so
+    // every curve fetched below is conditioned on the plan's traffic on
+    // the shared windows.
+    if(typeof planSetSegBackground==='function'){
+      const d=draft();
+      const bg={};
+      Object.keys(d).forEach(id=>{
+        const r=d[id];
+        if(!r||!r.key)return;
+        const n=workingDt(r);
+        if(n>0)bg[r.key]=(bg[r.key]||0)+n;
+      });
+      planSetSegBackground(bg);
+    }
     await planRulesWarmCurves();
     await planRulesSectionPricing();
   };
@@ -2077,8 +2135,11 @@
     // loaders scale with the asked fleet (§10.9 proportional loaders), so the
     // queue term stays honest at any IWIP fleet size
     async function ask(n){
+      const others=typeof planSegOthersFor==='function'?planSegOthersFor(key):null;
       const r=await fetch('/api/congestion_model?route='+encodeURIComponent(key)
-        +'&n_trucks='+n+'&n_loaders='+planRulesLoadersFor(n,tpl),{cache:'no-store'});
+        +'&n_trucks='+n+'&n_loaders='+planRulesLoadersFor(n,tpl)
+        +(others?'&others='+encodeURIComponent(JSON.stringify(others)):''),
+        {cache:'no-store'});
       if(!r.ok)return null;
       const j=await r.json();
       return (j&&j.ok&&j.trips_per_DT_per_day>0)?j:null;
@@ -2395,8 +2456,36 @@
         try{await window.planRulesPrepare();}catch(e){}
         const r1=_allocCoreRun.apply(this,arguments);
         try{
+          // §5 IWIP POS-transit rows from pass 1 must be ON THE ROAD before
+          // pass 2 runs: they load the POS weighbridges (wb 0.8 on KR>POS 12
+          // measured 2026-08-21) and pass 2's Stage F re-verifies priorities
+          // against exactly that traffic. Without this await pass 2 raced
+          // the async sizing and judged targets on an empty bridge.
+          try{await window._planPosTransitP;}catch(e){}
           await window.planRulesPrepare();   // applyLoaders reads _allocDt now
-          const r2=_allocCoreRun.apply(this,arguments);
+          let r2=_allocCoreRun.apply(this,arguments);
+          try{await window._planPosTransitP;}catch(e){}
+          // Steps done carefully (owner, 2026-08-21): pass 2's Stage F can
+          // still be undone by traffic that lands AFTER it — the §5 IWIP
+          // sizing is async AND its weighbridge shares resolve on a second
+          // async fetch (annotatePathWb), so KR>POS 12 only shows wb 0.8
+          // once both have landed. SETTLE FIRST (engine idle + a beat for
+          // the bridge annotations), then judge the finished pass with the
+          // same pricing the board uses; while any targeted P1/P2 row is
+          // short, run another full pass with all traffic frozen in.
+          // Three passes bound the loop.
+          for(let extra=0;extra<3;extra++){
+            if(typeof window.planWhenScenarioIdle==='function'){
+              try{await window.planWhenScenarioIdle();}catch(e){}
+            }
+            await new Promise(res=>setTimeout(res,1500));
+            const short=(typeof window.planAllocShortfalls==='function')
+              ?window.planAllocShortfalls():[];
+            if(!short.length)break;
+            await window.planRulesPrepare();
+            r2=_allocCoreRun.apply(this,arguments);
+            try{await window._planPosTransitP;}catch(e){}
+          }
           if(typeof window.planWhenScenarioIdle==='function'){
             await window.planWhenScenarioIdle();
           }

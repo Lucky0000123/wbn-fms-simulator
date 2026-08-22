@@ -136,9 +136,21 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
     # RISING when trucks were added (2026-08-21).
     # Stick routes decompose the road over the shared-corridor segments
     # (owner: one road, one penalty). Own-fleet-only when no segment_fleet.
-    from .segments import route_segments as _route_segments
+    # Free-time SHARE per segment follows the official speed-limit sheets
+    # (slow stretches own more of the route's calibrated road time); raw
+    # overlap length is the fallback where the sheets have no data.
+    from .segments import route_segments as _route_segments, node_km as _node_km
+    from .speed_limits import span_times_min as _span_times
     _segs = _route_segments(origin, dest)
-    _seg_total_ov = sum(ov for _s, ov in _segs) or 1.0
+    _seg_w = []
+    if _segs:
+        _a, _b = _node_km(origin), _node_km(dest)
+        _lo, _hi = min(_a, _b), max(_a, _b)
+        for s, ov in _segs:
+            o_lo, o_hi = max(_lo, s['bottom_km']), min(_hi, s['top_km'])
+            tl, te = _span_times(o_lo, o_hi)
+            _seg_w.append(((tl or 0) + (te or 0)) or ov)
+    _seg_total_ov = sum(_seg_w) or 1.0
 
     def _nxt(cyc_try):
         v_hr = n_trucks / (cyc_try / 60.0)      # trucks/hr entering the link
@@ -150,13 +162,13 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
             alpha, beta = float(p["alpha"]), float(p["beta"])
             t_road = 0.0
             worst_vc = 0.0
-            for s, ov in _segs:
+            for (s, ov), w in zip(_segs, _seg_w):
                 trucks_here = n_trucks
                 if segment_fleet:
                     trucks_here = max(float(segment_fleet.get(s['id'], 0.0)), n_trucks)
                 vc = (trucks_here / (cyc_try / 60.0)) / max(1.0, s['cap_hr'])
                 worst_vc = max(worst_vc, vc)
-                tf_seg = t_free_road * (ov / _seg_total_ov)
+                tf_seg = t_free_road * (w / _seg_total_ov)
                 t_road += min(3.0, 1.0 + alpha * (vc ** beta)) * tf_seg
             t_road = min(t_road, max_road)
             b = {"t_road_min": t_road, "penalty_min": t_road - t_free_road,
