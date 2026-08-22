@@ -4,9 +4,11 @@ Source: "20250811 UPDATE SPEED LIMIT HAULING ROAD.pdf"
 (/Volumes/LUCKY_SSD/WORK_WBN/WORK/Maps and Designs), read page by page:
   p1  KM 5 - KAOROHAI (KM 27)
   p2  KAOROHAI (KM 27) - TOFU (KM 68)
-  (p3/p4 cover UNI UNI-BIRI BIRI and BIRI BIRI-BUKIT LIMBER side roads,
-   not the main stick; the BLB spur has NO speed-limit sheet and keeps the
-   dispatch-calibrated per-route method.)
+  (p3/p4 cover UNI UNI-BIRI BIRI and BIRI BIRI-BUKIT LIMBER side roads —
+   owner, 2026-08-22: "we don't need to think of BIRI BIRI or UNI UNI,
+   ignore it for now." Do NOT wire them in without a new owner decision.
+   The BLB spur has NO speed-limit sheet and keeps the dispatch-calibrated
+   per-route method.)
 
 Directions are signed on the road: ARAH MUATAN = loaded = DOWN-chainage
 (pit -> coast), ARAH KOSONGAN = empty = UP-chainage. The two directions

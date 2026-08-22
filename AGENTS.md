@@ -1547,3 +1547,10 @@ Two rounds in one day, both owner-driven:
    with speeds, capacity basis, following distance and the source PDF.
    Backtest R2 0.926 / MAPE 5.8%; suite 74/74; all 13 saves re-frozen
    (partly by the co-agent working the same task concurrently).
+
+## 2026-08-22 — UNI UNI / BIRI BIRI side roads: OUT OF SCOPE (owner)
+
+Owner: "we don't need to think of BIRI BIRI or UNI UNI, ignore it for
+now." Pages 3-4 of the speed-limit PDF stay unencoded on purpose; the
+stick (S1-S4) and the BLB spur are the modelled network. Do not wire
+the side roads in without a new owner decision.
