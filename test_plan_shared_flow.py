@@ -35,7 +35,8 @@ check("never clips", r2.get("basis", {}).get("congestion_clips_tonnes") is False
 check("simulate unchanged", r2.get("basis", {}).get("simulate_unchanged") is True)
 check("no playback invent", r2.get("basis", {}).get("invents_playback_haul_speeds") is False)
 
-sec = "POS 10–FENI"
+sec = "POS 12–KM15"   # segment-model label: TOFU>KM0 and KR>KM15 share S2+S3
+# (was POS 10–FENI pre-2026-08-22; the old 0-17 section overlapped KR>KM15 at 15-17)
 
 
 def peak(res, name):
@@ -45,7 +46,7 @@ def peak(res, name):
     return 0
 
 
-check("POS 10–FENI shared in multi",
+check("POS 12–KM15 shared in multi",
       any(s.get("section") == sec and s.get("shared") for s in (r2.get("sections") or [])),
       r2.get("sections"))
 check("multi occupancy > single on shared section",

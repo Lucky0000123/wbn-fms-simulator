@@ -203,7 +203,7 @@ def shared_flow(
         "congestion_clips_tonnes": False,
         "simulate_unchanged": True,
         "invents_playback_haul_speeds": False,
-        "phase": "des_lite_loaded_outbound" + ("_2shift" if whole_day else ""),
+        "phase": "des_segment_model_roundtrip" + ("_2shift" if whole_day else ""),
         "era": "struggle",
     }
     if not norm:
@@ -221,36 +221,95 @@ def shared_flow(
     hours_payload = pch.corridor_hours(dir_filter="down", path=path)
     gps_ok = bool(hours_payload.get("ok"))
 
-    # Enrich paths with dwell + sections + travel
+    # ── Enrich paths from the CURRENT physics model (owner, 2026-08-22:
+    # the hourly view must match the segment model) ─────────────────────
+    # Timing per truck comes from congestion.predictor at the PLAN's
+    # combined fleets (segment_fleet = every route's trucks on the shared
+    # windows, contractor baseline when calibrated): road time split over
+    # the S1–S4 segments by the OFFICIAL directional speed-limit times,
+    # release cadence = model cycle + overhead-per-trip (trucks do not
+    # re-enter the road during breaks/dispatch/refuel). BLB is a spur —
+    # its trucks occupy a 'BLB spur' pseudo-section, never the stick.
+    from congestion.predictor import predict as _predict
+    from congestion.segments import (route_segments as _route_segments,
+                                     segment_trucks as _segment_trucks,
+                                     node_km as _node_km)
+    from congestion.speed_limits import span_times_min as _span_times
+
+    comb: Dict[str, float] = defaultdict(float)
+    for p in norm:
+        comb[p["route"]] += p["n_trucks"]
+    seg_fleet = _segment_trucks(dict(comb))
+
     path_rows = []
     dwell_notes = []
     for p in norm:
-        secs = pa.route_sections(p["source"], p["destination"])
+        segs = _route_segments(p["source"], p["destination"])
         load_min, load_basis = _point_dwell_min(p["source"], "loading", wet)
         dump_min, dump_basis = _point_dwell_min(p["destination"], "dumping", wet)
         if "fallback" in load_basis or "fallback" in dump_basis:
             dwell_notes.append("%s: load %s; dump %s" % (p["label"], load_basis, dump_basis))
-        travel_h = 0.0
-        sec_times = []
-        for sec in secs:
-            km = _section_length_km(sec)
-            spd = speeds.get(sec) or DEFAULT_SPEED_KMH
-            th = km / max(spd, 0.5)
-            sec_times.append({"section": sec, "hours": th, "speed_kmh": spd, "km": km})
-            travel_h += th
-        cycle_h = (load_min + dump_min) / 60.0 + travel_h * 2.0  # empty return ≈ same length
-        trips_per_truck = max(1, int(math.floor(shift_hours / max(cycle_h, 0.25))))
+        try:
+            pr = _predict(p["route"], comb[p["route"]], None,
+                          segment_fleet=seg_fleet,
+                          contractor=p.get("contractor"),
+                          rain_mm=rain_mm)
+        except (ValueError, ArithmeticError):
+            pr = None
+        comp = (pr or {}).get("components") or {}
+        road_min = (comp.get("t_free_road") or 0) + (comp.get("bpr_penalty_minutes") or 0)
+        queue_min = comp.get("queue_wait_minutes") or 0.0
+        overhead_min = comp.get("overhead_per_trip_minutes") or 240.0
+        cyc_min = (pr or {}).get("cycle_time_minutes") or (road_min + load_min + dump_min)
+        if road_min <= 0:
+            road_min = max(30.0, cyc_min - load_min - dump_min - queue_min)
+        # split the model's road time over the segments by the official
+        # directional limit times (loaded down-chainage, empty up)
+        sec_loaded, sec_empty = [], []
+        if segs:
+            a, b = _node_km(p["source"]), _node_km(p["destination"])
+            lo, hi = min(a, b), max(a, b)
+            raw = []
+            for s, ov in segs:
+                o_lo, o_hi = max(lo, s['bottom_km']), min(hi, s['top_km'])
+                tl, te = _span_times(o_lo, o_hi)
+                raw.append((s, ov, tl or ov, te or ov))
+            tot = sum(r[2] + r[3] for r in raw) or 1.0
+            k = road_min / tot
+            for s, ov, tl, te in raw:
+                sec_loaded.append({"section": s['label'], "hours": tl * k / 60.0,
+                                   "speed_kmh": (s.get('speeds') or {}).get('loaded', {}).get('mean'),
+                                   "km": round(ov, 1)})
+                sec_empty.append({"section": s['label'], "hours": te * k / 60.0,
+                                  "km": round(ov, 1)})
+        else:
+            # spur route (BLB …): own lane, not on the stick — loaded/empty
+            # split by the site 1.25x empty-speed factor
+            lbl = "%s spur" % p["source"].upper()
+            sec_loaded.append({"section": lbl, "hours": road_min * (1.25 / 2.25) / 60.0,
+                               "speed_kmh": None, "km": None})
+            sec_empty.append({"section": lbl, "hours": road_min * (1.0 / 2.25) / 60.0,
+                              "km": None})
+        travel_h = sum(x["hours"] for x in sec_loaded)
+        cycle_h = cyc_min / 60.0
+        interval_h = (cyc_min + overhead_min) / 60.0   # true inter-trip spacing
+        trips_per_truck = max(1, int(math.floor(shift_hours / max(interval_h, 0.25))))
         path_rows.append({
             **p,
-            "sections": secs,
+            "sections": [x["section"] for x in sec_loaded],
             "load_min": round(load_min, 2),
             "dump_min": round(dump_min, 2),
             "load_basis": load_basis,
             "dump_basis": dump_basis,
-            "sec_times": sec_times,
+            "queue_min": round(queue_min, 1),
+            "overhead_min": round(overhead_min, 1),
+            "sec_times": sec_loaded,
+            "sec_times_empty": sec_empty,
             "travel_h": round(travel_h, 3),
             "cycle_h": round(cycle_h, 3),
+            "interval_h": round(interval_h, 3),
             "trips_per_truck": trips_per_truck,
+            "model": (pr or {}).get("model_version") or "fallback",
         })
 
     # Loader serialization: trucks at same source release every load_min
@@ -270,32 +329,51 @@ def shared_flow(
         for src, group in by_src.items():
             # Serialize all trucks from this source across plans by cumulative
             # index. Stagger = max of load times at this source.
-            load_stagger_h = max(g["load_min"] for g in group) / 60.0
+            # Releases are PARALLEL across loading faces (rules §10.9:
+            # ~1 loader per 15 trucks) — the old serial stagger assumed one
+            # loader per pit and starved the road of most of the fleet
+            src_trucks = sum(g["n_trucks"] for g in group)
+            faces = max(1, round(src_trucks / 15.0))
+            load_stagger_h = (max(g["load_min"] for g in group) / 60.0) / faces
             truck_idx = 0
             for pr in group:
                 n = min(pr["n_trucks"], MAX_TRUCKS_SIM)
                 for _t in range(n):
                     for trip in range(pr["trips_per_truck"]):
-                        # First departure after load; then + cycle each trip
-                        t_depart = shift_t0 + truck_idx * load_stagger_h + trip * pr["cycle_h"]
+                        # Release after queue+load; trips repeat every
+                        # cycle+overhead (the model's true inter-trip
+                        # spacing), not every raw cycle
+                        t_depart = (shift_t0 + truck_idx * load_stagger_h
+                                    + (pr["queue_min"] + pr["load_min"]) / 60.0
+                                    + trip * pr["interval_h"])
                         if t_depart >= shift_t1:
                             break
                         t_cursor = t_depart
+                        # loaded pass, pit -> dump
                         for st in pr["sec_times"]:
-                            t0 = t_cursor
-                            t1 = t_cursor + st["hours"]
+                            t0, t1 = t_cursor, t_cursor + st["hours"]
                             if t0 < shift_t1:
-                                events.append((
-                                    st["section"],
-                                    t0,
-                                    min(t1, shift_t1 + 0.01),
-                                    pr["id"],
-                                    pr["label"],
-                                ))
+                                events.append((st["section"], t0,
+                                               min(t1, shift_t1 + 0.01),
+                                               pr["id"], pr["label"]))
                                 section_plans[st["section"]].add(pr["label"])
                             t_cursor = t1
                             if t_cursor >= shift_t1:
                                 break
+                        # dump dwell, then the EMPTY return in reverse —
+                        # empty trucks occupy the road too (their own lane,
+                        # counted in the section totals)
+                        t_cursor += pr["dump_min"] / 60.0
+                        for st in reversed(pr["sec_times_empty"]):
+                            if t_cursor >= shift_t1:
+                                break
+                            t0, t1 = t_cursor, t_cursor + st["hours"]
+                            if t0 < shift_t1:
+                                events.append((st["section"], t0,
+                                               min(t1, shift_t1 + 0.01),
+                                               pr["id"], pr["label"]))
+                                section_plans[st["section"]].add(pr["label"])
+                            t_cursor = t1
                     truck_idx += 1
 
     n_bins = int(math.ceil(horizon_h / bin_hours))
@@ -315,14 +393,26 @@ def shared_flow(
     congested_clock = defaultdict(lambda: {"peak": 0, "sections": []})
     worst = None
 
-    all_secs = [s[0] for s in pa.SECTIONS]
+    from congestion.segments import SEGMENTS as _SEGS
+    _seg_by_label = {s['label']: s for s in _SEGS}
+    all_secs = [s['label'] for s in _SEGS] + sorted(
+        s for s in section_plans if s not in {x['label'] for x in _SEGS})
     used_secs = [s for s in all_secs if s in section_plans or s in occ]
 
     for sec in used_secs:
         counts = occ.get(sec) or [0] * n_bins
         peak = max(counts) if counts else 0
         peak_bin = counts.index(peak) if counts else 0
-        cap_tph = caps.get(sec) or DEFAULT_CAP_TPH
+        seg = _seg_by_label.get(sec)
+        if seg:
+            # official capacity (speed limits / following distance) per lane;
+            # occupancy counts BOTH directions and the road has a separate
+            # lane each way, so the section carries 2x the lane capacity
+            cap_tph = float(seg['cap_hr']) * 2.0
+        elif sec.endswith(" spur"):
+            cap_tph = 800.0        # 20 km/h floor / 50 m, two lanes (no sheet)
+        else:
+            cap_tph = caps.get(sec) or DEFAULT_CAP_TPH
         cap_bin = cap_tph * bin_hours
         ratio = (peak / cap_bin) if cap_bin > 0 else 0.0
         status = "High" if ratio >= 1.0 else ("Watch" if ratio >= 0.7 else "Open")
@@ -339,7 +429,11 @@ def shared_flow(
             "cap_tph": round(cap_tph, 1),
             "ratio": round(ratio, 3),
             "status": status,
-            "speed_kmh": speeds.get(sec),
+            "speed_kmh": ((seg.get('speeds') or {}).get('loaded', {}).get('mean')
+                          if seg else speeds.get(sec)),
+            "cap_basis": ("official speed limits / 50 m following, 2 lanes"
+                          if seg else ("spur estimate 20 km/h / 50 m, 2 lanes (no limit sheet)"
+                                       if sec.endswith(" spur") else "measured peak")),
             "occupancy": counts,
         }
         sections_out.append(row)
@@ -420,6 +514,8 @@ def shared_flow(
             "sections": p["sections"], "load_min": p["load_min"],
             "dump_min": p["dump_min"], "load_basis": p["load_basis"],
             "dump_basis": p["dump_basis"], "cycle_h": p["cycle_h"],
+            "interval_h": p.get("interval_h"), "queue_min": p.get("queue_min"),
+            "overhead_min": p.get("overhead_min"), "model": p.get("model"),
             "trips_per_truck": p["trips_per_truck"],
         } for p in path_rows],
         "sections": sections_out,
@@ -435,9 +531,11 @@ def shared_flow(
         "dwell_notes": dwell_notes,
         "gps_window": hours_payload.get("window") if gps_ok else None,
         "note": (
-            "DES-lite: measured load/dump dwell + Jul+ section speeds + staggered "
-            "releases → shared-section occupancy. Advisory — never clips simulate tonnes. "
-            "Empty-return density and shovel queues are later phases."
+            "DES on the segment model: per-truck timing from the calibrated hybrid "
+            "(plan segment fleets, contractor baselines, cycle + overhead cadence), "
+            "road time split over S1–S4 by the official directional speed limits, "
+            "loaded pass + dump + EMPTY return both occupy the road; BLB rides its "
+            "spur pseudo-section. Advisory — never clips simulate tonnes."
         ),
         "basis": {
             **basis,

@@ -1554,3 +1554,30 @@ Owner: "we don't need to think of BIRI BIRI or UNI UNI, ignore it for
 now." Pages 3-4 of the speed-limit PDF stay unencoded on purpose; the
 stick (S1-S4) and the BLB spur are the modelled network. Do not wire
 the side roads in without a new owner decision.
+
+## 2026-08-22 — hourly road-crowding DES now runs on the segment model
+
+Owner: predict how many trucks are in each section at each hour of the
+day, "near to the physical world, using the physics model we just made".
+plan_shared_flow rebuilt on the current model, keeping the API shape:
+- Per-truck timing from congestion.predictor at the PLAN's fleets
+  (segment_fleet from every route, contractor baselines, rain): road time
+  split over S1–S4 by the OFFICIAL directional speed-limit times; release
+  cadence = cycle + overhead_per_trip (trucks do not re-enter the road on
+  breaks — the old DES cycled them at raw cycle and over-packed trips).
+- Trips now occupy the road BOTH ways: loaded pass, dump dwell, empty
+  return in reverse at empty-direction times (was loaded-outbound only).
+- Releases are PARALLEL across loading faces (~1 per 15 trucks, §10.9).
+  The old serial stagger modelled ONE loader per pit, so a 230-truck
+  fleet mostly never departed and peaks read ~12 trucks; real peaks are
+  ~300-400 concurrent at v/c 0.25-0.33 vs official capacities.
+- Sections are the model's segments + a "<PIT> spur" pseudo-section for
+  non-stick routes — the NODE_KM BLB=67.8 smear is thereby OUT of the
+  hourly view (BLB never rides the stick here). Capacity per section =
+  official per-lane cap x 2 (occupancy counts both directions, separate
+  lanes); spur = 800/bin estimate (20 km/h floor, no limit sheet).
+- test_plan_shared_flow's shared-section target moved to "POS 12–KM15"
+  (TOFU>KM0 and KR>KM15 share S2+S3 under the new split; the old
+  POS 10–FENI 0-17 section no longer exists).
+D18b flapped once during a server-restart race on the shared box —
+probe /api/predict aliases directly before investigating. Suite 74/74.
