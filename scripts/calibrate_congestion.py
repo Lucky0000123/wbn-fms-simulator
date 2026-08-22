@@ -91,6 +91,70 @@ HAVING COUNT(*) >= 5
     return out
 
 
+def contractor_ratios():
+    """Per-(route, contractor) matched-day trips/DT ratio vs the pooled route.
+
+    Owner (2026-08-21): contractors on one road need their own baselines
+    from HISTORY. Raw per-contractor averages are fleet-size-confounded
+    (RIM ran ~140 trucks/day on TF while SMA ran ~58), so the ratio is
+    computed per DAY — contractor trips/DT divided by the same day's
+    all-contractor trips/DT on the same route, i.e. identical road
+    traffic on both sides — then medianed. Ticket basis on both sides of
+    the division, so the two-240s basis problem cancels. Shrunk toward
+    1.0 (K=20 days) and bounded [0.6, 1.4]; fewer than 30 matched days
+    -> no override, pooled baseline stands."""
+    from load_fms_env import load_fms_env
+    load_fms_env()
+    import pymssql
+    conn = pymssql.connect(server=os.environ["FMS_DB_HOST"], user=os.environ["FMS_DB_USER"],
+                           password=os.environ["FMS_DB_PASS"], database="WBN_DATABASE",
+                           login_timeout=8, timeout=300)
+    cur = conn.cursor()
+    cur.execute("""
+WITH t AS (
+  SELECT DATE, CONTRACTOR, TRUCK_ID,
+    CASE WHEN ORIGIN_AREA LIKE '%[_]TF[_]%' OR ORIGIN_AREA LIKE 'TF%' OR ORIGIN_AREA LIKE '%TOFU%' THEN 'TF'
+         WHEN ORIGIN_AREA LIKE '%[_]KR%' OR ORIGIN_AREA LIKE 'KR%' OR ORIGIN_AREA LIKE '%KRENE%' THEN 'KR'
+         WHEN ORIGIN_AREA LIKE '%BLB%' THEN 'BLB'
+         WHEN ORIGIN_AREA LIKE '%CBB%' THEN 'CBB'
+         ELSE NULL END AS OPIT,
+    CASE WHEN DESTINATION_AREA LIKE 'HUAFEI%' THEN 'HUAFEI'
+         WHEN DESTINATION_AREA IN ('FENI','FENI A') THEN 'FENI KM0'
+         ELSE DESTINATION_AREA END AS DAREA
+  FROM HAULAGE_CLEAN
+  WHERE DATE >= '2025-06-01'
+)
+SELECT OPIT, DAREA, DATE, CONTRACTOR, COUNT(*), COUNT(DISTINCT TRUCK_ID)
+FROM t WHERE OPIT IS NOT NULL AND DAREA IS NOT NULL AND CONTRACTOR IS NOT NULL
+GROUP BY OPIT, DAREA, DATE, CONTRACTOR
+HAVING COUNT(DISTINCT TRUCK_ID) >= 5
+""")
+    per_day = defaultdict(dict)      # (route, date) -> {contractor: tpd}
+    for opit, darea, date, cont, trips, dts in cur.fetchall():
+        route = "%s>%s" % (opit, darea)
+        per_day[(route, str(date))][str(cont).strip().upper()] = trips / float(dts)
+    conn.close()
+    samples = defaultdict(list)      # (route, contractor) -> [ratio]
+    for (route, _d), by_c in per_day.items():
+        if len(by_c) < 2:
+            continue                 # need company on the road that day
+        pooled = sum(by_c.values()) / len(by_c)
+        if pooled <= 0:
+            continue
+        for cont, tpd in by_c.items():
+            samples[(route, cont)].append(tpd / pooled)
+    out = defaultdict(dict)
+    K = 20.0
+    for (route, cont), vals in samples.items():
+        if len(vals) < 30:
+            continue
+        med = _pctile(sorted(vals), 0.5)
+        shrunk = (len(vals) * med + K * 1.0) / (len(vals) + K)
+        out[route][cont] = {"ratio": round(max(0.6, min(1.4, shrunk)), 3),
+                            "n_matched_days": len(vals)}
+    return out
+
+
 def gps_corridor_speeds():
     """Measured GPS road speeds per origin corridor, split by direction.
 
@@ -308,6 +372,12 @@ def main():
               open(PARAMS_PATH, "w"))
     from congestion import config as ccfg, predictor as cpred
     ccfg._cache["data"] = None
+    try:
+        crat = contractor_ratios()
+        print("contractor matched-day ratios: %d routes" % len(crat))
+    except Exception as exc:  # noqa: BLE001
+        print("WARN contractor ratios unavailable (%s) — pooled baselines only" % exc)
+        crat = {}
     for route, rec in routes_out.items():
         rate = rec.get("day_rate")
         if not rate:
@@ -332,6 +402,19 @@ def main():
                 rec["overhead_per_trip_min"] = round(max(0.0, ovh), 1)
                 # kept for reference only — predict() no longer reads it
                 rec["utilization"] = round(min(1.0, max(0.2, rate * cyc_ref / 1440.0)), 3)
+                # per-contractor baselines: pooled day_rate x matched-day
+                # ratio, overhead re-anchored on the same pooled cyc_ref so
+                # only the contractor LEVEL differs, never the road physics
+                for cont, cr in (crat.get(route) or {}).items():
+                    rate_c = rate * cr["ratio"]
+                    if rate_c <= 0:
+                        continue
+                    rec.setdefault("contractors", {})[cont] = {
+                        "ratio": cr["ratio"],
+                        "n_matched_days": cr["n_matched_days"],
+                        "day_rate": round(rate_c, 3),
+                        "overhead_per_trip_min": round(max(0.0, 1440.0 / rate_c - cyc_ref), 1),
+                    }
         except Exception as exc:  # noqa: BLE001
             print("  WARN %s: anchor failed (%s) — overhead left at 0" % (route, exc))
     ccfg._cache["data"] = None
@@ -361,6 +444,12 @@ def main():
             "long_haul_km": _CFG["long_haul_km"],
             "n_lanes_loaded": _CFG["n_lanes_loaded"],
             "loaders": "proportional: round(DT / historical trucks-per-loader)",
+            "segments": "stick routes price road time per shared-corridor segment "
+                        "(congestion/segments.py): one geometry capacity per segment, "
+                        "combined fleet from segment_fleet when the caller supplies the plan",
+            "contractors": "matched same-day trips/DT ratio vs pooled route (>=30 days, "
+                           "both >=5 trucks, EB-shrunk K=20, bounded 0.6-1.4); overhead "
+                           "re-anchored per contractor on the pooled cycle",
             "utilization": "LEGACY reference only — predict() no longer reads it",
         },
         "global": {

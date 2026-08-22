@@ -1470,3 +1470,39 @@ that must not be re-derived:
    ~140 trucks/day vs SMA ~58); only matched days isolate the effect.
    TF>POS 12 specifically has ~no direct paired history — the app's
    RIM-ahead numbers there are pure factor artifact.
+
+## 2026-08-22 — segment-based shared-road pricing + contractor baselines SHIPPED (backend)
+
+The road-model plan's P0-P2, implemented per the joint spec:
+- **congestion/segments.py** — the stick: S1 TF–KR (67.8–39, cap 60/hr
+  geometry), S2 KR–POS12 / S3 POS12–KM15 / S4 KM15–coast (cap 240/hr —
+  the class calibration already gave every KR/BLB route running there;
+  before this, the SAME shared kilometres had c=60 for a TF route and
+  c=240 for a KR route). BLB is a spur: no stick segments, per-route
+  pricing, BY DESIGN.
+- **predict(segment_fleet=, contractor=)** — stick routes ALWAYS price
+  road time per segment (own fleet when segment_fleet absent), so the
+  calibration anchor holds exactly when a route is alone and CROSS
+  traffic is the only added penalty (no double-charge; anchors verified:
+  TF>HUAFEI 2.38 vs 2.374, KR>POS 12 4.62 vs 4.613, BLB>POS 14 7.07 vs
+  7.069). Nov S3 plan drag, alone vs shared: TF>FENI KM15 2.62→1.85,
+  KR>POS 12 4.61→3.79, TF>POS 12 3.53→2.08, BLB rows byte-identical.
+- **Per-contractor baselines** in calibration: matched SAME-DAY trips/DT
+  ratio vs the pooled route (>=30 days, both >=5 trucks, EB-shrunk K=20,
+  bounded 0.6–1.4; ticket basis on BOTH sides so the two-240s problem
+  cancels; raw contractor means are fleet-size-confounded — RIM ran
+  ~140/day where SMA ran ~58). Key result: TF>POS 12 RIM 0.673 (227d) vs
+  SMA 1.152 (313d) — history INVERTS the old fleet-global factor there.
+  Overhead re-anchored per contractor on the POOLED cycle: one road, one
+  physics; contractors differ only in level. route_params(route,
+  contractor=) merges rec['contractors'][NAME].
+- run_s3_hybrid prices per (route, contractor) at the combined fleet
+  with the plan's segment_fleet (IWIP rows included) and prints the
+  per-month SEGMENT FLEET table — S1 is the binding window (v/c 1.5→2.4
+  Sep→Nov); the lower mainline stays <0.81.
+- Backtest R2 0.925 / MAPE 5.9% (unchanged — backtest calls carry no
+  segment_fleet). Suite 74/74 after a VPN flap (J56/J70/J71 fail ONLY
+  when the site DB is down — check `SELECT 1` before investigating).
+- NOT yet wired: the frontend still prices via per-route curves with the
+  span-weighted approximation (and its NODE_KM BLB=67.8 span bug). Next:
+  serve segment pricing to the app (P3 side-by-side), then re-freeze.

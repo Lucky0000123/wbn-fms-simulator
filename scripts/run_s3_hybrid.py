@@ -64,6 +64,17 @@ def month_rows(m, calibrated, params, ratios, warnings):
         dt = p.get('_allocDt') if p.get('_allocDt') is not None else p.get('dt')
         if dt and dt > 0:
             comb[p['key']] += dt
+    # Combined trucks per shared-corridor segment — EVERY route on the road,
+    # including IWIP road-only rows (owner: same road, one penalty). BLB is a
+    # spur and contributes to no stick segment.
+    from congestion.segments import segment_trucks
+    all_road = dict(comb)
+    for p in (plan.get('paths') or {}).values():
+        if p.get('foreign'):
+            dt = p.get('_allocDt') if p.get('_allocDt') is not None else p.get('dt')
+            if dt and dt > 0:
+                all_road[p['key']] = all_road.get(p['key'], 0) + dt
+    seg_fleet = segment_trucks(all_road)
     priced = {}
     for route, cdt in comb.items():
         nl, cal, hist_max = n_loaders_for(route, cdt, calibrated, params, ratios)
@@ -79,7 +90,21 @@ def month_rows(m, calibrated, params, ratios, warnings):
                     "NOTE: %s at %.0f trucks using %d proportional loaders "
                     "(historical max %s DT, calibrated faces %d)."
                     % (route, cdt, nl, hist_max, cal))
-        priced[route] = (predict(route, cdt, nl), nl)
+        priced[route] = (predict(route, cdt, nl, segment_fleet=seg_fleet), nl)
+    from congestion.segments import SEGMENTS, route_segments
+    print("\n  SEGMENT FLEET — 2026-%02d (combined trucks per shared-road window)" % m)
+    print("  %-4s %-11s %8s %8s %6s  %s" % ("seg", "km span", "trucks", "flow/hr", "v/c", "routes on it"))
+    for s in SEGMENTS:
+        users = [rt for rt in sorted(all_road)
+                 if any(ss['id'] == s['id'] for ss, _ in route_segments(*rt.split('>')))]
+        flow = 0.0
+        for rt in users:
+            pr = priced.get(rt)
+            cycm = (pr[0].get('cycle_time_minutes') if pr else None) or 240.0
+            flow += all_road[rt] * 60.0 / max(1.0, cycm)
+        print("  %-4s %5.1f-%-5.1f %8d %8.1f %6.2f  %s" % (
+            s['id'], s['top_km'], s['bottom_km'], round(seg_fleet[s['id']]),
+            flow, flow / s['cap_hr'], ", ".join(users) or "—"))
     rows = []
     for slot, p in sorted(paths.items()):
         dt = p.get('_allocDt') if p.get('_allocDt') is not None else p.get('dt')
@@ -87,6 +112,16 @@ def month_rows(m, calibrated, params, ratios, warnings):
             continue
         route = p['key']
         r, nl = priced[route]
+        # per-contractor baseline when calibration carries one for this route
+        cont = str(p.get('contractor') or '').strip().upper()
+        if cont:
+            try:
+                rc = predict(route, comb[route], nl, segment_fleet=seg_fleet,
+                             contractor=cont)
+                if rc.get('trips_per_DT_per_day'):
+                    r = rc
+            except (ValueError, ArithmeticError):
+                pass
         share = dt / comb[route]
         payload = (r['total_tonnes_day'] / r['total_trips_day']
                    if r.get('total_trips_day') and r.get('total_tonnes_day') else 0)

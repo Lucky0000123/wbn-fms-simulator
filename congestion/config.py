@@ -54,13 +54,23 @@ def load_params() -> dict:
     return data
 
 
-def route_params(route: str) -> dict:
-    """DEFAULTS overlaid with global then per-route calibrated values."""
+def route_params(route: str, contractor: str | None = None) -> dict:
+    """DEFAULTS overlaid with global, per-route, then per-contractor values.
+
+    Per-contractor overrides live under rec["contractors"][NAME] — written
+    by scripts/calibrate_congestion.py from MATCHED same-day history (owner,
+    2026-08-21: contractors on one road need their own baselines). Missing
+    contractor -> pooled route baseline, unchanged behaviour."""
     data = load_params()
     p = dict(DEFAULTS)
     p.update({k: v for k, v in (data.get("global") or {}).items()
               if not isinstance(v, dict)})
     rp = (data.get("routes") or {}).get(route) or {}
-    p.update({k: v for k, v in rp.items() if v is not None})
+    p.update({k: v for k, v in rp.items()
+              if v is not None and k != "contractors"})
+    if contractor:
+        cp = (rp.get("contractors") or {}).get(str(contractor).strip().upper()) or {}
+        p.update({k: v for k, v in cp.items() if v is not None})
+        p["contractor_calibrated"] = bool(cp)
     p["calibrated"] = bool(rp)
     return p

@@ -23,16 +23,36 @@ def _finite(x):
 def predict(route: str, n_trucks: float, n_loaders: int | None = None,
             *, shift_hours: float | None = None, shifts_per_day: int | None = None,
             payload_t: float | None = None, rain_mm: float = 0.0,
-            legacy_cap: float | None = None, legacy_rate: float | None = None) -> dict:
+            contractor: str | None = None,
+            segment_fleet: dict | None = None,
+            legacy_cap: float | None = None, legacy_rate: float | None = None,
+            mode: str = "full") -> dict:
     """Hybrid trips/DT/day prediction for one route.
 
     route: 'TF>HUAFEI' style key. n_loaders None -> per-route default + warning.
+
+    contractor: per-contractor baseline (matched-day calibrated ratio over the
+    pooled route baseline) when calibration has one; None -> pooled.
+
+    segment_fleet: {segment_id: combined trucks} for the WHOLE plan (owner,
+    2026-08-21: trucks on the same road share one penalty). Stick routes
+    (congestion/segments.py) always price road time per segment — with only
+    their own fleet when this is absent — so the calibration anchor holds
+    exactly when a route is alone; cross traffic is the only extra penalty.
+
+    mode:
+      full — Congestion tab. Cycle includes loader queue and bunching.
+      road — Plan / Allocate. Trips/DT from ROAD time (+ ops + overhead)
+             only. Extra trucks slow the haul via BPR on c_road; they do
+             not collapse output because three faces saturated. Owner
+             2026-08-21: "here you just need to see the time in road,
+             not other things."
     """
     if not route or ">" not in str(route):
         raise ValueError("route must look like 'TF>HUAFEI'")
     if not _finite(n_trucks) or n_trucks < 0:
         raise ValueError("n_trucks must be a non-negative number")
-    p = route_params(route)
+    p = route_params(route, contractor=contractor)
     warnings = []
     if n_loaders is None:
         n_loaders = int(p["n_loaders"])
@@ -95,7 +115,16 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
             long_haul_km=float(p.get("long_haul_km") or 50.0))
     mu_hr = 60.0 / float(p["load_min"])
     c_dump = p.get("c_dump_trucks_hr")
-    c_link = min(c_road, n_loaders * mu_hr, c_dump if _finite(c_dump) and c_dump > 0 else float("inf"))
+    road_only = str(mode or "full").strip().lower() == "road"
+    # Plan pricing (mode=road): BPR uses ROAD capacity only. Putting
+    # n_loaders*mu into c_link made the loader wall look like road
+    # congestion — BLB trips/DT fell with fleet because three faces
+    # saturated, not because the 6.7 km haul got slower (owner, 2026-08-21).
+    if road_only:
+        c_link = c_road
+    else:
+        c_link = min(c_road, n_loaders * mu_hr,
+                     c_dump if _finite(c_dump) and c_dump > 0 else float("inf"))
 
     # Flow depends on cycle, cycle on BPR + queue. nxt(cyc) is strictly
     # decreasing in cyc (longer cycle -> fewer arrivals/hr -> less BPR
@@ -105,21 +134,49 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
     # saturation and exited after 50 rounds with NO convergence check —
     # the owner's saturation chart showed it as sawtooth dips, trips/DT
     # RISING when trucks were added (2026-08-21).
+    # Stick routes decompose the road over the shared-corridor segments
+    # (owner: one road, one penalty). Own-fleet-only when no segment_fleet.
+    from .segments import route_segments as _route_segments
+    _segs = _route_segments(origin, dest)
+    _seg_total_ov = sum(ov for _s, ov in _segs) or 1.0
+
     def _nxt(cyc_try):
         v_hr = n_trucks / (cyc_try / 60.0)      # trucks/hr entering the link
-        b = bpr.bpr_travel_min(t_free_road, v_hr, c_link,
-                               float(p["alpha"]), float(p["beta"]))
-        # Safety net: road time cannot exceed 3x free flow. Trucks keep
-        # moving in gridlock; they do not park for a whole shift. With
-        # geometry c_road this rarely binds — if it does, the BPR formula
-        # has left the physical range and the cap is a mask, not a model.
         max_road = t_free_road * 3.0
-        if b["t_road_min"] > max_road:
-            b = {**b, "t_road_min": max_road,
-                 "penalty_min": max_road - t_free_road, "regime": "capped"}
+        if _segs:
+            # per-segment: combined trucks on the segment (all routes, all
+            # contractors, IWIP) at this route's tempo -> v/c vs the
+            # SEGMENT's one geometry capacity; free time split by overlap
+            alpha, beta = float(p["alpha"]), float(p["beta"])
+            t_road = 0.0
+            worst_vc = 0.0
+            for s, ov in _segs:
+                trucks_here = n_trucks
+                if segment_fleet:
+                    trucks_here = max(float(segment_fleet.get(s['id'], 0.0)), n_trucks)
+                vc = (trucks_here / (cyc_try / 60.0)) / max(1.0, s['cap_hr'])
+                worst_vc = max(worst_vc, vc)
+                tf_seg = t_free_road * (ov / _seg_total_ov)
+                t_road += min(3.0, 1.0 + alpha * (vc ** beta)) * tf_seg
+            t_road = min(t_road, max_road)
+            b = {"t_road_min": t_road, "penalty_min": t_road - t_free_road,
+                 "vc": worst_vc,
+                 "regime": ("capped" if t_road >= max_road - 1e-6 else
+                            ("congested" if worst_vc >= 0.7 else "free"))}
+        else:
+            b = bpr.bpr_travel_min(t_free_road, v_hr, c_link,
+                                   float(p["alpha"]), float(p["beta"]))
+            # Safety net: road time cannot exceed 3x free flow. Trucks keep
+            # moving in gridlock; they do not park for a whole shift. With
+            # geometry c_road this rarely binds — if it does, the BPR formula
+            # has left the physical range and the cap is a mask, not a model.
+            if b["t_road_min"] > max_road:
+                b = {**b, "t_road_min": max_road,
+                     "penalty_min": max_road - t_free_road, "regime": "capped"}
         q = queueing.erlang_c(n_trucks, cyc_try / 60.0, float(p["load_min"]),
                               n_loaders, sh)
-        return b["t_road_min"] + t_fixed + q["wq_min"], b, q
+        extra = 0.0 if road_only else q["wq_min"]
+        return b["t_road_min"] + t_fixed + extra, b, q
 
     lo = max(1.0, ff["t_free_min"])
     hi = t_free_road * 3.0 + t_fixed + sh * 60.0 * 0.5 + 1.0
@@ -135,7 +192,7 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
             else:
                 hi = mid
         nxt_mid, bp, qq = _nxt(0.5 * (lo + hi))
-        cyc = bp["t_road_min"] + t_fixed + qq["wq_min"]
+        cyc = bp["t_road_min"] + t_fixed + (0.0 if road_only else qq["wq_min"])
 
     # ── bunching (variance) penalty ───────────────────────────────────────
     # Linear in N/n_ref, so cap at 3x the reference-fleet term the same way
@@ -154,7 +211,8 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
             warnings.append("bunching penalty capped at 3x the reference-fleet term")
         else:
             bunch = bunch_raw
-        cyc += bunch
+        if not road_only:
+            cyc += bunch
 
     # OVERHEAD PER TRIP (owner, 2026-08-21 — replaces trips = U*1440/cyc):
     # breaks, dispatch wait, shift change and refuelling attach to TRIPS,
@@ -187,7 +245,12 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
            "p50": round(trips_dt_day, 3),
            "p90": round(trips_dt_day * (1 + rel), 3),
            "relative": round(rel, 3),
-           "within_observed_fleet_range": bool(in_range)}
+           "within_observed_fleet_range": bool(in_range),
+           "method": "heuristic_sensitivity_band_not_empirical_quantiles"}
+    if hi_dt and not in_range:
+        warnings.append("fleet %.0f DT is outside the observed route range %.0f-%.0f; "
+                        "p10/p90 are heuristic sensitivity bounds" %
+                        (n_trucks, lo_dt, hi_dt))
 
     # ── legacy comparison (divide demonstrated max by fleet) ─────────────
     legacy = None
