@@ -1695,3 +1695,103 @@ predictor.py still prices BLB against a 72/hr OBSERVED p95 where geometry
 gives 400/hr — same "demonstrated peak read as a limit" defect on the
 PRICING path, and correcting it moves prices; (3) the KR corridor's
 calibrated road time runs 1.7-3.0x its official speed-limit time.
+
+## 2026-08-23 (later) — the four owner decisions, ruled and implemented
+
+Owner: "fix all these also." All four items from the QA audit are closed.
+Report: reports/QA_AUDIT_2026-08-23_FIX_PLAN.md §3.
+
+**1. The 8 Mt LD line — RULED: two labelled numbers, not one.** The two
+recorded owner statements were never in conflict; they are about different
+quantities. **Capacity is never clipped** (what the fleet could move on LD
+is computed and shown in full, above 8 Mt when the trucks are there — the
+2026-08-19 rule) and **credited production stops at the supplied target**,
+the remainder reported as explicit unused/excess (the learned preference).
+Payload gains dt_p3_capacity / dt_p3_unused / ld_t_month_excess /
+total.ld_t_excess_capacity; workbooks gain a "LIM-LD capacity vs credited
+production" table. Measured S3 Dec: capacity 2,657,340 t, credited
+2,034,750 t, excess 622,590 t — all three named on the sheet. Do NOT
+re-collapse this to one number.
+
+**2. BLB pricing capacity — the brief's premise was WRONG and the agent
+said so.** The 72/hr was never an observed p95 (that is `c_road_obs_p95`
+= 34.5, informational). It was `min(c_road, n_loaders x 60/load_min,
+c_dump)` — i.e. **the loader wall installed as road capacity**, so BLB's
+loader constraint was charged TWICE: once correctly by erlang_c, again as
+BPR road delay. Proof: `road_vc == rho` to 3 dp on all 7 BLB routes, so
+`bottleneck` was structurally incapable of ever returning "loader".
+Fixed: c_link is the official geometry (400/hr spur, reusing
+plan_shared_flow's constant), loader/dump ceilings reported separately.
+Backtest IMPROVED 0.926 -> 0.927 / MAPE 5.8 -> 5.7. Stick routes move
+0.00% at every fleet; BLB inside its observed range max +2.74%; the real
+2026-09-03 plan moves +0.40% on ONE path and 0.00% on nine.
+`segment_trucks()` now uses `mainline_windows()` so BLB counts onto the
+lower stick (S4 419->480 on `dt`, 368->469 on `_allocDt`, the +27.4% that
+matches plan_shared_flow's own 28%). `route_segments()` deliberately NOT
+widened — it is the "priced on the stick?" predicate; occupancy and
+pricing are now separate questions with separate functions.
+
+**3. KR corridor — SETTLED: not a KR defect, and not a distance error.**
+`road_free/limit` factors exactly into speed_factor x nonroad_factor.
+speed_factor is **1.59-1.86 on EVERY route, KR and TF alike** — trucks
+free-flow at ~20 km/h loaded against 30-50 posted, site-wide (38,515
+segment-hours). KR>POS 12 stands out only because it has the smallest
+denominator and the largest nonroad_factor (1.65). Chainage REJECTED as
+the cause by two independent methods agreeing to 0.2%: distance-differenced
+WAITING_TIME legs (16.94 km/h) and GPS corridor means (16.9 km/h).
+The real finding: **`road_free_min` is a CYCLE minus a flat 8-min ops
+term, not road time** — on KR>POS 12 it (110.9) exceeds the entire p10
+complete cycle (80 min), and the excess is named in the data as 18.1 min
+loading queue + 11.1 min dumping queue, the larger half at the POS 12 TIP,
+not the loader. Anchors hold (overhead is fitted on top) so LEVEL is
+right; SHAPE is not — BPR multiplies an inflated base and erlang_c adds
+queue on top of a base already containing ~29 min of measured queue.
+Estimator deliberately NOT changed: it cannot be verified without running
+calibration. `physics.free_flow_road_min()` / `road_free_audit()` and a
+per-route `road_free_basis` now make it visible instead of buried.
+**Why `chainage_suspect` never fired on any route: two errors cancel** —
+the numerator is 1.65x high and REF_SPEED 15 km/h is 0.74x low against a
+measured 20.3.
+
+**4. The blocked four — unblocked and fixed.** The other agent's files had
+been untouched since 2026-08-21 (dormant, not in flight); their work was
+backed up and BUILT ON, so those files now carry both authors.
+- Workbook labelled S1 contained S4: `day=None` was latest-file-wins.
+  Now DEFAULT_SCENARIO_DAY=1 with the source disclosed on the Year sheet,
+  in the API and in X-Plan-* headers; day=5/13 404s instead of silently
+  borrowing a legacy daily. Year target 20,900,148 (mixed) -> 22,356,095.
+- 533,180 t phantom target: a route the scenario does not run now carries
+  NO target (its pit x material target is already on the routes the
+  waterfall allocated — counting both double-counts). ONE owner,
+  `_allocation_target_day`, read by card, sheet and Year total. Oct/Nov
+  byte-identical, as required.
+- Infeasible targets credited: rows are now cut back in P1->P2 order until
+  they fit the pool. SAP x100 stress: Dec 29,187 DT from a 1,281 pool ->
+  1,280.8; total.sap_t 576,659,545 -> 37,717,872 credited with the ask
+  still visible as sap_t_target and feasible:false.
+- monthly_api was the THIRD owner of contractor pricing; `cf` deleted, it
+  now calls predict(contractor=) — 14 pairs agree with
+  /api/congestion_model to **0.0000%**.
+- Found while fixing: `_scenario_draft_paths` sized targeted rows on the
+  waterfall DT alone while the P3 LD block landed on the SAME TF>HUAFEI
+  key (Sep LIM-TOS delivered 64% of target). Now iterated to a fixed
+  point — the same trap `finalTrim` fixed in plan_sap_target.js.
+
+**Reference curves regenerated + J76 added**: the artifact records
+provenance (calibration timestamp, network constants AND a digest of
+congestion/ model code — data fingerprints alone are insufficient, proved
+live when BLB moved under a code-only change), and
+`export_saturation_curves.py --check` exits non-zero when stale.
+/api/congestion_curve now labels a served reference with
+referenceStale/referenceStaleReasons instead of passing it off as current.
+
+**Score 76/76** (D18b flaked once on the post-retrain race and passes on a
+direct probe — probe before investigating).
+
+**Still open, owner-sanctioned calibration run needed for both:**
+`calibrate_congestion.py:62` gives post-midnight shift-2 trips the
+pre-midnight date, so the midnight-crossing gap falls outside the
+[20,480] filter — discarding 43.4% of usable gaps on KR>FENI KM0 and
+41.6% on TF>POS 12. And the 480-min ceiling censors long TF routes
+(TF>HUAFEI road_free is 55% of its measured road time). Fixing both then
+re-running calibration would also re-zero the 0.21% BLB anchor drift.

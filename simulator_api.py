@@ -3352,6 +3352,68 @@ def api_congestion_model():
 
 
 _SAT_REF_CACHE = {"at": 0.0, "data": None}
+_SAT_REF_STALE = {"at": 0.0, "verdict": None, "mod": None}
+
+
+def _saturation_reference_freshness():
+    """Is the frozen reference still the curve THIS build would produce?
+
+    File digests only, no predict(): this runs on a request path, and the
+    machines that serve the reference have no calibration to recompute from
+    (data/congestion_params.json is gitignored). They DO have the committed
+    model code and the speed-limit/segment network — two of the three inputs
+    the curves are a function of. Numeric drift and the full "what moved"
+    table live in `scripts/export_saturation_curves.py --check` (exits
+    non-zero; that is what the gate runs). This only decides whether to LABEL
+    the payload, because a frozen artifact that answers without saying how old
+    it is is how TF>HUAFEI shipped 40.7% low for two days.
+    """
+    import time as _t
+    if _SAT_REF_STALE["verdict"] is not None and _t.time() - _SAT_REF_STALE["at"] < 300:
+        return _SAT_REF_STALE["verdict"]
+    here = os.path.dirname(os.path.abspath(__file__))
+    out = {"stale": None, "reasons": [], "generated_at": None}
+    try:
+        if _SAT_REF_STALE["mod"] is None:
+            import importlib.util as _ilu
+            _s = _ilu.spec_from_file_location(
+                "_sat_export", os.path.join(here, "scripts",
+                                            "export_saturation_curves.py"))
+            _m = _ilu.module_from_spec(_s)
+            _s.loader.exec_module(_m)
+            _SAT_REF_STALE["mod"] = _m
+        with open(os.path.join(here, "reports", "saturation_curves.json"),
+                  encoding="utf-8") as fh:
+            frozen = json.load(fh) or {}
+        out["generated_at"] = frozen.get("generated_at")
+        fp = frozen.get("provenance") or {}
+        cur = _SAT_REF_STALE["mod"].provenance()
+        out["stale"] = False
+        if not fp:
+            out["stale"] = True
+            out["reasons"].append("the frozen artifact records no provenance "
+                                  "(built before the freshness guard existed) "
+                                  "— it cannot be shown to be current")
+        else:
+            for name, label in (("network_fingerprint",
+                                 "speed-limit / segment network"),
+                                ("model_fingerprint", "congestion/ model code")):
+                if fp.get(name) != cur.get(name):
+                    out["stale"] = True
+                    out["reasons"].append("%s changed since the freeze" % label)
+            cal_at = cur.get("calibration_generated_at")
+            if cal_at and out["generated_at"] and cal_at > out["generated_at"]:
+                out["stale"] = True
+                out["reasons"].append(
+                    "calibration regenerated %s, after this reference was "
+                    "frozen %s" % (cal_at, out["generated_at"]))
+    except (OSError, ValueError, ImportError, AttributeError, KeyError) as exc:
+        # Deliberately NOT a bare `except Exception` (house rule), and
+        # deliberately not fatal: a label that cannot be computed must not take
+        # the endpoint down. `stale: null` means "unknown", not "fresh".
+        out["reasons"] = ["freshness could not be determined: %s" % exc]
+    _SAT_REF_STALE.update(at=_t.time(), verdict=out)
+    return out
 
 
 def _saturation_reference():
@@ -3465,16 +3527,27 @@ def api_congestion_curve():
         if ref:
             src = (ref.get("curve_proportional") if proportional
                    and ref.get("curve_proportional") else ref["curve"])
+            fresh = _saturation_reference_freshness()
             return jsonify({
                 "ok": True, "route": route, "n_loaders": n_loaders,
                 "calibrated_loaders": ref.get("n_loaders_calibrated"),
                 "calibrated": True, "servedFrom": "reference",
+                # `calibrated: True` says the curve came out of a calibrated
+                # model. It does NOT say the calibration is current, and
+                # nothing in this payload used to. These three do.
+                "referenceGeneratedAt": fresh.get("generated_at"),
+                "referenceStale": fresh.get("stale"),
+                "referenceStaleReasons": fresh.get("reasons") or [],
                 "loaders_basis": ("proportional" if proportional
                                   else "calibrated_faces"),
                 "curve": src, "knee_dt": ref.get("knee_dt"),
-                "note": "Frozen reference curve (reports/saturation_curves.json) — "
-                        "no live calibration on this machine"
-                        + ("; requested n_loaders ignored" if n_loaders else "")})
+                "note": ("Frozen reference curve (reports/saturation_curves.json, "
+                         "generated %s) — no live calibration on this machine"
+                         % (fresh.get("generated_at") or "unknown"))
+                        + ("; requested n_loaders ignored" if n_loaders else "")
+                        + ((" — STALE: " + "; ".join(fresh["reasons"])
+                            + ". Regenerate with scripts/export_saturation_curves.py.")
+                           if fresh.get("stale") else "")})
     tpl = 15.0
     ref_t, ref_l = rp.get("n_trucks_ref"), rp.get("n_loaders")
     if rp.get("calibrated") and ref_t and ref_l:

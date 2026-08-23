@@ -342,10 +342,24 @@ def main():
         ops_min = load_min + 1.0 + 2.0            # load + spot + dump
         rec["ops_min"] = round(ops_min, 1)
         rec["road_free_min"] = round(max(5.0, t_free - ops_min), 1)
+        rec["road_free_basis"] = (
+            "p25 of per-day-shift MEAN trip gaps minus a flat %g min ops — the "
+            "uncongested-day CYCLE, not measured road time. Whatever per-trip "
+            "queue, spotting and dwell that flat term does not cover is inside "
+            "this number; road_free_audit below sizes it." % ops_min)
         gps = gps_speeds.get(o)
         if gps and dist and gps.get("down") and gps.get("up"):
             rec["gps_road_min"] = round(60.0 * dist / gps["down"]
                                         + 60.0 * dist / gps["up"], 1)
+        # Owner, 2026-08-23: "why does KR's calibrated road time run 1.7-3.0x
+        # the official speed limit?" Because that ratio is a PRODUCT of two
+        # unrelated things, and neither is a distance error — the survey pins
+        # KR at chainage 39 and the mainline is contiguous on one datum. Split
+        # it so the artifact answers the question instead of posing it.
+        # Diagnostic only: nothing prices off these fields.
+        audit = ph.road_free_audit(o, d, rec["road_free_min"])
+        if audit:
+            rec["road_free_audit"] = audit
         rec.update(disp.get(route) or {})
         routes_out[route] = rec
         flag = " SUSPECT" if chainage_suspect else ""
@@ -430,7 +444,14 @@ def main():
             "trips_formula": "1440 / (road_congested + ops + queue + bunching + overhead_per_trip)",
             "road_free": "p25 of day-shift trip gaps minus ops (weighbridge stamps cannot "
                          "split the legs — measured 2026-08-21); gps_road_min = measured km / "
-                         "GPS corridor speeds by direction, cross-check only",
+                         "GPS corridor speeds by direction, cross-check only. NOT measured "
+                         "road time: it is the uncongested-day CYCLE minus a flat 8 min, so "
+                         "it still carries per-trip queue and dwell — per-route sizing in "
+                         "each route's road_free_audit (measured 2026-08-23: KR>POS 12 holds "
+                         "~44 min of non-road time, of which WAITING_TIME names ~29 min as "
+                         "loading + dumping queue). Kept as-is on purpose: overhead_per_trip "
+                         "is anchored on top of it, so moving it without re-anchoring breaks "
+                         "every route.",
             "ops": "loader service 5 + spot 1 + dump 2 min",
             "overhead_per_trip": "anchored: 1440/dispatch day_rate - modeled cycle at median "
                                  "fleet+faces (exact at the anchor; clamped >= 0)",

@@ -26,8 +26,9 @@ dump trucks (DT) by material priority, rolls plans up to monthly/yearly
 management reports, and renders GPS road-corridor crowding.
 
 Two contractors: RIM and SMA. Hard rule: **BLB pit accepts RIM trucks only.**
-Priorities: **P1 SAP → P2 LIM-TOS → P3 LIM-LD** (Tofu limonite dump → Huafei,
-the leftover-truck sink, uncapped; 8,000,000 t is a sales *target line*).
+Priorities: **P1 SAP → P2 LIM-TOS → P3 LIM-LD** (Tofu limonite dump → Huafei).
+All supplied targets are real: P3 fills only after P1/P2; capacity above target
+is reported separately and is not credited as production.
 
 ## 2. Where everything lives
 
@@ -105,8 +106,9 @@ Congestion/corridor outputs are advisory and never clip tonnes (J53/J57).
 - Import workbook (long-format "Mine Plan DB" sheet) on /monthly →
   `/api/scenarios/import`. S1 is always derived live from the yearly matrix
   (no S1 file may exist).
-- Waterfall `/api/scenarios/<id>/allocate`: P1→P2→P3 per contractor pools,
-  BLB=RIM lock, LIM-LD uncapped (8 Mt = target line).
+- Waterfall `/api/scenarios/<id>/allocate`: target-driven P1→P2→P3 per
+  contractor pools, BLB=RIM lock, 8 Mt default LIM-LD target. Imported
+  `Type Ore = LD` rows become explicit monthly P3 targets.
 - **SAP routing conditions (S2/S3 only)**: 10 kt/d TOFU→FENI KM15,
   10 kt/d BLB→FENI KM0, TOFU rest→POS 12, KR→POS 12, BLB rest→POS 14
   (`SAP_ROUTING` in scenario_api.py).
@@ -148,11 +150,10 @@ Congestion/corridor outputs are advisory and never clip tonnes (J53/J57).
 - Chainage stick: full card width, 560–640 px tall (#plan-c3-flow-svg).
 
 ## 9. Key measured findings (for management context)
-- S1 misses the 8 Mt LIM-LD target: ~5.45 Mt. S2/S3 free enough trucks to
-  exceed it *in waterfall capacity terms* (~9.5 Mt), **but** the real
-  constraint is the TF→HUAFEI corridor: ~500 trips/day ceiling ≈ 20–26 kt/d
-  (~2.5–3 Mt Sep–Dec) no matter how many trucks are parked on it. Adding
-  trucks past ~250–300 DT collapses trips/DT (1.9 → 0.75). That is why the
+- S1 misses the 8 Mt LIM-LD target in the historical-rate waterfall (~5.45 Mt).
+  S3 has enough waterfall capacity to fill exactly 8 Mt, with excess shown as
+  unused capacity. The current saved-plan hybrid run predicts ~6.18 Mt because
+  TF→HUAFEI remains the binding corridor. That is why the
   S2 achievable total (~11.5 Mt Sep–Dec) is below S1's (~15.5 Mt): trucks
   moved from productive SAP routes (130–180 t/DT/d) to the saturated LD
   corridor (35–60 t/DT/d). The lever is a second LD route, not more trucks.
@@ -236,14 +237,15 @@ Sequence of fixes after the first S3 run, each owner-driven:
    **R2 0.925, MAPE 5.9%** — improved. See AGENTS.md for the weighbridge
    timestamp trap and the flow-basis warning.
 
-Current S3 picture (hybrid, honest physics): LD Sep-Dec ~ 2.8-3 Mt of the
-8 Mt target; TF>HUAFEI is the binding corridor (v/c ~ 1.4-1.8 at planned
-fleets); a second HUAFEI corridor is worth ~ +73% LD tonnage. BLB routes
-run near-free at any planned fleet.
+Current S3 picture (regenerated hybrid artifact, proportional loaders): LD
+Sep-Dec **6.18 Mt** of the 8 Mt target; TF>HUAFEI is the binding corridor
+(v/c ~ 1.3-1.8 at planned fleets). A second independent HUAFEI corridor raises
+the modeled result to **7.72 Mt** (+25%, 97% of target). BLB routes run
+near-free at planned fleets.
 
 ## 14. Current state / open threads (for the parallel agent)
 
-Done and verified (73/73 as of 2026-08-21 morning):
+Done and verified (74/74 as of 2026-08-21; includes route-alias/distance gate):
 - Hybrid model live end-to-end: /api/congestion_model, /api/congestion_curve,
   /api/congestion_compare; Allocate-DT engine consumes the curve cache
   (plan.js planHybridCurveFor); congestion charts JS exists

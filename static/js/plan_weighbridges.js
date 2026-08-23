@@ -224,16 +224,28 @@
   function pathTrips(id){
     try {
       const r = typeof _planDraft !== 'undefined' ? _planDraft[id] : null;
-      if (!r || !(r.dt > 0)) return 0;
+      if (!r) return 0;
+      // WORKING FLEET, not display fleet (owner bug 2026-08-21): after
+      // Allocate freezes, r.dt shows the pre-alloc plan while _allocDt is
+      // the real division. This function fed r.dt to every bridge, so the
+      // SAME plan priced KR>POS 12 at wb 0.8 mid-allocate (r.dt = working)
+      // and wb 1.0 after restore (r.dt = display) — the allocator judged
+      // targets against one bridge load and the saved board against
+      // another. Same convention as planTripsPerDT's road coupling.
+      const frozen = typeof planAllocFrozen === 'function' && planAllocFrozen();
+      const dtw = (frozen && r._allocDt != null) ? r._allocDt : r.dt;
+      if (!(dtw > 0)) return 0;
       if (r.foreign && Number.isFinite(r.measTrips)){
         const rate = r.measTrucks ? r.measTrips / r.measTrucks : 0;
-        return r.dt * rate;
+        return dtw * rate;
       }
       if (typeof planTripsPerDT === 'function'){
         const rain = Math.max(0, parseFloat((el('plan-rain') || {}).value) || 0);
         const c = typeof planContractor === 'function' ? planContractor(r.contractor) : null;
-        const e = planTripsPerDT(r.key, r.dt, rain, c, typeof planTripOpts==='function'?planTripOpts(id,{noWb:true}):{ noWb: true, selfId: id, nLoaders: r.loaders||2 });
-        if (e) return r.dt * e.shift;
+        const sv = r.dt; r.dt = dtw;
+        const e = planTripsPerDT(r.key, dtw, rain, c, typeof planTripOpts==='function'?planTripOpts(id,{noWb:true}):{ noWb: true, selfId: id, nLoaders: r.loaders||2 });
+        r.dt = sv;
+        if (e) return dtw * e.shift;
       }
     } catch (e) {}
     return 0;

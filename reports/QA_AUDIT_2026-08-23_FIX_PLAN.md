@@ -79,7 +79,33 @@ Severity is by owner impact, not by code depth.
 | T3.10 | Foreign trucks priced at the host route's tempo (~1.8× under-weighted); direction correct, magnitude approximate | **BACKLOG** |
 | T3.11 | IWIP sizing ignores IWIP's own calibrated baseline (~9% oversize, conservative direction) | **BACKLOG** |
 
-## 3. Needs an owner decision
+## 3. Owner decisions — RULED 2026-08-23 ("fix all these also")
+
+1. **The 8 Mt LD line.** Both recorded statements stand, because they are
+   about different quantities — the contradiction was an artifact of
+   trying to carry one number:
+   - **Capacity is never clipped.** What the fleet could physically move
+     on LD stays computed and visible in full, above 8 Mt when the trucks
+     are there. Destroying that is what the 2026-08-19 rule forbids.
+   - **Credited production stops at the supplied target.** The remainder
+     is reported as explicit unused/excess capacity and is never folded
+     into headline production (the learned preference).
+   Two labelled numbers, the same doctrine as predicted-vs-achievable.
+2. **BLB pricing capacity**: fix — move off the 72/hr observed p95 to the
+   official geometry, and make `segment_trucks()` honour the surveyed
+   junction so S4 stops under-counting. Prices move; that is authorised,
+   and the requirement is that the movement be correct and quantified,
+   with no route collapsing (the 2026-08-21 failure mode).
+3. **KR corridor**: investigate with the live VPN, fix only on solid
+   evidence; if the anchor is absorbing non-road time, LABEL it rather
+   than silently reassigning minutes, since the calibration is
+   dispatch-anchored on purpose.
+4. **The blocked four**: unblocked. The other agent's files had been
+   untouched since 2026-08-21 — dormant, not in flight. Their work is
+   backed up at /tmp/coagent_backup_0823/ and is being built on, not
+   reverted, so the final state of those files carries both authors.
+
+## 4. Still open after this round
 
 1. **The 8 Mt LD clip.** A parallel agent is implementing "capacity beyond
    target is not credited as production" in `scenario_api.py` — this REVERSES

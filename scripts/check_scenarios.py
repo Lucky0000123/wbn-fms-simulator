@@ -95,25 +95,25 @@ for sid, res in results.items():
 check("lending never targets a RIM-only pit (code path)",
       "RIM_ONLY_PITS" in open(sa.__file__.replace(".pyc", ".py")).read())
 
-print("\n=== the 8 Mt LIM-LD TARGET line: never a clip (owner, 2026-08-19) ===")
+print("\n=== the 8 Mt LIM-LD target is filled after P1/P2; excess is capacity ===")
 for sid, res in results.items():
     t = res["total"]
-    # LD is UNCAPPED: planned == full free-fleet capacity, every month.
-    check("%s: planned LD == uncapped capacity (no clip)" % sid,
-          abs(t["ld_t_planned"] - t["ld_t_capacity"]) <= 2,
-          "%s vs %s" % (t["ld_t_planned"], t["ld_t_capacity"]))
+    expect = min(t["ld_t_capacity"], sa.LIM_LD_TARGET_T)
+    check("%s: planned LD stops at target; capacity remains visible" % sid,
+          abs(t["ld_t_planned"] - expect) <= 2,
+          "%s vs %s" % (t["ld_t_planned"], expect))
     cum = sum(mo["ld_t_month_planned"] for mo in res["months"])
     check("%s: months sum to the total (%s)" % (sid, format(t["ld_t_planned"], ",")),
           abs(cum - t["ld_t_planned"]) <= 2, cum)
     for mo in res["months"]:
-        check("%s M%d: month planned == month capacity" % (sid, mo["month"]),
-              abs(mo["ld_t_month_planned"] - mo["ld_t_month_capacity"]) <= 2 and
-              not mo["ld_capped"])
-    # attainment is REPORTED against the target line, both directions:
-    if t["ld_t_planned"] >= sa.LIM_LD_TARGET_T:
-        check("%s: over-target reported (%s t over)" % (sid, format(t["ld_over_target_t"], ",")),
+        capped = mo["ld_t_month_planned"] + 0.5 < mo["ld_t_month_capacity"]
+        check("%s M%d: target/capacity state is truthful" % (sid, mo["month"]),
+              mo["ld_t_month_planned"] <= mo["ld_t_month_capacity"] + 1 and
+              bool(mo["ld_capped"]) == capped)
+    if t["ld_t_capacity"] >= sa.LIM_LD_TARGET_T:
+        check("%s: target reached with no credited over-production" % sid,
               t["ld_cap_reached"] and t["ld_shortfall_t"] == 0 and
-              abs(t["ld_over_target_t"] - (t["ld_t_planned"] - sa.LIM_LD_TARGET_T)) <= 1)
+              t["ld_over_target_t"] == 0 and t["ld_t_planned"] == sa.LIM_LD_TARGET_T)
     else:
         check("%s: shortfall vs target reported" % sid,
               not t["ld_cap_reached"] and t["ld_over_target_t"] == 0 and
@@ -135,17 +135,38 @@ empty = {"id": "SY", "label": "all-free", "targets": [
 resy, err = sa.waterfall(empty)
 if err is None:
     mo9 = next(mo for mo in resy["months"] if mo["month"] == 9)
-    check("zero targets -> entire pool is free for LD",
-          abs(mo9["dt_p3"] - sum(mo9["pool"].values())) <= 1.5,
-          "%s vs %s" % (mo9["dt_p3"], sum(mo9["pool"].values())))
+    check("zero P1/P2 targets -> entire pool is available to P3",
+          abs(sum(mo9["free"].values()) - sum(mo9["pool"].values())) <= 1.5
+          and mo9["dt_p3"] <= sum(mo9["free"].values()) + 1.5,
+          "%s planned vs %s available" % (mo9["dt_p3"], sum(mo9["free"].values())))
 else:
     check("zero targets -> entire pool is free for LD", False, err)
+
+print("\n=== Monthly clock semantics: achievable is simulation, not capped prediction ===")
+import monthly_api as _ma
+clock_alloc = {
+    "frozen": True, "horizon": "day",
+    "old": {"pred": 80, "achv": 70},
+    "new": {"pred": 200, "achv": 150, "achv_sim": 150, "target": 100},
+    "goals": {"sap": 100, "tos": 0, "ld": 0, "total": 100},
+    "buckets": {"sap": {"target": 100, "pred_before": 80, "pred_after": 200,
+                            "achv_before": 70, "achv_after": 150, "achv_sim": 150}},
+    "rows": [{"prio": 1, "target": 100, "pred_before": 80, "pred_after": 200,
+              "achv_before": 70, "achv_after": 150, "achv_sim": 150,
+              "dt_before": 1, "dt_after": 1}],
+}
+clock_view = _ma._alloc_view(clock_alloc, 1)
+check("new_achv_day is raw /api/simulate output",
+      clock_view.get("new_achv_day") == 150, clock_view)
+check("target-capped prediction has an explicit credited field",
+      clock_view.get("new_credited_pred_day") == 100, clock_view)
 
 print("\n=== the importer reads the real workbook shape ===")
 hdr = ["Scenario", "Month", "Nb Days", "Mining Pit", "Material", "Type Ore", "wmt ROM"]
 demo = [hdr,
         ["Scenario 9", "Sept", 30, "BLB", "SAP", "TOS", 300000],
         ["Scenario 9", "Sept", 30, "TOFU", "LIM", "TOS", 150000],
+        ["Scenario 9", "Sept", 30, "TOFU", "LIM", "LD", 240000],
         ["Scenario 9", "Oct", 31, "KRENE", "SAP", "TOS", 310000]]
 scens, err = sa._parse_mine_plan_db(demo, "demo")
 check("long-format rows parse", err is None and len(scens) == 1, err)
@@ -155,6 +176,9 @@ if scens:
           any(abs(t["wmt_day"] - 10000) < 1 for t in s9["targets"]),
           s9["targets"][:2])
     check("scenario id normalised to S9", s9["id"] == "S9", s9["id"])
+    check("import preserves LIM-LD as a P3 target",
+          any(t.get("otype") == "LD" and abs(t["wmt_day"] - 8000) < 1
+              for t in s9["targets"]), s9["targets"])
 check("garbage in -> clear error, not a crash",
       sa._parse_mine_plan_db([["nothing", "here"]], "x")[1] is not None)
 
@@ -230,7 +254,7 @@ try:
     app.register_blueprint(ma.bp)
     c = app.test_client()
     yr = "2026"
-    want = ["Year", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    want_s3 = ["Year", "Sep", "Oct", "Nov", "Dec"]
     rv = c.get("/api/scenarios/export-full?year=%s&id=S3" % yr)
     check("S3 monthly workbook returns xlsx", rv.status_code == 200 and rv.data[:2] == b"PK",
           rv.status_code)
@@ -239,8 +263,10 @@ try:
         # "Paths" (the all-months path list, added 2026-08-19) is optional;
         # the month sheets must be Year-then-months in order.
         got = [s for s in wb.sheetnames if s != "Paths"]
-        check("S3 sheets are Year + months (Paths sheet optional)",
-              got == want, wb.sheetnames)
+        check("S3 sheets are Year + Sep–Dec (no August)",
+              got == want_s3, wb.sheetnames)
+        check("S3 workbook has no August sheet",
+              "Aug" not in wb.sheetnames, wb.sheetnames)
         sep = wb["Sep"]
         a1 = sep["A1"].value or ""
         check("S3 Sep title is 'Sep 2026 — old vs new'",
@@ -250,7 +276,39 @@ try:
         check("S3 Sep has the path table header", bool(heads), heads[:1])
         p3 = [r for r in rows if r and r[0] == "P3"]
         check("S3 Sep has P3 LIM-LD path rows (leftover DT)", bool(p3), p3[:1])
+        if "Paths" in wb.sheetnames:
+            ph = list(wb["Paths"].iter_rows(min_row=1, max_row=12, max_col=16,
+                                            values_only=True))
+            path_heads = next((r for r in ph if r and r[0] == "Month"), None)
+            check("S3 Paths header uses Priority, not P",
+                  path_heads and path_heads[1] == "Priority", path_heads)
+            check("S3 Paths columns have no 'new' suffix",
+                  path_heads and all("new" not in str(h or "").lower()
+                                     for h in path_heads),
+                  path_heads)
+            check("S3 Paths keeps DT / Trips / WMT / WMT/DT / Trips/DT / NB Days",
+                  path_heads and all(x in path_heads for x in
+                                     ("DT", "Trips", "WMT", "WMT/DT", "Trips/DT",
+                                      "NB Days")),
+                  path_heads)
         wb.close()
+        wb_style = load_workbook(_io.BytesIO(rv.data), read_only=False)
+        reds = {"DC2626", "B91C1C", "FFDC2626", "FFB91C1C"}
+        bad = []
+        for sname in wb_style.sheetnames:
+            ws = wb_style[sname]
+            for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row or 1, 80),
+                                    max_col=16):
+                for cell in row:
+                    if not isinstance(cell.value, (int, float)):
+                        continue
+                    rgb = None
+                    if cell.font and cell.font.color is not None:
+                        rgb = getattr(cell.font.color, "rgb", None)
+                    if rgb and str(rgb).upper() in reds:
+                        bad.append("%s!%s %s" % (sname, cell.coordinate, rgb))
+        check("S3 Excel table numbers are not red", not bad, bad[:8])
+        wb_style.close()
     rvz = c.get("/api/scenarios/export-full?year=" + yr)
     check("all-scenarios zip returns", rvz.status_code == 200 and rvz.data[:2] == b"PK",
           rvz.status_code)
@@ -266,8 +324,45 @@ try:
             inner = load_workbook(_io.BytesIO(z.read(fn)), read_only=True)
             check("%s sheets start with Year" % fn, inner.sheetnames[0] == "Year",
                   inner.sheetnames)
+            if fn == "monthly_plan_2026.xlsx":
+                check("S1 workbook still has August",
+                      "Aug" in inner.sheetnames, inner.sheetnames)
+            elif "_S3" in fn:
+                check("S3 zip workbook has no August",
+                      "Aug" not in inner.sheetnames, inner.sheetnames)
             inner.close()
         z.close()
+    # Year-board Download Excel with S3/S4 selected (day=3/4) also starts
+    # at September. Both directions: S3/S4 have no Aug AND S1/day=1 still has it.
+    rv1 = c.get("/api/monthly/export-year?year=%s&day=1" % yr)
+    if rv1.status_code == 200:
+        wb1 = load_workbook(_io.BytesIO(rv1.data), read_only=True)
+        check("S1 year Excel still has August",
+              "Aug" in wb1.sheetnames, wb1.sheetnames)
+        wb1.close()
+    for day, label in ((3, "S3"), (4, "S4")):
+        rvd = c.get("/api/monthly/export-year?year=%s&day=%d" % (yr, day))
+        if rvd.status_code == 404:
+            # No Sep–Dec saves for that day yet — August-only leftover is
+            # correctly not enough to build a workbook.
+            continue
+        if rvd.status_code != 200:
+            check("%s year Excel (day=%d) returns xlsx" % (label, day),
+                  False, rvd.status_code)
+            continue
+        wbd = load_workbook(_io.BytesIO(rvd.data), read_only=True)
+        names_d = wbd.sheetnames
+        check("%s year Excel has no August sheet" % label,
+              "Aug" not in names_d, names_d)
+        months_d = [s for s in names_d if s not in ("Year", "Paths")]
+        check("%s year Excel months start at September" % label,
+              months_d[:1] == ["Sep"], months_d)
+        yr_ws = wbd["Year"]
+        yr_vals = [cell.value for row in yr_ws.iter_rows(min_row=1, max_row=80, max_col=1)
+                   for cell in row]
+        check("%s Year sheet has no August row" % label,
+              "Aug" not in yr_vals, [v for v in yr_vals if v in ("Aug", "Sep")])
+        wbd.close()
 except ImportError as e:
     print("  SKIP export-full checks (%s)" % e)
 except Exception as e:
@@ -304,9 +399,11 @@ try:
                 if p["source"] == "BLB" and p["contractor"] != "RIM":
                     blb_bad.append(slot)
             pool = d["written"][0]["pool"]
-            check("draft fleet == pool per contractor",
-                  all(abs(tot.get(k, 0) - v) <= 1 for k, v in pool.items()),
-                  "%s vs %s" % (tot, pool))
+            unused = d["written"][0].get("unused") or {}
+            check("draft allocated + unused == pool per contractor",
+                  all(abs(tot.get(k, 0) + unused.get(k, 0) - v) <= 1.5
+                      for k, v in pool.items()),
+                  "%s + %s vs %s" % (tot, unused, pool))
             check("draft has no non-RIM at BLB", not blb_bad, blb_bad)
             # existing date is refused without overwrite
             rv2 = c3.post("/api/scenarios/S3/draft-plans", json={
@@ -362,6 +459,15 @@ try:
     check("day=2 resolves no saves (S2 deleted)", not srcs.get(2), srcs.get(2))
     check("day=1 and day=3 resolve different plans (not the same copy)",
           srcs[1] and srcs[3] and srcs[1] != srcs[3])
+    check("day=3 year board has no August card (S3 starts at September)",
+          not any(m.endswith("-08") for m, _ in (srcs.get(3) or [])),
+          srcs.get(3))
+    srcs4 = []
+    r4 = c5.get("/api/monthly/year-board?year=2026&day=4").get_json()
+    if r4 and r4.get("cards"):
+        srcs4 = [c["month"] for c in r4["cards"] if c.get("has_alloc")]
+    check("day=4 year board has no August card (S4 starts at September)",
+          "2026-08" not in srcs4, srcs4)
     check("day omitted keeps the old latest-save rule",
           bool(srcs[None]))
 except ImportError as e:

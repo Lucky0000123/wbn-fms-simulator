@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Monthly plan — target · old predicted plan · optimized predicted plan</title>
+<title>Monthly plan</title>
 <style>
 :root{--bg:#0d1117;--card:#161b22;--line:#30363d;--txt:#e6edf3;--muted:#8b98a5;
 --accent:#facc15;--ok:#22c55e;--warn:#facc15;--er:#ef4444;--blue:#60a5fa;
@@ -38,16 +38,8 @@ table{border-collapse:collapse;width:100%;font-size:12px}
 th,td{padding:3px 9px;border-bottom:1px solid var(--line);text-align:right}
 th:first-child,td:first-child{text-align:left}
 th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
-.tag{display:inline-block;padding:1px 7px;border-radius:9px;font-size:10px;background:rgba(96,165,250,.15);color:var(--blue)}
 .status{font-size:11.5px;margin-left:8px}
 .status.ok{color:var(--ok)} .status.er{color:var(--er)}
-.defs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0}
-@media(max-width:800px){.defs{grid-template-columns:1fr}}
-.def{border:1px solid var(--line);border-radius:9px;padding:10px 12px;background:#0d1117}
-.def h3{margin:0 0 4px;font-size:12px;letter-spacing:.04em;text-transform:uppercase}
-.def.pred h3{color:var(--blue)} .def.tgt h3{color:var(--warn)} .def.achv h3{color:var(--ok)}
-.def a{color:var(--blue);text-decoration:none}
-.def a:hover{text-decoration:underline}
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-top:12px}
 .mcard{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:#0d1117;cursor:pointer;text-align:left;width:100%;font:inherit;color:inherit}
 .mcard:hover{border-color:#8b98a5}
@@ -76,71 +68,37 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
 .mat-card .pair{display:flex;justify-content:space-between;font-size:12px;margin-top:4px}
 .mat-card .pair b{font-variant-numeric:tabular-nums}
 .sec-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:14px 0 6px}
+#mo-board-note:empty{display:none}
 </style>
 </head>
 <body>
 <header>
   <h1>Monthly plan</h1>
-  <a href="/simulator">← back to simulator</a>
-  <a href="/simulator?tab=plan">Plan tab</a>
+  <a href="/simulator">← simulator</a>
+  <a href="/simulator?tab=plan">Plan</a>
   <span style="flex:1"></span>
   <label class="muted" style="font-size:12px">Year
     <input type="number" id="mo-year" min="2025" max="2035" step="1" style="width:88px;margin-left:6px">
   </label>
-  <button class="primary" onclick="moExportYear()">⬇ Download Excel</button>
-  <button class="primary" onclick="moExportYear(1)" title="Year + month sheets with old / optimized achievable from Plan Allocate (/api/simulate)">⬇ with achievable</button>
 </header>
 <main>
 
 <div class="card">
-  <h2>What the numbers are</h2>
-  <div class="defs">
-    <div class="def pred">
-      <h3>Old predicted plan · Optimized predicted plan</h3>
-      <p><b>Old predicted plan</b> is Your plan as checked on the Plan tab. <b>Optimized predicted plan</b> is after Allocate DT (P1 SAP, then LIM-TOS, LIM-LD donates). Path-model trips/DT × this fleet. <a href="/simulator?tab=plan">Plan tab</a>.</p>
-    </div>
-    <div class="def tgt">
-      <h3>Target · SAP · LIM</h3>
-      <p>Matrix WMT/day × days. Coverage is optimized predicted plan ÷ target (100% = moving the month; over 100% is extra; shortfall is what we are leaving). Same split for SAP, LIM-TOS and LIM-LD.</p>
-    </div>
-    <div class="def achv">
-      <h3>Old achievable · Optimized achievable</h3>
-      <p>Same two clocks as Plan → Allocate: <b>old</b> is Your plan after Check capacity, <b>optimized</b> is after Allocate DT. Both are raw <code>/api/simulate</code> (effective cycle + loader clip) — never averaged with predicted, never capped to target. Year board and default Excel hide them; <b>⬇ with achievable</b> puts them on the Year sheet and every month sheet.</p>
-    </div>
-  </div>
-</div>
-
-<div class="card">
-  <h2>Yearly matrix <span class="tag" style="background:rgba(34,197,94,.15);color:var(--ok)">one paste · every month</span></h2>
-  <p class="muted" style="margin:4px 0 10px">Paste (or upload) the mine-planning matrix — ORIGIN / MATERIAL / DESTINATION / CONTRACTOR with <b>WMT/day</b> and <b>NB_DT_</b> per month. That is one typical day. We run that day across every calendar day of each month, then show target, old predicted plan and optimized predicted plan.</p>
-  <p class="muted" style="margin:4px 0 0;font-size:11px">
-    Loader count defaults to 2 per route. To override, add a "LOADERS" column
-    to your paste (after NB_DT_). Without it, the model uses the historical
-    average loader count per route.
-  </p>
-  <textarea id="mo-yearly-paste" placeholder="Paste the matrix straight from Excel (tab-separated)…"></textarea>
+  <h2>Yearly matrix</h2>
+  <textarea id="mo-yearly-paste" placeholder="Paste the matrix (WMT/day and NB_DT_ per month)…"></textarea>
   <div class="row" style="margin-top:6px">
-    <button class="primary" onclick="moYearlyPaste()">Load matrix and build year</button>
+    <button class="primary" onclick="moYearlyPaste()">Load and build year</button>
     <input type="file" id="mo-yearly-file" accept=".xlsx,.xlsm,.csv,.tsv,.txt">
-    <button onclick="moYearlyUpload()">Upload and build year</button>
+    <button onclick="moYearlyUpload()">Upload</button>
     <span class="status" id="mo-yearly-status"></span>
   </div>
 </div>
 
 <div class="card" id="mo-scen-card">
-  <h2>Mine-plan scenarios <span class="tag" style="background:rgba(96,165,250,.15);color:#60a5fa">same fleet · different allocation</span></h2>
-  <p class="muted" style="margin:4px 0 10px">
-    Each scenario is a set of pit × material monthly targets. The fleet never changes — the yearly matrix's DT per contractor per month.
-    Allocation is the priority waterfall: <b>P1 SAP</b> until every SAP target is met, then <b>P2 LIM-TOS</b>, then every free truck hauls
-    <b>P3 LIM-LD</b> (Tofu limonite dump → Huafei) — every leftover truck, no cap; the <b>8,000,000 t</b> line is the sales target we judge against. BLB accepts <b>RIM only</b>. S1 is the live plan and is never overwritten.
-    Full Excel is the same Year-board workbook as <b>⬇ Download Excel</b> (Year + Aug–Dec, paths, materials) — one file per scenario.
-  </p>
+  <h2>Scenarios</h2>
   <div class="row">
     <input type="file" id="mo-scen-file" accept=".xlsx,.xlsm">
-    <button onclick="scenImport()">Import scenarios from mine-plan Excel</button>
-    <a class="primary" href="/api/scenarios/export" style="text-decoration:none"><button class="primary">⬇ Download comparison (Excel)</button></a>
-    <button class="primary" onclick="scenExportFull()">⬇ Download monthly Excel (all scenarios)</button>
-    <button class="primary" onclick="scenExportFull(1)" title="Same Year-board workbooks plus old / optimized achievable on Year and every month sheet">⬇ with achievable</button>
+    <button onclick="scenImport()">Import</button>
     <span class="status" id="mo-scen-status"></span>
   </div>
   <div class="mat-grid" id="mo-scen-summary" style="margin-top:12px"></div>
@@ -153,19 +111,21 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
   <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
     <h2 style="margin:0">Year board</h2>
     <div class="row" style="gap:8px;align-items:center">
-      <label class="muted" style="font-size:12px" title="Which scenario's saved plans to show. Convention: the 1st of each month holds Scenario 1, the 3rd Scenario 3. (Scenario 2 / day 2 was deleted 2026-08-21.)">Scenario
+      <label class="muted" style="font-size:12px">Scenario
         <select id="mo-board-scen" style="margin-left:6px">
-          <option value="">Latest save (any day)</option>
-          <option value="1">Scenario 1 · day 1</option>
-          <option value="3">Scenario 3 · day 3</option>
-          <option value="4">Scenario 4 · day 4 (S3 + LD split 50/50)</option>
+          <!-- "Latest" used to mean latest saved FILE per month, which silently
+               mixed scenarios (Sep-Dec resolved to day-04 = S4 inside a workbook
+               labelled S1). The default is now an explicit scenario. -->
+          <option value="">S1 (default)</option>
+          <option value="1">S1</option>
+          <option value="3">S3</option>
+          <option value="4">S4</option>
         </select>
       </label>
-      <button class="primary" onclick="moExportYear()">⬇ Download Excel</button>
-      <button class="primary" onclick="moExportYear(1)" title="Year + month sheets with old / optimized achievable from Plan Allocate (/api/simulate)">⬇ with achievable</button>
+      <button class="primary" onclick="moExportYear()">Download Excel</button>
     </div>
   </div>
-  <p class="muted" id="mo-board-note" style="margin:0 0 8px">Load a matrix, then save Allocate DT on the Plan tab for each month.</p>
+  <p class="muted" id="mo-board-note" style="margin:0 0 8px"></p>
   <div class="kpis" id="mo-year-kpis"></div>
   <div class="mat-grid" id="mo-year-mats"></div>
   <div class="cards" id="mo-cards"></div>
@@ -191,10 +151,6 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
     <div class="chart" id="mo-chart-cov"></div>
   </div>
   <div class="chart" id="mo-chart-daily"></div>
-  <div class="row" style="margin-top:12px">
-    <button class="primary" onclick="moExport()">⬇ Export this month (Excel)</button>
-    <span class="muted" style="font-size:11.5px">Daily table is flat on purpose: the same day, every day.</span>
-  </div>
   <details style="margin-top:12px"><summary class="muted" style="cursor:pointer">Daily table</summary>
     <div style="max-height:340px;overflow:auto;margin-top:8px"><table id="mo-table"></table></div>
   </details>
@@ -202,15 +158,14 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
 </div>
 
 <details class="card adv">
-  <summary>Advanced — saved daily plan, extra Excel, record attempt, SAP rebalance</summary>
+  <summary>Advanced</summary>
   <div class="row" style="margin-top:10px">
     <label class="muted">Month <input type="month" id="mo-month" style="margin-left:6px"></label>
     <select id="mo-months" title="Stored months"><option value="">Stored…</option></select>
   </div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:12px">
     <div>
-      <h2>Build from a Plan-tab save</h2>
-      <p class="muted" style="margin:4px 0 10px">Pick a saved daily plan. It runs every day of the selected month.</p>
+      <h2>Build from a save</h2>
       <div class="row">
         <select id="mo-saved"><option value="">Saved daily plans…</option></select>
         <button onclick="moBuild()">Build month</button>
@@ -219,14 +174,13 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
       <div id="mo-pred-summary" class="muted" style="margin-top:10px;font-size:12px"></div>
     </div>
     <div>
-      <h2>Replace target from another Excel</h2>
-      <p class="muted" style="margin:4px 0 10px">Optional. The matrix already is the target. Use this only if you have a different day-by-day file.</p>
+      <h2>Replace target</h2>
       <div class="row">
         <input type="file" id="mo-file" accept=".xlsx,.xlsm,.csv,.tsv,.txt">
         <button onclick="moUpload()">Upload</button>
         <span class="status" id="mo-man-status"></span>
       </div>
-      <textarea id="mo-paste" placeholder="…or paste rows, e.g.&#10;date,wmt&#10;2026-09-01,34500"></textarea>
+      <textarea id="mo-paste" placeholder="date, wmt"></textarea>
       <div class="row" style="margin-top:6px">
         <button onclick="moPaste()">Use pasted rows</button>
         <span class="muted" id="mo-man-summary" style="font-size:12px"></span>
@@ -346,7 +300,6 @@ function matCard(m, extraK){
   return '<div class="mat-card">'
     +'<h3>'+m.label+'</h3>'
     +'<div class="cov '+covClass(cov)+'">'+pct(cov)+'</div>'
-    +'<div class="muted" style="font-size:11px;margin:2px 0 6px">optimized predicted plan vs '+m.label+' target'+(extraK?' · '+extraK:'')+'</div>'
     +'<div class="pair"><span>Target</span><b>'+fmt(tgt)+'</b></div>'
     +'<div class="pair"><span>Old predicted plan</span><b>'+fmt(oldP)+'</b></div>'
     +'<div class="pair"><span>Optimized predicted plan</span><b>'+fmt(pred)+'</b></div>'
@@ -366,7 +319,7 @@ function legendIcons(series){
 }
 function chart(id,opt){
   const el=$(id);if(!el)return;
-  if(typeof echarts==='undefined'){el.innerHTML='<div class="muted" style="padding:20px">Chart library offline — the month cards and Excel export still work.</div>';return;}
+  if(typeof echarts==='undefined'){el.innerHTML='<div class="muted" style="padding:20px">Charts unavailable.</div>';return;}
   let c=_charts[id];
   if(c&&(c.isDisposed()||c.getDom()!==el)){try{c.dispose();}catch(e){}c=null;}
   if(!c){c=echarts.init(el);_charts[id]=c;}
@@ -422,12 +375,11 @@ function renderBoard(){
   const note=$('mo-board-note');
   const nAlloc=cards.filter(c=>c.has_alloc).length;
   if(!b.has_matrix&&!cards.length){
-    note.textContent='Load a matrix to fill the months.';
+    note.textContent='';
   }else{
-    note.textContent=(b.source?('Loaded: '+b.source+' · '):'')
-      +(b.routes?b.routes+' route rows · ':'')
-      +(nAlloc?nAlloc+' month'+(nAlloc===1?'':'s')+' with Allocate snapshot (old vs optimized). ':'')
-      +'Solid gold = target · dotted = old predicted plan · solid red = optimized predicted plan.';
+    note.textContent=(b.source?b.source:'')
+      +(b.routes?(b.source?' · ':'')+b.routes+' routes':'')
+      +(nAlloc?(b.source||b.routes?' · ':'')+nAlloc+' month'+(nAlloc===1?'':'s')+' allocated':'');
   }
 
   const tot={p:0,t:0,n:0};
@@ -882,12 +834,8 @@ async function moPaste(){
   st.className='status ok';st.textContent=r.parsedDays+' days ✓';
   await loadState();refreshMonths();loadBoard();
 }
-function moExport(){
-  const m=_selMonth||month();
-  if(m)window.location='/api/monthly/export?month='+m;
-}
-function moExportYear(achv){
-  window.location='/api/monthly/export-year?year='+year()+boardDay()+(achv?'&achv=1':'');
+function moExportYear(){
+  window.location='/api/monthly/export-year?year='+year()+boardDay();
 }
 
 async function moYearlyRefresh(){
@@ -929,9 +877,9 @@ async function moAllocate(mnum){
     :'<div class="kpis" style="margin-top:8px">'+pk('1','P1 SAP')+pk('2','P2 TOS-LIM')+pk('3','P3 LD-LIM')+'</div>';
   host.innerHTML=
     '<div style="border:1px solid var(--line);border-radius:9px;padding:10px 13px;background:#0d1117">'
-    +'<b>🎯 Priority allocation · '+m+'</b> <span class="muted">— saved on the month. Original production card stays; Excel prints both. Fixed fleet: '
+    +'<b>Priority allocation · '+m+'</b> <span class="muted">'
     +Object.entries(r.fleet||{}).map(([c,v])=>c+' '+v+' DT').join(' · ')
-    +'. P1 SAP → P2 TOS-LIM → P3 LD-LIM.</span>'
+    +'</span>'
     +five
     +'<table style="margin-top:6px"><tr><th>P</th><th>Route</th><th>Mat·Origin</th><th>Contr.</th>'
     +'<th>Target t/day</th><th>Plan DT</th><th>→ Alloc DT</th><th>Predicted t/day</th><th>Status</th></tr>'
@@ -1056,10 +1004,6 @@ async function scenImport(){
   if(!r.ok){st.textContent='✗ '+(r.error||'import failed');return;}
   st.textContent='✓ imported '+r.imported.join(', ')+(r.skipped_s1?' (S1 in file ignored — the live plan is S1)':'');
   scenRefresh();
-}
-
-function scenExportFull(achv){
-  window.location='/api/scenarios/export-full?year='+year()+(achv?'&achv=1':'');
 }
 
 async function scenRefresh(){

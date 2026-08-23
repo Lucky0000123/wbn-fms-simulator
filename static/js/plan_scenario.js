@@ -1287,6 +1287,18 @@ function planSetCalcBusy(on){
   if(runBtn&&on){runBtn.disabled=true;runBtn.textContent='Running…';}
 }
 
+/** Resolves when Check-capacity / Allocate's /api/simulate is no longer in flight. */
+window.planWhenScenarioIdle=function(){
+  if(!_planScenarioBusy)return Promise.resolve();
+  return new Promise(function(resolve){
+    let n=0;
+    const t=setInterval(function(){
+      n++;
+      if(!_planScenarioBusy||n>600){clearInterval(t);resolve();}
+    },50);
+  });
+};
+
 function planDraftFleetDt(plans){
   return (plans||[]).reduce((n,p)=>n+(Number(p.n_trucks)||0),0);
 }
@@ -1434,6 +1446,7 @@ function planLoadDraft(obj){
   if(typeof _planDraft==='undefined')return;
   Object.keys(_planDraft).forEach(k=>delete _planDraft[k]);
   Object.assign(_planDraft, obj||{});
+  if(typeof planDraftTouch==='function')planDraftTouch();
   if(typeof planMigrateLimIds==='function')planMigrateLimIds();
   if(typeof computePlan==='function')computePlan();
   else planSetScenarioBtn();
@@ -1591,9 +1604,10 @@ function planOpenSavedDate(date){
   const d=(date||'').trim();if(!d)return;
   const inp=q('plan-date');if(!inp)return;
   inp.value=d;
-  // Go through planDateChange() rather than poking dependants directly — it is
-  // what re-pulls conditions, analogues and the saved-plan probe for the date.
-  if(typeof planDateChange==='function')planDateChange();
+  // Skip the empty-draft auto-load — we load explicitly below. Two in-flight
+  // fetches used to race: the quiet one landed after the planner had already
+  // deleted a row and put the saved file back (owner, 2026-08-21).
+  if(typeof planDateChange==='function')planDateChange({skipSavedAutoLoad:true});
   if(typeof planLoadSavedForDate==='function')planLoadSavedForDate();
 }
 
@@ -1650,15 +1664,20 @@ function planSaveForDate(){
   }).catch(e=>{alert('Save failed: '+e);if(st)st.textContent='Save failed';});
 }
 
+let _planLoadGen=0;
 function planLoadSavedForDate(opts){
   const quiet=opts&&opts.quiet;
   const date=((q('plan-date')||{}).value||'').trim();
   if(!date){if(!quiet)alert('Set a plan date first.');return Promise.resolve(false);}
   const st=q('plan-save-status');
   if(st&&!quiet)st.textContent='Loading…';
+  const gen=++_planLoadGen;
+  const epoch=window._planDraftEpoch||0;
+  const dateAtStart=date;
   return fetch('/api/plan/saved?date='+encodeURIComponent(date))
     .then(r=>r.json())
     .then(res=>{
+      if(gen!==_planLoadGen)return false;
       if(!res||!res.ok||!res.plan||!res.plan.paths){
         _planSavedExists=false;
         if(!quiet)alert('No saved plan for '+date);
@@ -1667,8 +1686,15 @@ function planLoadSavedForDate(opts){
         return false;
       }
       _planSavedExists=true;
+      const curDate=((q('plan-date')||{}).value||'').trim();
+      if(curDate!==dateAtStart)return false;
       const curN=planDraftEntries().length;
-      if(curN>0&&!quiet&&!confirm('Replace current holding plan with saved plan for '+date+'?')){
+      if(quiet){
+        // Auto-load is only for an empty holding plan. If the planner already
+        // built or edited a plan while this fetch was in flight, leave it.
+        if(curN>0)return false;
+        if((window._planDraftEpoch||0)!==epoch)return false;
+      }else if(curN>0&&!confirm('Replace current holding plan with saved plan for '+date+'?')){
         if(st)st.textContent='Load cancelled';
         return false;
       }
@@ -1697,5 +1723,5 @@ function planLoadSavedForDate(opts){
       planRefreshSaveButtons();
       return true;
     })
-    .catch(e=>{if(!quiet)alert('Load failed: '+e);if(st)st.textContent='Load failed';return false;});
+    .catch(e=>{if(gen!==_planLoadGen)return false;if(!quiet)alert('Load failed: '+e);if(st)st.textContent='Load failed';return false;});
 }

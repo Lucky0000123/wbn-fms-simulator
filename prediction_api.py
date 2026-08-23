@@ -100,6 +100,11 @@ def _path_fits():
     return _PATH_FIT_CACHE
 
 
+def _route_key(source, destination):
+    """Canonical key shared by model, path-response, rain and payload lookups."""
+    return "%s>%s" % (pp.canonical_area(source), pp.canonical_area(destination))
+
+
 def _rain_scale(source, destination, rainfall):
     """Multiply trips/DT for rainfall. Used when the CV winner is rain-blind
     (group-mean baseline) so Conditions rainfall still moves WMT.
@@ -111,7 +116,7 @@ def _rain_scale(source, destination, rainfall):
     if mm <= 0:
         return 1.0
     fits = _path_fits()
-    key = "%s>%s" % (pp._norm(source), pp._norm(destination))
+    key = _route_key(source, destination)
     m = fits.get(key) or {}
     wet, dry = m.get("mWet"), m.get("mDry")
     if isinstance(wet, (int, float)) and isinstance(dry, (int, float)) and dry > 0:
@@ -132,7 +137,7 @@ def _fallback_trips_per_dt(source, destination, trucks, rainfall, shift_hours):
     bAdj/b when negative.
     """
     fits = _path_fits()
-    key = "%s>%s" % (pp._norm(source), pp._norm(destination))
+    key = _route_key(source, destination)
     m = fits.get(key)
     if not m:
         return None, None
@@ -174,7 +179,7 @@ def _payload_for(contractor, source, destination):
     name = pp._norm(contractor)
     if name in by_contractor:
         return by_contractor[name], "contractor avg"
-    m = _path_fits().get("%s>%s" % (pp._norm(source), pp._norm(destination)))
+    m = _path_fits().get(_route_key(source, destination))
     if m and m.get("tf"):
         return float(m["tf"]), "path avg"
     return fleet, "fleet avg"
@@ -227,8 +232,9 @@ def _predict_selected(payload: dict):
             art = sm_["art"]
             k = "|".join(str(payload.get(c, "")) for c in art["key"])
             v = art["table"].get(k)
-            if v is None:                             # unseen cell -> fleet mean
+            if v is None:                             # unseen cell -> explicit fleet mean
                 v = art["global_mean"]
+                return float(v), "group_mean_baseline_global"
             return float(v), "group_mean_baseline"
     except Exception as exc:                          # noqa: BLE001
         print("[prediction] selected-model inference failed: %s" % exc)
@@ -279,13 +285,13 @@ def _predict_trips_per_dt(payload: dict, prefer_rain_aware: bool = False):
     val, name = _predict_selected(payload)
     if val is not None and val > 0:
         name = name or "group_mean_baseline"
-        if prefer_rain_aware and rain > 0 and name == "group_mean_baseline":
+        if prefer_rain_aware and rain > 0 and name.startswith("group_mean_baseline"):
             ratio = _rf_rain_ratio(payload, rain)
             if ratio is not None and ratio < 0.995:
-                return val * ratio, "group_mean_baseline+rf_rain"
+                return val * ratio, name + "+rf_rain"
             # RF flat/up → honest default/path rain drag (never invent a gain)
             return val * _rain_scale(payload.get("source"), payload.get("destination"), rain), \
-                "group_mean_baseline+rain"
+                name + "+rain"
         return val, name
     rf = _predict_rf(payload)
     if rf is not None:
@@ -316,6 +322,8 @@ def api_predict():
     contractor = _arg(data, "contractor", default="RIM")
     source = _arg(data, "source", default="TF")
     destination = _arg(data, "destination", "dest", default="FENI KM0")
+    canonical_source = pp.canonical_area(source)
+    canonical_destination = pp.canonical_area(destination)
     shift = str(_arg(data, "shift", default="day")).lower()
     if shift in ("1", "d"):
         shift = "day"
@@ -330,16 +338,16 @@ def api_predict():
     dow = _arg(data, "day_of_week", default=datetime.now().weekday(), cast=int)
     dist = _arg(data, "distance", "distance_km", default=None, cast=float)
     if dist is None:
-        dist = pp.distance_km(source, destination)
+        dist = pp.distance_km(canonical_source, canonical_destination)
 
-    payload_t, payload_src = _payload_for(contractor, source, destination)
+    payload_t, payload_src = _payload_for(contractor, canonical_source, canonical_destination)
     payload_override = _arg(data, "payload", "payload_t", default=None, cast=float)
     if payload_override and payload_override > 0:
         payload_t, payload_src = payload_override, "supplied"
 
     def features(n_trucks):
-        return {"contractor": pp._norm(contractor), "source": pp._norm(source),
-                "destination": pp._norm(destination), "shift": shift,
+        return {"contractor": pp._norm(contractor), "source": canonical_source,
+                "destination": canonical_destination, "shift": shift,
                 "day_of_week": int(dow), "distance_km": float(dist),
                 "payload_t": float(payload_t), "rainfall_mm": float(rainfall),
                 "weighbridges_open": float(wb_open), "trucks_dt": float(n_trucks)}
@@ -362,13 +370,15 @@ def api_predict():
         value, name = _predict_trips_per_dt(features(n_trucks), prefer_rain_aware=prefer_rain)
         if value and value > 0:
             # Plain baseline (no rain layer applied inside) still gets path/default drag.
-            if name == "group_mean_baseline" and rainfall > 0:
-                value *= _rain_scale(source, destination, rainfall)
-                name = "group_mean_baseline+rain"
+            if name.startswith("group_mean_baseline") and rainfall > 0 and "+rain" not in name:
+                value *= _rain_scale(canonical_source, canonical_destination, rainfall)
+                name += "+rain"
             model_used_name = name
             # The model is trained on the DB's ~12 h shift; scale a different ask.
-            return value * (float(shift_hours) / SHIFT_HOURS_DEFAULT), False
-        fb, _tf = _fallback_trips_per_dt(source, destination, n_trucks, rainfall, shift_hours)
+            used_global = "_global" in name
+            return value * (float(shift_hours) / SHIFT_HOURS_DEFAULT), used_global
+        fb, _tf = _fallback_trips_per_dt(canonical_source, canonical_destination,
+                                         n_trucks, rainfall, shift_hours)
         if fb:
             model_used_name = "fallback_ols"
             return fb, True
@@ -434,8 +444,8 @@ def api_predict():
     if cycsrv is not None:
         try:
             c = cycsrv.predict_cycle_time(
-                source=pp.canonical_area(source),
-                destination=pp.canonical_area(destination),
+                source=canonical_source,
+                destination=canonical_destination,
                 shift=shift, trucks=float(trucks),
                 rainfall_mm=float(rainfall), distance_km=float(dist))
             if c:
@@ -500,7 +510,12 @@ def api_predict():
         # panel instead of rendering a placeholder number.
         "cycle": cycle_block,
         "fallback": bool(fallback),
+        "model_match_level": ("global" if model_used_name and "_global" in model_used_name
+                              else "canonical_route"),
+        "canonical_route": "%s>%s" % (canonical_source, canonical_destination),
         "inputs": {"contractor": contractor, "source": source, "destination": destination,
+                   "canonical_source": canonical_source,
+                   "canonical_destination": canonical_destination,
                    "distance_km": dist, "shift": shift, "shift_hours": shift_hours,
                    "rainfall_mm": rainfall, "weighbridges_open": wb_open, "mode": mode},
         "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),

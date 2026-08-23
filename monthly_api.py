@@ -353,16 +353,16 @@ def api_monthly_clear():
     return jsonify({"ok": True, "month": month, "state": st})
 
 
-# Line colours match the monthly page: gold target, red predicted plan.
-# Solid gold = target. Dotted = old predicted plan. Solid red = optimized.
-_XLSX_PRED, _XLSX_TGT = "DC2626", "EAB308"
+# Line colours for charts: gold target, slate old plan, navy optimized.
+# Table numbers are always ink (black) — never red.
+_XLSX_PRED, _XLSX_TGT = "1F2937", "EAB308"
 _XLSX_NAVY, _XLSX_MUTED, _XLSX_INK = "1F4E79", "64748B", "1F2937"
-_XLSX_ACHV = "059669"
-# Target, old predicted, optimized predicted — (hex, dotted).
+_XLSX_ACHV = "1F2937"
+# Target, old predicted, optimized predicted — (hex, dotted). No red.
 _XLSX_CLOCKS = (
     ("EAB308", False),
-    ("DC2626", True),
-    ("DC2626", False),
+    ("64748B", True),
+    ("1F4E79", False),
 )
 # Same three, then old achievable (dotted green) and optimized achievable.
 _XLSX_CLOCKS_ACHV3 = (
@@ -536,11 +536,9 @@ def _xlsx_five_clock_block(ws, row, title, sub, points, start=1, chart_col="I", 
     if achv:
         heads = ["Month", "Target", "Optimized predicted plan", "Optimized achievable"]
         keys = ["target", "new_pred", "new_achv"]
-        clock_cols = [_XLSX_TGT, _XLSX_PRED, _XLSX_ACHV]
     else:
         heads = ["Month", "Target", "Old predicted plan", "Optimized predicted plan"]
         keys = ["target", "old_pred", "new_pred"]
-        clock_cols = [_XLSX_TGT, _XLSX_MUTED, _XLSX_PRED]
     heads.append("Optimized %")
     if achv:
         heads.append("Achievable %")
@@ -558,7 +556,6 @@ def _xlsx_five_clock_block(ws, row, title, sub, points, start=1, chart_col="I", 
         for i, key in enumerate(keys):
             cell = ws.cell(row=rr, column=start + 1 + i)
             _xlsx_num(cell, p.get(key), center=True)
-            cell.font = _xlsx_font(False, 11, clock_cols[i])
         tgt, np_ = p.get("target"), p.get("new_pred")
         _xlsx_paint_cov(ws.cell(row=rr, column=pct_col), _cov_pct(np_, tgt))
         if achv:
@@ -581,7 +578,7 @@ def _xlsx_five_clock_block(ws, row, title, sub, points, start=1, chart_col="I", 
         _xlsx_total_border(lab)
         for i, k in enumerate(keys):
             cell = ws.cell(row=rr, column=start + 1 + i, value=tot[k] if n_have[k] else None)
-            cell.font = _xlsx_font(True, 11, clock_cols[i])
+            cell.font = _xlsx_font(True, 11, _XLSX_INK)
             cell.number_format = "#,##0"
             cell.alignment = _xlsx_mid()
             _xlsx_total_border(cell)
@@ -625,7 +622,7 @@ def _xlsx_kpi_strip(ws, row, kpis, start=1):
     from openpyxl.styles import Alignment
     mid = Alignment(horizontal="center", vertical="center", wrap_text=True)
     for i, item in enumerate(kpis):
-        label, value, color = item[0], item[1], item[2]
+        label, value, _color = item[0], item[1], item[2]
         unit = item[3] if len(item) > 3 else None
         col = start + i
         if unit == "pct":
@@ -637,7 +634,7 @@ def _xlsx_kpi_strip(ws, row, kpis, start=1):
         lab = ws.cell(row=row, column=col, value=lab_txt)
         lab.font = _xlsx_font(True, 8, _XLSX_NAVY)
         lab.alignment = mid
-        lab.border = _xlsx_card_border(color)
+        lab.border = _xlsx_card_border(_XLSX_NAVY)
         cell = ws.cell(row=row + 1, column=col)
         cell.alignment = mid
         cell.border = _xlsx_sides()[0]
@@ -647,7 +644,7 @@ def _xlsx_kpi_strip(ws, row, kpis, start=1):
             cell.alignment = mid
         else:
             cell.value = value
-            cell.font = _xlsx_font(True, 20, color)
+            cell.font = _xlsx_font(True, 20, _XLSX_INK)
             cell.number_format = "#,##0"
     ws.row_dimensions[row].height = 28
     ws.row_dimensions[row + 1].height = 32
@@ -679,8 +676,8 @@ def _xlsx_month_cards(ws, row, cards, year, start=2):
         cell_m.alignment = mid
         cell_m.border = box
     metric_rows = (
-        (row + 3, "Old predicted plan", "pred_month", _XLSX_MUTED),
-        (row + 4, "Target", "target_month", _XLSX_TGT),
+        (row + 3, "Old predicted plan", "pred_month", _XLSX_INK),
+        (row + 4, "Target", "target_month", _XLSX_INK),
     )
     for mrow, label, key, color in metric_rows:
         lab = ws.cell(row=mrow, column=1, value=label)
@@ -771,10 +768,10 @@ def _xlsx_saved_day_allocation(ws, r, alloc):
         "Same GP targets. Old = Your plan as checked. New = after Allocate DT.")
     _xlsx_headers(ws, r, ["", "SAP", "LIM-TOS", "Other LIM"], center=True)
     metric_rows = [
-        ("Target t/day", "target", _XLSX_TGT, False),
-        ("Old predicted plan", "pred_before", _XLSX_MUTED, False),
-        ("Optimized predicted plan", "pred_after", _XLSX_PRED, True),
-        ("Old DT", "dt_before", _XLSX_MUTED, False),
+        ("Target t/day", "target", _XLSX_INK, False),
+        ("Old predicted plan", "pred_before", _XLSX_INK, False),
+        ("Optimized predicted plan", "pred_after", _XLSX_INK, True),
+        ("Old DT", "dt_before", _XLSX_INK, False),
         ("New DT", "dt_after", _XLSX_INK, True),
     ]
     for lab, key, color, bold in metric_rows:
@@ -825,24 +822,16 @@ def _xlsx_pct_cell(cell, value):
 
 
 def _xlsx_cov_tone(pct):
-    """Year-board pill tones. pct is 0–100. >=100 green, >=90 gold, else red."""
+    """Coverage % is ink on a clear cell — no red/gold/green pills in Excel."""
     if pct is None:
         return None, None
-    if pct >= 100:
-        return "047857", "D1FAE5"
-    if pct >= 90:
-        return "B45309", "FEF3C7"
-    return "B91C1C", "FECACA"
+    return _XLSX_INK, None
 
 
 def _xlsx_paint_cov(cell, pct, size=11):
-    """Percent of target with a light Year-board fill so SAP / TOS / LD read at a glance."""
-    from openpyxl.styles import PatternFill
+    """Percent of target as a plain black figure (no traffic-light fill)."""
     _xlsx_pct_cell(cell, pct)
-    fg, bg = _xlsx_cov_tone(pct)
-    if fg:
-        cell.font = _xlsx_font(True, size, fg)
-        cell.fill = PatternFill("solid", fgColor=bg)
+    cell.font = _xlsx_font(True, size, _XLSX_INK)
     return cell
 
 
@@ -934,18 +923,18 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
                 elif col >= 5 and isinstance(val, (int, float)):
                     cell.number_format = "#,##0"
                 if col in (6, 7, 8):
-                    cell.font = _xlsx_font(True, 9, _XLSX_PRED)
+                    cell.font = _xlsx_font(True, 9, _XLSX_INK)
                 if col == 11:
-                    cell.font = _xlsx_font(True, 9, "059669")
+                    cell.font = _xlsx_font(True, 9, _XLSX_INK)
             else:
                 if col in (12, 13, 14, 15) and isinstance(val, (int, float)):
                     cell.number_format = "0.00"
                 elif col >= 5 and isinstance(val, (int, float)):
                     cell.number_format = "#,##0"
                 if col in (6, 8, 10, 12, 14):
-                    cell.font = _xlsx_font(False, 9, _XLSX_MUTED)
+                    cell.font = _xlsx_font(False, 9, _XLSX_INK)
                 if col in (7, 9, 11, 13, 15):
-                    cell.font = _xlsx_font(True, 9, _XLSX_PRED)
+                    cell.font = _xlsx_font(True, 9, _XLSX_INK)
         tot["tgt"] += row.get("target") or 0
         tot["dt_b"] += row.get("dt_before") or 0
         tot["dt_a"] += row.get("dt_after") or 0
@@ -988,7 +977,7 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
         ]
     for col, val in enumerate(tot_vals, start=1):
         cell = ws.cell(row=r, column=col, value=val)
-        cell.font = _xlsx_font(True, 9, "059669" if (achv and col == 11) else _XLSX_NAVY)
+        cell.font = _xlsx_font(True, 9, _XLSX_NAVY)
         cell.alignment = mid
         _xlsx_total_border(cell)
         if (col in (9, 10) if achv else col in (12, 13, 14, 15)) and isinstance(val, (int, float)):
@@ -1087,23 +1076,23 @@ def _collect_year_path_rows(cards):
 
 
 def _xlsx_all_paths_table(ws, r, cards, achv=False):
-    """All months × allocated paths. NB Days then Predicted / month = WMT new × days."""
+    """All months × allocated paths. NB Days then Predicted / month = WMT × days."""
     from openpyxl.styles import Alignment, PatternFill
     rows = _collect_year_path_rows(cards)
     if not rows:
         return r
     r = _xlsx_section(
         ws, r, "Paths — all months",
-        "Optimized plan only. WMT new is t/day. Predicted / month = WMT new × NB Days. "
+        "Optimized plan only. WMT is t/day. Predicted / month = WMT × NB Days. "
         "WMT/DT is tonnes per truck-trip (payload)."
-        + (" Achievable new is /api/simulate, t/day." if achv else ""))
+        + (" Achievable is /api/simulate, t/day." if achv else ""))
     heads = [
-        "Month", "P", "Origin", "Destination", "Path", "Contractor", "Material",
-        "Target WMT/day", "DT new", "Trips new", "WMT new",
-        "WMT/DT new", "Trips/DT new",
+        "Month", "Priority", "Origin", "Destination", "Path", "Contractor", "Material",
+        "Target WMT/day", "DT", "Trips", "WMT",
+        "WMT/DT", "Trips/DT",
     ]
     if achv:
-        heads.append("Achievable new")
+        heads.append("Achievable")
     heads += ["NB Days", "Predicted / month"]
     _xlsx_headers(ws, r, heads, center=True)
     navy = PatternFill("solid", fgColor=_XLSX_NAVY)
@@ -1180,7 +1169,7 @@ def _xlsx_all_paths_table(ws, r, cards, achv=False):
         header_row, get_column_letter(n_cols), r - 1)
     ws.freeze_panes = "A%d" % (header_row + 1)
     _xlsx_widths(ws, [
-        10, 6, 10, 14, 22, 12, 14,
+        10, 10, 10, 14, 22, 12, 14,
         14, 10, 12, 12, 12, 12,
         14 if achv else 10, 12, 16,
     ])
@@ -1204,7 +1193,7 @@ def _xlsx_append_paths_sheet(wb, year, cards, used, prefix="", achv=False,
     ws.merge_cells("A1:P1")
     ws["A2"] = (
         "One row per route per month. Filter Month. "
-        "Predicted / month = WMT new (t/day) × NB Days."
+        "Predicted / month = WMT (t/day) × NB Days."
         + (" Achievable is /api/simulate." if achv else ""))
     ws["A2"].font = _xlsx_font(False, 10, _XLSX_MUTED)
     ws.merge_cells("A2:P2")
@@ -1278,19 +1267,19 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None, achv=False):
     _xlsx_headers(ws, r, ["", "SAP", "LIM-TOS", "LIM-LD", "Together"], center=True)
     if achv:
         metric = [
-            ("Target t/day", lambda k: (mats.get(k) or {}).get("target_day"), alloc.get("target_day"), _XLSX_TGT, False),
-            ("Optimized predicted plan", lambda k: (mats.get(k) or {}).get("pred_after_day"), alloc.get("new_pred_day"), _XLSX_PRED, True),
+            ("Target t/day", lambda k: (mats.get(k) or {}).get("target_day"), alloc.get("target_day"), _XLSX_INK, False),
+            ("Optimized predicted plan", lambda k: (mats.get(k) or {}).get("pred_after_day"), alloc.get("new_pred_day"), _XLSX_INK, True),
             ("Optimized achievable",
              lambda k: _pick_mat_achv(mats.get(k) or {}, False, "day"),
-             _pick_achv(alloc, False, "day"), _XLSX_ACHV, True),
+             _pick_achv(alloc, False, "day"), _XLSX_INK, True),
             ("New DT", lambda k: (mats.get(k) or {}).get("dt_after"), alloc.get("dt_after"), _XLSX_INK, True),
         ]
     else:
         metric = [
-            ("Target t/day", lambda k: (mats.get(k) or {}).get("target_day"), alloc.get("target_day"), _XLSX_TGT, False),
-            ("Old predicted plan", lambda k: (mats.get(k) or {}).get("pred_before_day"), alloc.get("old_pred_day"), _XLSX_MUTED, False),
-            ("Optimized predicted plan", lambda k: (mats.get(k) or {}).get("pred_after_day"), alloc.get("new_pred_day"), _XLSX_PRED, True),
-            ("Old DT", lambda k: (mats.get(k) or {}).get("dt_before"), alloc.get("dt_before"), _XLSX_MUTED, False),
+            ("Target t/day", lambda k: (mats.get(k) or {}).get("target_day"), alloc.get("target_day"), _XLSX_INK, False),
+            ("Old predicted plan", lambda k: (mats.get(k) or {}).get("pred_before_day"), alloc.get("old_pred_day"), _XLSX_INK, False),
+            ("Optimized predicted plan", lambda k: (mats.get(k) or {}).get("pred_after_day"), alloc.get("new_pred_day"), _XLSX_INK, True),
+            ("Old DT", lambda k: (mats.get(k) or {}).get("dt_before"), alloc.get("dt_before"), _XLSX_INK, False),
             ("New DT", lambda k: (mats.get(k) or {}).get("dt_after"), alloc.get("dt_after"), _XLSX_INK, True),
         ]
     for lab, fn, tot, color, bold in metric:
@@ -1338,6 +1327,39 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None, achv=False):
             "Trips are predicted trips. WMT/DT is tonnes per truck-trip (payload)."
             + (" Achievable is /api/simulate (effective cycle + loader clip), t/day." if achv else ""),
             achv=achv)
+
+    cap = alloc.get("capacity") or {}
+    if cap:
+        # Two labelled numbers, never merged: LIM-LD capacity is never clipped,
+        # only the tonnage credited against the target stops at it.
+        r += 2
+        r = _xlsx_section(
+            ws, r, "LIM-LD capacity vs credited production",
+            "Capacity is what the free fleet could move and is never clipped. "
+            "Credited is what counts against the target. The difference is "
+            "unused/excess capacity — reported, never folded into production.")
+        _xlsx_headers(ws, r, ["", "DT", "t/day", "t/month"], start=1, center=True)
+        for lab, dt_k, day_k, mon_k in (
+                ("Capacity (never clipped)", "ld_dt_capacity",
+                 "ld_t_day_capacity", "ld_t_month_capacity"),
+                ("Credited against target", "ld_dt_credited",
+                 "ld_t_day_credited", "ld_t_month_credited"),
+                ("Unused / excess capacity", "ld_dt_unused",
+                 "ld_t_day_excess", "ld_t_month_excess")):
+            r += 1
+            _xlsx_text(ws.cell(row=r, column=1), lab)
+            _xlsx_num(ws.cell(row=r, column=2), cap.get(dt_k), center=True)
+            _xlsx_num(ws.cell(row=r, column=3), cap.get(day_k), center=True)
+            _xlsx_num(ws.cell(row=r, column=4), cap.get(mon_k), center=True)
+        r += 1
+        if not cap.get("feasible", True):
+            ws.cell(row=r, column=1, value=(
+                "NOT FEASIBLE: targets this month need %s DT more than the pool "
+                "holds. Credited tonnage is what the fielded trucks can move, "
+                "not what was asked." % cap.get("infeasible_dt"))
+            ).font = _xlsx_font(True, 10, _XLSX_INK)
+            ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=10)
+            r += 1
 
     r += 3
     days = _days_in(month)
@@ -1456,12 +1478,6 @@ def _xlsx_fill_month(ws, st, title, achv=False):
             cell.alignment = mid
             if col in (4, 5, 6, 7, pred_col, tgt_col, roster_col) + ((achv_col,) if achv_col else ()) and val is not None:
                 cell.number_format = "#,##0.0" if col in (5, 6, 7) else "#,##0"
-            if col == pred_col:
-                cell.font = _xlsx_font(False, 10, _XLSX_MUTED)
-            if achv and col == achv_col:
-                cell.font = _xlsx_font(True, 10, _XLSX_ACHV)
-            if col == tgt_col:
-                cell.font = _xlsx_font(True, 10, _XLSX_TGT)
         tot_dt += dt or 0
         tot_pred += pred or 0
         tot_tgt += tgt or 0
@@ -1478,7 +1494,6 @@ def _xlsx_fill_month(ws, st, title, achv=False):
         if achv:
             ac = ws.cell(row=r, column=achv_col)
             _xlsx_num(ac, tot_path_achv or None, True, center=True)
-            ac.font = _xlsx_font(True, 11, _XLSX_ACHV)
         _xlsx_num(ws.cell(row=r, column=tgt_col), tot_tgt or None, True, center=True)
 
     warns = sim_sum.get("capacity_warnings") or p.get("extrapolated") or []
@@ -1486,7 +1501,7 @@ def _xlsx_fill_month(ws, st, title, achv=False):
         r += 2
         r = _xlsx_section(ws, r, "Capacity warnings")
         for w in warns:
-            ws.cell(row=r, column=1, value=str(w)).font = _xlsx_font(False, 9, "B91C1C")
+            ws.cell(row=r, column=1, value=str(w)).font = _xlsx_font(False, 9, _XLSX_MUTED)
             ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=12)
             ws.cell(row=r, column=1).alignment = Alignment(wrap_text=True)
             ws.row_dimensions[r].height = 28
@@ -1496,7 +1511,7 @@ def _xlsx_fill_month(ws, st, title, achv=False):
     sap_rows = _sap_table_rows(st, paths, sim_rows)
     r = _xlsx_section(
         ws, r, "Priority targets — P1 SAP · P2 LIM from TOS",
-        "LD limonite is P3 buffer. Predicted = path model.")
+        "Supplied LD tonnage is the P3 target. Predicted = path model.")
     sap_heads = ["P", "Path", "Mat · type", "Contractor", "Target t/day", "Old predicted plan t/day",
                  "Allocated DT", "Required DT", "Status"]
     _xlsx_headers(ws, r, sap_heads, center=True)
@@ -1508,13 +1523,6 @@ def _xlsx_fill_month(ws, st, title, achv=False):
         ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=10)
     for sap in sap_rows:
         r += 1
-        status = sap["status"]
-        if status == "on target":
-            status_col = "059669"
-        elif status.startswith("target above"):
-            status_col = "B91C1C"
-        else:
-            status_col = "D97706"
         vals = ["P%s" % sap.get("prio", 1), sap["path"],
                 "%s · %s" % (sap.get("mat") or "", sap.get("otype") or "—"),
                 sap["contractor"], sap["target"], sap["pred"],
@@ -1522,15 +1530,10 @@ def _xlsx_fill_month(ws, st, title, achv=False):
         for col, val in enumerate(vals, start=1):
             cell = ws.cell(row=r, column=col, value=val)
             cell.border = box
-            cell.font = _xlsx_font(col == 2 or col == 9, 10,
-                                   status_col if col == 9 else _XLSX_INK)
+            cell.font = _xlsx_font(col == 2 or col == 9, 10, _XLSX_INK)
             cell.alignment = mid
             if col in (5, 6, 7, 8) and val is not None:
                 cell.number_format = "#,##0"
-            if col == 5:
-                cell.font = _xlsx_font(False, 10, _XLSX_TGT)
-            if col == 6:
-                cell.font = _xlsx_font(False, 10, _XLSX_MUTED)
 
     alloc = (st or {}).get("allocation") or {}
     if alloc.get("new") or alloc.get("old"):
@@ -1559,7 +1562,7 @@ def _xlsx_fill_month(ws, st, title, achv=False):
             r += 1
             r = _xlsx_section(ws, r, "Fleet shortfalls")
             for s in alloc["shortfalls"]:
-                ws.cell(row=r, column=1, value=str(s)).font = _xlsx_font(False, 9, "B91C1C")
+                ws.cell(row=r, column=1, value=str(s)).font = _xlsx_font(False, 9, _XLSX_MUTED)
                 ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=10)
                 r += 1
 
@@ -1585,27 +1588,21 @@ def _xlsx_fill_month(ws, st, title, achv=False):
         _xlsx_text(ws.cell(row=dr, column=1), d, center=True)
         pred_c = ws.cell(row=dr, column=2)
         _xlsx_num(pred_c, pw, center=True)
-        pred_c.font = _xlsx_font(False, 11, _XLSX_MUTED)
         if achv:
             achv_c = ws.cell(row=dr, column=3)
             _xlsx_num(achv_c, aw, center=True)
-            achv_c.font = _xlsx_font(False, 11, _XLSX_ACHV)
         tgt_c = ws.cell(row=dr, column=tgt_dcol)
         _xlsx_num(tgt_c, tw, center=True)
-        tgt_c.font = _xlsx_font(False, 11, _XLSX_TGT)
     last_daily = dr
     dr += 1
     _xlsx_text(ws.cell(row=dr, column=1), "TOTAL", True, _XLSX_NAVY, center=True)
     tot_p_c = ws.cell(row=dr, column=2)
     _xlsx_num(tot_p_c, tot_p or None, True, center=True)
-    tot_p_c.font = _xlsx_font(True, 11, _XLSX_MUTED)
     if achv:
         tot_a_c = ws.cell(row=dr, column=3)
         _xlsx_num(tot_a_c, tot_a or None, True, center=True)
-        tot_a_c.font = _xlsx_font(True, 11, _XLSX_ACHV)
     tot_t_c = ws.cell(row=dr, column=tgt_dcol)
     _xlsx_num(tot_t_c, tot_t or None, True, center=True)
-    tot_t_c.font = _xlsx_font(True, 11, _XLSX_TGT)
     if last_daily > daily_head:
         pal = (_XLSX_MUTED, _XLSX_ACHV, _XLSX_TGT) if achv else (_XLSX_MUTED, _XLSX_TGT)
         _xlsx_line_chart(ws, "Daily WMT", "t/day", 2, tgt_dcol, daily_head, last_daily,
@@ -1655,19 +1652,15 @@ def _xlsx_month_book(month, st):
         _xlsx_text(key.cell(row=rr, column=1), d)
         pc = key.cell(row=rr, column=2)
         _xlsx_num(pc, pw)
-        pc.font = _xlsx_font(False, 11, _XLSX_MUTED)
         tc = key.cell(row=rr, column=3)
         _xlsx_num(tc, tw)
-        tc.font = _xlsx_font(False, 11, _XLSX_TGT)
     last = rr
     rr += 1
     _xlsx_text(key.cell(row=rr, column=1), "TOTAL", True, _XLSX_NAVY)
     pc = key.cell(row=rr, column=2)
     _xlsx_num(pc, tot_p or None, True)
-    pc.font = _xlsx_font(True, 11, _XLSX_MUTED)
     tc = key.cell(row=rr, column=3)
     _xlsx_num(tc, tot_t or None, True)
-    tc.font = _xlsx_font(True, 11, _XLSX_TGT)
     if last > table_row:
         _xlsx_line_chart(key, "Daily WMT (flat — the same plan every day)", "t/day",
                          2, 3, table_row, last, "A%d" % (rr + 2), cat_col=1,
@@ -1687,6 +1680,52 @@ def _xlsx_unique_sheet_name(base, used):
     return name
 
 
+def _xlsx_plan_source_block(ws, r, cards):
+    """WHICH PLAN THIS WORKBOOK IS. Printed on the Year sheet, above the totals.
+
+    The Year TOTAL used to sum months that came from different scenarios with
+    no disclosure anywhere on the sheet (month sheets said "Saved 2026-09-04"
+    in row 2; the Year sheet said nothing). One workbook is now one scenario,
+    and it says so here — scenario, day, and the exact saved file per month,
+    plus any month that has no plan for this scenario rather than a silent
+    hole where another day's plan used to be substituted."""
+    first = cards[0] if cards else {}
+    note = first.get("_source_note")
+    scen = first.get("_scenario")
+    if not note and not scen:
+        return r
+    r = _xlsx_section(ws, r, "Plan source — one workbook, one scenario", note)
+    _xlsx_headers(ws, r, ["Month", "Saved plan read", "Target (t)"], start=1)
+    for c in cards:
+        r += 1
+        a = c.get("alloc") or {}
+        _xlsx_text(ws.cell(row=r, column=1), c.get("name"))
+        _xlsx_text(ws.cell(row=r, column=2),
+                   c.get("alloc_source_date") or a.get("source_date")
+                   or c.get("alloc_source") or "—")
+        _xlsx_num(ws.cell(row=r, column=3), a.get("target_month") or c.get("target_month"))
+    r += 2
+    missing = first.get("_missing_months") or []
+    ws.cell(row=r, column=1, value=(
+        "Months with no %s plan: %s — not substituted from another day."
+        % (scen or "scenario", ", ".join(str(m) for m in missing))
+        if missing else
+        "Every month in this year has a %s plan; nothing was substituted."
+        % (scen or "scenario"))).font = _xlsx_font(False, 9, _XLSX_MUTED)
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
+    r += 1
+    cap = (first.get("alloc") or {}).get("capacity") or {}
+    if cap:
+        ws.cell(row=r, column=1, value=(
+            "LIM-LD: capacity is reported in full and never clipped; only the "
+            "tonnage CREDITED against the target stops at it. See each month "
+            "sheet for that month's capacity / credited / unused split."
+        )).font = _xlsx_font(False, 9, _XLSX_MUTED)
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
+        r += 1
+    return r + 1
+
+
 def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
     """Year dashboard sheet: KPIs, five-clock charts, coverage table.
     achv=True adds old / optimized achievable (Plan simulate) next to predicted."""
@@ -1702,6 +1741,7 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
         + (" Achievable = /api/simulate after Allocate. Old-plan columns omitted."
            if achv else ""),
         start=1)
+    r = _xlsx_plan_source_block(ws, r, cards)
     if Y:
         mats = Y.get("materials") or {}
         if achv:
@@ -1793,7 +1833,6 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
                     na = _pick_achv(a, False, "month")
                     ac = ws.cell(row=r, column=4)
                     _xlsx_num(ac, na, True)
-                    ac.font = _xlsx_font(True, 11, _XLSX_ACHV)
                     col = 5
                 else:
                     _xlsx_num(ws.cell(row=r, column=3), a.get("old_pred_month"))
@@ -1958,21 +1997,36 @@ def api_monthly_export():
 
 @bp.route("/api/monthly/export-year")
 def api_monthly_export_year():
-    """Year workbook: Key + year chart + one production/capacity/SAP sheet per month."""
+    """Year workbook: Key + year chart + one production/capacity/SAP sheet per month.
+
+    ONE WORKBOOK = ONE SCENARIO. `day` omitted resolves to
+    DEFAULT_SCENARIO_DAY (S1 = day 01), never "latest save wins"; the resolved
+    scenario, its day and the exact source file per month are printed on the
+    Year sheet and echoed in the X-Plan-Scenario response headers.
+    """
     year = (request.args.get("year") or str(date.today().year)).strip()
     if not re.fullmatch(r"\d{4}", year):
         return jsonify({"ok": False, "error": "year=YYYY"}), 400
     day = (request.args.get("day") or "").strip()
     day = int(day) if re.fullmatch(r"[0-9]{1,2}", day) and 1 <= int(day) <= 28 else None
     achv = (request.args.get("achv") or "").strip() in ("1", "true", "yes")
+    resolved_day = DEFAULT_SCENARIO_DAY if day is None else day
     _yearly, cards = _year_cards(year, day=day)
     if not cards:
-        return jsonify({"ok": False, "error": "nothing stored for %s — load a matrix and build the year first" % year}), 404
-    for c in cards:
-        c["_alloc_day"] = day
+        return jsonify({
+            "ok": False,
+            "error": "no day-%02d (%s) plans stored for %s — load a matrix and "
+                     "build the year first, or ask for another day"
+                     % (resolved_day, _scenario_label_for_day(resolved_day), year),
+        }), 404
     name = "monthly_plan_%s%s%s.xlsx" % (
         year, "" if not day else "_day%02d" % day, "_achievable" if achv else "")
-    return _xlsx_send(_xlsx_year_book(year, cards, achv=achv), name)
+    rv = _xlsx_send(_xlsx_year_book(year, cards, achv=achv), name)
+    rv.headers["X-Plan-Scenario"] = _scenario_label_for_day(resolved_day)
+    rv.headers["X-Plan-Scenario-Day"] = "%02d" % resolved_day
+    rv.headers["X-Plan-Sources"] = ",".join(
+        "%s=%s" % (c["month"], c.get("alloc_source_date") or "-") for c in cards)
+    return rv
 
 
 
@@ -2198,6 +2252,59 @@ def _path_model_context():
     return paths, fleet, contr_by
 
 
+_CONG_TRIPS_CACHE = {}
+
+
+def _congestion_trips_per_dt(route, contractor, n_comb):
+    """Trips/DT/day from the ONE contractor-pricing owner: the calibrated
+    congestion model, asked with the contractor.
+
+    Until 2026-08-23 this module priced trips/DT as `dayRate × cf`, where cf
+    was the contractor's fleet-wide Trips/DT ÷ the site-wide Trips/DT, clamped
+    [0.5,1.5]. plan.js deleted exactly that factor the same day, because it is
+    fleet-size-confounded (RIM ran ~140 trucks/day against SMA's ~58) and
+    INVERTS on the TF corridor against matched-day history. Leaving it here
+    would have made monthly_api the third owner of one concept — the shape
+    that produced the 0.85 availability override (J55) and the capacity card
+    (J71).
+
+    congestion.predictor.predict() applies the contractor's own
+    overhead_per_trip_min where calibration found a matched-day baseline, and
+    answers POOLED where it did not — the exact transform
+    trips_c = 1440 / (1440/trips_pooled − ovh_pooled + ovh_c) that plan.js and
+    /api/congestion_model both use. Returns None for an uncalibrated route so
+    the caller falls back to the measured ticket history, pooled.
+
+    Basis note: priced on this route's OWN combined fleet, exactly like
+    /api/congestion_model without `others`. Cross-route segment traffic is a
+    known, disclosed gap here (the Plan tab supplies it via `others`); it is
+    not silently approximated.
+    """
+    try:
+        from congestion.config import route_params
+        from congestion.predictor import predict
+    except ImportError:
+        return None
+    n = max(1.0, float(n_comb or 0))
+    key = (route, (contractor or "").upper(), round(n, 1))
+    if key in _CONG_TRIPS_CACHE:
+        return _CONG_TRIPS_CACHE[key]
+    out = None
+    try:
+        if route_params(route).get("calibrated"):
+            rec = predict(route, n, None, contractor=(contractor or None) and
+                          str(contractor).strip().upper())
+            v = rec.get("trips_per_DT_per_day")
+            if v and float(v) > 0:
+                out = float(v)
+    except (ValueError, ArithmeticError, KeyError, TypeError, OSError):
+        out = None
+    if len(_CONG_TRIPS_CACHE) > 20000:
+        _CONG_TRIPS_CACHE.clear()
+    _CONG_TRIPS_CACHE[key] = out
+    return out
+
+
 def _path_row_wmt(src, dst, contractor, dt, n_comb, paths, fleet, contr_by):
     """One contractor-path through the Plan Step 1 path model (day grain, rain=0)."""
     k = "%s>%s" % (src, dst)
@@ -2205,40 +2312,53 @@ def _path_row_wmt(src, dst, contractor, dt, n_comb, paths, fleet, contr_by):
     dt = float(dt or 0)
     n_comb = float(n_comb or dt) or dt
     c = contr_by.get((contractor or "").upper()) or {}
-    if fleet and c.get("tripsPerDT"):
-        cf = max(0.5, min(1.5, float(c["tripsPerDT"]) / float(fleet)))
-    else:
-        cf = 1.0
     pay = c.get("tf") or m.get("tf")
     day_rate = m.get("dayRate") or m.get("avgTr")
     cap_trips = m.get("dayTripsCap")
-    if not day_rate or not pay or dt <= 0:
+    # Contractor pricing has exactly ONE owner (see _congestion_trips_per_dt).
+    cong_tr = _congestion_trips_per_dt(k, contractor, n_comb)
+    if not pay or dt <= 0 or (not day_rate and not cong_tr):
         return {"wmt": None, "trips": None,
                 "flag": "no measured day history — using cycle × payload",
-                "cf": cf, "pay": pay, "cap_trips": cap_trips, "avg_dt": m.get("avgDt")}
-    tr = float(day_rate) * cf
-    linear = tr * n_comb
+                "pay": pay, "cap_trips": cap_trips, "avg_dt": m.get("avgDt"),
+                "contractor_basis": None}
     flag = None
-    if cap_trips and cap_trips > 0 and linear > cap_trips:
-        tr *= cap_trips / linear
-        flag = "at demonstrated ceiling (%d trips/day)" % round(cap_trips)
-    floor = 0.3 * float(day_rate) * cf
-    if tr < floor:
-        tr = floor
+    if cong_tr:
+        # Calibrated route: the congestion model already carries saturation on
+        # the combined fleet, so the legacy demonstrated-ceiling divide and the
+        # 30% floor are NOT applied on top — same guard plan.js uses
+        # (`if(!_hybridInfo && capEff>0 …)`). Two saturation models on one
+        # number is the defect this repo has paid for three times.
+        tr = cong_tr
+        basis = "congestion model (contractor=%s)" % ((contractor or "-").upper())
+        cap_trips = None
+    else:
+        tr = float(day_rate)  # POOLED — no contractor factor exists for this route
+        basis = "measured day history, pooled (route not calibrated)"
+        linear = tr * n_comb
+        if cap_trips and cap_trips > 0 and linear > cap_trips:
+            tr *= cap_trips / linear
+            flag = "at demonstrated ceiling (%d trips/day)" % round(cap_trips)
+        floor = 0.3 * float(day_rate)
+        if tr < floor:
+            tr = floor
     dt_max = m.get("dtMaxDayAll") or m.get("dtMaxAll") or m.get("dtMax")
     if dt_max and n_comb > dt_max:
         flag = "beyond measured fleet (max ever %d DT)" % round(dt_max)
     trips = dt * tr
     return {"wmt": trips * float(pay), "trips": trips, "flag": flag,
-            "cf": cf, "pay": pay, "cap_trips": cap_trips, "avg_dt": m.get("avgDt")}
+            "pay": pay, "cap_trips": cap_trips, "avg_dt": m.get("avgDt"),
+            "trips_per_dt": tr, "contractor_basis": basis}
 
 
 def _plan_predict_for_routes(route_list):
     """Plan tab Step 1 WMT for one typical day (rain=0, no WB / other-traffic knobs).
 
-    Identical ingredients to planTripsPerDT + planPayload + planContractorFactor:
-      trips/DT = dayRate × contractor factor, saturating at dayTripsCap on the
-      combined fleet for that path, 30% floor; tonnes = trips × contractor t/trip.
+    Same ingredients the Plan tab uses: trips/DT from the calibrated congestion
+    model priced for THIS contractor (the model's own saturation, no legacy
+    ceiling divide on top), or the measured pooled day rate with the
+    demonstrated ceiling where the route is not calibrated; tonnes = trips ×
+    contractor t/trip.
     """
     paths, fleet, contr_by = _path_model_context()
     combined = {}
@@ -2259,7 +2379,11 @@ def _plan_predict_for_routes(route_list):
 
 
 def _required_dt_day(src, dst, contractor, target_day, others_dt, paths, fleet, contr_by):
-    """Invert the path model for a day target. Same solver as planDtForWmt (rain=0)."""
+    """Invert the path model for a day target. Same solver as planDtForWmt (rain=0).
+
+    `cap_trips` (and therefore the "target above path ceiling" pre-check) only
+    exists on routes the congestion model has no calibration for; on calibrated
+    routes the model's own saturation is the ceiling and the solver walks it."""
     if not target_day or target_day <= 0:
         return None, None
     seed = _path_row_wmt(src, dst, contractor, 1, others_dt + 1, paths, fleet, contr_by)
@@ -2631,9 +2755,11 @@ def _cov_pct(num, den):
 
 
 def _plan_achv(pred, tgt):
-    """Monthly presentation only. Plan page stores raw simulate; here we
-    hide overshoot so management tables read Predicted vs Target, not a
-    third clock sitting well above the target. Not a planning cap."""
+    """Target-credited prediction for management presentation.
+
+    This is deliberately not called achievable: achievable is reserved for
+    raw /api/simulate output throughout the API and exports.
+    """
     if pred is None:
         return None
     if tgt:
@@ -2743,20 +2869,25 @@ def _alloc_view(alloc, n_days, source_date=None, include_detail=False):
             "target_day": rnd(tgt),
             "pred_before_day": rnd(pb),
             "pred_after_day": rnd(pa),
-            "achv_before_day": rnd(ab),
-            "achv_after_day": rnd(aa),
+            "credited_pred_before_day": rnd(ab),
+            "credited_pred_after_day": rnd(aa),
+            "achv_before_day": rnd(ab_raw),
+            "achv_after_day": rnd(aa_sim),
             "achv_before_raw_day": rnd(ab_raw),
             "achv_after_raw_day": rnd(aa_sim),
             "over_achv_day": rnd(max(0, aa_sim - aa)) if aa_sim is not None and aa is not None else None,
             "target_month": rnd(tgt * n) if tgt is not None else None,
             "pred_before_month": rnd(pb * n) if pb is not None else None,
             "pred_after_month": rnd(pa * n) if pa is not None else None,
-            "achv_before_month": rnd(ab * n) if ab is not None else None,
-            "achv_after_month": rnd(aa * n) if aa is not None else None,
+            "credited_pred_before_month": rnd(ab * n) if ab is not None else None,
+            "credited_pred_after_month": rnd(aa * n) if aa is not None else None,
+            "achv_before_month": rnd(ab_raw * n) if ab_raw is not None else None,
+            "achv_after_month": rnd(aa_sim * n) if aa_sim is not None else None,
             "achv_before_raw_month": rnd(ab_raw * n) if ab_raw is not None else None,
             "achv_after_raw_month": rnd(aa_sim * n) if aa_sim is not None else None,
             "cov_pred": _cov_pct(pa, tgt),
-            "cov_achv": _cov_pct(aa, tgt),
+            "cov_credited_pred": _cov_pct(aa, tgt),
+            "cov_achv": _cov_pct(aa_sim, tgt),
             "cov_achv_raw": _cov_pct(aa_sim, tgt),
             "left_pred_month": rnd(max(0, tgt - pa) * n) if tgt is not None and pa is not None else None,
             "over_pred_month": rnd(max(0, pa - tgt) * n) if tgt is not None and pa is not None else None,
@@ -2787,20 +2918,21 @@ def _alloc_view(alloc, n_days, source_date=None, include_detail=False):
                 tot_ab += ab
                 if k in sums:
                     sums[k]["ab"] += ab
-        oa, na = tot_ab, tot_aa
+        credited_oa, credited_na = tot_ab, tot_aa
         for k, s in sums.items():
             mat = materials.get(k)
             if not mat:
                 continue
-            mat["achv_after_day"] = rnd(s["aa"])
-            mat["achv_before_day"] = rnd(s["ab"])
-            mat["achv_after_month"] = rnd(s["aa"] * n) if n else None
-            mat["achv_before_month"] = rnd(s["ab"] * n) if n else None
-            mat["cov_achv"] = _cov_pct(s["aa"], mat.get("target_day"))
-            if mat.get("achv_after_raw_day") is not None and mat.get("achv_after_day") is not None:
-                mat["over_achv_day"] = rnd(max(0, mat["achv_after_raw_day"] - mat["achv_after_day"]))
+            mat["credited_pred_after_day"] = rnd(s["aa"])
+            mat["credited_pred_before_day"] = rnd(s["ab"])
+            mat["credited_pred_after_month"] = rnd(s["aa"] * n) if n else None
+            mat["credited_pred_before_month"] = rnd(s["ab"] * n) if n else None
+            mat["cov_credited_pred"] = _cov_pct(s["aa"], mat.get("target_day"))
+            if mat.get("achv_after_day") is not None and mat.get("credited_pred_after_day") is not None:
+                mat["over_achv_day"] = rnd(max(0, mat["achv_after_day"] - mat["credited_pred_after_day"]))
     else:
-        oa, na = _plan_achv(op, tgt), _plan_achv(np_, tgt)
+        credited_oa, credited_na = _plan_achv(op, tgt), _plan_achv(np_, tgt)
+    oa, na = oa_raw, na_sim
     fleet = alloc.get("fleet") or {}
     out = {
         "has": True,
@@ -2810,6 +2942,8 @@ def _alloc_view(alloc, n_days, source_date=None, include_detail=False):
         "dt_after": fleet.get("after") if fleet.get("after") is not None else new.get("dt"),
         "old_pred_day": rnd(op), "new_pred_day": rnd(np_),
         "old_achv_day": rnd(oa), "new_achv_day": rnd(na),
+        "old_credited_pred_day": rnd(credited_oa),
+        "new_credited_pred_day": rnd(credited_na),
         "old_achv_raw_day": rnd(oa_raw), "new_achv_raw_day": rnd(na_sim),
         "over_new_achv_day": rnd(max(0, na_sim - na)) if na_sim is not None and na is not None else None,
         "target_day": rnd(tgt),
@@ -2817,6 +2951,8 @@ def _alloc_view(alloc, n_days, source_date=None, include_detail=False):
         "new_pred_month": rnd(np_ * n) if np_ is not None else None,
         "old_achv_month": rnd(oa * n) if oa is not None else None,
         "new_achv_month": rnd(na * n) if na is not None else None,
+        "old_credited_pred_month": rnd(credited_oa * n) if credited_oa is not None else None,
+        "new_credited_pred_month": rnd(credited_na * n) if credited_na is not None else None,
         "old_achv_raw_month": rnd(oa_raw * n) if oa_raw is not None else None,
         "new_achv_raw_month": rnd(na_sim * n) if na_sim is not None else None,
         "target_month": rnd(tgt * n) if tgt is not None else None,
@@ -2824,12 +2960,19 @@ def _alloc_view(alloc, n_days, source_date=None, include_detail=False):
         "cov_new_pred": _cov_pct(np_, tgt),
         "cov_old_achv": _cov_pct(oa, tgt),
         "cov_new_achv": _cov_pct(na, tgt),
+        "cov_old_credited_pred": _cov_pct(credited_oa, tgt),
+        "cov_new_credited_pred": _cov_pct(credited_na, tgt),
         "cov_new_achv_raw": _cov_pct(na_sim, tgt),
         "left_new_pred_month": rnd(max(0, tgt - np_) * n) if tgt is not None and np_ is not None else None,
         "over_new_pred_month": rnd(max(0, np_ - tgt) * n) if tgt is not None and np_ is not None else None,
         "over_new_achv_month": rnd(max(0, na_sim - na) * n) if na_sim is not None and na is not None else None,
         "moved_total": alloc.get("moved_total"),
         "materials": materials,
+        # LIM-LD capacity (never clipped) vs credited production, and whether
+        # the month's targets fit the pool at all. Both travel with the view so
+        # the workbook and the API cannot report one without the other.
+        "capacity": alloc.get("capacity"),
+        "feasible": alloc.get("feasible", True),
     }
     if include_detail:
         out["rows"] = alloc.get("rows") or []
@@ -2902,11 +3045,41 @@ def _year_alloc_totals(cards):
     return tot
 
 
+# The day-of-month saved-plan convention (owner, 2026-08-19): day 01 holds
+# Scenario 1, day 03 Scenario 3, day 04 Scenario 4. Day 02 is reserved (S2 was
+# deleted from the app on 2026-08-21).
+#
+# ONE WORKBOOK = ONE SCENARIO. `day=None` used to mean "latest file wins" per
+# month, and that silently mixed scenarios inside a single workbook: on
+# 2026-08-23 the year book named monthly_plan_2026.xlsx resolved Aug from a
+# legacy 2026-08-13 daily and Sep/Oct/Nov/Dec from the day-04 (S4) saves, so
+# its Sep target read 2,410,410 t where the real S1 day-01 plan gives
+# 2,840,190 t (-15%) and the Year TOTAL summed ACROSS scenarios with no
+# disclosure. The default is now EXPLICIT: S1 = day 01.
+DEFAULT_SCENARIO_DAY = 1
+_SCENARIO_FOR_DAY = {1: "S1", 3: "S3", 4: "S4"}
+
+
+def _scenario_label_for_day(day):
+    """'S1' / 'S3' / 'S4' for the day-of-month convention, else 'day-NN plans'."""
+    return _SCENARIO_FOR_DAY.get(int(day), "day-%02d plans" % int(day))
+
+
 def _year_cards(year, day=None):
     """Month cards for the year board and the year Excel download.
-    day=N picks that day-of-month's saved plan (scenario convention), and a
-    month with NO save on that day is dropped entirely - no target, no old
-    predicted plan (owner, 2026-08-19: August belongs to Scenario 1 only)."""
+
+    day=N picks that day-of-month's saved plan (the scenario convention).
+    day=None resolves to DEFAULT_SCENARIO_DAY (=1, Scenario 1) rather than
+    letting the latest file in each month win, so one workbook can only ever
+    contain one scenario.
+
+    A month with NO save on the requested day is dropped entirely - no target,
+    no old predicted plan, and never another day's plan substituted (owner,
+    2026-08-19: August belongs to Scenario 1 only). The dropped months are
+    reported on every card as `_missing_months` so the Year sheet and the API
+    can say so instead of leaving a silent hole. day=3 (S3) and day=4 (S4)
+    therefore never include August."""
+    resolved_day = DEFAULT_SCENARIO_DAY if day is None else int(day)
     yearly = _load_yearly()
     mnums = set(int(m) for m in (yearly or {}).get("months") or [])
     if os.path.isdir(_MONTH_DIR):
@@ -2920,17 +3093,24 @@ def _year_cards(year, day=None):
                     mnums.add(int(f[5:7]))
         except OSError:
             pass
-    if day is not None:
-        with_day = set()
-        if os.path.isdir(_SAVED_DIR):
-            try:
-                for f in os.listdir(_SAVED_DIR):
-                    m = re.fullmatch(r"%s-(0[1-9]|1[0-2])-%02d\.json" % (year, int(day)), f)
-                    if m:
-                        with_day.add(int(m.group(1)))
-            except OSError:
-                pass
-        mnums &= with_day
+    with_day = set()
+    if os.path.isdir(_SAVED_DIR):
+        try:
+            for f in os.listdir(_SAVED_DIR):
+                m = re.fullmatch(r"%s-(0[1-9]|1[0-2])-%02d\.json" % (year, resolved_day), f)
+                if m:
+                    with_day.add(int(m.group(1)))
+        except OSError:
+            pass
+    asked = set(mnums)
+    mnums &= with_day
+    # August belongs to Scenario 1 only (owner 2026-08-19). Day 3 = S3,
+    # day 4 = S4: start at September. A leftover 08-04 save is a legacy
+    # daily plan, not S4 — do not treat it as a scenario month.
+    if resolved_day != 1:
+        mnums.discard(8)
+        asked.discard(8)
+    missing = sorted(asked - mnums)
     cards = []
     for mnum in sorted(mnums):
         month = "%s-%02d" % (year, mnum)
@@ -2946,7 +3126,7 @@ def _year_cards(year, day=None):
                 _save_state(month, st)
         tgt_days = man.get("days") or []
         tgt_day = tgt_days[0].get("wmt") if tgt_days else None
-        alloc, src = _resolve_allocation(month, st, day=day)
+        alloc, src = _resolve_allocation(month, st, day=resolved_day)
         view = _alloc_view(alloc, n, src, include_detail=False)
         card = {
             "month": month, "name": _MONTH_LABELS[mnum], "n_days": n,
@@ -2957,6 +3137,18 @@ def _year_cards(year, day=None):
             "target_month": round(tgt_day * n) if tgt_day is not None else None,
             "built": bool(p and man),
             "has_alloc": bool(view),
+            # Disclosure travels WITH the card, so the Year sheet, the month
+            # sheets and the API cannot disagree about which plan was read.
+            "_alloc_day": resolved_day,
+            "_scenario": _scenario_label_for_day(resolved_day),
+            "_missing_months": [_MONTH_LABELS.get(m, str(m)) for m in missing],
+            "_source_note": (
+                "%s — day-%02d saved plans only. Every month on this sheet comes "
+                "from data/saved_plans/%s-MM-%02d.json; no other scenario's plan "
+                "appears anywhere in this workbook."
+                % (_scenario_label_for_day(resolved_day), resolved_day,
+                   year, resolved_day)),
+            "alloc_source_date": src,
         }
         if view:
             card["alloc"] = view
@@ -2975,8 +3167,17 @@ def api_monthly_year_board():
     day = (request.args.get("day") or "").strip()
     day = int(day) if re.fullmatch(r"[0-9]{1,2}", day) and 1 <= int(day) <= 28 else None
     yearly, cards = _year_cards(year, day=day)
+    resolved_day = DEFAULT_SCENARIO_DAY if day is None else day
     return jsonify({
         "ok": True, "year": year, "day": day,
+        # Which plan this board is actually showing. `day` echoes what was
+        # asked; `resolved_day`/`scenario` say what was read, and `sources`
+        # names the exact saved file per month — one scenario, disclosed.
+        "resolved_day": resolved_day,
+        "scenario": _scenario_label_for_day(resolved_day),
+        "default_day_applied": day is None,
+        "sources": {c["month"]: c.get("alloc_source_date") for c in cards},
+        "missing_months": (cards[0].get("_missing_months") if cards else []),
         "has_matrix": yearly is not None,
         "source": (yearly or {}).get("source"),
         "routes": len((yearly or {}).get("entries") or []),
@@ -3354,7 +3555,7 @@ def api_monthly_allocate():
 
     for r in rows:
         others = max(0.0, comb_matrix[r["route"]] - r["matrix_dt"])
-        if r["prio"] in (1, 2) and r["target"] > 0:
+        if r["prio"] in (1, 2, 3) and r["target"] > 0:
             req, why = _required_dt_day(r["src"], r["dst"], r["contractor"],
                                         r["target"], others, path_models,
                                         fleet_kpi, contr_by)
@@ -3383,15 +3584,13 @@ def api_monthly_allocate():
     for r in rows:
         fleet[r["contractor"]] += r["matrix_dt"]
     moves, shortfalls = [], []
+    unused_fleet = {}
     for cont in sorted(fleet):
         crows = [r for r in rows if r["contractor"] == cont]
         remaining = fleet[cont]
-        for r in crows:
-            if r["prio"] == 9:
-                r["alloc_dt"] = round(r["matrix_dt"])
-                remaining -= r["alloc_dt"]
-        remaining = max(0.0, remaining)
-        for prio in (1, 2):
+        # Supplied targets consume the fixed fleet strictly P1 -> P2 -> P3.
+        # Unclassified work can use only what remains after all three targets.
+        for prio in (1, 2, 3):
             for r in sorted([x for x in crows if x["prio"] == prio],
                             key=lambda x: -x["target"]):
                 need = float(r["req_dt"] or 0)
@@ -3403,18 +3602,15 @@ def api_monthly_allocate():
                         shortfalls.append("%s SAP still short %d DT — %s fleet exhausted (LD + LIM-TOS used)"
                                           % (r["route"], round(need - give), cont))
                     else:
-                        shortfalls.append("%s LIM-TOS short %d DT after SAP took the fleet (SAP is must-move)"
-                                          % (r["route"], round(need - give)))
-        p3 = [x for x in crows if x["prio"] == 3]
-        p3_matrix = sum(x["matrix_dt"] for x in p3) or 1
-        for r in p3:
-            share = remaining * (r["matrix_dt"] / p3_matrix)
-            r["alloc_dt"] = round(share)
-        used = sum(x.get("alloc_dt", 0) for x in crows)
-        drift = round(fleet[cont]) - used
-        if drift and crows:
-            tgt = max(p3 or crows, key=lambda x: x.get("alloc_dt", 0))
-            tgt["alloc_dt"] = max(0, tgt.get("alloc_dt", 0) + drift)
+                        label = "LIM-TOS" if prio == 2 else "LIM-LD"
+                        shortfalls.append("%s %s short %d DT after higher priorities used the fleet"
+                                          % (r["route"], label, round(need - give)))
+        for r in sorted([x for x in crows if x["prio"] == 9],
+                        key=lambda x: -x["matrix_dt"]):
+            give = min(remaining, round(r["matrix_dt"]))
+            r["alloc_dt"] = max(0, give)
+            remaining -= give
+        unused_fleet[cont] = max(0.0, remaining)
         donors = [x for x in crows if x.get("alloc_dt", 0) < x["matrix_dt"]]
         receivers = [x for x in crows if x.get("alloc_dt", 0) > x["matrix_dt"]]
         for rec in sorted(receivers, key=lambda x: x["prio"]):
@@ -3517,18 +3713,21 @@ def api_monthly_allocate():
         "shortfalls": shortfalls,
         "prio_summary": prio_sum,
         "fleet": {c: round(v) for c, v in fleet.items()},
+        "unused_fleet": {c: round(v, 1) for c, v in unused_fleet.items()},
     }
     st["allocation"] = payload
     _save_state(month, st)
     return jsonify({
         "ok": True, "month": month, "saved": True,
-        "priorities": ["P1 SAP (fixed supply)", "P2 LIM from TOS", "P3 LIM from LD (buffer)"],
+        "priorities": ["P1 SAP (fixed supply)", "P2 LIM from TOS", "P3 LIM from LD (target)"],
         "fleet": payload["fleet"],
+        "unused_fleet": payload["unused_fleet"],
         "old": payload["old"], "new": payload["new"],
         "rows": payload["rows"], "moves": moves, "shortfalls": shortfalls,
         "prio_summary": prio_sum,
-        "note": ("SAP is must-move: it takes LD limonite first, then LIM-TOS of "
-                 "the same contractor if LD is not enough. LIM-TOS may run short. "
+        "note": ("Supplied targets consume the fixed fleet in strict order: "
+                 "SAP, then LIM-TOS, then LIM-LD. Any fleet beyond all targets "
+                 "is reported as unused rather than credited as production. "
                  "Required DT inverts the Plan path model (hard ceiling). Original "
                  "month prediction is kept; this allocation is stored beside it."),
     })

@@ -53,7 +53,9 @@ DIRTY_RE = re.compile(r"^TOS(?![A-Z]*\s)|[^\x00-\x7F]|-(?:PT|LVMI|HUAFEI|WBN|BSE
 MUST_DIFFER = [("POS 12", "POS 10"), ("POS 12", "POS 16"),
                ("FENI KM0", "FENI KM15"), ("TF", "KR")]
 MUST_MEASURE = [(("TF", "FENI KM0"), 67.8), (("KR", "POS 12"), 12.0),
-                (("TF", "FENI KM15"), 52.8), (("TF", "POS 12"), 40.8)]
+                (("TF", "FENI KM15"), 52.8), (("TF", "POS 12"), 40.8),
+                (("TF", "HUAFEI"), 63.7), (("TOFU", "HUAFEI"), 63.7),
+                (("BLB", "POS 14"), 6.7), (("BLB", "POS14"), 6.7)]
 
 # Real strings taken from HAULAGE_IWIP_CLEAN, with the node each one denotes.
 # Kept here rather than in a fixture so the expectations sit next to the guards.
@@ -62,7 +64,8 @@ CASES = [
     ("TOS_TF_STM_13-WBN矿业部", "TF"), ("TOS_TF_SMA_02_EXT-WBN矿业部", "TF"),
     ("TOS_KRENE", "KR"), ("TOS_KRENE_PPP_06-WBN矿业部", "KR"), ("KRENE", "KR"),
     ("TOSBLB-WBN矿业部", "BLB"), ("TOS_BLB", "BLB"),
-    ("POS 12", "POS 12"), ("POS16-WBN矿业部", "POS 16"),
+    ("POS 12", "POS 12"), ("POS14", "POS 14"),
+    ("POS16-WBN矿业部", "POS 16"),
     ("POS16-LVMI镍铁事业部", "POS 16"), ("POS15-WBN矿业部", "POS 15"),
     ("POSCBB-WBN矿业部", "POS CBB"), ("POS CBB", "POS CBB"),
     ("FENI A", "FENI KM0"), ("FENI U2", "FENI KM0"), ("FENI W", "FENI KM0"),

@@ -8,14 +8,37 @@ between scenarios is where those trucks go.
 The waterfall, in the owner's words (2026-08-18):
   1. allocate DTs until every SAP target is met,
   2. then until every LIM-TOS target is met,
-  3. every truck still free hauls LIM-LD (Tofu limonite dump -> Huafei),
-     every leftover truck, uncapped - 8 Mt is the sales target line.
+  3. every truck still free hauls LIM-LD (Tofu limonite dump -> Huafei).
+
+THE 8 Mt LIM-LD RULE, as two labelled numbers (owner ruling, 2026-08-23).
+Both owner statements are true at once and the repo's standing pattern is
+two clocks, never merged:
+
+  * CAPACITY IS NEVER CLIPPED. What the free fleet could physically move on
+    LD is computed and reported in full, above 8 Mt when the trucks are
+    there (`ld_t_day_capacity`, `ld_t_month_capacity`, `ld_t_capacity`,
+    `dt_p3_capacity`, `free`). Destroying that information is what the
+    2026-08-19 rule forbids: "LIM-LD is the only place extra trucks go - it
+    has no kind of cap."
+  * CREDITED PRODUCTION IS BOUNDED BY THE SUPPLIED TARGET. Tonnage credited
+    against a target never exceeds it (`ld_t_month_planned`, `ld_t_planned`,
+    `p3`, `dt_p3`); the remainder is reported as explicit unused/excess
+    capacity (`unused`, `ld_t_month_excess`) and never folded into headline
+    production.
+
+So: no clip on capacity, no credit beyond target, both present in the
+payload and in the workbook with names that say which is which. 8 Mt is the
+sales target line the plan is judged against, not a limit on what the fleet
+can do.
 
 Hard rules:
   * BLB pit accepts RIM trucks only - never SMA or another contractor.
   * Free DTs are pooled per contractor: a spare SMA truck cannot cover a
     BLB (RIM) shortfall, but it can cover TOFU/KRENE work and LIM-LD.
   * DT counts per month never change; only the allocation does.
+  * Credited tonnage never exceeds what the allocated DT can physically
+    move: an impossible target starves P3, reports a deficit and marks the
+    month `feasible: false` - it is never credited as delivered production.
 
 Storage: data/scenarios/{id}.json - one file per scenario, S1 is derived
 live from the yearly matrix so it can never drift from the real plan.
@@ -45,11 +68,16 @@ _MN = {"aug": 8, "august": 8, "sept": 9, "sep": 9, "september": 9,
        "oct": 10, "october": 10, "nov": 11, "november": 11,
        "dec": 12, "december": 12}
 
-# H2 LIM-LD sales TARGET (owner, 2026-08-19): a reference line, NOT a clip.
-# "LIM-LD is the only place extra trucks go - it has no kind of cap." Every
-# free DT hauls LD; the plan reports attainment against this line.
+# H2 LIM-LD sales TARGET: the line credited production is measured against,
+# never a limit on the fleet. Capacity above it is computed and reported in
+# full (see the two-labelled-numbers rule in the module docstring); only the
+# CREDITED tonnage stops here.
 LIM_LD_TARGET_T = 8_000_000
 LIM_LD_CAP_T = LIM_LD_TARGET_T  # back-compat alias (old name, same number)
+# P3 LIM-LD always runs Tofu limonite dump -> Huafei. Named once so the
+# draft-plan sizing and the LD rows cannot disagree about which road the
+# leftover fleet joins.
+LD_ROUTE_KEY = "TF>HUAFEI"
 RIM_ONLY_PITS = ("BLB",)
 
 # SAP routing conditions for imported scenarios (owner, 2026-08-19):
@@ -224,6 +252,7 @@ def _parse_mine_plan_db(ws_rows, src_name):
     c_sc, c_m = col("scenario"), col("month")
     c_days, c_pit = col("nb days"), col("mining pit", "pit")
     c_mat, c_wmt = col("material"), col("wmt rom", "wmt")
+    c_otype = col("type ore", "ore type", "otype")
     if None in (c_sc, c_m, c_pit, c_mat, c_wmt):
         return None, "missing one of: Scenario, Month, Mining Pit, Material, wmt ROM"
     acc = defaultdict(float)
@@ -232,6 +261,8 @@ def _parse_mine_plan_db(ws_rows, src_name):
         mon = _MN.get(str(r[c_m] or "").strip().lower())
         pit = _PIT.get(str(r[c_pit] or "").strip().upper())
         mat = str(r[c_mat] or "").strip().upper()
+        raw_otype = str(r[c_otype] or "").strip().upper() if c_otype is not None else ""
+        otype = "LD" if (mat == "LIM" and "LD" in raw_otype) else "TOS"
         try:
             wmt = float(r[c_wmt] or 0)
         except (TypeError, ValueError):
@@ -244,18 +275,18 @@ def _parse_mine_plan_db(ws_rows, src_name):
                 days = float(r[c_days] or 0) or None
             except (TypeError, ValueError):
                 days = None
-        acc[(sc, pit, mat, mon)] += wmt / (days or _DAYS[mon])
+        acc[(sc, pit, mat, otype, mon)] += wmt / (days or _DAYS[mon])
     if not acc:
         return None, "found the header but no scenario rows under it"
     scens = {}
-    for (sc, pit, mat, mon), v in acc.items():
+    for (sc, pit, mat, otype, mon), v in acc.items():
         sid = "S" + re.sub(r"\D", "", sc) if re.search(r"\d", sc) else _safe_id(sc)
         rec = scens.setdefault(sid, {"id": sid, "label": sc, "source": src_name,
                                      "targets": []})
-        rec["targets"].append({"pit": pit, "mat": mat, "month": mon,
+        rec["targets"].append({"pit": pit, "mat": mat, "otype": otype, "month": mon,
                                "wmt_day": round(v, 1)})
     for rec in scens.values():
-        rec["targets"].sort(key=lambda t: (t["month"], t["pit"], t["mat"]))
+        rec["targets"].sort(key=lambda t: (t["month"], t["pit"], t["mat"], t.get("otype", "")))
         rec["loaded_at"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     return list(scens.values()), None
 
@@ -278,10 +309,18 @@ def waterfall(sc, yearly=None, ld_cap=LIM_LD_TARGET_T):
         return None, "the yearly matrix has no usable rows"
     s1 = _s1_targets(rows)
     tgt = dict(s1) if sc["id"] == "S1" else {}
+    ld_targets = defaultdict(float)
     filled_from_s1 = []
     if sc["id"] != "S1":
         for t in sc.get("targets") or []:
-            tgt[(t["pit"], t["mat"], int(t["month"]))] = float(t["wmt_day"] or 0)
+            mat = str(t.get("mat") or "").upper()
+            otype = str(t.get("otype") or "").upper()
+            month = int(t["month"])
+            value = float(t["wmt_day"] or 0)
+            if mat in ("LIM-LD", "LD") or (mat == "LIM" and otype == "LD"):
+                ld_targets[month] += value
+            else:
+                tgt[(t["pit"], mat, month)] = value
         scen_months = {int(t["month"]) for t in sc.get("targets") or []}
         for (pit, mat, m), v in s1.items():
             if m not in scen_months and (pit, mat, m) not in tgt:
@@ -300,7 +339,7 @@ def waterfall(sc, yearly=None, ld_cap=LIM_LD_TARGET_T):
 
     months_out, violations = [], []
     ld_cum = 0.0
-    ld_uncapped_total = 0.0
+    ld_capacity_total = 0.0
     for m in _MONTHS:
         pool = defaultdict(float)
         for r in rows:
@@ -346,7 +385,14 @@ def waterfall(sc, yearly=None, ld_cap=LIM_LD_TARGET_T):
                     alloc_rows.append({
                         "prio": prio, "pit": pit, "mat": mat, "otype": r["otype"],
                         "dest": r["dest"], "contractor": r["contractor"],
+                        # wmt_day is the TARGET asked of this route. dt is the
+                        # fleet actually fielded and wmt_day_credited is what
+                        # that fleet moves - the feasibility pass below may cut
+                        # dt when the pool cannot supply the target.
                         "wmt_day": round(w), "dt": round(d, 1),
+                        "dt_target": round(d, 1),
+                        "wmt_day_credited": round(w),
+                        "feasible": True,
                         "rate_t_dt_day": round(rate, 1),
                     })
         # Lending: overflow in one contractor covered by the other's spare,
@@ -376,50 +422,120 @@ def waterfall(sc, yearly=None, ld_cap=LIM_LD_TARGET_T):
             if over > 0.01:
                 deficit.append({"pit": "*", "mat": "*", "wmt_day": None,
                                 "why": "%s short %.0f DT even after lending" % (c, over)})
+        # ---- feasibility: credited tonnage <= what the fielded DT can move --
+        # A target the pool cannot supply used to be credited in full: SAP x100
+        # on S3 allocated 29,187 DT out of a 1,281-DT December pool and reported
+        # 576,659,545 t against an honest 6,927,160 t (83x). The waterfall was
+        # already right to starve P3 and emit deficits - that stays untouched -
+        # but sap_t_day/limtos_t_day read the ASK, not the delivery. Trucks are
+        # never invented here: rows are cut back in strict P1 -> P2 order until
+        # the contractor's rows fit its pool (plus whatever was lent to them).
+        month_feasible = True
+        infeasible_dt = 0.0
+        for c in list(used):
+            over = used[c] - pool[c]
+            if over <= 0.01:
+                continue
+            crows = [a for a in alloc_rows if a["contractor"] == c]
+            room = max(0.0, sum(a["dt"] for a in crows) - over)
+            for a in sorted(crows, key=lambda x: (x["prio"], -x["wmt_day"])):
+                give = min(a["dt"], room)
+                room -= give
+                if give + 0.05 < a["dt"]:
+                    month_feasible = False
+                    infeasible_dt += a["dt"] - give
+                    a["feasible"] = False
+                    deficit.append({
+                        "pit": a["pit"], "mat": a["mat"],
+                        "wmt_day": round(a["wmt_day"] - give * a["rate_t_dt_day"]),
+                        "why": "%s pool supplies %.0f of the %.0f DT this target needs"
+                               % (c, give, a["dt"]),
+                    })
+                a["dt"] = round(give, 1)
+                a["wmt_day_credited"] = round(give * a["rate_t_dt_day"])
+            used[c] = pool[c]
         free = {c: max(0.0, pool[c] - used[c]) for c in pool}
-        ld_day = sum(free[c] * ld_rate.get(c, 100.0) for c in free)
-        ld_month_uncapped = ld_day * _DAYS[m]
-        ld_uncapped_total += ld_month_uncapped
-        # No clip: every free truck hauls LD every month (owner, 2026-08-19).
-        # ld_cap is only the reference target the totals are judged against.
-        ld_month = ld_month_uncapped
+        # CAPACITY (never clipped): what every free truck could move on LD.
+        ld_day_capacity = sum(free[c] * ld_rate.get(c, 100.0) for c in free)
+        ld_month_capacity = ld_day_capacity * _DAYS[m]
+        ld_capacity_total += ld_month_capacity
+        # CREDITED (bounded by the supplied target): a month-specific imported
+        # LD target wins; otherwise the horizon target (8 Mt by default) is
+        # filled in chronological order. Capacity above it is reported as
+        # unused/excess, never folded into headline production.
+        explicit_month_target = ld_targets.get(m)
+        if explicit_month_target is not None:
+            target_month = max(0.0, explicit_month_target * _DAYS[m])
+        elif ld_cap is not None:
+            target_month = max(0.0, float(ld_cap) - ld_cum)
+        else:
+            target_month = ld_month_capacity
+        ld_month = min(ld_month_capacity, target_month)
+        use_scale = (ld_month / ld_month_capacity) if ld_month_capacity > 0 else 0.0
+        p3 = {c: free[c] * use_scale for c in free}
+        unused = {c: max(0.0, free[c] - p3[c]) for c in free}
         ld_cum += ld_month
+        sap_credited = sum(a["wmt_day_credited"] for a in alloc_rows if a["prio"] == 1)
+        tos_credited = sum(a["wmt_day_credited"] for a in alloc_rows if a["prio"] == 2)
         months_out.append({
             "month": m, "days": _DAYS[m],
             "pool": {c: round(v) for c, v in pool.items()},
             "dt_p1": round(sum(a["dt"] for a in alloc_rows if a["prio"] == 1), 1),
             "dt_p2": round(sum(a["dt"] for a in alloc_rows if a["prio"] == 2), 1),
+            # free = physical P3 capacity. p3 = the part credited against the
+            # LD target. unused = the labelled remainder. Never merged.
             "free": {c: round(v, 1) for c, v in free.items()},
-            "dt_p3": round(sum(free.values()), 1),
+            "p3": {c: round(v, 1) for c, v in p3.items()},
+            "unused": {c: round(v, 1) for c, v in unused.items()},
+            "dt_p3": round(sum(p3.values()), 1),
+            "dt_p3_capacity": round(sum(free.values()), 1),
+            "dt_p3_unused": round(sum(unused.values()), 1),
             "rows": alloc_rows,
             "lends": lends,
             "deficit": deficit,
-            "sap_t_day": round(sum(a["wmt_day"] for a in alloc_rows if a["prio"] == 1)),
-            "limtos_t_day": round(sum(a["wmt_day"] for a in alloc_rows if a["prio"] == 2)),
-            "ld_t_day_capacity": round(ld_day),
-            "ld_t_month_capacity": round(ld_month_uncapped),
+            "feasible": month_feasible,
+            "infeasible_dt": round(infeasible_dt, 1),
+            "sap_t_day": round(sap_credited),
+            "limtos_t_day": round(tos_credited),
+            "sap_t_day_target": round(sum(a["wmt_day"] for a in alloc_rows if a["prio"] == 1)),
+            "limtos_t_day_target": round(sum(a["wmt_day"] for a in alloc_rows if a["prio"] == 2)),
+            "ld_t_day_capacity": round(ld_day_capacity),
+            "ld_t_day_planned": round(ld_month / _DAYS[m]) if _DAYS[m] else 0,
+            "ld_t_month_capacity": round(ld_month_capacity),
             "ld_t_month_planned": round(ld_month),
-            "ld_capped": False,  # kept for API compat; LD is never clipped
+            "ld_t_month_excess": round(max(0.0, ld_month_capacity - ld_month)),
+            "ld_target_month": round(target_month),
+            "ld_capped": bool(ld_month + 0.5 < ld_month_capacity),
         })
     total = {
         "sap_t": round(sum(mo["sap_t_day"] * mo["days"] for mo in months_out)),
         "limtos_t": round(sum(mo["limtos_t_day"] * mo["days"] for mo in months_out)),
-        "ld_t_capacity": round(ld_uncapped_total),
+        "sap_t_target": round(sum(mo["sap_t_day_target"] * mo["days"] for mo in months_out)),
+        "limtos_t_target": round(sum(mo["limtos_t_day_target"] * mo["days"] for mo in months_out)),
+        "ld_t_capacity": round(ld_capacity_total),
         "ld_t_planned": round(ld_cum),
-        "ld_cap": ld_cap,  # the 8 Mt TARGET line (name kept for API compat)
+        "ld_t_excess_capacity": round(max(0.0, ld_capacity_total - ld_cum)),
+        "ld_cap": ld_cap,
         "ld_target": ld_cap,
         "ld_cap_reached": bool(ld_cap and ld_cum >= ld_cap - 0.5),
         "ld_shortfall_t": round(max(0.0, (ld_cap or 0) - ld_cum)),
         "ld_over_target_t": round(max(0.0, ld_cum - (ld_cap or 0))),
+        "feasible": all(mo["feasible"] for mo in months_out),
+        "infeasible_months": [mo["month"] for mo in months_out if not mo["feasible"]],
     }
     return {
         "id": sc["id"], "label": sc.get("label") or sc["id"],
         "months": months_out, "total": total,
         "months_filled_from_s1": sorted(filled_from_s1),
         "violations": violations,
-        "priority_note": "P1 SAP -> P2 LIM-TOS -> P3 LIM-LD (Tofu dump -> Huafei). "
+        "feasible": total["feasible"],
+        "priority_note": "Targets run P1 SAP -> P2 LIM-TOS -> P3 LIM-LD (Tofu dump -> Huafei). "
                          "Fixed fleet: the yearly matrix's DT per contractor per month. "
-                         "BLB accepts RIM only.",
+                         "LIM-LD capacity is never clipped and is reported in full; the "
+                         "tonnage CREDITED against the target stops at it and the rest is "
+                         "reported as unused/excess. Credited tonnage never exceeds what "
+                         "the fielded DT can move (feasible=false says a target outran "
+                         "the pool). BLB accepts RIM only.",
     }, None
 
 
@@ -488,6 +604,22 @@ def _dt_moves(rows):
     return moves
 
 
+def _allocation_target_day(raw):
+    """THE target owner for a scenario workbook: t/day the frozen allocation
+    itself asks for, summed over its own rows.
+
+    One function, one number. The month card used to compute
+    sap_t_day + limtos_t_day + ld_month_planned/n while the sheets rendered
+    _build_synthetic_allocation's row targets, and the two diverged wherever
+    the scenario zeroed a matrix route (Sep 93,169 vs 80,563 t/day, +15.6%;
+    Dec 188,441 vs 183,441, +2.7%). Card, month sheet and Year total now all
+    read this, so they cannot drift again.
+    """
+    if not isinstance(raw, dict):
+        return 0.0
+    return sum(float(r.get("target") or 0) for r in (raw.get("rows") or []))
+
+
 def _build_synthetic_allocation(mo, yearly, mnum, sc_id):
     """Frozen Plan-tab allocation shape from a waterfall month (for Excel only)."""
     import monthly_api as ma
@@ -521,13 +653,28 @@ def _build_synthetic_allocation(mo, yearly, mnum, sc_id):
                 "target": float(wf["wmt_day"] or 0),
             })
         elif dt_b > 0:
+            # A matrix route the SCENARIO does not run. Its trucks are shown
+            # leaving (dt_before > 0, dt_after = 0) but it carries NO target:
+            # the matrix wmt here belongs to S1's routing, and this scenario's
+            # own target for the same pit x material is already carried by the
+            # routes the waterfall did allocate. Counting it again is the
+            # 533,180 t phantom (Sep BLB>POS 14 12,606 t/d, Dec BLB>POS 16
+            # 5,000 t/d) that inflated the headline row and the Year total.
             detail.append({
                 "key": key, "src": src, "dst": dst, "contractor": contractor,
                 "material": mat, "otype": otype, "prio": 1 if mat == "SAP" else 2,
                 "dt_before": float(dt_b), "dt_after": 0.0,
-                "target": float((e.get("wmt") or {}).get(mstr) or (e.get("wmt") or {}).get(int(mnum)) or 0),
+                "target": 0.0,
+                "matrix_target": float((e.get("wmt") or {}).get(mstr)
+                                       or (e.get("wmt") or {}).get(int(mnum)) or 0),
+                "not_in_scenario": True,
             })
-    free = mo.get("free") or {}
+    # CREDITED P3 fleet: only the trucks needed to reach the LD target become
+    # planned production. `free` (physical post-P1/P2 capacity) may be larger;
+    # the difference is reported as unused/excess capacity below, never as
+    # production and never deleted.
+    free = mo.get("p3") or mo.get("free") or {}
+    capacity_free = mo.get("free") or free
     days = float(mo.get("days") or _DAYS.get(int(mnum)) or 30)
     ld_planned_day = (float(mo.get("ld_t_month_planned") or 0) / days) if days else 0.0
     free_total = sum(float(v or 0) for v in free.values())
@@ -634,6 +781,30 @@ def _build_synthetic_allocation(mo, yearly, mnum, sc_id):
         "total": sum(buckets[k]["target"] for k in buckets),
     }
     moves = _dt_moves(alloc_rows)
+    # Two labelled numbers, never merged: what the free fleet COULD move on LD
+    # and what is CREDITED against the target. `unused_dt` is the difference,
+    # reported as excess capacity - it is not production and is not deleted.
+    unused_dt = {c: round(max(0.0, float(capacity_free.get(c) or 0)
+                              - float(free.get(c) or 0)), 1)
+                 for c in capacity_free}
+    capacity = {
+        "ld_dt_capacity": round(sum(float(v or 0) for v in capacity_free.values()), 1),
+        "ld_dt_credited": round(free_total, 1),
+        "ld_dt_unused": round(sum(unused_dt.values()), 1),
+        "unused_by_contractor": unused_dt,
+        "ld_t_day_capacity": mo.get("ld_t_day_capacity"),
+        "ld_t_day_credited": round(ld_planned_day),
+        "ld_t_day_excess": round(max(0.0, float(mo.get("ld_t_day_capacity") or 0)
+                                     - ld_planned_day)),
+        "ld_t_month_capacity": mo.get("ld_t_month_capacity"),
+        "ld_t_month_credited": mo.get("ld_t_month_planned"),
+        "ld_t_month_excess": mo.get("ld_t_month_excess"),
+        "ld_target_month": mo.get("ld_target_month"),
+        "feasible": mo.get("feasible", True),
+        "infeasible_dt": mo.get("infeasible_dt", 0),
+        "note": "LIM-LD capacity is never clipped; the tonnage credited against "
+                "the target stops at it and the rest is unused/excess capacity.",
+    }
     return {
         "frozen": True,
         "horizon": "day",
@@ -645,9 +816,13 @@ def _build_synthetic_allocation(mo, yearly, mnum, sc_id):
         "buckets": buckets,
         "rows": alloc_rows,
         "moves": moves,
+        "capacity": capacity,
+        "feasible": mo.get("feasible", True),
         "moved_total": sum(m.get("trucks") or 0 for m in moves),
         "notes": "Scenario %s — same layout as Monthly year Excel. "
-                 "Old = yearly-matrix fleet. Optimized = P1 SAP → P2 LIM-TOS → P3 LIM-LD."
+                 "Old = yearly-matrix fleet. Optimized = P1 SAP → P2 LIM-TOS → P3 LIM-LD. "
+                 "Routes this scenario does not run keep their trucks-out row but "
+                 "carry no target."
                  % sc_id,
     }
 
@@ -660,8 +835,9 @@ def _scenario_month_card(sc, mo, year, mnum, yearly):
     if not raw:
         return None
     view = ma._alloc_view(raw, n, "scenario:%s" % sc["id"], include_detail=False)
-    tgt_day = (mo.get("sap_t_day") or 0) + (mo.get("limtos_t_day") or 0) + (
-        float(mo.get("ld_t_month_planned") or 0) / n if n else 0)
+    # ONE target owner (see _allocation_target_day): the card, the month sheet
+    # and the Year total all read the frozen allocation's own row targets.
+    tgt_day = _allocation_target_day(raw)
     return {
         "month": month,
         "name": ma._MONTH_LABELS.get(int(mnum), month),
@@ -672,6 +848,8 @@ def _scenario_month_card(sc, mo, year, mnum, yearly):
         "alloc": view,
         "alloc_raw": raw,
         "alloc_source": "scenario:%s" % sc["id"],
+        "scenario": sc["id"],
+        "feasible": mo.get("feasible", True),
         "synthetic": True,
     }
 
@@ -689,18 +867,33 @@ def _scenario_year_cards(sc, year):
     mnums = set(int(m) for m in (yearly.get("months") or []))
     mnums.update(mo_by.keys())
     mnums.update(_MONTHS)
-    cards = []
+    cards, missing = [], []
     for mnum in sorted(mnums):
         if mnum < 1 or mnum > 12:
             continue
+        # August is S1 only. S3/S4 (and any later imported scenario) start
+        # at September — do not fill Aug from S1 into the workbook.
+        if sc["id"] != "S1" and mnum == 8:
+            continue
         mo = mo_by.get(mnum)
         if not mo:
+            missing.append(ma._MONTH_LABELS.get(mnum, str(mnum)))
             continue
         card = _scenario_month_card(sc, mo, year, mnum, yearly)
         if card:
             cards.append(card)
+        else:
+            missing.append(ma._MONTH_LABELS.get(mnum, str(mnum)))
     if not cards:
         return None, "no months to export for %s" % sc.get("id")
+    # ONE workbook = ONE scenario, and it says which one on its Year sheet.
+    for c in cards:
+        c["_source_note"] = (
+            "Scenario %s — every month on this sheet is the %s waterfall on the "
+            "yearly-matrix fleet. No other scenario's plan appears anywhere in "
+            "this workbook." % (sc["id"], sc["id"]))
+        c["_missing_months"] = list(missing)
+        c["_scenario"] = sc["id"]
     return cards, None
 
 
@@ -726,17 +919,20 @@ def _write_compare_sheet(ws, results):
     num = "#,##0"
     ws.append(["Mine-plan scenarios - same fleet, different allocation"])
     ws["A1"].font = Font(bold=True, size=14)
-    ws.append(["Waterfall: P1 SAP -> P2 LIM-TOS -> P3 LIM-LD (Tofu dump -> Huafei), "
-               "cap %s t. BLB accepts RIM only. Fleet = yearly matrix DT per contractor."
-               % format(LIM_LD_CAP_T, ",")])
+    ws.append(["Waterfall: P1 SAP -> P2 LIM-TOS -> P3 LIM-LD (Tofu dump -> Huafei). "
+               "LIM-LD capacity is never clipped; %s t is the sales TARGET the "
+               "credited tonnage stops at, and the rest is excess capacity. "
+               "BLB accepts RIM only. Fleet = yearly matrix DT per contractor."
+               % format(LIM_LD_TARGET_T, ",")])
     ws.append([])
     hdr = ["", ""]
     for r in results:
-        hdr += [r["label"], "", "", ""]
+        hdr += [r["label"], "", "", "", ""]
     ws.append(hdr)
     sub = ["Month", "Fleet (RIM+SMA)"]
     for _ in results:
-        sub += ["P1 SAP DT", "P2 LIM-TOS DT", "P3 free DT", "LIM-LD t"]
+        sub += ["P1 SAP DT", "P2 LIM-TOS DT", "P3 DT credited",
+                "LIM-LD credited t", "LIM-LD capacity t"]
     ws.append(sub)
     for c in range(1, len(sub) + 1):
         ws.cell(row=5, column=c).fill = head_fill
@@ -755,24 +951,32 @@ def _write_compare_sheet(ws, results):
             mo = r["months"][i] if i < len(r["months"]) else {}
             row += [round(mo.get("dt_p1", 0)), round(mo.get("dt_p2", 0)),
                     round(mo.get("dt_p3", 0)),
-                    mo.get("ld_t_month_planned", 0)]
+                    mo.get("ld_t_month_planned", 0),
+                    mo.get("ld_t_month_capacity", 0)]
         ws.append(row)
     tot = ["Total", ""]
     for r in results:
         t = r["total"]
-        tot += ["", "", "", t["ld_t_planned"]]
+        tot += ["", "", "", t["ld_t_planned"], ""]
     ws.append(tot)
     ws.cell(row=ws.max_row, column=1).font = bold
     ws.append([])
-    for label, key in (("SAP moved (t)", "sap_t"), ("LIM-TOS moved (t)", "limtos_t"),
-                       ("LIM-LD planned (t)", "ld_t_planned"),
-                       ("LIM-LD uncapped capacity (t)", "ld_t_capacity"),
+    for label, key in (("SAP credited (t)", "sap_t"),
+                       ("SAP target asked (t)", "sap_t_target"),
+                       ("LIM-TOS credited (t)", "limtos_t"),
+                       ("LIM-TOS target asked (t)", "limtos_t_target"),
+                       ("LIM-LD credited (t)", "ld_t_planned"),
+                       ("LIM-LD capacity, never clipped (t)", "ld_t_capacity"),
+                       ("LIM-LD excess capacity above target (t)", "ld_t_excess_capacity"),
                        ("8 Mt target met", "ld_cap_reached"),
-                       ("Short of cap by (t)", "ld_shortfall_t")):
+                       ("Short of target by (t)", "ld_shortfall_t"),
+                       ("Targets fit the fleet", "feasible")):
         row = [label, ""]
         for r in results:
-            v = r["total"][key]
-            row += ["", "", "", ("YES" if v else "no") if key == "ld_cap_reached" else v]
+            v = r["total"].get(key)
+            if key in ("ld_cap_reached", "feasible"):
+                v = "YES" if v else "no"
+            row += ["", "", "", v, ""]
         ws.append(row)
         ws.cell(row=ws.max_row, column=1).font = bold
     for row in ws.iter_rows(min_row=6):
@@ -797,7 +1001,8 @@ def _scenario_cards_for_excel(sc, year):
 
 
 def _scenario_year_book(sc, year, achv=False):
-    """One workbook = Monthly year Excel: Year + Aug + Sep + Oct + Nov + Dec.
+    """One workbook = Monthly year Excel: Year + one sheet per month.
+    S1 is Aug–Dec. S3/S4 start at September (no August sheet).
     achv=True adds the engine's achievable next to every predicted figure."""
     import monthly_api as ma
     cards, err = _scenario_cards_for_excel(sc, year)
@@ -920,26 +1125,136 @@ def api_scenario_allocate(sid):
     return jsonify({"ok": True, "allocation": res})
 
 
+def _day_for_scenario_id(sid):
+    """S1 -> day 01, S3 -> day 03, S4 -> day 04 (the saved-plan convention).
+
+    S4 has no data/scenarios/S4.json and never will: it is not a mine-plan
+    import, it is the day-04 Plan-tab saves (identical to S3 except the TF LD
+    trucks split 50/50 HUAFEI/BSE vs POS 12). Day 02 is reserved - S2 was
+    deleted from the app on 2026-08-21 - so it maps to nothing.
+    """
+    m = re.fullmatch(r"S(\d{1,2})", str(sid or "").upper())
+    if not m:
+        return None
+    day = int(m.group(1))
+    if day == 2 or not 1 <= day <= 28:
+        return None
+    return day
+
+
+def _saved_day_summary(sid, day, year):
+    """The saved-plan side of a day-convention scenario, on its OWN basis.
+
+    This is NOT a waterfall run and is never presented as one: it reads the
+    frozen Plan-tab allocations at data/saved_plans/YYYY-MM-{day}.json, the
+    same source the Year board and the year workbook use. Nothing is
+    fabricated - a month with no save on that day simply is not here.
+    """
+    import monthly_api as ma
+    _yearly, cards = ma._year_cards(year, day=day)
+    months = []
+    for c in cards or []:
+        a = c.get("alloc") or {}
+        if not a:
+            continue
+        months.append({
+            "month": c["month"], "name": c.get("name"),
+            "source_date": a.get("source_date"),
+            "n_days": c.get("n_days"),
+            "target_month": a.get("target_month"),
+            "new_pred_month": a.get("new_pred_month"),
+            "new_achv_month": a.get("new_achv_month"),
+            "dt_after": a.get("dt_after"),
+            "materials": {k: {"target_month": (v or {}).get("target_month"),
+                              "pred_after_month": (v or {}).get("pred_after_month")}
+                          for k, v in (a.get("materials") or {}).items()},
+        })
+    if not months:
+        return None
+    tot = ma._year_alloc_totals(cards)
+    return {
+        "id": sid, "day": day, "year": year,
+        "label": "%s - saved Plan-tab allocations, day-%02d convention" % (sid, day),
+        "basis": "saved_plans/%s-MM-%02d.json (frozen Allocate snapshots)" % (year, day),
+        "months": months,
+        "total": {"target": (tot or {}).get("target"),
+                  "new_pred": (tot or {}).get("new_pred"),
+                  "new_achv_raw": (tot or {}).get("new_achv_raw"),
+                  "n_months": (tot or {}).get("n")},
+        "note": "Target and predicted tonnage from frozen saves. This is a "
+                "different clock from the waterfall `scenarios` block above - "
+                "compare like with like.",
+    }
+
+
 @bp.route("/api/scenarios/compare")
 def api_scenarios_compare():
+    """Compare scenarios. `ids=S3,S4` works.
+
+    Two kinds of "scenario" exist in this app and they are kept apart on
+    purpose (the two-panels-one-concept lesson):
+      * `scenarios`      - waterfall runs of data/scenarios/{id}.json (S1, S3).
+      * `saved_day_plans`- the day-of-month saved-plan convention (01=S1,
+        03=S3, 04=S4), read from frozen Plan-tab Allocate snapshots.
+    S4 lives only in the second block; asking for it used to return
+    ok:true + errors:[no such scenario], which read as success and left the
+    owner's natural S3-vs-S4 comparison unreachable. Unknown ids now fail
+    loudly (ok:false) and say where to look.
+    """
+    year = (request.args.get("year") or str(datetime.utcnow().year)).strip()
+    if not re.fullmatch(r"\d{4}", year):
+        return jsonify({"ok": False, "error": "year=YYYY"}), 400
     ids = request.args.get("ids")
+    explicit = bool(ids)
     ids = [_safe_id(s) for s in ids.split(",")] if ids else (["S1"] + _scenario_ids())
-    seen, out, errors = set(), [], []
+    seen, out, errors, saved_days = set(), [], [], []
     for sid in ids:
         if not sid or sid in seen:
             continue
         seen.add(sid)
         sc = _load_scenario(sid)
-        if not sc:
-            errors.append({"id": sid, "error": "no such scenario"})
-            continue
-        res, err = waterfall(sc)
-        if err:
-            errors.append({"id": sid, "error": err})
-            continue
-        out.append(res)
-    return jsonify({"ok": True, "scenarios": out, "errors": errors,
-                    "ld_cap": LIM_LD_CAP_T})
+        day = _day_for_scenario_id(sid)
+        if sc:
+            res, err = waterfall(sc)
+            if err:
+                errors.append({"id": sid, "error": err})
+            else:
+                out.append(res)
+        if explicit and day is not None:
+            summary = _saved_day_summary(sid, day, year)
+            if summary:
+                saved_days.append(summary)
+            elif not sc:
+                errors.append({
+                    "id": sid, "day": day,
+                    "error": "no scenario file and no day-%02d saved plans for %s"
+                             % (day, year),
+                    "where": "a scenario lives in data/scenarios/%s.json; the "
+                             "day-%02d convention lives in "
+                             "data/saved_plans/%s-MM-%02d.json (Year board "
+                             "/api/monthly/year-board?year=%s&day=%d)"
+                             % (sid, day, year, day, year, day),
+                })
+        elif not sc:
+            errors.append({
+                "id": sid,
+                "error": "no such scenario",
+                "where": "scenarios are files in data/scenarios/*.json; S4 is not "
+                         "one of them - it is the day-04 saved-plan convention "
+                         "(data/saved_plans/YYYY-MM-04.json). Ask for it with "
+                         "?ids=...,S4 and read the saved_day_plans block.",
+            })
+    return jsonify({"ok": not errors, "scenarios": out,
+                    "saved_day_plans": saved_days, "errors": errors,
+                    "year": year,
+                    "ld_target": LIM_LD_TARGET_T,
+                    "ld_cap": LIM_LD_CAP_T,
+                    "note": "`scenarios` are waterfall runs; `saved_day_plans` are "
+                            "frozen Plan-tab saves under the day-of-month "
+                            "convention (01=S1, 03=S3, 04=S4). Two clocks, never "
+                            "merged. LIM-LD capacity is reported in full; only the "
+                            "credited tonnage stops at the %s t target."
+                            % format(LIM_LD_TARGET_T, ",")})
 
 
 _MONN = {8: "Aug", 9: "Sept", 10: "Oct", 11: "Nov", 12: "Dec"}
@@ -975,8 +1290,16 @@ def api_scenarios_export():
             d.append(["Months taken from S1 (not in this scenario's file): "
                       + ", ".join(_MONN.get(m, str(m)) for m in r["months_filled_from_s1"])])
         d.append([])
+        d.append(["Credited = tonnage counted against the target. Capacity = what the "
+                  "fleet on this row could move, never clipped. On P1/P2 they differ "
+                  "only when a target outran the pool (Feasible = no)."])
+        d.append([])
+        # ONE P3 LIM-LD row per month (gate J72 counts them). The capacity /
+        # credited pair lives in its own two columns rather than a second row,
+        # so "t/day" means the same thing on every row of the sheet.
         cols = ["Month", "Priority", "Pit", "Material", "Destination", "Contractor",
-                "t/day", "DT", "t/DT/day"]
+                "t/day credited", "DT credited", "t/DT/day",
+                "t/day capacity", "DT capacity", "Feasible"]
         d.append(cols)
         hr = d.max_row
         for c in range(1, len(cols) + 1):
@@ -987,12 +1310,25 @@ def api_scenarios_export():
             for a in mo["rows"]:
                 d.append([mn, "P%d" % a["prio"], a["pit"],
                           a["mat"] + ("-" + a["otype"] if a["otype"] not in ("", "TOS") else ""),
-                          a["dest"], a["contractor"], a["wmt_day"], a["dt"],
-                          a["rate_t_dt_day"]])
+                          a["dest"], a["contractor"],
+                          a.get("wmt_day_credited", a["wmt_day"]), a["dt"],
+                          a["rate_t_dt_day"],
+                          a["wmt_day"], a.get("dt_target", a["dt"]),
+                          "yes" if a.get("feasible", True) else "NO"])
             free_txt = " + ".join("%s %d" % (c, round(v)) for c, v in mo["free"].items())
             d.append([mn, "P3", "TOFU", "LIM-LD", "HUAFEI", free_txt,
-                      mo["ld_t_day_capacity"], round(mo["dt_p3"], 1), ""])
+                      mo.get("ld_t_day_planned", 0), round(mo["dt_p3"], 1), "",
+                      mo["ld_t_day_capacity"], round(mo.get("dt_p3_capacity", 0), 1),
+                      "yes"])
             d.cell(row=d.max_row, column=2).font = bold
+            if mo.get("dt_p3_unused"):
+                d.append([mn, "", "TOFU", "LIM-LD", "UNUSED CAPACITY",
+                          " + ".join("%s %d" % (c, round(v))
+                                     for c, v in (mo.get("unused") or {}).items() if v),
+                          "", "", "",
+                          round((mo.get("ld_t_month_excess") or 0) / (mo["days"] or 1)),
+                          round(mo.get("dt_p3_unused", 0), 1),
+                          "capacity above target — not credited"])
             for l in mo["lends"]:
                 d.append([mn, "", "", "lend", "", "%s -> %s work" % (l["from"], l["to_work_of"]),
                           "", l["dt"], l["note"]])
@@ -1003,7 +1339,7 @@ def api_scenarios_export():
             for cell in row:
                 if isinstance(cell.value, (int, float)) and abs(cell.value) >= 1000:
                     cell.number_format = num
-        widths = [8, 8, 8, 10, 14, 22, 11, 9, 40]
+        widths = [8, 9, 8, 10, 16, 22, 13, 12, 10, 13, 12, 40]
         for c, w in enumerate(widths, start=1):
             d.column_dimensions[get_column_letter(c)].width = w
 
@@ -1017,7 +1353,8 @@ def api_scenarios_export():
 
 @bp.route("/api/scenarios/export-full")
 def api_scenarios_export_full():
-    """One Monthly-style year workbook per scenario (Year + Aug–Dec).
+    """One Monthly-style year workbook per scenario.
+    S1 = Year + Aug–Dec; S3/S4 = Year + Sep–Dec (August is S1 only).
 
     ?id=S2 → a single xlsx named like monthly_plan_2026_S2.xlsx
     no id → a zip of every scenario, S1 named monthly_plan_2026.xlsx
@@ -1053,10 +1390,13 @@ def api_scenarios_export_full():
 
 def _scenario_draft_paths(sc, mnum, yearly):
     """Plan-tab `paths` dict for one scenario month, sized by the REAL path
-    model: P1 SAP and P2 LIM-TOS routes get monthly_api._required_dt_day so
-    Predicted sits ON target (not the flat t/DT/day rate), and every leftover
-    truck per contractor goes to LIM-LD (TF dump -> HUAFEI). BLB stays
-    RIM-only because targets only land on matrix routes, which are RIM there."""
+    model: P1 SAP, P2 LIM-TOS and the supplied P3 LIM-LD target are sized in
+    strict order.
+
+    The LD rows carry the CREDITED fleet; whatever is left over is returned as
+    `unused` (and stored on the plan's meta as `unused_fleet`) so the capacity
+    stays visible without being credited as production. BLB stays RIM-only
+    because targets only land on matrix routes, which are RIM there."""
     import monthly_api as ma
     res, err = waterfall(sc, yearly)
     if err:
@@ -1066,55 +1406,92 @@ def _scenario_draft_paths(sc, mnum, yearly):
         return None, "the scenario has no month %s" % mnum
     path_models, fleet, contr_by = ma._path_model_context()
     pool = {c: float(v) for c, v in (mo.get("pool") or {}).items()}
-    used = {c: 0.0 for c in pool}
     wf_rows = mo.get("rows") or []
-    route_tot = {}
-    for a in wf_rows:
-        rk = _wf_route_key(a)
-        k = "%s>%s" % (rk[0], rk[1])
-        route_tot[k] = route_tot.get(k, 0.0) + float(a["dt"])
-    paths, warnings = {}, []
-    for a in sorted(wf_rows, key=lambda x: (x["prio"], x["pit"], x["dest"])):
-        src, dst, contractor, mat, otype = _wf_route_key(a)
-        key = "%s>%s" % (src, dst)
-        target = float(a["wmt_day"] or 0)
-        others = max(0.0, (route_tot.get(key) or 0) - float(a["dt"]))
-        req, why = ma._required_dt_day(src, dst, contractor, target, others,
-                                       path_models, fleet, contr_by)
-        dt = float(req) if req else float(a["dt"])
-        if why:
-            warnings.append("%s %s (%s): %s - kept waterfall %s DT"
-                            % (key, mat, contractor, why, round(a["dt"])))
-        avail = pool.get(contractor, 0.0) - used.get(contractor, 0.0)
-        if dt > avail:
-            warnings.append("%s %s (%s): needs %d DT, only %d left - clipped"
-                            % (key, mat, contractor, round(dt), round(avail)))
-            dt = max(0.0, avail)
-        used[contractor] = used.get(contractor, 0.0) + dt
-        slot = "%s|%s" % (contractor, key)
-        if mat == "LIM":
-            slot += "|LIM|%s" % (otype or "TOS")
-        paths[slot] = {
-            "key": key, "dt": int(round(dt)), "contractor": contractor,
-            "source": src, "dest": dst, "material": mat,
-            "otype": (otype or "TOS") if mat == "LIM" else "",
-            "targetWmt": int(round(target)),
-            "_targetManual": mat == "LIM",
-        }
+    p3_plan = mo.get("p3") or mo.get("free") or {}
     ld_rate = {}
     for r in _yearly_rows(yearly):
         if r["mat"] == "LIM" and r["otype"] == "LD":
             rt = _route_rate(r, 11)
             if rt:
                 ld_rate[r["contractor"]] = rt
+
+    # ---- size against the FINAL shared-corridor fleet, not the seed ------
+    # The P3 LIM-LD block lands on LD_ROUTE_KEY after the targeted rows are
+    # sized, so sizing each target against the waterfall's DT alone priced it
+    # on a road that later got hundreds more trucks: Sep S3 sized TF>HUAFEI
+    # LIM-TOS at 53 SMA DT for a 5,533 t/day target, then 215 LD trucks joined
+    # the same key and the row delivered 3,566 t (64%). Same trap as the
+    # 2026-08-21 finalTrim pass in plan_sap_target.js. Iterate to a fixed
+    # point: everyone is priced on the fleet everyone ends up sharing.
+    sized = {i: float(a["dt"]) for i, a in enumerate(wf_rows)}
+    ld_fleet = sum(float(v or 0) for v in p3_plan.values())
+    order = sorted(range(len(wf_rows)),
+                   key=lambda i: (wf_rows[i]["prio"], wf_rows[i]["pit"],
+                                  wf_rows[i]["dest"]))
+    used, warnings = {c: 0.0 for c in pool}, []
+    for _pass in range(5):
+        combined = {}
+        for i, a in enumerate(wf_rows):
+            rk = _wf_route_key(a)
+            k = "%s>%s" % (rk[0], rk[1])
+            combined[k] = combined.get(k, 0.0) + sized[i]
+        combined[LD_ROUTE_KEY] = combined.get(LD_ROUTE_KEY, 0.0) + ld_fleet
+        used = {c: 0.0 for c in pool}
+        warnings, nxt = [], {}
+        for i in order:
+            a = wf_rows[i]
+            src, dst, contractor, mat, otype = _wf_route_key(a)
+            key = "%s>%s" % (src, dst)
+            target = float(a["wmt_day"] or 0)
+            others = max(0.0, (combined.get(key) or 0) - sized[i])
+            req, why = ma._required_dt_day(src, dst, contractor, target, others,
+                                           path_models, fleet, contr_by)
+            dt = float(req) if req else float(a["dt"])
+            if why:
+                warnings.append("%s %s (%s): %s - kept waterfall %s DT"
+                                % (key, mat, contractor, why, round(a["dt"])))
+            avail = pool.get(contractor, 0.0) - used.get(contractor, 0.0)
+            if dt > avail:
+                warnings.append("%s %s (%s): needs %d DT, only %d left - clipped"
+                                % (key, mat, contractor, round(dt), round(avail)))
+                dt = max(0.0, avail)
+            nxt[i] = dt
+            used[contractor] = used.get(contractor, 0.0) + dt
+        ld_next = sum(min(max(0.0, pool.get(c, 0.0) - used.get(c, 0.0)),
+                          float(p3_plan.get(c) or 0.0)) for c in pool)
+        settled = (all(abs(nxt[i] - sized[i]) <= 0.5 for i in nxt)
+                   and abs(ld_next - ld_fleet) <= 0.5)
+        sized, ld_fleet = nxt, ld_next
+        if settled:
+            break
+
+    paths = {}
+    for i, a in enumerate(wf_rows):
+        src, dst, contractor, mat, otype = _wf_route_key(a)
+        key = "%s>%s" % (src, dst)
+        slot = "%s|%s" % (contractor, key)
+        if mat == "LIM":
+            slot += "|LIM|%s" % (otype or "TOS")
+        paths[slot] = {
+            "key": key, "dt": int(round(sized[i])), "contractor": contractor,
+            "source": src, "dest": dst, "material": mat,
+            "otype": (otype or "TOS") if mat == "LIM" else "",
+            "targetWmt": int(round(float(a["wmt_day"] or 0))),
+            "_targetManual": mat == "LIM",
+        }
+    unused, capacity = {}, {}
     for contractor, have in sorted(pool.items()):
-        free = max(0.0, have - used.get(contractor, 0.0))
+        capacity_dt = max(0.0, have - used.get(contractor, 0.0))
+        capacity[contractor] = capacity_dt
+        free = min(capacity_dt, float(p3_plan.get(contractor) or 0.0))
+        unused[contractor] = max(0.0, capacity_dt - free)
         if free < 0.5:
             continue
         rate = ld_rate.get(contractor, 120.0 if contractor == "RIM" else 100.0)
-        paths["%s|TF>HUAFEI|LIM|LD" % contractor] = {
-            "key": "TF>HUAFEI", "dt": int(round(free)), "contractor": contractor,
-            "source": "TF", "dest": "HUAFEI", "material": "LIM", "otype": "LD",
+        paths["%s|%s|LIM|LD" % (contractor, LD_ROUTE_KEY)] = {
+            "key": LD_ROUTE_KEY, "dt": int(round(free)), "contractor": contractor,
+            "source": LD_ROUTE_KEY.split(">")[0], "dest": LD_ROUTE_KEY.split(">")[1],
+            "material": "LIM", "otype": "LD",
             "targetWmt": int(round(free * rate)),
             "_targetManual": True,
         }
@@ -1122,7 +1499,10 @@ def _scenario_draft_paths(sc, mnum, yearly):
         return None, "no routes with targets for month %s" % mnum
     return {"paths": paths, "warnings": warnings,
             "pool": {c: round(v) for c, v in pool.items()},
-            "used": {c: round(v, 1) for c, v in used.items()}}, None
+            "used": {c: round(v, 1) for c, v in used.items()},
+            # P3 capacity (never clipped) vs the part credited to the LD rows.
+            "p3_capacity": {c: round(v, 1) for c, v in capacity.items()},
+            "unused": {c: round(v, 1) for c, v in unused.items()}}, None
 
 
 @bp.route("/api/scenarios/<sid>/draft-plans", methods=["POST"])
@@ -1176,8 +1556,12 @@ def api_scenario_draft_plans(sid):
             "hours": 12,
             "wb": None,
             "meta": {"scenario": sid,
+                     "p3_capacity_fleet": draft.get("p3_capacity") or {},
+                     "unused_fleet": draft.get("unused") or {},
                      "note": "draft from %s waterfall - open on the Plan tab, "
-                             "Check capacity, Allocate DT, Save" % sid,
+                             "Check capacity, Allocate DT, Save. LD rows carry "
+                             "the fleet credited against the target; "
+                             "unused_fleet is capacity above it." % sid,
                      "generated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")},
             "saved_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
@@ -1189,5 +1573,8 @@ def api_scenario_draft_plans(sid):
         out.append({"month": m, "date": date_s,
                     "routes": len(draft["paths"]),
                     "dt_total": sum(p["dt"] for p in draft["paths"].values()),
-                    "pool": draft["pool"], "warnings": draft["warnings"]})
+                    "pool": draft["pool"],
+                    "p3_capacity": draft.get("p3_capacity") or {},
+                    "unused": draft.get("unused") or {},
+                    "warnings": draft["warnings"]})
     return jsonify({"ok": bool(out), "scenario": sid, "written": out, "errors": errors})

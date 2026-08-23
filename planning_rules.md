@@ -22,7 +22,7 @@
 | POS | Permanent Ore Storage — permanent stockpile where ore is saved long-term |
 | SAP | Saprolite ore (high-grade nickel) — highest priority, must move first |
 | LIM-TOS | Limonite ore going to TOS stockpile — second priority |
-| LIM-LD | Limonite ore going to LD (long-distance) haul — lowest priority, uses leftover trucks |
+| LIM-LD | Limonite ore going to LD (long-distance) haul — third priority; a supplied target is filled after SAP and LIM-TOS |
 | FeNi KM0 | Ferronickel plant at KM 0 |
 | FeNi KM15 | Ferronickel plant at KM 15 |
 | HUAFEI | Huafei stockpile area (TOS destination for LIM) |
@@ -60,7 +60,9 @@ never refill the illegal row.
 
 ## 4. Priority Allocation System
 
-Material is allocated in strict priority order. P1 fills first, P2 fills second, P3 gets all leftover trucks.
+Material is allocated in strict target order. P1 fills first, P2 fills second,
+then P3 fills its supplied target. Fleet beyond all supplied targets remains
+visible as excess LD capacity; it must not be counted as target production.
 
 ### P1 — SAP (Saprolite, must-move, highest priority)
 
@@ -91,9 +93,12 @@ Total LIM-TOS from ALL pits = 4.6 Mt. BLB adds 1 Mt (250 kt/month × 4 months). 
 
 P2 fills after P1 is fully satisfied. If P1 SAP target requires more trucks than available, P2 does not get trucks.
 
-### P3 — LIM-LD (Limonite long-distance haul, lowest priority, leftover trucks)
+### P3 — LIM-LD (Limonite long-distance haul, third-priority target)
 
-**Rule:** After P1 and P2 are fully satisfied, ALL leftover DT go to TF (Tofu) for LD-LIM hauling.
+**Rule:** After P1 and P2 are fully satisfied, allocate DT to the supplied
+LIM-LD target. If no LIM-LD target is supplied, the route remains the
+lowest-priority capacity sink for leftover trucks. Production above a supplied
+P3 target is reported separately as excess capacity, not credited to target.
 
 The leftover DT are split:
 - 50% of leftover DT → TF → HUAFEI / BSE
@@ -101,7 +106,9 @@ The leftover DT are split:
 
 This half/half split is the S4 concept — a what-if to see how much tonnage increases when trucks are split across destinations instead of all going to one.
 
-If there are not enough trucks to fill P1 and P2, P3 gets zero trucks. P3 is the first donor if P1 or P2 needs more trucks.
+If there are not enough trucks to fill P1 and P2, P3 may receive zero trucks.
+P3 is the first donor if P1 or P2 needs more trucks. Once P1 and P2 are met,
+targeted P3 rows take precedence over untargeted LD capacity.
 
 ---
 
@@ -166,8 +173,6 @@ Show a validation summary after each run:
 ```
 VALIDATION SUMMARY
 ==================
-BLB trips/DT range:  [min] - [max]  [PASS/WARN/FAIL]
-TF trips/DT range:   [min] - [max]  [PASS/WARN/FAIL]
 SAP target met:      [YES/NO]  (target: X t/day, actual: Y t/day)
 LIM-TOS target met:  [YES/NO]  (target: 4.6 Mt, actual: X Mt)
 LIM-LD total:        X Mt  (target: 8 Mt)  [PASS/FAIL]

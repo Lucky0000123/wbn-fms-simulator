@@ -115,27 +115,30 @@ js = open(os.path.join(ROOT, "static/js/plan_simulator.js")).read()
 check("the UI surfaces the extrapolation warning",
       "shift_minutes_extrapolated" in js)
 
-print("\n=== exactly ONE editable shift control in the whole app ===")
+print("\n=== no visible shift-length control (Shift/Day is horizon, not minutes) ===")
 
-# There were THREE. #ps-shift drove the engine, #plan-hours drove plan.js's
-# local estimate on another tab, and #flow-hours sat disabled and unread in a
-# collapsed panel on a third. Two controls for one concept is how the 0.85
-# availability override survived, so this counts them rather than trusting that
-# nobody adds a fourth.
+# There were THREE length controls, then one visible minutes box next to the
+# Shift/Day grain toggle. That pair is the same two-controls-one-concept defect:
+# planners read the toggle as "shift length". Length is calibrated at 720 min
+# (98.5% of measured shifts) and stays a hidden engine source.
 inputs = re.findall(r"<input\b[^>]*>", html)
 shifty = [t for t in inputs
           if re.search(r'id="(ps-shift|plan-hours|flow-hours|[a-z-]*shift[a-z-]*|[a-z-]*hours[a-z-]*)"', t)]
 editable = [t for t in shifty
             if 'type="hidden"' not in t and "disabled" not in t]
 ids = [re.search(r'id="([^"]+)"', t).group(1) for t in editable]
-check("exactly one editable shift/hours input", len(editable) == 1, ids)
-check("and it is ps-shift (the one that reaches the engine)",
-      ids == ["ps-shift"], ids)
+ps_tag = next((t for t in inputs if 'id="ps-shift"' in t), "")
+check("no editable shift/hours input", len(editable) == 0, ids)
+check("#ps-shift still exists as the engine source", bool(ps_tag), ps_tag or "missing")
+check("#ps-shift is hidden (not a second Shift/Day control)",
+      'type="hidden"' in ps_tag, ps_tag)
 check("#plan-hours survives as a HIDDEN field so plan.js keeps working",
       'id="plan-hours"' in html and 'id="plan-hours" type="hidden"' in html)
 check("the inert #flow-hours display is gone", 'id="flow-hours"' not in html)
 check("plan-hours is driven from ps-shift, so they cannot diverge",
       "psSyncShift" in js and "plan-hours" in js)
+check("the visible Shift minutes metric is gone",
+      "plan-shift-field" not in html and 'id="plan-hours-display"' not in html)
 
 print("\n=== the input range matches what the data supports ===")
 

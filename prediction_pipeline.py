@@ -217,16 +217,19 @@ def canonical_area(name: str) -> str:
 
 
 def distance_km(source: str, destination: str) -> float:
-    """Haul distance from the corridor chainage lookup.
+    """Haul distance from the shared route-physics lookup.
 
-    Both endpoints on the corridor → |Δ chainage|. Otherwise fall back to the
-    median observed haul so an unmapped spur never produces a null feature.
+    The prediction model used to maintain a smaller, independent corridor map.
+    That made known off-stick routes silently become the 25 km fleet median
+    (TF>HUAFEI is 63.7 km; BLB>POS 14 is 6.7 km).  The hybrid congestion
+    engine already owns measured-route overrides and spur geometry, so use the
+    same source of truth here and retain 25 km only for genuinely unknown
+    endpoints.
     """
-    a = CORRIDOR_KM.get(canonical_area(source))
-    b = CORRIDOR_KM.get(canonical_area(destination))
-    if a is None or b is None:
-        return _MEDIAN_HAUL_KM
-    return round(abs(a - b), 2)
+    from congestion.physics import route_distance_km
+
+    distance = route_distance_km(canonical_area(source), canonical_area(destination))
+    return _MEDIAN_HAUL_KM if distance is None else round(float(distance), 2)
 
 
 def _fx(name):

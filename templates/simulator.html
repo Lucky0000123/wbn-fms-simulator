@@ -410,8 +410,13 @@
           </div>
           <details class="card plan-outlook" id="plan-sec-outlook" open>
             <summary class="plan-outlook-sum">
-              <h3>Coming days</h3>
-              <span class="muted">rain forecast × this plan</span>
+              <h3>Rain forecast</h3>
+              <span class="muted plan-outlook-hint">Click a day to set date and rain</span>
+              <span class="plan-outlook-keys" aria-hidden="true">
+                <span class="k k-dry">dry</span>
+                <span class="k k-rain">rain</span>
+                <span class="k k-on">plan date</span>
+              </span>
             </summary>
             <p class="muted plan-outlook-note">Click a day to fill Rain. Path-model prediction — simulate tonnes stay dry/wet-invariant.</p>
             <div id="plan-coming-days" class="plan-coming-days" aria-live="polite"></div>
@@ -496,7 +501,7 @@
               <div class="plan-cond-head">
                 <h3>Scenario</h3>
                 <div class="plan-horizon" role="group" aria-label="Plan totals for one shift or one day">
-                  <button type="button" class="plan-horizon-seg" data-h="shift" onclick="planSetHorizon('shift')" title="Show trips and tonnes for one 12 h shift">Shift</button>
+                  <button type="button" class="plan-horizon-seg" data-h="shift" onclick="planSetHorizon('shift')" title="Show trips and tonnes for one 12 h shift · 98.5% of 538,586 measured shifts are 12.0 h">Shift</button>
                   <button type="button" class="plan-horizon-seg on" data-h="day" onclick="planSetHorizon('day')" title="Show trips and tonnes for one day (2 × 12 h shifts)">Day</button>
                 </div>
               </div>
@@ -513,12 +518,7 @@
                   <span class="k">Other traffic</span>
                   <span class="v"><input id="plan-other-trips" type="number" min="0" step="10" value="0" oninput="planOtherManualEdit()"><em id="plan-other-src" class="plan-other-src"></em></span>
                 </label>
-                <label class="plan-cond-metric" title="Measured over 538,586 truck-shifts: 98.5% are exactly 12.0 h (720 min). Data supports 8–12 h (480–720).">
-                  <span class="k">Shift</span>
-                  <span class="v"><input id="ps-shift" type="number" min="480" max="720" step="30" value="720" onchange="psShiftChanged()"><em>min · <b id="plan-hours-display">12</b> h · 98.5% of 538,586 shifts are 720</em></span>
-                </label>
               </div>
-              <div id="plan-rain-suggest" class="plan-rain-suggest"></div>
               <details class="plan-limits-details" id="plan-limits-details" open>
                 <summary>Limits <span class="muted">bridges · other traffic · road-only</span></summary>
                 <!-- Other-traffic regime + road-only add (filled by planRenderWbLoad). -->
@@ -528,6 +528,7 @@
                 <!-- Per-bridge load + wait (plan_weighbridges.js). -->
                 <div id="plan-wb-stress" class="plan-wb-stress" aria-live="polite"></div>
               </details>
+              <input id="ps-shift" type="hidden" min="480" max="720" value="720">
               <input id="plan-hours" type="hidden" value="12">
               <select id="ps-weather" style="display:none" aria-hidden="true"><option value="dry" selected>Dry</option><option value="wet">Wet</option></select>
               <div class="effkpis" id="plan-kpis" style="display:none"></div>
@@ -626,7 +627,7 @@
                   <div class="plan-alloc-hero" id="plan-alloc-hero"></div>
                   <div class="plan-alloc-buckets" id="plan-alloc-buckets"></div>
                   <div class="plan-alloc-holding" id="plan-alloc-holding"></div>
-                  <div class="plan-alloc-moves muted" id="plan-alloc-moves"></div>
+                  <div id="plan-rules-validation"></div>
                   <div id="plan-alloc-estimate" hidden></div>
                 </div>
               </div>
@@ -634,7 +635,7 @@
 
             <!-- B · Fleet sensitivity — nonlinear DT sweep per plan (ECharts). -->
             <section class="plan-s2-block" id="plan-s2-sensitivity" style="display:none">
-              <div class="plan-s2-label">Fleet sensitivity <span class="muted">(how tonnes and trips/DT bend with fleet size)</span></div>
+              <div class="plan-s2-label">Fleet sensitivity <span class="muted">(hybrid saturation curve vs fleet size)</span></div>
               <div class="plan-sens-wrap">
                 <div class="plan-sens-side">
                   <div class="plan-sens-side-h muted">Plans</div>
@@ -658,9 +659,9 @@
                   <div id="plan-sens-readout" class="plan-sens-readout"></div>
                 </div>
                 <div class="plan-sens-main">
-                  <div id="plan-sens-chart" style="height:480px"></div>
+                  <div id="plan-sens-chart" style="height:520px"></div>
                   <div id="plan-sens-opt" class="plan-sens-opt"></div>
-                  <p class="muted" id="plan-sens-caption" style="font-size:10.5px;margin:6px 0 0">Top graph = tonnage, bottom graph = trips per truck, same fleet-size scale so they read together. ● your current DT · ★ calculated optimal (most trips before diminishing returns, within measured data) · dotted rule = where the day ceiling starts binding · shaded = beyond measured data. Same prediction as the plan table. Road-only plans appear in the bottom graph only.</p>
+                  <p class="muted" id="plan-sens-caption" style="font-size:11px;margin:8px 0 0;line-height:1.45">Hybrid saturation curve from /api/congestion_curve (proportional loaders — same basis the plan table prices with). Trips/DT is per day on the Per day scale. ● = planned DT.</p>
                 </div>
               </div>
             </section>
@@ -981,6 +982,13 @@
           </details>
         </div>
         </details>
+        <div id="plan-alloc-frontload" class="plan-frontload" hidden>
+          <div class="plan-frontload-card" role="status" aria-live="polite">
+            <div class="ph-spin" aria-hidden="true"></div>
+            <div class="ph-load-text">Allocating DT by priority…</div>
+            <div class="ph-load-sub">New Allocation Plan will appear when pricing and capacity finish</div>
+          </div>
+        </div>
       </div><!-- /tab-plan -->
 
 

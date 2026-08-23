@@ -14,6 +14,11 @@ import math
 
 from . import physics, queueing, bpr
 from .config import route_params
+# ONE home for road capacity (congestion.segments reads the official
+# speed-limit sheets). Imported eagerly and NOT wrapped in try/except: if the
+# official basis cannot load, pricing must fail loudly rather than fall back
+# to the headway-class assumption this change exists to retire.
+from .segments import route_road_capacity_hr as _road_capacity
 
 
 def _finite(x):
@@ -39,6 +44,15 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
     (congestion/segments.py) always price road time per segment — with only
     their own fleet when this is absent — so the calibration anchor holds
     exactly when a route is alone; cross traffic is the only extra penalty.
+    Build it with congestion.segments.segment_trucks(), which as of
+    2026-08-23 also counts spur-origin (BLB) trucks onto the lower mainline
+    they physically run — they were invisible to S4 before.
+
+    Road capacity is the OFFICIAL geometric one (speed-limit sheets / 50 m
+    following, one loaded lane; the BLB spur has no sheet and carries the
+    20 km/h floor). It is a ROAD number and only a road number: the loader
+    and dump ceilings are priced by queueing.erlang_c and reported under
+    their own keys, never folded into the BPR capacity.
 
     mode:
       full — Congestion tab. Cycle includes loader queue and bunching.
@@ -114,25 +128,50 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
     n_lanes = int(p.get("n_lanes_loaded") or p.get("n_lanes") or 1)
     headway_s = p.get("headway_s")
     c_road = p.get("c_road_trucks_hr")
-    if not _finite(c_road) or c_road <= 0 or not _finite(headway_s):
+    # OFFICIAL geometric road capacity first (owner documents, 2026-08-22):
+    # slowest posted speed-limit bin / 50 m following distance, ONE loaded
+    # lane. The stored c_road_trucks_hr is the PRE-2026-08-22 headway-CLASS
+    # assumption (60 or 240 trucks/hr) that congestion/segments.py records as
+    # having sat "2.5-10x LOW ... an assumption artifact, owner-caught". Stick
+    # routes stopped pricing on it when the per-segment branch below landed,
+    # but the SPUR routes never did: BLB still priced, and every route still
+    # REPORTED, a capacity nobody stands behind. The segment's capacity is a
+    # property of the segment, so it is read from one home
+    # (congestion.segments) rather than re-derived here.
+    c_road_official, c_road_basis = _road_capacity(origin, dest)
+    if _finite(c_road_official) and c_road_official > 0:
+        c_road = float(c_road_official)
+        n_lanes = 1            # per loaded lane by construction of the basis
+        headway_s = 3600.0 / c_road       # implied time gap, reporting only
+    elif not _finite(c_road) or c_road <= 0 or not _finite(headway_s):
         c_road, n_lanes, headway_s = bpr.geometry_c_road(
             dist,
             n_lanes_loaded=n_lanes,
             headway_s=float(p.get("headway_s") or p["safe_headway_s"]),
             headway_s_short=float(p.get("headway_s_short") or 15.0),
             long_haul_km=float(p.get("long_haul_km") or 50.0))
+        c_road_basis = ("fallback: n_lanes x 3600 / documented headway "
+                        "(route geometry unknown, no speed-limit sheet)")
+    else:
+        c_road_basis = ("calibration c_road_trucks_hr — headway CLASS "
+                        "assumption, not the official speed-limit basis")
     mu_hr = 60.0 / float(p["load_min"])
     c_dump = p.get("c_dump_trucks_hr")
     road_only = str(mode or "full").strip().lower() == "road"
-    # Plan pricing (mode=road): BPR uses ROAD capacity only. Putting
-    # n_loaders*mu into c_link made the loader wall look like road
-    # congestion — BLB trips/DT fell with fleet because three faces
-    # saturated, not because the 6.7 km haul got slower (owner, 2026-08-21).
-    if road_only:
-        c_link = c_road
-    else:
-        c_link = min(c_road, n_loaders * mu_hr,
-                     c_dump if _finite(c_dump) and c_dump > 0 else float("inf"))
+    # BPR uses ROAD capacity only, in EVERY mode. Putting n_loaders*mu into
+    # c_link made the loader wall look like road congestion — BLB trips/DT
+    # fell with fleet because three faces saturated, not because the 6.7 km
+    # haul got slower (owner, 2026-08-21). That fix was applied to mode=road
+    # only; the same argument holds verbatim in full mode, where the loader
+    # constraint is ALREADY priced — correctly, and by the model built for it —
+    # in queueing.erlang_c below. Charging it a second time through a
+    # volume-delay function whose argument is by definition a road capacity
+    # was double counting, and it made `road_vc` == `rho` identically whenever
+    # loaders bound, so the `road_vc >= rho` bottleneck classifier in
+    # simulator_api could never once return "loader". The other two ceilings
+    # are not discarded, they are reported on their own names below.
+    c_loader = n_loaders * mu_hr
+    c_link = c_road
 
     # Flow depends on cycle, cycle on BPR + queue. nxt(cyc) is strictly
     # decreasing in cyc (longer cycle -> fewer arrivals/hr -> less BPR
@@ -310,12 +349,24 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
         "bunching_capped": bunch_capped,
         "rho": round(qq["rho"], 3),
         "road_vc": round(bp["vc"], 3),
+        # ROAD capacity, and only the road's — the field is named for it.
+        # The loader and dump ceilings keep their own names so nothing is
+        # lost and no two of them can be read as each other.
         "link_capacity_trucks_hr": round(c_link, 1),
+        "link_capacity_basis": c_road_basis,
+        "loader_capacity_trucks_hr": round(c_loader, 1),
+        "dump_capacity_trucks_hr": (round(float(c_dump), 1)
+                                    if _finite(c_dump) and c_dump > 0 else None),
+        "system_capacity_trucks_hr": round(
+            min(c_link, c_loader,
+                float(c_dump) if _finite(c_dump) and c_dump > 0
+                else float("inf")), 1),
         "distance_km": round(dist, 1),
         "params": {"alpha": p["alpha"], "beta": p["beta"],
                    "bpr_source": "literature_default",
                    "load_min": p["load_min"], "rr_pct": rr,
                    "c_road_trucks_hr": round(c_road, 1),
+                   "c_road_basis": c_road_basis,
                    "headway_s": round(float(headway_s), 1),
                    "n_lanes_loaded": n_lanes},
         "uncertainty": unc,

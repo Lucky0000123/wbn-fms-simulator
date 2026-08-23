@@ -118,6 +118,24 @@ EOF
 chk $? "D17  model loaded once (stable instance id)" "reloading per request"
 CODE=$(curl -s -o /tmp/p2_fb.json -w '%{http_code}' "$BASE/api/predict?contractor=RIM&source=TF&destination=NOWHERE&trucks=19&mode=dt_to_wmt")
 [ "$CODE" = "200" ]; chk $? "D18  unknown route still returns 200" "http $CODE"
+$PY - <<'EOF' >/dev/null 2>&1
+import json,sys,urllib.parse,urllib.request
+base='http://127.0.0.1:5055/api/predict?contractor=RIM&shift=day&trucks=30&'
+def get(src,dst):
+    q=urllib.parse.urlencode({'source':src,'destination':dst})
+    return json.load(urllib.request.urlopen(base+q,timeout=5))
+def same(a,b):
+    return (a.get('canonical_route')==b.get('canonical_route') and
+            a.get('prediction',{}).get('trips_per_dt')==b.get('prediction',{}).get('trips_per_dt'))
+tf, tofu = get('TF','HUAFEI'), get('TOFU','HUAFEI')
+p14, p14x = get('BLB','POS 14'), get('BLB','POS14')
+ok=(same(tf,tofu) and same(p14,p14x) and
+    tf.get('inputs',{}).get('distance_km')==63.7 and
+    p14.get('inputs',{}).get('distance_km')==6.7 and
+    tf.get('model_match_level')!='global' and p14.get('model_match_level')!='global')
+sys.exit(0 if ok else 1)
+EOF
+chk $? "D18b route aliases and focus distances are canonical" "TF/TOFU or POS14 split/fallback"
 
 echo "── E/F · integration & regressions ───────────────────────────────"
 grep -q "api/predict" static/js/plan.js 2>/dev/null
@@ -365,6 +383,16 @@ fi
 $PY test_plan_shared_flow.py >/dev/null 2>&1
 chk $? "J75  road crowding: order- and bin-invariant, trips match the cadence" "see: python test_plan_shared_flow.py"
 
+# The frozen reference curves are SERVED (tagged servedFrom:"reference") on any
+# machine without a live calibration — a fresh clone, or the deployed Mac. They
+# rotted silently once: TF>HUAFEI shipped up to 40.7% low for two days because
+# "regenerate after recalibration" lived only in a docstring. --check compares
+# the artifact's recorded provenance (calibration timestamp, network constants
+# AND congestion/ model-code digest) against the current build, and prints what
+# moved. Needs no DB or VPN.
+$PY scripts/export_saturation_curves.py --check >/dev/null 2>&1
+chk $? "J76  frozen saturation curves match the current model" "stale: python scripts/export_saturation_curves.py --check"
+
 # Pure local test with a stubbed connection, so it needs no VPN.
 $PY test_accumulator.py >/dev/null 2>&1
 chk $? "J54  the GPS accumulator is idempotent and loses no history" "see: python test_accumulator.py"
@@ -567,4 +595,3 @@ fi
 
 printf 'SCORE %d/%d   (failures: %d)\n' "$PASS" "$TOTAL" "$FAIL"
 [ "$FAIL" = "0" ]
-

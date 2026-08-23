@@ -19,7 +19,17 @@ DEFAULTS = {
     "dump_min": 2.0,
     "rr_pct": 2.0,            # rolling resistance, maintained road
     "n_loaders": 2,           # per-route default; UI should supply the real one
-    # Geometry capacity: c_road = n_lanes_loaded * 3600 / headway_s.
+    # FALLBACK road capacity only: c_road = n_lanes_loaded * 3600 / headway_s.
+    # These are the pre-2026-08-22 headway-CLASS numbers (60 or 240 trucks/hr).
+    # They are NOT the pricing basis any more and must not be read as one:
+    # congestion.segments.route_road_capacity_hr() serves the OFFICIAL basis
+    # (owner speed-limit sheets: slowest posted bin / 50 m following distance,
+    # ONE loaded lane -> 400/hr on S4, 600/hr on S1-S3), and the predictor
+    # prefers it wherever the route's geometry is known. The class numbers sat
+    # 2.5-10x low, which is how an "S1 bottleneck" at v/c 2.4 was manufactured
+    # out of an assumption. What survives here is the last resort for a route
+    # with no chainage and no sheet, and the values below are kept unchanged so
+    # that route's answer does not move for an unrelated reason.
     # v in BPR is loaded-direction flow (one pass per cycle), so a two-way
     # road is n_lanes_loaded=1. Headway is a documented following gap, not a
     # dial for trips/DT. Long corridors (chainage >= long_haul_km) use 60 s

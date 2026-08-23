@@ -89,3 +89,6 @@ data/s3_results_calibrated.json
 data/s3_results_calibrated.csv
 data/s3_results_scale.json
 data/s3_results_scale.csv
+# Derived from real saved plans (tonnages + DT allocations) — same rule as the
+# scan reports: gitignore a DB-derived report in the change that creates it.
+data/refreeze_report.json

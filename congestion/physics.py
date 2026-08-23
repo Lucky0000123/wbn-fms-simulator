@@ -58,9 +58,46 @@ HAUL_KM_SOURCE = {
     ("TF", "HUAFEI"): "DISTANCE_HAULING p50 63.7 km (n=51); DISPATCH ROADS 63.1-63.4",
     ("TOFU", "HUAFEI"): "DISTANCE_HAULING p50 63.7 km (n=51); DISPATCH ROADS 63.1-63.4",
 }
-# Typical loaded mine-haul speed used only to translate a measured free-flow
-# cycle into an implied one-way distance (chainage sanity check).
+# Reference speed for implied_one_way_km ONLY (chainage sanity check).  It is
+# NOT the measured corridor speed and is deliberately left at 15.0 — see the
+# note on implied_one_way_km below for why raising it would make that check
+# worse, not better.
 REF_SPEED_KMH = 15.0
+
+# ── MEASURED free-flow corridor speed (2026-08-23) ───────────────────────────
+# p85 of the hourly mean GPS speed in the QUIET quartile of truck counts, per
+# km band, from FMS_CONGESTION_SEG (38,515 segment-hours, 2026-07-15..), then
+# length-weighted per road (total minutes / total km).  "Free flow" is the same
+# low-traffic-p85 convention the congestion endpoint already uses; the committed
+# data/congestion_seg_by_dir.csv is a traffic-WEIGHTED mean and so runs ~20-25%
+# slower than this — do not read that CSV as free flow (AGENTS.md already warns
+# "corridor means include congested traffic, so they run high").
+#
+# The result that matters is how FLAT it is.  Every road on the stick free-flows
+# at ~20 km/h loaded against posted limits of 30-50 km/h, so the route's road
+# time comes out 1.59-1.86x its speed-limit-implied time on EVERY calibrated
+# stick route — KR 1.62-1.86, TF 1.59-1.67.  Trucks running at roughly half the
+# sign is a site fact, not a KR peculiarity, and it is most of the KR corridor
+# anomaly the owner asked about (2026-08-23).  Measured, not assumed: do not
+# "correct" a route's distance to make its posted-limit time fit.
+CORRIDOR_FREE_FLOW_KMH = {
+    # road: (loaded / down-chainage, empty / up-chainage) km/h
+    "CRD": (18.6, 18.8),    # n = 2,075 / 2,130 segment-hours over 7 km
+    "KR": (20.3, 22.6),     # n = 9,807 / 9,738 over 32 km
+    "TF": (20.4, 25.5),     # n = 7,642 / 7,123 over 29 km
+    "BLB": (16.7, 19.2),    # spur, n = 2,471 / 2,445 over 11 km
+}
+
+# Which road owns which chainage.  From the committed survey
+# data/haul_road_chainage_public.csv, whose mainline is three CONTIGUOUS runs on
+# one datum — CRD 0.000-7.850, KR 7.875-38.975, TOFU 39.000-67.800 — which is
+# also the independent confirmation that KR sits at chainage 39 and TF at 67.8.
+# Same provenance and same "never retype it" rule as segments.SPUR_JOIN_KM.
+CORRIDOR_ROADS = (
+    (0.0, 7.85, "CRD"),
+    (7.85, 39.0, "KR"),
+    (39.0, 67.8, "TF"),
+)
 # Kept for FENI/HUAFEI BLB hauls that still use the spur formula.
 BLB_COASTAL_DEST = {
     "POS 14", "POS14", "POS 15", "POS15", "POS 16", "POS16",
@@ -87,9 +124,110 @@ def route_distance_km(origin: str, dest: str) -> float | None:
     return abs(ok - dk)
 
 
+def free_flow_road_min(origin: str, dest: str):
+    """(loaded_min, empty_min) round-trip ROAD time at MEASURED free-flow speed.
+
+    Walks the route's chainage span across CORRIDOR_ROADS and prices each part
+    at that road's measured free-flow speed (CORRIDOR_FREE_FLOW_KMH).  Returns
+    (None, None) for anything not wholly on the mainline stick — a spur origin
+    is priced on its own calibrated distance everywhere else in this package
+    and has no speed-limit sheet to be compared against, so inventing a number
+    for it here would be exactly the geometry this repo has already paid for.
+
+    This is the honest reference `road_free_min` should be read against.  It is
+    NOT a replacement for it: `road_free_min` stays dispatch-anchored on
+    purpose, and the calibration's overhead term is anchored on top of it, so
+    swapping one for the other without re-anchoring would break every route.
+    """
+    a, b = NODE_KM.get((origin or "").strip().upper()), \
+        NODE_KM.get((dest or "").strip().upper())
+    if a is None or b is None or a == b:
+        return None, None
+    lo, hi = min(a, b), max(a, b)
+    t_loaded = t_empty = 0.0
+    covered = 0.0
+    for bottom, top, road in CORRIDOR_ROADS:
+        ov = min(hi, top) - max(lo, bottom)
+        if ov <= 0:
+            continue
+        v_l, v_e = CORRIDOR_FREE_FLOW_KMH[road]
+        t_loaded += 60.0 * ov / v_l
+        t_empty += 60.0 * ov / v_e
+        covered += ov
+    if covered <= 0 or covered < (hi - lo) - 0.05:
+        return None, None          # span leaves the surveyed mainline
+    return t_loaded, t_empty
+
+
+def road_free_audit(origin: str, dest: str, road_free_min):
+    """Decompose a calibrated `road_free_min` against measured road time.
+
+    Answers the owner's 2026-08-23 question ("why does KR's calibrated road
+    time run 1.7-3.0x its official speed-limit time?") as a PRODUCT of two
+    independent factors instead of one alarming ratio:
+
+        road_free_min / posted_limit  ==  speed_factor  x  nonroad_factor
+
+      speed_factor   = measured free-flow road time / speed-limit-implied time.
+                       1.59-1.86 on every calibrated stick route — trucks run
+                       at ~55-63% of the posted limit, corridor-wide.
+      nonroad_factor = road_free_min / measured free-flow road time.  Whatever
+                       is left is per-trip queue, spotting and dwell that the
+                       flat 8-minute `ops_min` does not cover.  0.55-1.65
+                       across routes; KR>POS 12 is the highest at 1.65, where
+                       WAITING_TIME independently measures ~29 min/trip of
+                       loading + dumping queue.
+
+    Returns None when the route is not wholly on the surveyed mainline.
+    """
+    t_l, t_e = free_flow_road_min(origin, dest)
+    if t_l is None:
+        return None
+    # Local import: keeps physics free of an import-time dependency on
+    # speed_limits, the same way predictor.py reaches for segments/speed_limits.
+    from .speed_limits import span_times_min
+    a, b = NODE_KM[(origin or "").strip().upper()], \
+        NODE_KM[(dest or "").strip().upper()]
+    lim_l, lim_e = span_times_min(min(a, b), max(a, b))
+    ff = t_l + t_e
+    posted = (lim_l or 0.0) + (lim_e or 0.0)
+    out = {
+        "free_flow_road_min": round(ff, 1),
+        "posted_limit_road_min": round(posted, 1) if posted else None,
+        "speed_factor_vs_posted": round(ff / posted, 2) if posted else None,
+        "free_flow_source": ("p85 quiet-hour FMS_CONGESTION_SEG speeds by road "
+                             "x surveyed chainage span (2026-08-23)"),
+    }
+    if road_free_min and float(road_free_min) > 0 and ff > 0:
+        rf = float(road_free_min)
+        out["nonroad_in_road_free_min"] = round(rf - ff, 1)
+        out["nonroad_factor"] = round(rf / ff, 2)
+        if posted:
+            out["road_free_vs_posted"] = round(rf / posted, 2)
+    return out
+
+
 def implied_one_way_km(t_free_min, load_min=5.0, spot_min=1.0, dump_min=2.0,
                        speed_loaded_kmh=REF_SPEED_KMH):
-    """One-way km implied by a measured free-flow cycle at a reference speed."""
+    """One-way km implied by a measured free-flow cycle at a reference speed.
+
+    READ THE RESULT WITH BOTH ITS ERRORS IN MIND (measured 2026-08-23).  Its
+    caller feeds it `t_free` = the p25 of per-day-shift MEAN trip gaps, which is
+    NOT free-flow and NOT road: on KR>POS 12 that is 118.9 min against a
+    fastest-decile complete cycle of 80 min and a measured free-flow road round
+    trip of 67.3 min, so the numerator carries ~30-45 min of queue and dwell.
+    The denominator is wrong the other way: 15.0 km/h against a measured
+    free-flow 20.3 km/h loaded on the KR road.  The two errors PARTIALLY CANCEL
+    (1.65x up, 0.74x down) and that is precisely why `chainage_suspect`, which
+    is built on this ratio, has never fired on any route.
+
+    So this is a weak check, not a distance measurement, and raising
+    REF_SPEED_KMH alone would make it WORSE: KR>POS 12's implied 15.4 km
+    (against a true 12.0) would become 21.0 km.  Fed its honest inputs the
+    formula is sound — free_flow_road_min('KR','POS 12') is 67.3 min, which at
+    20.3 km/h returns 12.5 km against the surveyed 12.0.  Fix the numerator, or
+    use free_flow_road_min(); do not tune the constant.
+    """
     if not t_free_min or t_free_min <= 0 or speed_loaded_kmh <= 0:
         return None
     t_road = max(5.0, float(t_free_min) - (load_min + spot_min + dump_min))

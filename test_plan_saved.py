@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import tempfile
+import copy
 
 from flask import Flask
 
@@ -81,7 +82,9 @@ def main():
             "frozen": True,
             "horizon": "day",
             "old": {"pred": 8000, "achv": 7500, "dt": 200},
-            "new": {"pred": 8200, "achv": 7600, "dt": 200, "target": 9000},
+            "new": {"pred": 8200, "achv": 7600, "achv_sim": 7600,
+                    "dt": 200, "target": 9000},
+            "calculation_status": "complete",
             "fleet": {"before": 200, "after": 200},
             "goals": {"sap": 5000, "tos": 3000, "ld": 1000, "total": 9000},
             "moved_total": 24,
@@ -101,7 +104,8 @@ def main():
                 "material": "SAP", "otype": "TOS", "prio": 1, "target": 5000,
                 "dt_before": 80, "dt_after": 104,
                 "pred_before": 4000, "pred_after": 5000,
-                "achv_before": 3800, "achv_after": 4700, "trips": 210,
+                "achv_before": 3800, "achv_after": 4700,
+                "achv_sim": 4700, "trips": 210,
             }],
             "moves": [{
                 "contractor": "RIM", "trucks": 24,
@@ -126,6 +130,13 @@ def main():
             "meta": {"predict": {"wmt": 4100, "dt": 104}},
             "allocation": alloc,
         }
+        incomplete = copy.deepcopy(body_alloc)
+        incomplete["allocation"]["new"]["achv_sim"] = None
+        incomplete["allocation"]["calculation_status"] = "simulation_pending"
+        r = client.post("/api/plan/saved", json=incomplete)
+        check("POST rejects frozen allocation without raw simulation",
+              r.status_code == 409 and not r.get_json().get("ok"))
+
         r = client.post("/api/plan/saved", json=body_alloc)
         j = r.get_json()
         check("POST with allocation ok", r.status_code == 200 and j.get("ok"))
