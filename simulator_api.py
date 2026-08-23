@@ -2245,6 +2245,105 @@ def api_simulator_corridor_geometry():
     return jsonify(_GEOM_CACHE)
 
 
+def _sim_number(raw, field, errors, coercions, *, allow_negative=False,
+                label=None):
+    """Coerce ONE numeric request field, or record why it cannot be used.
+
+    Returns the float, or None when the field is absent (caller keeps its own
+    default) or rejected (an error was appended, so nothing is computed).
+
+    The policy, and why each half of it:
+
+    * absent            -> None, silent. Omitting a field must keep behaving
+                           exactly as it did; every currently-valid payload has
+                           to come back byte-identical.
+    * explicit null     -> 400. `shift_minutes: null` used to reach float(None)
+                           and return HTTP 500 with the raw Python TypeError.
+    * bool              -> 400. True is a number in Python (float(True) == 1.0)
+                           and used to book one truck. A boolean truck count is
+                           a client bug; answering it with a plausible number is
+                           worse than refusing it.
+    * NaN / inf         -> 400. These reached int() and leaked
+                           "cannot convert float NaN to integer" out of a 500.
+    * negative          -> 400 unless allowed. n_trucks=-5 produced -258 t and
+                           shift_minutes=-720 produced -1,550 t, both HTTP 200.
+                           A plan cannot un-mine ore; the only honest answer to
+                           a negative fleet is that it is not a fleet.
+    * numeric string    -> ACCEPTED and echoed. "800" is a real form/query shape
+                           and refusing it would break callers for no safety
+                           gain, but a silent coercion is how the 0.85 override
+                           survived, so it is named in the response.
+    * non-integer float -> ACCEPTED and echoed, loudly. 2.7 trucks is priced as
+                           2.7 for tonnage while the result row reports
+                           n_trucks=2 (int() truncation), so the row and its own
+                           tonnage disagree. That disagreement is reported
+                           rather than papered over by rounding, because
+                           rounding would change a number the caller sent.
+    """
+    if field not in raw:
+        return None
+    name = label or field
+    v = raw.get(field)
+    if v is None:
+        errors.append("%s must be a number; got null" % name)
+        return None
+    if isinstance(v, bool):
+        errors.append("%s must be a number, not a boolean (got %r)" % (name, v))
+        return None
+    if isinstance(v, str):
+        try:
+            f = float(v.strip())
+        except (TypeError, ValueError):
+            errors.append("%s must be a number; got the string %r" % (name, v))
+            return None
+        coercions.append("%s was sent as the string %r and read as %g"
+                         % (name, v, f))
+    elif isinstance(v, (int, float)):
+        f = float(v)
+    else:
+        errors.append("%s must be a number; got %s" % (name, type(v).__name__))
+        return None
+    if math.isnan(f):
+        errors.append("%s must be a finite number; got NaN" % name)
+        return None
+    if math.isinf(f):
+        errors.append("%s must be a finite number; got infinity" % name)
+        return None
+    if f < 0 and not allow_negative:
+        errors.append("%s must not be negative; got %g" % (name, f))
+        return None
+    return f
+
+
+def _sim_validate(payload):
+    """Validate an /api/simulate body. Returns (errors, coercions).
+
+    Boundary-only ON PURPOSE. plan_simulator.simulate() is also called
+    in-process by monthly_api, plan_shared_flow and gates J52/J55/J57, which
+    build their own trusted payloads; putting request hygiene in the engine
+    would change what those callers compute. This is where untrusted JSON
+    arrives, so this is where it is checked.
+    """
+    errors, coercions = [], []
+    _sim_number(payload, "shift_minutes", errors, coercions)
+    _sim_number(payload, "rain_mm", errors, coercions)
+    # availability is accepted-and-ignored by the engine (J55) and must stay
+    # that way, but a NaN here silently defeats the "you supplied X, ignored"
+    # echo (abs(nan - 1.0) > 1e-9 is False), so the caller would never be told.
+    _sim_number(payload, "availability", errors, coercions)
+    for i, p in enumerate(payload.get("plans") or []):
+        if not isinstance(p, dict):
+            errors.append("plans[%d] must be an object" % i)
+            continue
+        lbl = "plans[%d].n_trucks" % i
+        n = _sim_number(p, "n_trucks", errors, coercions, label=lbl)
+        if n is not None and n != int(n):
+            coercions.append(
+                "%s=%g is not a whole number: tonnage uses %g but the result "
+                "row reports n_trucks=%d (truncated)" % (lbl, n, n, int(n)))
+    return errors, coercions
+
+
 @bp.route('/api/simulate', methods=['POST'])
 def api_simulate():
     """Predict trip time, dwell and production for a multi-route truck plan."""
@@ -2256,12 +2355,31 @@ def api_simulate():
     if not isinstance(payload.get("plans"), list) or not payload["plans"]:
         return jsonify({"error": "supply plans: [{source, destination, n_trucks}]",
                         "results": [], "summary": {}}), 400
+    # INPUT VALIDATION. Audited 2026-08-12 as absent, and the gap was not
+    # cosmetic: n_trucks=-5 returned HTTP 200 with -258 t produced, and
+    # n_trucks=NaN returned HTTP 500 with the raw Python error in the body.
+    # A planner cannot tell a wrong number from a right one, so a refused
+    # request is the only safe answer to an impossible fleet.
+    errors, coercions = _sim_validate(payload)
+    if errors:
+        return jsonify({"error": "invalid simulate input: " + "; ".join(errors),
+                        "invalid_fields": errors,
+                        "results": [], "summary": {}}), 400
     try:
-        return jsonify(plan_simulator.simulate(payload))
+        out = plan_simulator.simulate(payload)
     except Exception as e:                # noqa: BLE001
-        print("[sim_api] simulate failed: %s" % e)
-        return jsonify({"error": "simulation failed: %s" % e,
+        # Do not put the exception text in the body. It used to ship Python
+        # internals ("cannot convert float NaN to integer") to the browser; the
+        # detail belongs in the server log, where it already is.
+        print("[sim_api] simulate failed: %r" % (e,))
+        return jsonify({"error": "simulation failed",
+                        "error_type": type(e).__name__,
                         "results": [], "summary": {}}), 500
+    if coercions and isinstance(out, dict) and isinstance(out.get("summary"), dict):
+        # Accepted, but not silently: the caller learns which of its inputs the
+        # engine had to reinterpret before believing the tonnage.
+        out["summary"]["input_coercions"] = coercions
+    return jsonify(out)
 
 
 @bp.route('/api/simulate/options', methods=['GET'])
@@ -2757,8 +2875,24 @@ def api_plan_material_mix():
                       "trips": int(r[1]),
                       "sharePct": round(100.0 * int(r[1]) / total, 1)} for r in rows]
         conn.close()
-    except Exception as e:
-        return jsonify({"ok": False, "error": "material query failed: %s" % e}), 503
+    except Exception as e:  # noqa: BLE001
+        # THIRD MODE (CLAUDE.md): DB configured but UNREACHABLE — the normal
+        # state here, the site VPN drops every few minutes. Returning 503 with
+        # an error payload was the exact defect the fixture doctrine exists to
+        # prevent: the page logged a console error and the panel rendered
+        # empty while perfectly good data sat one layer away. Prefer this
+        # route's own STALE cache (real data from minutes ago, self-flagged),
+        # then the fixture — same precedent as api_weighbridge_summary. Never
+        # a bare error payload.
+        if hit:
+            stale = dict(hit["data"])
+            stale["stale"] = True
+            stale["staleAgeSec"] = int(time.time() - hit["ts"])
+            stale["staleReason"] = "database unreachable: %s" % str(e)[:160]
+            return jsonify(stale)
+        out = {"ok": True, "fixture": True, "route": [],
+               "materials": [{"code": c, "name": n} for c, n in _MATERIAL_NAMES.items()]}
+        return jsonify(_served_from_fixture(out, "database unreachable: %s" % str(e)[:160]))
     out = {"ok": True, "route": route,
            "materials": [{"code": c, "name": n} for c, n in _MATERIAL_NAMES.items()],
            "source": "WBN_DATABASE.dbo.HAULAGE (MATERIAL column, all history)",
@@ -3173,11 +3307,17 @@ def api_congestion_model():
                 kw[name] = cast(v)
             except (TypeError, ValueError):
                 return jsonify({"ok": False, "error": "%s must be numeric" % name}), 400
-    _others = _parse_others(a.get('others'))
+    # `others` is BACKGROUND traffic only, on both congestion endpoints. The
+    # self key is dropped inside _parse_others (one implementation, shared with
+    # /api/congestion_curve) so that this route's fleet is counted exactly once,
+    # from n_trucks. It used to be counted twice when a caller passed its whole
+    # plan: TF>HUAFEI at 322 DT reported road v/c 0.312 here against 0.193 from
+    # the curve endpoint on the identical map.
+    _others = _parse_others(a.get('others'), route)
     if _others:
         from congestion.segments import segment_trucks
         fleet = dict(_others)
-        fleet[route] = fleet.get(route, 0.0) + float(n_trucks)
+        fleet[route] = float(n_trucks)
         kw['segment_fleet'] = segment_trucks(fleet)
     ctr = (a.get('contractor') or '').strip().upper()
     if ctr:
@@ -3187,6 +3327,13 @@ def api_congestion_model():
     except (ValueError, ArithmeticError) as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     out["ok"] = True
+    # State the contract in the response, not only in the source. Two endpoints
+    # that take the same `others` map must be readable as taking the same thing.
+    out["others_basis"] = (
+        "others = BACKGROUND routes only; this route's own fleet comes from "
+        "n_trucks and its key is dropped from others if present. Same rule as "
+        "/api/congestion_curve, where the sweep axis supplies it.")
+    out["others_routes"] = sorted(_others) if _others else []
     # Owner 2026-08-21: loader counts follow the measured trucks-per-loader
     # ratio (calibration n_trucks_ref / n_loaders at the reference fleet);
     # 15 where unmeasured (Burt & Caccetta 2007 balanced match factor) —
@@ -3227,12 +3374,30 @@ def _saturation_reference():
     return data
 
 
-def _parse_others(raw):
+def _parse_others(raw, self_route=None):
     """others = JSON [{route, dt}...] or {route: dt} -> {canonical route: dt}.
 
     The plan's OTHER routes: with these, the curve/model endpoints price the
     route under the whole plan's segment traffic (owner, 2026-08-22: every
-    scenario calculates on the segment-based model)."""
+    scenario calculates on the segment-based model).
+
+    `self_route` is dropped from the result, and BOTH congestion endpoints pass
+    it. That used to be a private habit of /api/congestion_curve (a bare
+    others.pop after the call) while /api/congestion_model kept the key, so the
+    same `others` map meant two different things depending on which endpoint you
+    sent it to. Measured on TF>HUAFEI at 322 DT with the full plan in `others`:
+    the model reported road v/c 0.312 against the curve's 0.193, because the
+    route's own 322 trucks were counted once in `others` and again as n_trucks.
+    Both endpoints price the SAME question, so `others` has to mean the same
+    thing in both, and the de-duplication has to live in one place -- here --
+    rather than in a line each caller may or may not remember to write.
+
+    The convention, stated once: `others` is BACKGROUND traffic only. The
+    route's own fleet comes from n_trucks (model) or the sweep axis (curve).
+    Sending the whole plan is therefore safe and is what the shipped client does
+    anyway -- planSegOthersFor() in static/js/plan.js:345 already filters the
+    self key, so this changes nothing for it and stops punishing anyone who
+    forgets."""
     if not raw:
         return {}
     try:
@@ -3257,6 +3422,8 @@ def _parse_others(raw):
             o, _, d = r.partition('>')
             key = '%s>%s' % (_canon(o), _canon(d))
             out[key] = out.get(key, 0.0) + v
+    if self_route:
+        out.pop(str(self_route), None)
     return out
 
 
@@ -3288,8 +3455,9 @@ def api_congestion_curve():
         rain_mm = 0.0
     proportional = str(a.get("proportional") or "").strip().lower() in (
         "1", "true", "yes")
-    others = _parse_others(a.get('others'))
-    others.pop(route, None)          # the route's own fleet is the sweep axis
+    # The route's own fleet is the sweep axis, so it must not also arrive as
+    # background. _parse_others drops it -- same call the model endpoint makes.
+    others = _parse_others(a.get('others'), route)
     from congestion.config import route_params as _route_params
     rp = _route_params(route)
     if not rp.get("calibrated") and not others:
@@ -3390,11 +3558,13 @@ def api_congestion_plan():
     """Section-resolved pricing for a WHOLE plan (owner, 2026-08-21).
 
     POST {rows:[{route, dt, loaders?, foreign?}], rain_mm?} -> per-route
-    trips/DT with the shared-road correction (plan flows vs own flows on
-    each chainage window) and the per-section table: trucks on the window,
-    flow vs measured capacity, v/c, measured speed. The plan builder
-    multiplies the calibrated curve by shared_road_ratio so every row is
-    priced as one day on one road network, not row by row."""
+    trips/DT and the per-section table: trucks on the window, flow vs the
+    OFFICIAL geometric capacity (congestion.segments / the speed-limit
+    sheets), v/c, limit speed, plus the measured GPS speed and demonstrated
+    peak in their own labelled columns. VISIBILITY ONLY: shared_road_ratio
+    is reported and consumed by nothing — the owner reverted it out of the
+    pricing curve on 2026-08-21 ("BLB trips falls like hell") because its
+    capacity basis was the median observed peak. See response['basis']."""
     from congestion.sections import price_plan
     body = request.get_json(silent=True) or {}
     try:

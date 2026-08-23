@@ -2341,9 +2341,11 @@
           +'<td class="r">'+x.speed_free_kmh+(x.speed_cong_kmh?' → '+x.speed_cong_kmh:'')+' km/h</td></tr>').join('')
         +'</tbody></table>'
         +'<div class="muted" style="font-size:11px;margin-top:4px">Road windows are INFORMATION '
-        +'only: trucks and flow per chainage section at measured GPS speeds. Cap/hr is the median '
-        +'observed peak (what the section has demonstrated, not a limit); pricing stays on the '
-        +'calibrated per-route curves.</div>'
+        +'only: pricing stays on the calibrated per-route curves. Cap/hr is the OFFICIAL geometric '
+        +'capacity (2025-08-11 speed-limit sheets: slowest bin speed ÷ 50 m following, one '
+        +'loaded lane) — the same basis as the road-crowding card, which states 2× because '
+        +'it counts both directions. Speed is the limit-implied free speed. A demonstrated peak is '
+        +'not a capacity and prices nothing.</div>'
       :'';
     const s4=planRulesS4Active()
       ?' <span class="plan-cong-badge saturated" title="Day-04 plan = Scenario 4: same as S3 '

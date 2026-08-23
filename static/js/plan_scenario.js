@@ -937,7 +937,7 @@ function planFetchRoadCrowding(){
 function planRenderRoadCrowding(data,meta){
   const box=q('plan-road-crowding');if(!box)return;
   meta=meta||{};
-  const iwipChk=`<label class="plan-rc-iwip" title="Full day = two 12 h shifts (07:00 day + 19:00 night), releases re-staggered at the changeover. Untick for the day shift only.">
+  const iwipChk=`<label class="plan-rc-iwip" title="Full day = two 12 h shifts (07:00 day + 19:00 night). Trips in flight at the changeover run to completion. Untick for the day shift only.">
       <input type="checkbox" ${_planCrowdWholeDay?'checked':''} onchange="planCrowdToggleDay(this)"> whole day (2\u00d712 h)
     </label>
     <label class="plan-rc-iwip" title="Add the measured IWIP/Position trucks (their last-shift paths, scaled to the Other-trips input) to the road occupancy. They share POS 12\u2013FENI with our hauls. Default OFF.">
@@ -965,8 +965,16 @@ function planRenderRoadCrowding(data,meta){
       const cls=r>=1?'rc-high':r>=0.7?'rc-watch':c>0?'rc-open':'rc-idle';
       const night=data.whole_day&&b>=shiftLen?' rc-night':'';
       const edge=data.whole_day&&b===shiftLen?' rc-shift-edge':'';
-      const tip=`${escH(s.section)} · ${String(hourLbls[b]).padStart(2,'0')}:00 · ${c} truck${c===1?'':'s'} on section (cap ~${Math.round(cap)}/bin${cap?` · ${Math.round(100*r)}%`:''})${night?' · night shift':''}`;
-      return `<div class="rc-cell ${cls}${night}${edge}" title="${tip}">${c>0?c:''}</div>`;
+      // c is MEAN CONCURRENT trucks on the section that hour (a stock), so it
+      // divides by how many FIT at following distance — not by a flow. The
+      // throughput reading lives in flow_per_h / cap_flow_per_h beside it.
+      const cShow=Math.round(c);
+      const fl=(s.flow_per_h||[])[b];
+      const tip=`${escH(s.section)} · ${String(hourLbls[b]).padStart(2,'0')}:00 · ${cShow} truck${cShow===1?'':'s'} on the section on average that hour`
+        +` (fits ~${Math.round(cap)} at ${(data.basis&&data.basis.following_distance_m)||50} m spacing${cap?` · ${Math.round(100*r)}%`:''})`
+        +(Number.isFinite(fl)?` · ${Math.round(fl)} passages/h vs ${Math.round(s.cap_flow_per_h||0)}/h per lane`:'')
+        +`${night?' · night shift':''}`;
+      return `<div class="rc-cell ${cls}${night}${edge}" title="${tip}">${cShow>0?cShow:''}</div>`;
     }).join('');
     const who=(s.plans||[]).join(' · ');
     const shared=s.shared?` <span class="muted">· shared${who.includes('IWIP')?' incl. IWIP':''}</span>`:'';
@@ -982,7 +990,7 @@ function planRenderRoadCrowding(data,meta){
   const chours=data.congestion_hours||[];
   const verdict=chours.length
     ?`\u26a0 Crowded: ${chours.slice(0,4).map(h=>`<b>${escH(h.label)}</b> ${escH((h.sections||[]).join(', '))} (${h.peak_trucks} trucks${h.ratio!=null?` · ${Math.round(100*h.ratio)}%`:''})`).join(' · ')}`
-    :`\u2713 No hour reaches 70% of section capacity — releases stay smooth all shift`;
+    :`\u2713 No hour reaches 70% of the official lane capacity flow — v/c peaks at ${Math.round(100*Math.max.apply(null,secs.map(x=>x.ratio||0)))}%`;
   const iwipNote=meta.nIwip&&_planCrowdIncludeIwip
     ?` · IWIP ${meta.nIwip} path(s) scaled to the Other-trips input`
     :(_planCrowdIncludeIwip?'':' · IWIP excluded (toggle to include)');
@@ -993,8 +1001,8 @@ function planRenderRoadCrowding(data,meta){
     </div>
     <div class="plan-rc-grid">${axis}${rows}</div>
     <div class="muted" style="font-size:10.5px;margin-top:6px">
-      Trucks on each section per hour \u2014 our ${meta.nPlan||0} plan path(s)${iwipNote}${data.whole_day?' · full day: 07:00 day + 19:00 night shift, releases re-staggered at changeover':''}.
-      Cell colour: green &lt;70% of section capacity · amber \u226570% · red \u2265100%.
+      Mean trucks on each section per hour \u2014 our ${meta.nPlan||0} plan path(s)${iwipNote}${data.whole_day?' · full day: 07:00 day + 19:00 night shift':''}.
+      Cell colour: share of the trucks that FIT on the section (green &lt;70% · amber \u226570% · red \u2265100%); the verdict above uses the v/c flow ratio.
       ${escH(data.note||'Advisory only \u2014 never changes simulate tonnes.')}
     </div>`;
 }

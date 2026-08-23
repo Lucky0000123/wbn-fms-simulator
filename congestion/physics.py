@@ -102,22 +102,71 @@ def speed_from_rr(rr_pct: float) -> float:
     return max(5.0, 0.0348 * rr * rr - 1.3239 * rr + 17.696)
 
 
+def rr_speed_ratio(rr_pct: float, rr_ref_pct: float) -> float:
+    """Speed multiplier for moving off the reference rolling resistance.
+
+    The M&S 2023 curve above is the ONLY thing in this module that says how
+    road condition maps to speed, so it is also the only thing entitled to say
+    how much a wetter road slows a truck.  This returns
+
+        speed_from_rr(rr) / speed_from_rr(rr_ref)
+
+    i.e. a pure RATIO, so it can be applied to a *measured* speed without
+    discarding it.  No new coefficient is introduced: at rr == rr_ref the
+    ratio is exactly 1.0 (short-circuited, so callers are bit-identical),
+    and every wetter value is read off the same published curve.
+
+    Monotone: the parabola's vertex sits at rr = 19.0 %, far outside the
+    [0.5, 10] % clamp in speed_from_rr, so speed is strictly decreasing in rr
+    across the whole usable domain -> the ratio never rises with rain.
+    Bounded: the clamp also bounds the ratio.  Worst case reachable from the
+    maintained-road reference (2 %) with the predictor's +2 pp wet bump is
+    speed_from_rr(4)/speed_from_rr(2) = 12.957/15.187 = 0.853, i.e. at most
+    ~17.2 % more road running time.
+    """
+    ref = float(rr_ref_pct)
+    cur = float(rr_pct)
+    if cur == ref:
+        return 1.0
+    v_ref = speed_from_rr(ref)
+    if not (v_ref > 0):
+        return 1.0
+    return speed_from_rr(cur) / v_ref
+
+
 def free_flow_cycle_min(
     distance_km: float,
     *,
     rr_pct: float = 2.0,
+    rr_ref_pct: float | None = None,
     speed_loaded_kmh: float | None = None,
     speed_empty_kmh: float | None = None,
     load_min: float = 5.0,
     spot_min: float = 1.0,
     dump_min: float = 2.0,
 ) -> dict:
-    """Free-flow (zero-queue, zero-traffic) cycle for one round trip."""
+    """Free-flow (zero-queue, zero-traffic) cycle for one round trip.
+
+    `rr_pct` only reached the output when no measured speed was supplied, so a
+    calibrated route silently ignored rolling resistance and therefore ignored
+    rain (owner-reported defect, 2026-08-23).  Supplying `rr_ref_pct` — the
+    rolling resistance the measured speed was observed AT — makes the measured
+    speed scale by `rr_speed_ratio(rr_pct, rr_ref_pct)` instead of being
+    bypassed.  Left None (the default) nothing changes for any caller.
+    """
     if distance_km is None or distance_km < 0:
         raise ValueError("distance_km must be >= 0")
-    v_l = speed_loaded_kmh if (speed_loaded_kmh or 0) > 0 else speed_from_rr(rr_pct)
+    # Ratio only; the measured speed stays the anchor for its own conditions.
+    rr_scale = 1.0 if rr_ref_pct is None else rr_speed_ratio(rr_pct, rr_ref_pct)
+    if (speed_loaded_kmh or 0) > 0:
+        v_l = speed_loaded_kmh * rr_scale
+    else:
+        v_l = speed_from_rr(rr_pct)
     # Empty return runs faster; site GPS shows ~1.25x loaded speed.
-    v_e = speed_empty_kmh if (speed_empty_kmh or 0) > 0 else v_l * 1.25
+    if (speed_empty_kmh or 0) > 0:
+        v_e = speed_empty_kmh * rr_scale
+    else:
+        v_e = v_l * 1.25
     t_haul_loaded = 60.0 * distance_km / v_l
     t_haul_empty = 60.0 * distance_km / v_e
     total = spot_min + load_min + t_haul_loaded + t_haul_empty + dump_min
@@ -130,5 +179,6 @@ def free_flow_cycle_min(
         "t_dump_min": dump_min,
         "speed_loaded_kmh": v_l,
         "speed_empty_kmh": v_e,
+        "rr_speed_scale": rr_scale,
         "distance_km": distance_km,
     }

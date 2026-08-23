@@ -125,12 +125,45 @@ function planContractors(){
   return WBN_HAULERS_FALLBACK.map(n=>seen.get(n));
 }
 function planContractor(name){const want=name||((q('plan-contractor')||{}).value);return planContractors().find(c=>c.name===want)||null;}
-// How this contractor performs vs the whole selection: their Trips/DT ÷ fleet-wide Trips/DT.
-// Clamped so a thin contractor sample can't produce an absurd multiplier.
-function planContractorFactor(c){
-  const fleet=_D&&_D.kpi&&_D.kpi.tripsPerDT;
-  if(!c||!Number.isFinite(c.tripsPerDT)||!Number.isFinite(fleet)||!fleet)return 1;
-  return Math.max(.5,Math.min(1.5,c.tripsPerDT/fleet));
+// ── Contractor pricing has exactly ONE owner: the matched-day transform ─────
+// planContractorFactor() lived here until 2026-08-23 — the contractor's
+// Trips/DT ÷ the FLEET-WIDE Trips/DT, clamped to [0.5,1.5]. It is deleted,
+// not left inert, because a second owner for one concept is how the 0.85
+// availability override (J55) and the capacity card (J71) both survived.
+// It was wrong in SIGN, not only in size: it is measured across every route
+// at once, so it carries fleet size, and the matched same-day history on the
+// TF corridor INVERTS it (RIM/SMA 0.60 measured, against the 1.085 it
+// applied — RIM ran ~140 trucks/day against SMA's ~58).
+//
+// The replacement is the substitution the server itself makes: route_params()
+// drops the contractor's own overhead_per_trip_min into the pooled route
+// record, so with cyc(n) = 1440/trips_pooled(n) − ovh_pooled,
+//     trips_c(n) = 1440 / (cyc(n) + ovh_c)
+// is EXACT — /api/congestion_model?…&contractor=X and this file cannot
+// disagree. Where calibration found no matched-day baseline for the
+// (route, contractor) pair the honest answer is POOLED, no factor at all,
+// which is exactly what the server serves for that pair.
+function planContractorName(contractor){
+  if(!contractor)return null;
+  if(typeof contractor==='string')return contractor.trim().toUpperCase()||null;
+  return contractor.name?String(contractor.name).trim().toUpperCase():null;
+}
+/** Price one contractor off a served curve/model record's POOLED trips/DT.
+ *  rec carries overhead_per_trip_min (pooled) + contractors{NAME:{…}}.
+ *  Returns {trips, basis:'matched-day'|'pooled', ratio} — ratio is exactly 1
+ *  on the pooled branch, and is a LEVEL-DEPENDENT ratio on the other (the
+ *  transform is not a multiplier; it only looks like one at a fixed fleet). */
+function planContractorTrips(rec,tripsPooled,contractor){
+  const flat={trips:tripsPooled,basis:'pooled',ratio:1};
+  if(!(tripsPooled>0))return flat;
+  const name=planContractorName(contractor);
+  const cInfo=name&&rec&&rec.contractors&&rec.contractors[name];
+  const ovhP=rec&&rec.overhead_per_trip_min;
+  if(!cInfo||!Number.isFinite(cInfo.overhead_per_trip_min)||!Number.isFinite(ovhP))return flat;
+  const cyc=Math.max(1,1440/tripsPooled-ovhP);
+  const trips=1440/(cyc+cInfo.overhead_per_trip_min);
+  if(!Number.isFinite(trips)||!(trips>0))return flat;
+  return {trips,basis:'matched-day',ratio:trips/tripsPooled};
 }
 // Day→shift conversion measured from the loaded data rather than assumed: the capability KPI carries
 // both daily and per-shift Trips/DT, so their ratio IS the observed shift share. Scaled when the
@@ -461,7 +494,10 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
   tr+=sec.delta;
   const scale=planRainScale(key,rain);
   const rainDelta=tr*(scale-1);
-  tr=Math.max(.3*(hasDay?m.dayRate:m.avgTr),tr*scale)*planContractorFactor(contractor);
+  // POOLED, deliberately: m.dayRate is every contractor's trips on this path,
+  // and the contractor's own baseline is applied ONCE — on the served curve
+  // below, or not at all. Nothing multiplies a contractor factor in here.
+  tr=Math.max(.3*(hasDay?m.dayRate:m.avgTr),tr*scale);
   // Demonstrated-throughput ceiling + OVER-SATURATION DECAY (day level).
   //
   // Owner 2026-08-12: "if trips/DT keeps falling while trucks keep rising,
@@ -488,8 +524,9 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
   // row being priced from the "others" sum.
   let satFactor=1;
   let _hybridInfo=null;
+  let cBasis='pooled',cRatio=1;
   if(tr>0&&dt>0){
-    let otherDt=0,otherLd=0,sharedDt=0;
+    let otherDt=0,otherLd=0,sharedDt=0,otherFgnDt=0;
     // Owner (2026-08-21): "they are using the same window for going — see it
     // as a complete one-day plan, not one row." Different route KEYS that
     // share the corridor (TF>HUAFEI vs TF>POS 12 after the S4 split; IWIP
@@ -497,6 +534,16 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
     // evaluation fleet weighted by chainage-span overlap. Same-key rows stay
     // at weight 1 (otherDt); the legacy cap keeps the same-key basis only —
     // its demonstrated day cap is a PATH property, not a corridor one.
+    // Same-key ROAD-ONLY rows (an IWIP row on a production route key) used to
+    // fall through every net: planSegOthersFor drops the whole self key, and
+    // the server drops it again (`others.pop(route)` — this route's fleet IS
+    // the sweep axis), while `!r2.foreign` kept them out of otherDt and the
+    // same key kept them out of sharedDt. Their trucks were on the road and
+    // in nobody's arithmetic. They ride the sweep axis now (otherFgnDt), so
+    // the fleet this row is priced at matches the background snapshot's
+    // bg[key] exactly. They stay OUT of the legacy cap demand (nComb): that
+    // ceiling was demonstrated by WBN ticket days, so only WBN trucks may
+    // divide it.
     const spanSelf=typeof _planSpan==='function'?_planSpan(key):null;
     const spanLen=spanSelf?Math.max(1e-6,spanSelf[1]-spanSelf[0]):null;
     // opts.solo: this path's own fleet only (Fleet sensitivity). The rest of
@@ -510,8 +557,9 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
         if(!r2||!r2.key)return;
         const n=(frozen&&r2._allocDt!=null)?r2._allocDt:r2.dt;
         if(!(n>0))return;
-        if(r2.key===key&&!r2.foreign){
-          otherDt+=n;otherLd+=planNLoaders(r2);
+        if(r2.key===key){
+          if(r2.foreign)otherFgnDt+=n;
+          else {otherDt+=n;otherLd+=planNLoaders(r2);}
         }else if(spanSelf){
           const s2=_planSpan(r2.key);
           if(s2){
@@ -521,7 +569,8 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
         }
       });
     }
-    const nComb=dt+otherDt;
+    const nComb=dt+otherDt;          // WBN fleet on this key — legacy cap basis
+    const nEval=nComb+otherFgnDt;    // every truck on this key — curve basis
     const linear=tr*nComb;
     // Rain scales the CEILING too (harsh-test 2026-08-12: with a fixed cap,
     // wet beat dry at over-saturation because rain lowered demand and thus
@@ -530,7 +579,8 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
     const nLoaders=(opts&&Number.isFinite(opts.nLoaders)&&opts.nLoaders>=1)?Math.round(opts.nLoaders):2;
     // HYBRID: when the backend saturation curve is cached, it REPLACES the
     // divide-at-ceiling. tr becomes the physics trips/DT at the COMBINED
-    // fleet (x contractor factor; rain is inside the curve request).
+    // fleet, transformed to this contractor (rain is inside the curve
+    // request; the transform is the block further down).
     // The curve is priced at the route's COMBINED loaders too: rows share
     // one road AND its loading faces. Keying each row's curve on its OWN
     // loaders priced 929 trucks against 4 faces on one TF>HUAFEI row and
@@ -554,24 +604,18 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
       // fleet only, or the cross traffic would be priced twice. The client
       // span-weighted fleet remains solely as the cold-start fallback.
       const segBased=!!hyb.segment_based;
-      const pt=planHybridTripsAt(hyb,segBased?nComb:nComb+sharedDt);
+      const pt=planHybridTripsAt(hyb,segBased?nEval:nEval+sharedDt);
       if(pt&&Number.isFinite(pt.trips_per_dt)&&pt.trips_per_dt>0){
-        let trHyb;
-        // Per-contractor baseline (matched-day calibration) replaces the
-        // fleet-global factor when the route has one — exact transform:
-        // cyc(n) = 1440/trips - ovh_pooled; trips_c = 1440/(cyc + ovh_c).
-        // The global factor was measured fleet-wide and is INVERTED on the
-        // TF corridor (RIM/SMA matched-day 0.60 vs applied 1.085).
-        const coName=contractor&&contractor.name?String(contractor.name).toUpperCase()
-          :(typeof contractor==='string'?contractor.toUpperCase():null);
-        const cInfo=coName&&hyb.contractors&&hyb.contractors[coName];
-        if(cInfo&&Number.isFinite(cInfo.overhead_per_trip_min)
-           &&Number.isFinite(hyb.overhead_per_trip_min)){
-          const cyc=Math.max(1,1440/pt.trips_per_dt-hyb.overhead_per_trip_min);
-          trHyb=1440/(cyc+cInfo.overhead_per_trip_min);
-        }else{
-          trHyb=pt.trips_per_dt*planContractorFactor(contractor);
-        }
+        // Per-contractor baseline — ONE owner, planContractorTrips above:
+        // the matched-day transform where this route's calibration has a
+        // baseline for them, POOLED where it does not. The fleet-global
+        // factor that used to sit in the pooled branch priced SMA on
+        // TF>HUAFEI at 2.05 trips/DT against the server's 2.371 (−13.6%),
+        // precisely because SMA has no matched-day baseline there and the
+        // server therefore answers pooled.
+        const cPrice=planContractorTrips(hyb,pt.trips_per_dt,contractor);
+        const trHyb=cPrice.trips;
+        cBasis=cPrice.basis;cRatio=cPrice.ratio;
         satFactor=tr>0?Math.min(1,trHyb/tr):1;
         tr=trHyb;
         _hybridInfo={modelVersion:segBased?'hybrid_segment':'hybrid',
@@ -610,7 +654,7 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
     // point where the ceiling division would price a truck below 30% of the
     // path's measured rate, the floor holds. This is the same guard the model
     // always had; it also bounds how far beyond data the estimate can fall.
-    const floorTr=.3*(hasDay?m.dayRate:m.avgTr)*Math.min(1,scale)*planContractorFactor(contractor);
+    const floorTr=.3*(hasDay?m.dayRate:m.avgTr)*Math.min(1,scale);   // pooled, as above
     if(!_hybridInfo&&tr<floorTr){
       satFactor=satFactor*(floorTr/tr);
       tr=floorTr;
@@ -639,6 +683,9 @@ function planTripsPerDT(key,dt,rain,contractor,opts){
     cycleTimeMin:_hybridInfo?_hybridInfo.cycleTimeMin:null,
     rho:_hybridInfo?_hybridInfo.rho:null,
     hybridKnee:_hybridInfo?_hybridInfo.knee:null,
+    // What actually priced the contractor on this row, for the attribution
+    // chips: 'matched-day' + the ratio at THIS fleet, or 'pooled' + exactly 1.
+    contractorBasis:cBasis,contractorRatio:cRatio,
     satFactor,dayBasis:hasDay,m,
     nLoaders:(opts&&Number.isFinite(opts.nLoaders)&&opts.nLoaders>=1)?Math.round(opts.nLoaders):2,
     congestionStatus:hint.congestionStatus,bottleneck:hint.bottleneck};
@@ -665,29 +712,43 @@ function planDtForWmt(key,targetWmt,rain,contractor,opts){
   // the plan (the J71 two-renderers lesson).
   const nLoaders=(opts&&Number.isFinite(opts.nLoaders)&&opts.nLoaders>=1)?opts.nLoaders:planBuilderLoaders();
   const sf=typeof planShiftFactor==='function'?planShiftFactor():0.5;
-  const cf=typeof planContractorFactor==='function'?planContractorFactor(contractor):1;
   const hybCurve=typeof planHybridCurveFor==='function'?planHybridCurveFor(key,nLoaders,rain,{proportional:true}):undefined;
   if(hybCurve&&hybCurve.curve&&hybCurve.curve.length){
     let peakT=0,peakN=0;
     for(const pt of hybCurve.curve){
-      // day tonnes -> this shift's tonnes (sf), contractor factor applied
-      const tShift=(pt.total_tonnes!=null?pt.total_tonnes:pt.total_trips*pay)*sf*cf;
+      // Same two ingredients planTripsPerDT prices with, or the ceiling and
+      // the plan disagree (the J71 lesson, and it did in BOTH directions
+      // here): this contractor's trips off the served pooled curve, and this
+      // contractor's t/trip — not the curve's pooled total_tonnes, and never
+      // a fleet-global factor. Measured 2026-08-23 on the old code against
+      // what the model actually prices at the same fleet: TF>POS 12 · RIM
+      // ceiling 62,870 t/shift vs 43,074 priced (+46%, so unreachable
+      // targets sailed through), TF>POS 12 · SMA 51,141 vs 63,713 (−20%, so
+      // REACHABLE targets came back "unreachable" and the allocator stopped).
+      const tShift=planContractorTrips(hybCurve,pt.trips_per_dt,contractor).trips
+        *pt.n_trucks*pay*sf;
       if(tShift>peakT){peakT=tShift;peakN=pt.n_trucks;}
     }
     if(targetWmt>peakT*0.999){
+      // peakN at the last swept point means the curve was still rising when
+      // the sweep ended: that is a RANGE limit, not a demonstrated ceiling.
+      const last=hybCurve.curve[hybCurve.curve.length-1];
       planDtForWmt._lastCeiling={maxT:Math.round(peakT),cap:m&&m.dayTripsCap||null,
-        peakDt:peakN,model:'hybrid'};
+        peakDt:peakN,model:'hybrid',
+        sweptOnly:!!(last&&peakN>=last.n_trucks)};
       return null;
     }
   }else if(m&&Number.isFinite(m.dayTripsCap)&&m.dayTripsCap>0){
     const scale=typeof planRainScale==='function'?planRainScale(key,rain):1;
-    const maxT=m.dayTripsCap*Math.min(1,scale)*sf*cf*pay*planLoaderCapScale(m,nLoaders);   // peak achievable/shift
+    const maxT=m.dayTripsCap*Math.min(1,scale)*sf*pay*planLoaderCapScale(m,nLoaders);   // peak achievable/shift
     if(targetWmt>maxT*0.999){
       planDtForWmt._lastCeiling={maxT:Math.round(maxT),cap:m.dayTripsCap,model:'legacy_divide'};
       return null;
     }
   }
   planDtForWmt._lastCeiling=null;
+  const tAt=n=>{const r=planTripsPerDT(key,n,rain,contractor,opts);
+    return (r&&r.shift>0)?n*r.shift*pay:0;};
   for(let i=0;i<60;i++){
     const e=planTripsPerDT(key,dt,rain,contractor,opts);if(!e||!(e.shift>0))return null;
     const next=targetWmt/(e.shift*pay);
@@ -695,7 +756,36 @@ function planDtForWmt(key,targetWmt,rain,contractor,opts){
     if(Math.abs(next-dt)<.01){dt=next;break;}
     dt=dt+.6*(next-dt);                      // damping keeps the declining-efficiency case stable
   }
-  return Math.max(1,Math.ceil(dt));
+  // The damped fixed point is a SEARCH, not a proof. Near a ceiling it can
+  // still be walking when the 60 rounds run out, and rounding up hid that:
+  // measured on the legacy path 2026-08-23, an 86,110 t target on TF>POS 12
+  // came back as 1,898 DT that deliver 84,422 t — 2.0% short, with no signal
+  // at all. (The Python twin, monthly_api._required_dt_day, has verified its
+  // answer all along; only this side guessed.) So check what we are about to
+  // hand back, and when it does not deliver, bisect the bracket — the same
+  // move that fixed the backend's oscillating Picard solver on 2026-08-21 —
+  // and say so rather than quoting a fleet that misses the target.
+  const out=Math.max(1,Math.ceil(dt));
+  const tOut=tAt(out);
+  if(tOut>=targetWmt*0.995)return out;
+  let lo=out,hi=Math.max(lo+10,Math.ceil(lo*2)),tHi=tAt(hi),best=Math.max(tOut,tHi),grew=0;
+  while(tHi<targetWmt&&grew++<8&&hi<200000){
+    lo=hi;hi=Math.ceil(hi*2);tHi=tAt(hi);if(tHi>best)best=tHi;
+  }
+  if(tHi>=targetWmt*0.995){
+    while(hi-lo>1){
+      const mid=Math.ceil((lo+hi)/2);
+      if(tAt(mid)>=targetWmt)hi=mid;else lo=mid;
+    }
+    return Math.max(1,hi);
+  }
+  // No fleet in the search reached it. Quote the tonnage, NOT the fleet the
+  // search ended on: on a plateau that is an arbitrarily large number
+  // (measured: 311,552 DT for a target 0.6% over the plateau) and reads as a
+  // recommendation. peakDt stays null so no caller can print it as one.
+  planDtForWmt._lastCeiling={maxT:Math.round(best),cap:(m&&m.dayTripsCap)||null,
+    peakDt:null,searchDt:hi,model:'no_convergence'};
+  return null;
 }
 // ── Cross-plan interactions panel (the WHY under "Add a haul path") ─────────
 // The estimate above it already prices these effects in; this panel makes each
@@ -1599,8 +1689,18 @@ function planUpdatePathMeta(){
     return;
   }
   const m=_pathResp&&_pathResp[s+'>'+d];
-  const c=planContractor(),f=planContractorFactor(c);
+  const c=planContractor();
   if(!m){ hint.innerHTML=''; return; }
+  // Attribution must name what PRICED the row, so ask the pricer rather than
+  // quoting a factor of its own (the chip carried the deleted fleet-global
+  // factor for months after the transform took over). noWb: the weighbridge
+  // ceiling has its own panel and this is a hint.
+  const _hintDt=Math.max(1,parseFloat((q('plan-dt')||{}).value)||1);
+  const _hintRain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0);
+  const _hintE=planTripsPerDT(s+'>'+d,_hintDt,_hintRain,c,
+    {nLoaders:planBuilderLoaders(),noWb:true});
+  const cBasis=_hintE&&_hintE.contractorBasis==='matched-day'?'matched-day':'pooled';
+  const f=_hintE&&Number.isFinite(_hintE.contractorRatio)?_hintE.contractorRatio:1;
   const chips=[];
   chips.push(`<span class="plan-hint-chip" title="Main-cluster trips/DT per day (≈ half per 12h shift)"><b>${fmt(m.avgTr,2)}</b><span class="u">trips/DT · day</span></span>`);
   chips.push(`<span class="plan-hint-chip" title="Approx. trips/DT on one 12h shift"><b>${fmt(m.avgTr/2,2)}</b><span class="u">/ shift</span></span>`);
@@ -1612,8 +1712,12 @@ function planUpdatePathMeta(){
   if(c){
     let cTxt=escH(c.name);
     if(Number.isFinite(c.tf))cTxt+=` ${fmt(c.tf,1)} t`;
-    if(f!==1)cTxt+=` · ${fmt(f,2)}×`;
-    chips.push(`<span class="plan-hint-chip"><b>${cTxt}</b><span class="u">contractor</span></span>`);
+    const shownF=cBasis==='matched-day'&&Math.abs(f-1)>=.005;
+    if(shownF)cTxt+=` · ${fmt(f,2)}×`;
+    const cTip=cBasis==='matched-day'
+      ?`Matched same-day calibration for ${escH(c.name)} on this route: their own overhead per trip replaces the pooled one (trips = 1440 ÷ (cycle + overhead)). The ${fmt(f,2)}× is that transform AT ${fmt(_hintDt)} DT, not a fixed multiplier.`
+      :`No matched-day baseline for ${escH(c.name)} on this route, so this path is priced POOLED — every contractor's measured days together, exactly what the server answers for this pair.`;
+    chips.push(`<span class="plan-hint-chip" title="${cTip}"><b>${cTxt}</b><span class="u">contractor · ${cBasis}</span></span>`);
   }
   hint.innerHTML=`<div class="plan-hint-path">
     <div class="plan-hint-route"><b>${escH(s)} → ${escH(d)}</b><span class="muted">path response · main cluster</span></div>
@@ -1639,9 +1743,10 @@ function _planModelLabel(v){
   const cv=Number.isFinite(v.cvR2), shown=cv?v.cvR2:v.r2;
   let text=escH(name);
   if(Number.isFinite(shown))text+=` · R² ${fmtExact(shown,2)}`;
-  if(Number.isFinite(v.contractorFactor)&&v.contractorFactor!==1){
-    text+=` · factor ${fmtExact(v.contractorFactor,2)}×`;
-  }
+  // No contractor clause here on purpose: this label names the TRAINED model,
+  // whose tonnage comes from /api/predict with its own contractor handling.
+  // It used to append this file's fleet-global factor to it — one panel, two
+  // models, the J71 shape.
   const weak=Number.isFinite(v.baselineLift)&&v.baselineLift<0.01;
   return {cls:weak?'warn':'ok', text};
 }
@@ -1656,8 +1761,11 @@ function _planRenderEstimate(v){
     ['Trips',fmtExact(tripsShow)],
     ['t / trip',v.foreign?'—':fmtExact(v.payload,1)+' t'],
   ];
-  if(Number.isFinite(v.contractorFactor)&&v.contractorFactor!==1){
-    lines.push(['Contractor',fmtExact(v.contractorFactor,2)+'×']);
+  if(v.contractorBasis==='matched-day'&&Number.isFinite(v.contractorFactor)
+     &&Math.abs(v.contractorFactor-1)>=.005){
+    lines.push(['Contractor',fmtExact(v.contractorFactor,2)+'× matched-day']);
+  }else if(v.contractorBasis==='pooled'){
+    lines.push(['Contractor','pooled (no matched-day baseline)']);
   }
   if(v.cycle&&Number.isFinite(v.cycle.cycle_time_min)){
     lines.push(['Cycle',fmtExact(v.cycle.cycle_time_min,0)+' min']);
@@ -1737,9 +1845,19 @@ function planPreview(){
     dt=planDtForWmt(key,planWmtTargetShift(),rain,c,{nLoaders:planBuilderLoaders()});
     if(!dt){
       const ceil=planDtForWmt._lastCeiling;
+      if(ceil&&ceil.model==='no_convergence'){
+        // Say the true thing: the solver could not find a fleet that
+        // delivers, and the best it reached is a measured number. Quoting a
+        // fleet that misses the target is what this branch replaced.
+        return blank('\u26d4 Could not size a fleet that actually delivers this target here \u2014 the best the model reaches on this path is ~'
+          +fmtExact(ceil.maxT*planHorizonFactor())+' t/'+planHorizonLabel()
+          +', and adding trucks past that point stops adding tonnes. Lower the target or split the tonnage onto another road.');
+      }
       if(ceil&&ceil.model==='hybrid'){
         return blank('\u26d4 STOP: this road maxes out at ~'+fmtExact(ceil.maxT*planHorizonFactor())+' t/'+planHorizonLabel()
-          +(ceil.peakDt?' (reached near '+fmtExact(ceil.peakDt)+' DT \u2014 more trucks past that add congestion, not tonnes)':'')
+          +(ceil.peakDt?(ceil.sweptOnly
+            ?' \u2014 the most the model has been swept to ('+fmtExact(ceil.peakDt)+' DT); it was still rising there, so this is the modelled range, not a demonstrated ceiling'
+            :' (reached near '+fmtExact(ceil.peakDt)+' DT \u2014 more trucks past that add congestion, not tonnes)'):'')
           +'. Lower this path\u2019s target or split the tonnage onto another road, then continue to the next priority.');
       }
       return blank(ceil
@@ -1753,7 +1871,12 @@ function planPreview(){
   if(!e)return blank('No history for this path yet.');
   trips=dt*e.shift; wmt=trips*pay.tf;
   const swapped=_planMode==='wmt';
-  const cFactor=planContractorFactor(c);
+  // Attribution follows the pricer: the matched-day transform's ratio AT THIS
+  // fleet, or nothing at all when the pair is priced pooled. A chip that
+  // quotes a multiplier the model never applied is the same defect class as
+  // the capacity card (J71) at label scale.
+  const cBasis=e.contractorBasis==='matched-day'?'matched-day':'pooled';
+  const cFactor=(cBasis==='matched-day'&&Number.isFinite(e.contractorRatio))?e.contractorRatio:1;
   const warns=[];
   const _envW=planDtEnvelope(m);
   if(_envW!=null&&dt>_envW)warns.push(`⚠ ${fmtExact(dt)} DT is beyond the ${fmtExact(_envW)} DT ever observed on this path`);
@@ -1764,7 +1887,7 @@ function planPreview(){
   const base={src:s,dst:d,contractor:c?c.name:'—',hours,swapped,warns,foreign:false,
     dt,tripsPerDt:e.shift,trips,wmt,payload:pay.tf,payloadSrc:pay.src,model:'local',
     dtMax:planDtEnvelope(m),
-    contractorFactor:cFactor};
+    contractorFactor:cFactor,contractorBasis:cBasis};
   _planRenderEstimate(base);                       // stage 1 — instant, local
   planRenderImpacts(key,dt,e,c);                   // WHY panel under the builder
   planFetchBestHistory(s,d,dt,c?c.name:null,rain); // side panel: best past days at this fleet
@@ -1827,7 +1950,9 @@ function planPreview(){
           cvR2:res.model_cv_r2, cvBasis:res.model_cv_basis,
           cvBest:res.model_cv_best, isCvWinner:res.model_is_cv_winner,
           selectedModel:res.model_selected, cycle:res.cycle,
-          contractorFactor:cFactor});
+          // These numbers are the TRAINED model's, not this file's, so they
+          // carry no contractor attribution from here.
+          contractorFactor:1,contractorBasis:null});
       })
       .catch(()=>{
         if(seq!==_planPredictSeq)return;
@@ -2136,6 +2261,16 @@ function computePlan(){
     return;}
   let totTrips=0,totWmt=0,totDt=0,beyond=false,hasForeign=false;
   let visTrips=0,visWmt=0,visDt=0,visLd=0,visN=0,totLd=0;
+  // ONE convention for the foot, because it had two: origin-filtered totals
+  // counted foreign DT while the unfiltered TOTAL did not, and loaders
+  // counted foreign in BOTH — so picking "All" could shrink the fleet the
+  // page had just shown for one pit. Rules §10.8: IWIP/road-only rows are
+  // their own fleet, never taken from and never counted against the
+  // contractor pools, and the hero already totals contractor DT only. So the
+  // foot is the CONTRACTOR fleet in both modes — DT, loaders, trips, tonnes
+  // — and the road-only rows it excludes are named in the tooltip instead of
+  // vanishing silently.
+  let fgnDt=0,fgnLd=0,fgnN=0,visFgnDt=0,visFgnLd=0,visFgnN=0;
   const hz=planHorizonFactor();
   const srcsAll=[...new Set(ids.map(id=>planHoldSrc(_planDraft[id])).filter(Boolean))];
   if(_planHoldOrigin&&srcsAll.indexOf(_planHoldOrigin)<0)_planHoldOrigin='';
@@ -2151,10 +2286,11 @@ function computePlan(){
     const path=`<b>${escH(r.key.replace('>',' \u2192 '))}</b>`;
     const show=!_planHoldOrigin||planHoldSrc(r)===_planHoldOrigin;
     if(r.foreign)hasForeign=true;
-    totLd+=planNLoaders(r);
+    if(!r.foreign)totLd+=planNLoaders(r);
+    else {fgnN+=1;fgnDt+=r.dt;fgnLd+=planNLoaders(r);}
     if(!m&&r.foreign&&Number.isFinite(r.measTrips)){
       if(!show)return '';
-      visN+=1;visDt+=r.dt;visLd+=planNLoaders(r);
+      visN+=1;visFgnN+=1;visFgnDt+=r.dt;visFgnLd+=planNLoaders(r);
       const rate=r.measTrucks?r.measTrips/r.measTrucks:0,ftrips=r.dt*rate*hz;
       return holdTr(id,'plan-hold-road',path+' <span class="plan-hold-tag" title="Road-only: congestion, no WMT">road</span>',fmtExact(Math.round(ftrips)),'<span class="muted">\u2014</span>',null);
     }
@@ -2166,7 +2302,7 @@ function computePlan(){
     const trips=r.dt*e.shift*hz,wmt=trips*pay.tf;
     if(r.foreign){
       if(!show)return '';
-      visN+=1;visDt+=r.dt;visLd+=planNLoaders(r);
+      visN+=1;visFgnN+=1;visFgnDt+=r.dt;visFgnLd+=planNLoaders(r);
       return holdTr(id,'plan-hold-road',path+' <span class="plan-hold-tag" title="Road-only: congestion, no WMT">road</span>',fmtExact(Math.round(trips)),'<span class="muted">\u2014</span>',e);
     }
     totTrips+=trips;totWmt+=wmt;totDt+=r.dt;
@@ -2188,13 +2324,17 @@ function computePlan(){
         return `<button type="button" class="plan-src-chip${on?' on':''}" style="--src:${col}" onclick="planHoldOriginSet('${escH(s)}')"><i></i>${escH(s)}</button>`;
       }).join('');
   }
-  const footN=_planHoldOrigin?visN:ids.length;
-  const footDt=_planHoldOrigin?visDt:totDt;
+  const footN=_planHoldOrigin?visN:ids.length;          // rows shown, road-only included
+  const footDt=_planHoldOrigin?visDt:totDt;             // contractor fleet only (§10.8)
   const footLd=_planHoldOrigin?visLd:totLd;
   const footTr=_planHoldOrigin?visTrips:totTrips;
   const footWmt=_planHoldOrigin?visWmt:totWmt;
+  const fN=_planHoldOrigin?visFgnN:fgnN,fDt=_planHoldOrigin?visFgnDt:fgnDt,fLd=_planHoldOrigin?visFgnLd:fgnLd;
+  const footTip=fN
+    ?`Contractor fleet only. ${fmtExact(fN)} road-only/IWIP row${fN===1?'':'s'} excluded from DT and loaders (${fmtExact(Math.round(fDt))} DT, ${fmtExact(Math.round(fLd))} loaders) — rules §10.8: IWIP trucks are their own fleet. They still load the road in the pricing.`
+    :'Contractor fleet: DT, loaders, trips and tonnes on the rows shown.';
   const footLab=_planHoldOrigin?(_planHoldOrigin+(hz>1?' · day':'')):'TOTAL'+(hz>1?' · day':'');
-  if(foot)foot.innerHTML=`<tr class="plan-total-row"><td><b>${escH(footLab)}</b></td><td class="muted">${footN}</td><td></td><td class="r"><b>${fmtExact(Math.round(footDt))}</b></td><td class="r"><b>${fmtExact(Math.round(footLd))}</b></td><td class="r"><b>${fmtExact(Math.round(footTr))}</b></td><td class="r"><b>${fmtExact(Math.round(footWmt))} t</b></td><td></td><td></td></tr>`;
+  if(foot)foot.innerHTML=`<tr class="plan-total-row" title="${escH(footTip)}"><td><b>${escH(footLab)}</b></td><td class="muted">${footN}</td><td></td><td class="r"><b>${fmtExact(Math.round(footDt))}</b></td><td class="r"><b>${fmtExact(Math.round(footLd))}</b></td><td class="r"><b>${fmtExact(Math.round(footTr))}</b></td><td class="r"><b>${fmtExact(Math.round(footWmt))} t</b></td><td></td><td></td></tr>`;
   const names=[...new Set(ids.map(id=>_planDraft[id].contractor))];
   const mats=[...new Set(ids.map(id=>(_planDraft[id].material||'').trim()).filter(Boolean))];
   const otherN=Math.round(_planOtherTrips||0);

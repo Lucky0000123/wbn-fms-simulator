@@ -30,6 +30,20 @@ NODE_KM = {
     'FENI KM0': 0.0, 'FENI 0': 0.0, 'HUAFEI': 0.0, 'BSE': 0.0,
 }
 
+# Spur origins are NOT on the stick, but they JOIN it: a BLB truck runs the
+# spur and then the lower mainline from this chainage to its destination.
+# Survey (data/haul_road_chainage_public.csv, 2026-08-23): the mainline is
+# three contiguous runs on ONE datum (CRD 0.000-7.850, KR 7.875-38.975,
+# TOFU 39.000-67.800), and road BLB is surveyed on that same datum — its
+# km 2.450 point sits 0.2 m from the mainline's own km 2.450 on CRD, the
+# polylines then separating to 87 m by km 2.575. physics.py agrees from the
+# other direction ("joins at ~2.5 km + 17.4 km spur"; SPUR_KM 19.9 =
+# 2.5 + 17.4), to ~50 m. ONE home for this number — import it, never retype.
+# Charging BLB to a spur pseudo-section ALONE under-counts S4 (the tightest
+# section) by 28% on the real 2026-09-03 plan; pinning BLB at 67.8 (the old
+# NODE_KM bug) over-counted it across the whole mainline instead.
+SPUR_JOIN_KM = {'BLB': 2.45}
+
 # Capacity now comes from the OFFICIAL speed-limit sheets + road geometry
 # (speed_limits.py; owner documents 2026-08-22): one loaded lane, no
 # overtaking, capacity = slowest bin speed / following distance. The old

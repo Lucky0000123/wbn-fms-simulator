@@ -76,9 +76,15 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
 
     # ── Layer 1: free flow ────────────────────────────────────────────────
     # Wet road: rolling resistance rises with rain (maintained 2% -> ~4% wet).
-    rr = float(p["rr_pct"]) + (2.0 if rain_mm >= 10 else (1.0 if rain_mm >= 1 else 0.0))
+    # rr_dry is the condition the route's MEASURED speed was observed at, so it
+    # is also the reference the wet ratio is taken against.  Passing it makes
+    # rain reach a calibrated route: without it free_flow_cycle_min took the
+    # measured speed verbatim and dropped rr_pct on the floor, which is why
+    # rain_mm was a silent no-op on every calibrated route (2026-08-23).
+    rr_dry = float(p["rr_pct"])
+    rr = rr_dry + (2.0 if rain_mm >= 10 else (1.0 if rain_mm >= 1 else 0.0))
     ff = physics.free_flow_cycle_min(
-        dist, rr_pct=rr,
+        dist, rr_pct=rr, rr_ref_pct=rr_dry,
         speed_loaded_kmh=p.get("speed_loaded_kmh"),
         load_min=float(p["load_min"]), spot_min=float(p["spot_min"]),
         dump_min=float(p["dump_min"]))
@@ -90,8 +96,10 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
     if _finite(p.get("road_free_min")) and p["road_free_min"] > 0:
         rain_scale = 1.0
         if rain_mm >= 1:
+            # Dry baseline: rr_pct == rr_ref_pct, so the ratio is exactly 1.0
+            # and this is the unscaled measured speed by construction.
             ff_dry = physics.free_flow_cycle_min(
-                dist, rr_pct=float(p["rr_pct"]),
+                dist, rr_pct=rr_dry, rr_ref_pct=rr_dry,
                 speed_loaded_kmh=p.get("speed_loaded_kmh"),
                 load_min=float(p["load_min"]), spot_min=float(p["spot_min"]),
                 dump_min=float(p["dump_min"]))

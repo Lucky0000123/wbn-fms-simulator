@@ -355,6 +355,16 @@ $PY test_speed_density.py >/dev/null 2>&1
 chk $? "J53  congestion measured, negligible, and kept out of the model" "see: python test_speed_density.py"
 fi
 
+# Road crowding by hour. Runs on plan_corridor_hours._FIXTURE, so no DB/VPN.
+# It was NOT wired to any gate until 2026-08-23 — the hourly DES shipped three
+# times while its only test ran by hand. Asserts the invariances that were
+# actually broken: row ORDER must not change the answer (a peak moved 43% on a
+# swap), v/c must not move with the display bin (2.5x on identical traffic),
+# executed trips must track the priced cadence (-41%..+35%), and a fleet above
+# the sample size must be WEIGHTED, not silently truncated.
+$PY test_plan_shared_flow.py >/dev/null 2>&1
+chk $? "J75  road crowding: order- and bin-invariant, trips match the cadence" "see: python test_plan_shared_flow.py"
+
 # Pure local test with a stubbed connection, so it needs no VPN.
 $PY test_accumulator.py >/dev/null 2>&1
 chk $? "J54  the GPS accumulator is idempotent and loses no history" "see: python test_accumulator.py"

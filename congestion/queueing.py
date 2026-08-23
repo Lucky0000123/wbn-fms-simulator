@@ -19,6 +19,18 @@ def erlang_c(n_trucks: float, cycle_h: float, load_min: float, c_loaders: int,
     Returns wq_min (mean wait per arrival), rho, lq, overloaded flag.
     rho >= 1: the queue is unstable; wq is capped at half the shift and the
     route is flagged - never silently infinite.
+
+    `lq` (mean queue length) is None, not NaN, whenever it does not exist.
+    M/M/c has no steady-state queue length at rho >= 1 - the queue grows without
+    bound - so the honest value is "undefined", and None says that in a way JSON
+    can carry and arithmetic cannot swallow. NaN said the same thing in a form
+    that propagates: every comparison against it is False, so a consumer writing
+    `if lq > threshold` silently takes the safe-looking branch on the one input
+    that is actually overloaded. predict() does not export lq today, so nothing
+    breaks either way; this is about the next consumer, and it costs nothing to
+    be un-swallowable now. `overloaded` is the flag to read, and wq_min stays
+    capped at half a shift exactly as before - both are load-bearing and both
+    are unchanged.
     """
     if n_trucks <= 0 or c_loaders <= 0 or load_min <= 0 or cycle_h <= 0:
         return {"wq_min": 0.0, "rho": 0.0, "lq": 0.0, "overloaded": False,
@@ -30,7 +42,9 @@ def erlang_c(n_trucks: float, cycle_h: float, load_min: float, c_loaders: int,
     rho = r / c
     cap_wq_min = shift_hours * 60.0 * 0.5
     if rho >= 1.0:
-        return {"wq_min": cap_wq_min, "rho": rho, "lq": float("nan"),
+        # Unstable: no steady-state queue length exists. lq=None, not NaN.
+        return {"wq_min": cap_wq_min, "rho": rho, "lq": None,
+                "lq_note": "undefined: rho >= 1, queue grows without bound",
                 "overloaded": True, "lambda_hr": lam, "mu_hr": mu, "c": c}
     # Erlang-C P(wait) via stable summation
     s = 0.0
@@ -42,7 +56,10 @@ def erlang_c(n_trucks: float, cycle_h: float, load_min: float, c_loaders: int,
     term_c = term * r / c                            # r^c / c!
     p0_inv = s + term_c / (1.0 - rho)
     if p0_inv <= 0 or not math.isfinite(p0_inv):
-        return {"wq_min": cap_wq_min, "rho": rho, "lq": float("nan"),
+        # Numerically degenerate normaliser (r^c overflows at large c): the
+        # Erlang-C terms cannot be trusted, so lq is unknown rather than zero.
+        return {"wq_min": cap_wq_min, "rho": rho, "lq": None,
+                "lq_note": "undefined: Erlang-C normaliser not finite",
                 "overloaded": True, "lambda_hr": lam, "mu_hr": mu, "c": c}
     p_wait = (term_c / (1.0 - rho)) / p0_inv
     lq = p_wait * rho / (1.0 - rho)

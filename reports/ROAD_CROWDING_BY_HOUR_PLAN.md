@@ -37,15 +37,31 @@ segment.
   loaded = ARAH MUATAN (down-chainage), empty = ARAH KOSONGAN (up). The
   route's TOTAL road time stays dispatch-anchored; the limits set each
   segment's share — same anchoring discipline as pricing.
-- **Capacity per section** = official min-bin speed ÷ 50 m following,
-  × 2 because occupancy counts both directions and the road has a
-  separate lane each way (S1–S3 1,200/bin, S4 800/bin at 1-h bins). The
-  BLB spur has no limit sheet: 800/bin estimate (20 km/h floor), stated
-  on the row (`cap_basis`).
+- **Two quantities, never mixed** (corrected 2026-08-23 — the original
+  version divided a stock by a flow and moved 2.5× with the display bin):
+  - **flow** — trucks PASSING per hour, measured over a FIXED one-hour
+    window whatever the grid draws, against the official lane capacity
+    (S1–S3 600/h, S4 400/h per lane). This is the headline `ratio` (v/c).
+  - **presence** — trucks ON the section at one moment, against how many
+    physically FIT at 50 m spacing on both lanes (S1 1,152, S2/S3 480,
+    S4 600, BLB spur 698). Reported as `occupancy` (mean concurrent per
+    bin), `peak_concurrent`, and `ratio_presence`.
+  Little's law is the bridge and is checked: presence = flow × time-in-
+  section holds to 3 significant figures on the real plan.
 - **Dwell** stays measured (wet/dry load & dump per point) — the model's
   queue term delays road entry; dwell occupies the pit, not the road.
-- **Shifts**: two 12-h shifts, releases re-staggered at the 19:00
-  changeover (the site runs 2×12 h, not a continuous 24 h).
+- **Shifts**: two 12-h shifts. A trip in flight at the 19:00 changeover
+  **runs to completion**, and the tail past the horizon wraps to t=0 —
+  the plan repeats day after day, so that tail IS the traffic already on
+  the road at the start. (Re-staggering at the changeover was dropped:
+  with a uniform release it produces identical departure times, so all it
+  ever contributed was the 17.9% truck-hour loss it caused.)
+- **Big fleets** are sampled, never truncated: a row over
+  `MAX_TRUCKS_SIM` simulates that many trucks each carrying weight
+  n/sample, so occupancy and flow stay unbiased and only the resolution
+  coarsens. The basis is disclosed in the payload.
+- **BLB joins the stick at chainage 2.45 km** (survey-verified), so BLB
+  trucks appear on the lower mainline as well as their spur.
 
 ## 4. Real plans — what the card actually sends (VERIFIED)
 
@@ -69,12 +85,15 @@ running.
 ## 5. Acceptance criteria (how to check it's real)
 
 1. Load a saved S3/S4 plan → Check capacity → ▶ Run road crowding: the
-   grid shows S1–S4 + spur rows; per-path `cycle_h`/`interval_h`/
-   `trips_per_truck` in the payload match the plan table's trips/DT
-   (interval ≈ 1440 ÷ trips/DT within rounding).
-2. Peak concurrent trucks per section ≈ Σ over routes crossing it of
-   (DT × time-in-section ÷ interval), shifted by release stagger — not
-   the fleet count, not ~12.
+   grid shows S1–S4 + spur rows; per-path `interval_h` matches the plan
+   table's trips/DT (interval ≈ 1440 ÷ trips/DT), and `executed_trips`
+   tracks `expected_trips` within 10% on every path (`trips_per_truck` is
+   a continuous rate, not an integer count).
+2. Presence per section ≈ Σ over routes crossing it of
+   (DT × time-in-section ÷ interval) — this is a stock, so it is tens of
+   trucks, not hundreds. v/c and peak concurrent are invariant to
+   `bin_hours`, and the payload is invariant to the ORDER of the input
+   rows (both asserted in `test_plan_shared_flow.py`).
 3. `basis.phase` = `des_segment_model_roundtrip_2shift`;
    `congestion_clips_tonnes` false; suite 74/74 with J53/J57 green.
 4. Changing rain moves dwell and cycle (wet), never simulate tonnes.

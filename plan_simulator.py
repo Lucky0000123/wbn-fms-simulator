@@ -97,6 +97,35 @@ FALLBACK_EFFECTIVE_RATIO = 4.7
 # Rain slows loading; this is the observed median penalty across points, used
 # only when the caller asks for a wet scenario without naming a point.
 FALLBACK_WET_UPLIFT = 1.08
+# Millimetres of daily rainfall at or above which a plan is priced WET.
+#
+# NOT a new number. This engine's dwell split is BINARY (dwell_model_results.csv
+# carries wet_min / dry_min and nothing in between), so a rain figure has to be
+# bucketed, and the repo already has exactly one binary rain_mm -> wet/dry rule:
+#
+#   static/js/plan_scenario.js:90  planWeatherForSimulate()
+#       const rain=...; return rain>=1?'wet':'dry';   <- the real caller of this API
+#   plan_analogues.py:123          _wet(rain_mm) -> _num(rain_mm) >= 1.0
+#
+# The shipped /api/simulate caller already converts its rain box to a weather
+# token at 1 mm, so honouring rain_mm at the same threshold makes the engine
+# agree with the UI that feeds it rather than contradict it, and makes
+# /api/simulate agree with /api/plan/analogues on the same request body.
+# plan_analogues.py:684 maps the other direction (weather "wet" -> 2.0 mm), which
+# round-trips cleanly through 1.0 and would NOT round-trip through 10.
+#
+# The 10 mm figure in static/js/plan.js:331 and in the weather cache is the
+# THREE-bucket dry/damp/wet convention for the hybrid congestion predictor -- a
+# different consumer with a different, continuous rain term. It is deliberately
+# not reused here: at 10 mm a plan sent as rain_mm=3 would price dry while the
+# same plan sent through the UI prices wet, which is the disagreement this fix
+# exists to remove.
+WET_RAIN_MM = 1.0
+# Weather tokens the engine recognises. Anything else is still priced dry, but
+# says so in summary.weather_input_ignored -- a silently-dropped input is exactly
+# how the 0.85 availability override survived (see the availability block below).
+WET_WEATHER_WORDS = ("wet", "rain", "rainy")
+DRY_WEATHER_WORDS = ("dry", "clear", "fine", "none", "")
 
 _CACHE: dict[str, pd.DataFrame | None] = {}
 
@@ -299,7 +328,71 @@ def simulate(payload: dict) -> dict:
                 "fleet_sizing.trucks_to_roster." % _r
             )
 
-    wet = str(payload.get("weather", "dry")).lower() in ("wet", "rain", "rainy")
+    # ── Weather: rain_mm is FIRST-CLASS, and an unrecognised input says so ───
+    #
+    # `rain_mm` used to be accepted by the request body and then silently
+    # dropped: the engine keyed only on the `weather` token, so rain_mm=20 and
+    # rain_mm=0 returned byte-identical dwell. That is the availability-override
+    # shape again -- a parameter that looks honoured and is not -- so rain_mm now
+    # decides the bucket when it is present and usable, and every path records
+    # which input it actually used in summary.weather_basis.
+    #
+    # This CANNOT move tonnage, and J57 asserts that: rain reaches the reported
+    # cycle through the two dwell points only, and is deliberately kept out of
+    # effective_cycle_min, which is what trips (and therefore tonnes) divide by.
+    # See the "RAIN IS DELIBERATELY NOT APPLIED TO THE EFFECTIVE CYCLE" note.
+    _weather_raw = payload.get("weather", "dry")
+    _weather_word = str(_weather_raw).strip().lower()
+    weather_ignored = None
+    if _weather_word in WET_WEATHER_WORDS:
+        wet, weather_basis = True, 'weather="%s"' % _weather_word
+    elif _weather_word in DRY_WEATHER_WORDS:
+        wet, weather_basis = False, 'weather="%s"' % _weather_word
+    else:
+        wet, weather_basis = False, "default dry (weather not recognised)"
+        weather_ignored = (
+            "weather=%r is not a recognised token and was IGNORED; the plan "
+            "falls back to dry unless rain_mm decides otherwise. Recognised: "
+            "%s (wet) / %s (dry). Send rain_mm for a millimetre figure."
+            % (_weather_raw, ", ".join(WET_WEATHER_WORDS),
+               ", ".join(w for w in DRY_WEATHER_WORDS if w)))
+
+    _rain_raw = payload.get("rain_mm")
+    if _rain_raw is not None and not isinstance(_rain_raw, bool):
+        try:
+            _rain = float(_rain_raw)
+        except (TypeError, ValueError):
+            _rain = None
+        if _rain is None or not np.isfinite(_rain) or _rain < 0:
+            # Never let a junk rain figure decide the bucket, and never raise on
+            # it either: the /api/simulate boundary rejects these with a 400, but
+            # simulate() is also called in-process (monthly_api, plan_shared_flow)
+            # where a 500 would be the only symptom.
+            weather_ignored = (
+                "rain_mm=%r is not a finite, non-negative number; IGNORED. "
+                "Weather taken from %s instead."
+                % (_rain_raw, weather_basis))
+        else:
+            wet = _rain >= WET_RAIN_MM
+            weather_basis = (
+                "rain_mm=%.2f vs %.1f mm wet threshold (same rule as "
+                "planWeatherForSimulate() in static/js/plan_scenario.js and "
+                "_wet() in plan_analogues.py)" % (_rain, WET_RAIN_MM))
+            # A rain figure and a contradicting token is a caller bug worth
+            # naming rather than resolving in silence. Only when the caller
+            # actually SENT a token, though: "weather" defaults to "dry", and
+            # reporting an override against a default the caller never chose is
+            # a warning that always fires, which is one nobody reads.
+            if "weather" not in payload:
+                pass
+            elif _weather_word in WET_WEATHER_WORDS and not wet:
+                weather_ignored = (
+                    'weather="%s" was overridden by rain_mm=%.2f (< %.1f mm): '
+                    "priced DRY." % (_weather_word, _rain, WET_RAIN_MM))
+            elif _weather_word in DRY_WEATHER_WORDS and wet:
+                weather_ignored = (
+                    'weather="%s" was overridden by rain_mm=%.2f (>= %.1f mm): '
+                    "priced WET." % (_weather_word, _rain, WET_RAIN_MM))
 
     # Combined demand at every point, summed ACROSS plans. This is where two
     # plans that load from the same source become one contention problem.
@@ -671,6 +764,14 @@ def simulate(payload: dict) -> dict:
                 "Measured hauling-truck availability is %.1f%% over 215 days."
                 % (100 * MEASURED_HAUL_AVAILABILITY)),
             "weather": "wet" if wet else "dry",
+            # Which INPUT produced that bucket. rain_mm is first-class and wins
+            # when present; the threshold is the repo's existing 1 mm binary
+            # rule, not a new one (see WET_RAIN_MM).
+            "weather_basis": weather_basis,
+            "weather_wet_threshold_mm": WET_RAIN_MM,
+            # Present only when an input was not honoured as sent. Never null on
+            # a silently-dropped parameter -- that is the availability lesson.
+            "weather_input_ignored": weather_ignored,
             "weather_note": (
                 "wet raises DWELL at both ends -- loading and dumping -- and the "
                 "reported cycle time carries both, measured per point, but "

@@ -1607,3 +1607,89 @@ round added the plan document + closed the real-plan gaps:
   in-flight planWhenScenarioIdle/load-flow work stays uncommitted in
   the tree (partial-stage via checkout-reapply, both copies node-checked).
 Suite 74/74.
+
+## 2026-08-23 — five-auditor model QA, then the fixes it ordered
+
+Owner: "quality check for ALL the models, see how they are connected and
+whether they work with all physics and real-world laws" → then "fix those
+issues." Five auditors probed in parallel, each required to prove every
+claim with a measured number and to check BOTH directions of each
+doctrine. Full findings + ranked plan: reports/QA_AUDIT_2026-08-23_FIX_PLAN.md.
+
+**What held** (do not re-open without new evidence): anchors exact on all
+15 calibrated routes incl. per-contractor transforms; bisection solver
+converges, zero monotonicity violations 5..800; tonnage conservation exact
+to 0.0 t; segment free-time shares sum to the route total exactly; speed
+tables cover 0-68 km with no gap/overlap; J53/J57/availability doctrine
+intact; all 13 saves pass DT conservation, walls, the 50/50 split and the
+BLB +250 kt to the tonne; backtest R2 0.926 / MAPE 5.8% reproduced.
+
+**Fixed this round:**
+- **Rain was a NO-OP on every calibrated route.** physics.py let the
+  calibrated speed bypass the rolling-resistance path, so the wet/dry
+  ratio was always exactly 1.0 (delta 0.000000 at 25 mm) while
+  UNCALIBRATED routes did respond -11.7%. Fixed as a RATIO off the
+  existing M&S curve (`rr_speed_ratio`), no new constant; dry proven
+  bit-identical (630 configs x 18,270 fields, max delta 0). Owner impact:
+  the wet-season saves had rain set and were silently ignoring it —
+  2026-10-04 (25 mm) -5.4%, 2026-11-04 (15 mm) -4.7%.
+- **Contractor pricing had three owners.** plan.js used the fleet-global
+  factor where calibration had no matched-day record (client 2.042 vs
+  server 2.363, -13.6%) and even in the WMT->DT ceiling where the exact
+  transform existed. `planContractorFactor` is DELETED (not left inert);
+  client now matches server <=0.03% everywhere. A reachable target that
+  returned "unreachable" now returns 712 DT. **monthly_api.py is the
+  third owner and still uses the old factor — BLOCKED, see below.**
+- **Hourly DES**: silent 400-truck truncation on a mixed basis (priced at
+  the full fleet) -> weighted representative trucks, disclosed; 17.9% of
+  truck-hours lost at the shift boundary -> trips in flight complete and
+  the tail wraps; ROW ORDER changed the answer (peak -43%) -> uniform
+  per-row phase, invariance asserted; executed trips -41%..+35% off the
+  priced cadence -> continuous release; v/c divided a STOCK by a FLOW and
+  moved 2.5x with the display bin -> flow/flow over a fixed hour, with
+  presence reported separately against how many trucks FIT. Card numbers
+  change MEANING (cells are now mean concurrent, ~34-52 not ~207-286);
+  captions updated in the same commit.
+- **BLB joins the stick at chainage 2.45 km** — survey-proven (BLB km
+  2.450 sits 0.2 m from mainline CRD km 2.450 on the same datum,
+  separating to 87 m by km 2.575; physics.py agrees within ~50 m). BLB was
+  wrong in BOTH directions: pinned at 67.8 (TF's chainage) it smeared
+  across the whole mainline; deleting it from the stick would under-count
+  the tightest section 28%. Truth: 456 trucks on S4, not 562 or 355.
+  ONE home: `congestion.segments.SPUR_JOIN_KM`.
+- **sections.py migrated to official capacities** — it still divided by
+  the median OBSERVED peak, so a normal plan read v/c 1.56-2.09 RED on
+  the same screen where the crowding card read 0.17-0.36 (18x apart).
+  Now 0.19-0.35. Anchors IMPROVED (max dev 0.2270 -> 0.0140 trips/DT).
+  Still visibility-only; `shared_road_ratio` reaches no pricing path.
+- **/api/simulate input validation**: -5 trucks produced -258 t, NaN/null
+  gave 500s leaking Python text. Now 400s naming the field; every valid
+  payload byte-identical. `rain_mm` is first-class (1.0 mm threshold, the
+  one the repo already uses in two places) — dwell moves, tonnes do not.
+- **`others` self-key asymmetry** closed (model endpoint double-counted a
+  route against itself: v/c 0.312 vs 0.193).
+- **material-mix returned 503 on an unreachable DB** — the documented
+  THIRD MODE defect, a sixth instance. Now prefers its stale cache, then
+  the tagged fixture. This is what J56 was failing on.
+- **J75 added**: test_plan_shared_flow.py had NEVER been wired to a gate —
+  the hourly DES shipped three times with a hand-run test. Mutation-tested
+  (7 mutants, each failing exactly its intended assertion).
+
+**Score 74/75.** The one failure is J70, which asserts `servedFrom=db` and
+fails only while the site DB is unreachable. D18b flapped again on a
+restart race and passes on a direct probe — probe before investigating.
+
+**BLOCKED on a parallel agent's uncommitted rewrite** (monthly_api.py,
+scenario_api.py, export_saturation_curves.py, plan_sensitivity.js) — do
+NOT commit their hunks: workbook named S1 actually contains S4 data (Year
+total sums ACROSS scenarios, Sep 17% off); two target figures in one S3
+workbook (533,180 t phantom); infeasible targets credited as delivered
+tonnage; frozen reference curves one recalibration stale (+40.7%);
+monthly_api's contractor factor. All are in the fix plan report.
+
+**OWNER DECISIONS PENDING**: (1) the 8 Mt LD clip doctrine reversal that
+agent is implementing REVERSES the recorded 2026-08-19 rule; (2)
+predictor.py still prices BLB against a 72/hr OBSERVED p95 where geometry
+gives 400/hr — same "demonstrated peak read as a limit" defect on the
+PRICING path, and correcting it moves prices; (3) the KR corridor's
+calibrated road time runs 1.7-3.0x its official speed-limit time.
