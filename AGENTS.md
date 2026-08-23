@@ -1675,9 +1675,11 @@ BLB +250 kt to the tonne; backtest R2 0.926 / MAPE 5.8% reproduced.
   the hourly DES shipped three times with a hand-run test. Mutation-tested
   (7 mutants, each failing exactly its intended assertion).
 
-**Score 74/75.** The one failure is J70, which asserts `servedFrom=db` and
-fails only while the site DB is unreachable. D18b flapped again on a
-restart race and passes on a direct probe — probe before investigating.
+**Score 75/75** with the VPN connected (owner reconnected and it was
+re-run clean end to end). While the DB was down it read 74/75, the single
+failure being J70, which asserts `servedFrom=db` — that is the documented
+VPN signature, not a defect. D18b flapped again on a restart race and
+passes on a direct probe; probe before investigating either.
 
 **BLOCKED on a parallel agent's uncommitted rewrite** (monthly_api.py,
 scenario_api.py, export_saturation_curves.py, plan_sensitivity.js) — do
