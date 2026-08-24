@@ -24,6 +24,15 @@ function planDraftToPsPlans(){
   Object.keys(_planDraft||{}).forEach(id=>{
     const r=_planDraft[id];
     if(!r||!r.key)return;
+    // Tenant rows do NOT go to the engine. Two of the six run to RSF, which is
+    // deliberately absent from the model's node map (nothing of ours hauls
+    // there), so the corridor would place them on a fabricated "<PIT> spur"
+    // instead of the S2/S3 kilometres they really occupy — and half the
+    // register resolving correctly while half is invented is worse than a
+    // stated omission. Their effect on trips/DT is already carried as flow.
+    // Putting them on the corridor needs RSF chainage in the corridor's own
+    // node map; until then the corridor says it excludes them.
+    if(r._tenant)return;
     const dt=Math.round((frozen&&r._allocDt!=null)?r._allocDt:r.dt);
     if(!(dt>0))return;
     const parts=(r.key||'').split('>');
@@ -1554,12 +1563,19 @@ function planNavSync(){
   // Contractor fleet only — IWIP road-only trucks are a separate fleet
   // (planning_rules.md §10.8) and must not read as allocatable DT.
   const dt=rows.filter(r=>!r.foreign).reduce((a,r)=>a+(+r.dt||0),0);
-  const iwip=rows.filter(r=>r.foreign).reduce((a,r)=>a+(+r.dt||0),0);
+  // IWIP and the other tenants are BOTH foreign, and both are road-only, but
+  // they are not the same fleet and must not be summed under one label: IWIP
+  // moves OUR material off the POS stockpiles, the tenants move their own and
+  // give us nothing. Counting 1,340 tenant DT as "IWIP" would misname the
+  // biggest fleet on the road.
+  const iwip=rows.filter(r=>r.foreign&&!r._tenant).reduce((a,r)=>a+(+r.dt||0),0);
+  const ten=rows.filter(r=>r._tenant).reduce((a,r)=>a+(+r.dt||0),0);
   const d=q('plan-nav-date'); if(d)d.textContent=date||'no date set';
   const s=q('plan-nav-summary');
   if(s)s.textContent=rows.length
     ? rows.length+' path'+(rows.length===1?'':'s')+' · '+Math.round(dt)+' DT'
       +(iwip>0?' + '+Math.round(iwip)+' IWIP':'')
+      +(ten>0?' + '+Math.round(ten)+' other tenants':'')
     : 'no paths yet';
 }
 

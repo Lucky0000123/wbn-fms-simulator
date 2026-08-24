@@ -381,10 +381,36 @@ function planSegOthersFor(key){
   Object.keys(_planSegBg).forEach(k=>{if(k!==key)o[k]=_planSegBg[k];});
   return o;
 }
+// ── Other tenants (owner register, 2026-08-24) ──────────────────────────
+// Other companies' fleets on our haul road: no tonnage to us, road only.
+// They reach pricing as FLOW (congestion/tenants.py) rather than as trucks in
+// `others`, because a truck count is converted at the HOST route's tempo and
+// the tenants do not share it -- 40 KR>RSF trucks at 5 trips/day push three
+// times the flow of 40 of ours at ~1.2. That is also why the tenant rows the
+// Plan tab draws are kept OUT of the segment background: the road effect has
+// exactly one owner, and counting the rows there too would charge them twice.
+let _planTenants=null;          // {tenants:[...], total_dt} once loaded
+function planTenantsOn(){return !!(_planTenants&&_planTenants.tenants&&_planTenants.tenants.length);}
+function planTenantsInfo(){return _planTenants;}
+async function planTenantsLoad(){
+  if(_planTenants)return _planTenants;
+  try{
+    const r=await fetch('/api/congestion_tenants',{cache:'no-store'});
+    if(!r.ok)return null;
+    const j=await r.json();
+    if(j&&j.ok&&(j.tenants||[]).length)_planTenants=j;
+  }catch(e){}
+  return _planTenants;
+}
 function planHybridCurveFor(key,nLoaders,rain,opts){
   const bucket=planHybridRainBucket(rain);
   const prop=!!(opts&&opts.proportional);
-  const ck=key+'|'+(prop?'prop':String(nLoaders))+'|'+bucket+'|'+_planSegBgSig;
+  // The tenant flag MUST be in the cache key. It changes the answer, and a key
+  // that omits an input serves one question's answer to another question --
+  // the analogue-cache defect of 2026-08-07, which hashed {plans,rain,k} but
+  // not rank/prefer_peak and served match-mode results for best-output asks.
+  const ten=planTenantsOn()?'|ten':'';
+  const ck=key+'|'+(prop?'prop':String(nLoaders))+'|'+bucket+'|'+_planSegBgSig+ten;
   const hit=_planHybridCurves[ck];
   if(hit)return hit;
   // A failed fetch used to cache null FOREVER, so one server blip mid-
@@ -400,7 +426,8 @@ function planHybridCurveFor(key,nLoaders,rain,opts){
     const qs=(prop
       ?('route='+encodeURIComponent(key)+'&proportional=1&max_trucks=800&rain_mm='+rainMm)
       :('route='+encodeURIComponent(key)+'&n_loaders='+nLoaders+'&max_trucks=1000&rain_mm='+rainMm))
-      +(others?'&others='+encodeURIComponent(JSON.stringify(others)):'');
+      +(others?'&others='+encodeURIComponent(JSON.stringify(others)):'')
+      +(planTenantsOn()?'&tenants=1':'');
     fetch('/api/congestion_curve?'+qs)
       .then(r=>r.ok?r.json():null)
       .then(d=>{

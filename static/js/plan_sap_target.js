@@ -1989,7 +1989,10 @@
     // The promise is exposed so the allocate wrapper can AWAIT it between
     // passes: pass 2's Stage F must see these trucks (they saturate the POS
     // weighbridges — wb 0.8 on KR>POS 12) or it re-verifies a fiction.
-    window._planPosTransitP=planRulesPosTransit();
+    window._planPosTransitP=planRulesPosTransit()
+      // Tenant rows land after the POS rows so the road view carries every
+      // fleet on it at once — ours, IWIP's, and the other tenants'.
+      .then(()=>planRulesTenants());
   };
 
   // ── planning_rules.md §5 — POS transit: size IWIP trucks for POS→FeNi ────
@@ -2028,6 +2031,11 @@
     for(const id of Object.keys(d)){
       const r=d[id];
       if(!r||!r.key)continue;
+      // Tenant fleets are not ours to resource: we do not schedule their
+      // loaders, and their routes (KR>RSF, HUAFEI>RSF) are not in our model,
+      // so asking for a trucks-per-loader ratio would fetch a route the
+      // calibration has never seen.
+      if(r._tenant)continue;
       const dt=workingDt(r);
       if(!(dt>0))continue;
       r.loaders=planRulesLoadersFor(dt, await planRulesTpl(r.key));
@@ -2111,6 +2119,11 @@
       Object.keys(d).forEach(id=>{
         const r=d[id];
         if(!r||!r.key)return;
+        // Tenant rows are DISPLAY and road-crowding only. Their pricing effect
+        // arrives as flow via tenants=1 on the curve, so adding their trucks
+        // here as well would charge the same fleet twice — and at our tempo,
+        // which is the wrong unit for them (see planTenantsOn in plan.js).
+        if(r._tenant)return;
         const n=workingDt(r);
         if(n>0)bg[r.key]=(bg[r.key]||0)+n;
       });
@@ -2224,6 +2237,41 @@
       try{planRunScenario({preserveFinalize:true,fromAlloc:true});}catch(e){}
     }
   }
+
+  // ── Other tenants on our road (owner register, 2026-08-24) ───────────────
+  // "I didn't see all these new DT in my plan — add them the same as we show
+  // the IWIP trucks." Same mechanism as the POS-transit rows above: ROAD-ONLY
+  // draft rows (foreign:true) that are counted by road crowding and the
+  // shared-section view, never by production WMT, never by the allocator, and
+  // never drawn from a contractor pool. Rebuilt on every Allocate.
+  //
+  // What is DIFFERENT from the IWIP rows, and must stay different: an IWIP row
+  // is OUR traffic and enters the segment background as trucks. A tenant row
+  // does not — its road cost is already carried as flow by tenants=1 on the
+  // curve, at its own tempo rather than ours. The row is what the owner sees;
+  // the flow is what the model prices. Two representations of one fleet, so
+  // exactly one of them may reach pricing.
+  async function planRulesTenants(){
+    const d=draft();
+    Object.keys(d).forEach(id=>{if(d[id]&&d[id]._tenant)delete d[id];});
+    const info=(typeof planTenantsLoad==='function')?await planTenantsLoad():null;
+    if(!info||!(info.tenants||[]).length)return;
+    info.tenants.forEach(t=>{
+      const dt=Number(t.dt)||0;
+      if(!(dt>0))return;
+      const key=String(t.route||'');
+      if(key.indexOf('>')<0)return;
+      const id='TENANT|'+t.name+'|road';
+      d[id]={key:key,dt:dt,loaders:0,contractor:t.name,
+        source:key.split('>')[0],dest:key.split('>')[1],
+        foreign:true,_tenant:true,_allocDt:dt,
+        _tenantRate:t.trips_per_dt||null,_tenantBasis:t.rate_basis||'',
+        _preAlloc:{dt:dt,pred:0,achv:0,achv_sim:0}};
+    });
+    try{if(typeof computePlan==='function')computePlan();}catch(e){}
+    try{renderAllocView();}catch(e){}
+  }
+  window.planRulesTenants=planRulesTenants;
 
   // ── planning_rules.md §7 — validation bands + post-run summary ───────────
   function planRulesDailyTpd(id,r,dt){

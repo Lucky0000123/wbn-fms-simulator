@@ -3580,6 +3580,13 @@ def api_congestion_curve():
     if rp.get("calibrated") and ref_t and ref_l:
         tpl = float(ref_t) / float(ref_l)
     from congestion.segments import segment_trucks
+    # tenants=1 prices the other tenants' fleets onto the shared segments, the
+    # same flag and the same flow basis as /api/congestion_model. The Plan tab
+    # prices from THIS endpoint, so without it the plan could never see the
+    # register that the Excel column already reports. Default OFF, and the
+    # response states which question it answered so a clear-road curve is never
+    # mistaken for a shared-road one by absence.
+    tenants = str(a.get('tenants') or '').strip().lower() in ('1', 'true', 'yes', 'on')
     step = max(1, max_trucks // 80)
     curve = []
     for nt in range(1, max_trucks + 1, step):
@@ -3591,7 +3598,7 @@ def api_congestion_curve():
                 fleet[route] = fleet.get(route, 0.0) + float(nt)
                 segf = segment_trucks(fleet)
             p = predict(route, float(nt), nl, rain_mm=rain_mm,
-                        segment_fleet=segf)
+                        segment_fleet=segf, tenant_flow_hr=tenants or None)
             curve.append({
                 "n_trucks": nt,
                 "trips_per_dt": p["trips_per_DT_per_day"],
@@ -3627,6 +3634,7 @@ def api_congestion_curve():
                     "calibrated": bool(route_params(route).get("calibrated")),
                     "segment_based": bool(others),
                     "others_n": len(others),
+                    "tenant_traffic": bool(tenants),
                     "overhead_per_trip_min": rp.get("overhead_per_trip_min"),
                     "contractors": _contractors,
                     "loaders_basis": ("proportional" if proportional

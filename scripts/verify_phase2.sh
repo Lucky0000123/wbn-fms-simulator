@@ -444,6 +444,21 @@ chk $? "J76  frozen saturation curves match the current model" "stale: python sc
 $PY test_tenant_traffic.py >/dev/null 2>&1
 chk $? "J77  other tenants take road, never tonnage" "see: python test_tenant_traffic.py"
 
+# J78 — the tenants are VISIBLE in the plan (owner: "I didn't see all these new
+# DT in my plan"), drawn the same way the POS-transit IWIP rows are. A tenant
+# fleet has two representations and only ONE may reach pricing: the ROW the
+# owner reads, and the FLOW the model prices. If the rows also entered the
+# segment background the fleet would be charged twice, at OUR tempo, and
+# nothing on screen would look wrong — trips/DT would just be quietly low.
+# Asserts presence AND absence for that reason. Mutation-tested three ways
+# (rows leaking into the background, rows reaching the engine, pricing no
+# longer asking for the flow), each failing exactly its own assertion.
+if $PY -c "import playwright" >/dev/null 2>&1 \
+   && [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 $BASE/health)" = "200" ]; then
+$PY scripts/check_tenant_plan_rows.py >/dev/null 2>&1
+chk $? "J78  other tenants show in the plan, charged once" "see: python scripts/check_tenant_plan_rows.py"
+fi
+
 # Pure local test with a stubbed connection, so it needs no VPN.
 $PY test_accumulator.py >/dev/null 2>&1
 chk $? "J54  the GPS accumulator is idempotent and loses no history" "see: python test_accumulator.py"
