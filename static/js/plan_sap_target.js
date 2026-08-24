@@ -1077,6 +1077,18 @@
     const rows=Object.keys(draft()).map(id=>{
       const r=draft()[id];
       if(!r||!r.key)return null;
+      // Other tenants are NEVER saved into a plan. They are a register
+      // (congestion/tenants.py) that regenerates on every Allocate, not part of
+      // our plan — nobody here decided their fleet and nobody here can change
+      // it. Freezing a copy into the save did three bad things at once: it
+      // went stale the moment the register changed, it DOUBLE-COUNTED (the
+      // road model already injects them as background flow), and because this
+      // serializer copies `foreign` but not `_tenant`, they came back on load
+      // as ordinary rows that no tenant guard could recognise — which is how
+      // "KR spur" and "HUAFEI spur" appeared in Road crowding: RSF is not a
+      // node on our stick, so an unrecognised RSF row fell through to the
+      // "<SOURCE> spur" fallback and invented two side roads that do not exist.
+      if(typeof planIsTenantRow==='function'?planIsTenantRow(r):r._tenant)return null;
       const dtNow=workingDt(r);
       const clk=rowClocks(id,r,dtNow);
       const pre=r._preAlloc||{};
@@ -2035,7 +2047,7 @@
       // loaders, and their routes (KR>RSF, HUAFEI>RSF) are not in our model,
       // so asking for a trucks-per-loader ratio would fetch a route the
       // calibration has never seen.
-      if(r._tenant)continue;
+      if(typeof planIsTenantRow==='function'?planIsTenantRow(r):r._tenant)continue;
       const dt=workingDt(r);
       if(!(dt>0))continue;
       r.loaders=planRulesLoadersFor(dt, await planRulesTpl(r.key));
@@ -2130,7 +2142,7 @@
         // arrives as flow via tenants=1 on the curve, so adding their trucks
         // here as well would charge the same fleet twice — and at our tempo,
         // which is the wrong unit for them (see planTenantsOn in plan.js).
-        if(r._tenant)return;
+        if(typeof planIsTenantRow==='function'?planIsTenantRow(r):r._tenant)return;
         const n=workingDt(r);
         if(n>0)bg[r.key]=(bg[r.key]||0)+n;
       });

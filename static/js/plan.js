@@ -392,6 +392,26 @@ function planSegOthersFor(key){
 let _planTenants=null;          // {tenants:[...], total_dt} once loaded
 function planTenantsOn(){return !!(_planTenants&&_planTenants.tenants&&_planTenants.tenants.length);}
 function planTenantsInfo(){return _planTenants;}
+// Is this draft row one of the other tenants' fleets?
+//
+// `_tenant` is the flag we set when the row is built, but it does NOT survive a
+// save: buildAllocationPayload writes `foreign` and not `_tenant`, so plans
+// saved before that was fixed carry tenant rows that look like ordinary ones.
+// Those rows then reached the road model, where "KR>RSF" could not be placed on
+// the stick (RSF is not one of our nodes) and fell through to the "<SOURCE>
+// spur" fallback — inventing a "KR spur" and a "HUAFEI spur" that do not exist.
+// So recognition is by NAME as well as by flag, and the name list comes from
+// the register itself. The ">RSF" test is the backstop for a page where the
+// register has not loaded yet: no plan of ours ever hauls to RSF.
+function planIsTenantRow(r){
+  if(!r)return false;
+  if(r._tenant)return true;
+  const c=String(r.contractor||'').trim().toUpperCase();
+  const names=(_planTenants&&_planTenants.tenants)
+    ? _planTenants.tenants.map(t=>String(t.name||'').toUpperCase()) : [];
+  if(c&&names.indexOf(c)>=0)return true;
+  return /(^|>)RSF$/.test(String(r.key||'').trim().toUpperCase());
+}
 async function planTenantsLoad(){
   if(_planTenants)return _planTenants;
   try{

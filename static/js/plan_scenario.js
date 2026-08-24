@@ -33,7 +33,7 @@ function planDraftToPsPlans(){
     // twice. The rows exist so the owner can SEE the fleets in the plan; the
     // flow is what the road model prices. One fleet, two representations,
     // exactly one of which may reach the engine.
-    if(r._tenant)return;
+    if(typeof planIsTenantRow==='function'?planIsTenantRow(r):r._tenant)return;
     const dt=Math.round((frozen&&r._allocDt!=null)?r._allocDt:r.dt);
     if(!(dt>0))return;
     const parts=(r.key||'').split('>');

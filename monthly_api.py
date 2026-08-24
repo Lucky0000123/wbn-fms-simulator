@@ -1918,6 +1918,32 @@ def _xlsx_plan_source_block(ws, r, cards):
 
 
 
+def _is_tenant_row(r):
+    """Is this saved allocation row one of the OTHER tenants' fleets?
+
+    Recognised by name as well as by flag: the save format carries `foreign`
+    but not `_tenant`, so any plan frozen before that was fixed holds tenant
+    rows indistinguishable from our own except by their names and routes. The
+    ">RSF" backstop covers the same case if the register cannot be imported —
+    nothing of ours hauls to RSF.
+    """
+    if not isinstance(r, dict):
+        return False
+    if r.get("_tenant"):
+        return True
+    key = str(r.get("key") or "").strip().upper()
+    if key.endswith(">RSF"):
+        return True
+    ctr = str(r.get("contractor") or "").strip().upper()
+    if not ctr:
+        return False
+    try:
+        from congestion.tenants import TENANTS as _T
+        return ctr in {str(t["name"]).upper() for t in _T}
+    except (ImportError, KeyError, TypeError):
+        return False
+
+
 def _plans_from_alloc_rows(rows):
     """Allocation / holding rows → shared_flow plans. Includes IWIP on the plan."""
     plans = []
@@ -1928,6 +1954,16 @@ def _plans_from_alloc_rows(rows):
         if dt is None:
             dt = r.get("n_trucks") if r.get("n_trucks") is not None else r.get("dt")
         if not (dt or 0) > 0:
+            continue
+        # Other tenants never come from a saved plan. They are a register that
+        # the road model injects itself as background flow, so a saved copy
+        # would be counted twice — and plans saved before the save-side guard
+        # existed carry them WITHOUT the _tenant flag, so they must be
+        # recognised by name here too. Left in, an unrecognised "KR>RSF" row
+        # cannot be placed on the stick (RSF is not one of our nodes) and the
+        # corridor invents a "<SOURCE> spur" for it: the phantom "KR spur" and
+        # "HUAFEI spur" the owner reported on the Road crowding card.
+        if _is_tenant_row(r):
             continue
         key = str(r.get("key") or "")
         if ">" in key:

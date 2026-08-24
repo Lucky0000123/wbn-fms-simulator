@@ -204,6 +204,54 @@ for t in T.TENANTS:
           "has %s" % sorted(banned & set(t)))
 
 print()
+# ── 9. tenants never live in a SAVED plan (owner-reported bug) ─────────────
+# The owner saw "KR spur" and "HUAFEI spur" on Road crowding. Cause: tenant
+# rows had been saved into a plan, and the save format carries `foreign` but
+# not `_tenant`, so on reload they were ordinary rows. "KR>RSF" cannot be
+# placed on our stick (RSF is not one of our nodes), so the corridor fell
+# through to its "<SOURCE> spur" fallback and invented two side roads that do
+# not exist. Recognition must therefore work by NAME, not only by flag.
+import glob as _glob
+import json as _json
+from monthly_api import _is_tenant_row, _plans_from_alloc_rows
+
+check(_is_tenant_row({"key": "KR>RSF", "contractor": "KR>RSF"}),
+      "an unflagged RSF row is still recognised as a tenant")
+check(_is_tenant_row({"key": "TF>FENI KM15", "contractor": "POSITION"}),
+      "an unflagged tenant is recognised by NAME")
+check(_is_tenant_row({"_tenant": True, "key": "X>Y", "contractor": "Z"}),
+      "the explicit flag still works")
+# ...and the other direction: our own rows must survive, or the guard would
+# quietly delete the plan it is meant to protect.
+check(not _is_tenant_row({"key": "TF>HUAFEI", "contractor": "RIM"}),
+      "our own rows are NOT mistaken for tenants")
+check(not _is_tenant_row({"key": "POS 12>FENI KM0", "contractor": "IWIP"}),
+      "IWIP road-only rows are NOT mistaken for tenants")
+
+_mixed = [{"key": "TF>HUAFEI", "contractor": "RIM", "dt_after": 50},
+          {"key": "TF>FENI KM15", "contractor": "MHM", "dt_after": 100},
+          {"key": "KR>RSF", "contractor": "KR>RSF", "dt_after": 40},
+          {"key": "POS 12>FENI KM0", "contractor": "IWIP", "dt_after": 17}]
+_kept = _plans_from_alloc_rows(_mixed)
+check(sorted(p["contractor"] for p in _kept) == ["IWIP", "RIM"],
+      "saved-plan reader drops tenants and keeps ours",
+      [p["contractor"] for p in _kept])
+check(not any("RSF" in (p["source"] + p["destination"]) for p in _kept),
+      "no RSF route survives into the road model from a save")
+
+# No saved plan on disk may carry them. This is the state the owner's screenshot
+# came from, so it is asserted on the real files, not a fixture.
+_bad = []
+for _f in sorted(_glob.glob("data/saved_plans/*.json")):
+    try:
+        _d = _json.load(open(_f, encoding="utf-8"))
+    except (OSError, ValueError):
+        continue
+    _rows = (_d.get("allocation") or {}).get("rows") or []
+    if any(_is_tenant_row(_r) for _r in _rows):
+        _bad.append(_f.rsplit("/", 1)[-1])
+check(not _bad, "no saved plan carries tenant rows", _bad)
+
 for s in SKIPS:
     print("  skip %s" % s)
 if FAILS:
