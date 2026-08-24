@@ -442,5 +442,51 @@ check("tenant traffic still never clips tonnes",
       (_on["basis"].get("congestion_clips_tonnes") is False
        and _on["basis"].get("simulate_unchanged") is True))
 
+# ── RSF geography: a tenant is only on the kilometres it actually drives ────
+# Two fleets turn off at RSF (km 26), so tenant load is NOT the same set of
+# fleets all the way down the stick. This is the assertion that would catch a
+# regression to "add every tenant to every section", which is the easy wrong
+# implementation and looks entirely plausible on screen.
+_named = {s["section"]: {t["name"] for t in (s.get("tenant_plans") or [])}
+          for s in _on["sections"]}
+check("every loaded section names WHICH tenants are on it",
+      all(_named.get(s["section"]) for s in _on["sections"]
+          if s.get("tenant_trucks_present", 0) > 0),
+      {k: sorted(v) for k, v in _named.items()})
+# TF fleets load at TF (km 67.8) and stop at FENI KM15 (km 15.0): they are on
+# the top of the stick and must NOT appear below KM15.
+check("the TF tenants are on TF-KR",
+      {"MHM", "POSITION", "PMA", "HSM"} <= _named.get("TF–KR", set()),
+      sorted(_named.get("TF–KR", [])))
+check("the TF tenants do NOT reach KM15-coast",
+      not ({"MHM", "POSITION", "PMA", "HSM"} & _named.get("KM15–coast", set())),
+      sorted(_named.get("KM15–coast", [])))
+# KR>RSF runs km 39 -> 26: on KR-POS 12, and NOT above KR or below km 26.
+check("KR>RSF is on KR-POS 12",
+      "KR>RSF" in _named.get("KR–POS 12", set()), sorted(_named.get("KR–POS 12", [])))
+check("KR>RSF never reaches TF-KR (it loads at KR)",
+      "KR>RSF" not in _named.get("TF–KR", set()), sorted(_named.get("TF–KR", [])))
+check("KR>RSF never reaches KM15-coast (it turns off at km 26)",
+      "KR>RSF" not in _named.get("KM15–coast", set()),
+      sorted(_named.get("KM15–coast", [])))
+# HUAFEI>RSF returns km 26 -> 0 on the loaded lane: the LOWER stick only.
+check("HUAFEI>RSF is on KM15-coast",
+      "HUAFEI>RSF" in _named.get("KM15–coast", set()),
+      sorted(_named.get("KM15–coast", [])))
+check("HUAFEI>RSF never reaches TF-KR or KR-POS 12 (its leg starts at km 26)",
+      "HUAFEI>RSF" not in _named.get("TF–KR", set())
+      and "HUAFEI>RSF" not in _named.get("KR–POS 12", set()),
+      (sorted(_named.get("TF–KR", [])), sorted(_named.get("KR–POS 12", []))))
+# Per-section tenant trucks must sum to the section total, or the breakdown is
+# decorative rather than the actual composition of the number above it.
+for _s in _on["sections"]:
+    _tp = _s.get("tenant_plans") or []
+    if not _tp:
+        continue
+    check("%s: the named fleets sum to its tenant total" % _s["section"],
+          abs(sum(t["trucks_present"] for t in _tp)
+              - _s["tenant_trucks_present"]) < 0.15,
+          (sum(t["trucks_present"] for t in _tp), _s["tenant_trucks_present"]))
+
 print("\n%s" % ("ALL PASS" if not fails else "FAILED: " + ", ".join(fails)))
 sys.exit(1 if fails else 0)

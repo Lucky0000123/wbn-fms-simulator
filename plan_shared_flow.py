@@ -1058,25 +1058,47 @@ def shared_flow(
     # default and is labelled as such in the payload and the caption.
     _ten_flow_hr: dict = {}
     _ten_present: dict = {}
+    _ten_by_sec: dict = {}
     _ten_total_dt = 0
     if tenants:
         try:
-            from congestion.tenants import tenant_segment_flow_hr, TENANTS as _TREG
+            from congestion.tenants import tenant_rows as _trows, TENANTS as _TREG
             from congestion.speed_limits import span_times_min as _stm
             _ten_total_dt = sum(t["dt"] for t in _TREG)
-            _by_id = tenant_segment_flow_hr()
+            _cross_h = {}
             for _s in _SEGS:
-                _f_hr = float(_by_id.get(_s["id"], 0.0) or 0.0)
+                _loaded_min, _ = _stm(_s["bottom_km"], _s["top_km"])
+                _cross_h[_s["id"]] = float(_loaded_min) / 60.0
+            _id2label = {s["id"]: s["label"] for s in _SEGS}
+            # Per TENANT per section, not just a total. A section reading
+            # "+130 trucks" with no names cannot be acted on: two of these
+            # fleets run to RSF (km 26) and only cross PART of the stick, so
+            # which fleet is where is the whole point. Built from tenant_rows()
+            # so the names, spans and rates are the register's own.
+            for _r in _trows():
+                _f_hr = float(_r.get("loaded_lane_flow_per_hr") or 0.0)
                 if _f_hr <= 0:
                     continue
-                _loaded_min, _ = _stm(_s["bottom_km"], _s["top_km"])
-                _ten_flow_hr[_s["label"]] = _f_hr
-                _ten_present[_s["label"]] = _f_hr * (float(_loaded_min) / 60.0)
+                for _sid in (_r.get("segments") or []):
+                    _lab = _id2label.get(_sid)
+                    if not _lab:
+                        continue
+                    _pres = _f_hr * _cross_h.get(_sid, 0.0)
+                    _ten_flow_hr[_lab] = _ten_flow_hr.get(_lab, 0.0) + _f_hr
+                    _ten_present[_lab] = _ten_present.get(_lab, 0.0) + _pres
+                    _ten_by_sec.setdefault(_lab, []).append({
+                        "name": _r["name"], "route": _r.get("route"),
+                        "dt": _r.get("dt"),
+                        "flow_per_h": round(_f_hr, 1),
+                        "trucks_present": round(_pres, 1),
+                    })
+            for _lab in _ten_by_sec:
+                _ten_by_sec[_lab].sort(key=lambda x: -x["trucks_present"])
         except (ImportError, ValueError, ArithmeticError, KeyError, TypeError):
             # An advisory panel must not die because a register is unreadable,
-            # but it must not silently claim a clear road either: tenants_applied
+            # but it must not silently claim a clear road either: tenant_traffic
             # in the payload says which of the two happened.
-            _ten_flow_hr, _ten_present, _ten_total_dt = {}, {}, 0
+            _ten_flow_hr, _ten_present, _ten_by_sec, _ten_total_dt = {}, {}, {}, 0
     all_secs = [s['label'] for s in _SEGS] + sorted(
         s for s in section_plans if s not in {x['label'] for x in _SEGS})
     used_secs = [s for s in all_secs if s in section_plans or s in occ_h]
@@ -1183,6 +1205,10 @@ def shared_flow(
             "tenant_trucks_present": round(ten_p, 1),
             "our_peak_flow_per_h": round(ours_flow, 1),
             "our_peak_concurrent": round(ours_peak_conc, 1),
+            # WHICH tenants, not just how many trucks. Two of the six turn off
+            # at RSF (km 26), so a section's tenant load is not the same set of
+            # fleets all the way down the stick.
+            "tenant_plans": _ten_by_sec.get(sec) or [],
             # ── PRESENCE: a stock, with a stock denominator.
             "peak_trucks": int(round(peak_conc)),
             "peak_concurrent": round(peak_conc, 1),

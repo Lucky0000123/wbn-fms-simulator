@@ -24,14 +24,15 @@ function planDraftToPsPlans(){
   Object.keys(_planDraft||{}).forEach(id=>{
     const r=_planDraft[id];
     if(!r||!r.key)return;
-    // Tenant rows do NOT go to the engine. Two of the six run to RSF, which is
-    // deliberately absent from the model's node map (nothing of ours hauls
-    // there), so the corridor would place them on a fabricated "<PIT> spur"
-    // instead of the S2/S3 kilometres they really occupy — and half the
-    // register resolving correctly while half is invented is worse than a
-    // stated omission. Their effect on trips/DT is already carried as flow.
-    // Putting them on the corridor needs RSF chainage in the corridor's own
-    // node map; until then the corridor says it excludes them.
+    // Tenant rows do NOT go to the engine, and the reason is now DOUBLE-COUNT,
+    // not absence. plan_shared_flow injects the register itself as background
+    // flow, placing each fleet by CHAINAGE (congestion/tenants.LOADED_SPAN), so
+    // the corridor already carries them on the right kilometres — including the
+    // two that turn off at RSF (km 26) and therefore never reach KM15-coast.
+    // Sending the rows here as well would put the same trucks on the road
+    // twice. The rows exist so the owner can SEE the fleets in the plan; the
+    // flow is what the road model prices. One fleet, two representations,
+    // exactly one of which may reach the engine.
     if(r._tenant)return;
     const dt=Math.round((frozen&&r._allocDt!=null)?r._allocDt:r.dt);
     if(!(dt>0))return;
