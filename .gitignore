@@ -92,3 +92,9 @@ data/s3_results_scale.csv
 # Derived from real saved plans (tonnages + DT allocations) — same rule as the
 # scan reports: gitignore a DB-derived report in the change that creates it.
 data/refreeze_report.json
+
+# Trips/DT research (2026-08-24): DB-derived, carries real tonnages and
+# per-contractor rates. Same rule as the scan reports above — gitignore the
+# artifact in the change that creates the script.
+reports/trips_per_dt_jan_jun.json
+reports/trips_per_dt_vs_engine.json
