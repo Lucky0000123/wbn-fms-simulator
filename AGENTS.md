@@ -1795,3 +1795,68 @@ pre-midnight date, so the midnight-crossing gap falls outside the
 41.6% on TF>POS 12. And the 480-min ceiling censors long TF routes
 (TF>HUAFEI road_free is 55% of its measured road time). Fixing both then
 re-running calibration would also re-zero the 0.21% BLB anchor drift.
+
+## 2026-08-24 — calibration re-run: the road/overhead split was wrong, now it is right
+
+Owner: "go and fix all." Two estimator defects fixed and calibration
+re-run against the live DB. **This is the largest parameter change the
+project has made, and it made the model measurably better.**
+
+**A. Night shift crosses midnight; HAULAGE_CLEAN stamps the whole shift
+with the PRE-midnight DATE.** `CAST(DATE AS datetime)+CAST(TIME_LOADED…)`
+therefore sorted the post-midnight half of shift 2 BEFORE the evening
+half, so the LAG measured a gap running backwards and the real
+midnight-crossing gap was never formed — it fell outside [20,480] and was
+discarded. **23.7% of ALL consecutive gaps site-wide; 41.5% on TF>POS 12,
+43.2% on KR>FENI KM0. After the fix: 2.2%.** Loads are now ordered by
+time since the shift's own 19:00 start; 19:00 is READ OFF the histogram
+(8,558 loads at 19:00 vs 677 at 18:00 — a 12.6x step), not chosen, and
+the recovered-gap count is flat for any cut 06:00-19:00.
+
+**B. The 480-min gap ceiling clipped genuine congested cycles.** Raised to
+**720 = the 12 h shift length**, justified from the pooled gap histogram
+(decays to a floor at 690-719 then flattens into a second population;
+every one of the 1,440 gaps above 720 comes from a truck-shift already
+spanning >12 h, so none can be a within-shift cycle). t_free stable to
+~1% for any ceiling 600-1200.
+
+**The result validates the KR investigation exactly.** `road_free_min` was
+a censored cycle, not road time. TF>HUAFEI **208.7 -> 377.8 min**, against
+an independently MEASURED free-flow road time of 377.6 — agreement to
+0.05%, i.e. nonroad_factor 0.55 -> 1.00, precisely as predicted.
+TF>FENI KM15 206.0 -> 285.4 (measured 287.1). Overhead absorbs the
+difference (TF>HUAFEI 387.0 -> 218.4), so **every day_rate is unchanged**:
+the model's LEVEL was always right, its internal split was not. That split
+is what BPR multiplies and what erlang_c's arrival rate depends on, which
+is why the shape is now correct.
+
+Measured, all ship criteria passed:
+- **Backtest R2 0.927 -> 0.936, MAPE 5.7% -> 5.6%.**
+- **Anchors IMPROVED 8x**: max relative deviation 0.2108% -> **0.0268%**,
+  and 17 routes anchored vs 15 (the 0.001-0.003 ABSOLUTE figures are
+  3-dp output rounding — use the relative measure).
+- The 0.21% BLB drift from the 2026-08-23 capacity fix re-zeroed itself,
+  as that agent predicted it would.
+- Contractor ratios all inside [0.6,1.4], min 35 matched days.
+- Monotonicity 0 violations (5-DT sweep, 5..800, three routes).
+- TWO NEW calibrated routes recovered by the wrap fix: TF>BSE, TF>FENI KM0.
+
+Owner-visible: at plan-scale fleets (100 DT) almost nothing moves
+(0.0-2.1%); at 250 DT the long TF routes rise — **TF>HUAFEI +23.9%,
+TF>FENI KM15 +11.9%** — because the old model, believing trucks returned
+to the loader far sooner than they do, inflated the loader queue. Curves
+regenerated, all 13 plans re-frozen, **76/76**.
+
+**D18b was a FLAKY GATE, not a defect** — it flaked three times in the
+same position and passed every direct probe. Cause: `timeout=5` on
+urlopen while F23's retrain reloads the model. It asserts canonicalisation,
+not latency (D16 owns latency), so it now uses a 60 s timeout with a
+bounded retry. A flaky gate is worse than no gate: it teaches people to
+wave failures through.
+
+**Still open** (both named by the KR investigation, neither blocking):
+`DISTANCE_HAULING` no longer exists in any of the 14 databases, so
+`physics.HAUL_KM_SOURCE`'s citations cannot be re-checked; and POS 10's
+chainage is the one node where evidence disagrees with NODE_KM (p10 cycle
+implies ~21 km vs the stored 17.0, ~1 sigma, so not solid). A geofence
+centroid for POS 10 would settle it in minutes.

@@ -59,7 +59,21 @@ WITH t AS (
     CASE WHEN DESTINATION_AREA LIKE 'HUAFEI%' THEN 'HUAFEI'
          WHEN DESTINATION_AREA IN ('FENI','FENI A') THEN 'FENI KM0'
          ELSE DESTINATION_AREA END AS DAREA,
-    CAST(DATE AS datetime) + CAST(TIME_LOADED AS datetime) AS TL
+    -- Night shift crosses midnight and HAULAGE_CLEAN stamps the WHOLE shift
+    -- with the pre-midnight DATE (measured 2026-08-24: SHIFT=2 loads run
+    -- 19:00-06:00 under one DATE — 8,558 loads at 19:00 vs 677 at 18:00, a
+    -- 12.6x step, and 124,534 of 250,334 shift-2 loads sit at 00:00-06:59).
+    -- Naive DATE+TIME therefore sorts the post-midnight half BEFORE the
+    -- evening half, so the LAG below measured a gap that ran backwards
+    -- through the shift and the real midnight-crossing gap was never formed
+    -- at all. It landed outside [20,480] and was discarded: 23.7% of all
+    -- consecutive gaps site-wide, 41.5% on TF>POS 12, 43.2% on KR>FENI KM0.
+    -- Order each shift-2 load by time SINCE ITS OWN SHIFT START instead.
+    -- 19:00 is read off the load histogram, not chosen; the recovered-gap
+    -- count is flat (+29.3%..+30.3%) for any cut from 06:00 to 19:00 and
+    -- only degrades at 20:00, when the cut starts splitting the evening.
+    DATEADD(day, CASE WHEN SHIFT = 2 AND TIME_LOADED < '19:00:00' THEN 1 ELSE 0 END,
+            CAST(DATE AS datetime)) + CAST(TIME_LOADED AS datetime) AS TL
   FROM HAULAGE_CLEAN
   WHERE DATE >= '2026-01-01' AND TIME_LOADED IS NOT NULL
 ),
@@ -68,12 +82,29 @@ g AS (
     DATEDIFF(minute, LAG(TL) OVER (PARTITION BY DATE, SHIFT, TRUCK_ID, OPIT, DAREA ORDER BY TL), TL) AS gap_min
   FROM t WHERE OPIT IS NOT NULL AND DAREA IS NOT NULL
 )
+-- Gap ceiling is the SHIFT LENGTH (720 min), not a tuned constant.
+-- 480 censored the long TF cycles it was supposed to keep: after the
+-- midnight fix above, 13.9% of TF>HUAFEI and 17.0% of TF>FENI KM15
+-- consecutive gaps still sat past 480, and TF>HUAFEI's free-flow cycle
+-- alone is ~386 min, so 480 clipped the CONGESTED half of its own
+-- distribution. Two independent readings put the boundary at ~720:
+--   (1) the pooled gap histogram decays monotonically to a floor at
+--       690-719 min and then stops decaying — bins 720..1170 are a flat
+--       ~85/30-min plateau (idle/parking/mislabelled records arriving
+--       uniformly), i.e. a second population takes over there;
+--   (2) 1,440 of 1,440 gaps above 720 come from a truck-shift whose own
+--       first-to-last span already exceeds 12 h, so NO gap above 720 can
+--       be a within-shift cycle. Zero counter-examples.
+-- The estimate is insensitive well inside the safe zone: every calibrated
+-- route's t_free is stable from 600 to 1200 to within ~1%, so this is a
+-- ceiling that stays, not an unbounded gap that would swallow overnight
+-- parking.
 SELECT OPIT, DAREA, DATE, SHIFT,
   COUNT(DISTINCT TRUCK_ID),
   COUNT(*) + COUNT(DISTINCT TRUCK_ID),
-  AVG(CASE WHEN gap_min BETWEEN 20 AND 480 THEN CAST(gap_min AS float) END),
-  STDEV(CASE WHEN gap_min BETWEEN 20 AND 480 THEN CAST(gap_min AS float) END),
-  MIN(CASE WHEN gap_min BETWEEN 20 AND 480 THEN gap_min END),
+  AVG(CASE WHEN gap_min BETWEEN 20 AND 720 THEN CAST(gap_min AS float) END),
+  STDEV(CASE WHEN gap_min BETWEEN 20 AND 720 THEN CAST(gap_min AS float) END),
+  MIN(CASE WHEN gap_min BETWEEN 20 AND 720 THEN gap_min END),
   COUNT(DISTINCT ORIGIN_ID)
 FROM g
 GROUP BY OPIT, DAREA, DATE, SHIFT
@@ -458,7 +489,21 @@ def main():
             "bpr": "applied to road_free only, capped at 3x",
             "alpha": "literature default 0.15 (insufficient v/c variation for LSQ fit)",
             "beta": "literature default 4.0 (insufficient v/c variation for LSQ fit)",
-            "t_free": "p25 of day-shift mean gaps",
+            "t_free": "p25 of day-shift mean gaps, gaps kept in [20, 720] min",
+            "gap_window": "20..720 min. Ceiling is the 12 h SHIFT LENGTH: the pooled "
+                          "gap histogram decays to a floor at 690-719 min and then "
+                          "flattens (second population), and every one of the 1,440 "
+                          "gaps above 720 comes from a truck-shift already spanning "
+                          ">12 h, so none can be a within-shift cycle. t_free is "
+                          "stable to ~1% for any ceiling 600..1200 (measured "
+                          "2026-08-24). The old 480 clipped genuine congested TF "
+                          "cycles — TF>HUAFEI's free-flow cycle alone is ~386 min.",
+            "shift2_midnight": "SHIFT=2 spans midnight but HAULAGE_CLEAN stamps the "
+                               "whole shift with the pre-midnight DATE, so loads are "
+                               "ordered by time since the 19:00 shift start, not by "
+                               "DATE+TIME. Before this fix 23.7% of consecutive gaps "
+                               "exceeded 480 min and were discarded (41.5% on "
+                               "TF>POS 12, 43.2% on KR>FENI KM0); after it, 2.2%.",
             "c_road": "geometry: n_lanes_loaded * 3600 / headway_s",
             "headway_s_long": _CFG["headway_s"],
             "headway_s_short": _CFG["headway_s_short"],

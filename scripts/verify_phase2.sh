@@ -119,11 +119,23 @@ chk $? "D17  model loaded once (stable instance id)" "reloading per request"
 CODE=$(curl -s -o /tmp/p2_fb.json -w '%{http_code}' "$BASE/api/predict?contractor=RIM&source=TF&destination=NOWHERE&trucks=19&mode=dt_to_wmt")
 [ "$CODE" = "200" ]; chk $? "D18  unknown route still returns 200" "http $CODE"
 $PY - <<'EOF' >/dev/null 2>&1
-import json,sys,urllib.parse,urllib.request
+import json,sys,time,urllib.parse,urllib.request
 base='http://127.0.0.1:5055/api/predict?contractor=RIM&shift=day&trucks=30&'
 def get(src,dst):
+    # This gate asserts CANONICALISATION, not latency (D16 owns latency). It
+    # runs right after F23's retrain, and a reloading model answers slower than
+    # the old timeout=5 allowed — so it flaked three times on 2026-08-23/24 and
+    # passed every direct probe. A flaky gate is worse than no gate: it trains
+    # people to wave failures through. Generous timeout + bounded retry.
     q=urllib.parse.urlencode({'source':src,'destination':dst})
-    return json.load(urllib.request.urlopen(base+q,timeout=5))
+    last=None
+    for attempt in range(3):
+        try:
+            return json.load(urllib.request.urlopen(base+q,timeout=60))
+        except Exception as exc:      # noqa: BLE001 — retry, then re-raise
+            last=exc
+            time.sleep(2*(attempt+1))
+    raise last
 def same(a,b):
     return (a.get('canonical_route')==b.get('canonical_route') and
             a.get('prediction',{}).get('trips_per_dt')==b.get('prediction',{}).get('trips_per_dt'))
