@@ -998,13 +998,16 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
             " · 'Trips/DT w/ other tenants' re-prices the SAME fleet with the "
             "other tenants' %s DT on the shared road (%s). They carry no "
             "tonnage for us and take no trucks from us — only road. Tonnes, "
-            "targets and DT in this table are unchanged. The cost is small "
-            "(roughly 0.1–1.5%%, shown to 3 decimals) because at the official "
-            "surveyed capacities the corridor still has headroom: the tenants "
-            "raise v/c on the busiest section from about 0.03 to 0.32, and "
-            "delay grows with the FOURTH power of v/c, so it stays flat until "
-            "v/c approaches 1. Blank = that route is off the shared mainline "
-            "(the BLB spur), not that the tenants made no difference."
+            "targets and DT in this table are unchanged. Both fleets are on ONE "
+            "clock: a tenant truck occupies the loaded lane for one pass per "
+            "road cycle, exactly as ours does, so they take the busiest section "
+            "(POS 12–KM15) to about 70%% of its capacity. Remaining caveat: that "
+            "capacity (600/hr S1-S3, 400/hr S4) is derived from posted speed "
+            "limits and an assumed 50 m following distance, NOT a counted "
+            "traffic survey — if the real lane carries less, this cost grows "
+            "sharply, because delay rises with the fourth power of v/c. Blank = "
+            "that route is off the shared mainline (the BLB spur), not that the "
+            "tenants made no difference."
             % (_n_dt, _names))
     r = _xlsx_section(ws, r, title, sub)
     if achv:

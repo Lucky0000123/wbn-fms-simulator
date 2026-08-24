@@ -83,6 +83,35 @@ check(per_dt_kr > per_dt_tf * 1.5,
       "a tenant is priced at ITS OWN tempo, not ours",
       "%.4f vs %.4f per DT/hr" % (per_dt_kr, per_dt_tf))
 
+# ── 3b. ONE CLOCK: a tenant truck weighs the same as ours on the same road ──
+# Fixed 2026-08-24 after an independent audit. predictor._nxt converts our own
+# fleet with flow = n * 60 / cycle_min (every truck one loaded pass per cycle,
+# all of them in cycle at once). This module used to hand it a DAILY AVERAGE
+# instead — DT * trips_per_day / 24 — so a tenant truck counted 2.2x to 4.2x
+# lighter than one of ours on the same kilometre, and the reported cost of
+# 1,340 tenant DT collapsed to ~0.0-0.05%. The bug was invisible: nothing
+# errored, the number was just quietly too small.
+#
+# Asserted by RECONSTRUCTION, not by re-reading the constant: price each
+# tenant's own DT through predict() on its proxy road and require the flow the
+# module hands the predictor to match n*60/cycle. A gate that only checked
+# "cycle_min is not None" would pass on any formula at all.
+for _row in rows:
+    _cyc, _flow, _dt = _row.get("cycle_min"), _row.get("loaded_lane_flow_per_hr"), _row["dt"]
+    if not (_cyc and _flow):
+        continue
+    _expect = float(_dt) * 60.0 / float(_cyc)
+    check(abs(_flow - _expect) < 0.02,
+          "%s is on the predictor's clock, not a daily average" % _row["name"],
+          "flow %.2f vs n*60/cycle %.2f" % (_flow, _expect))
+    # and the daily average must be STRICTLY smaller, or the two bases have
+    # been silently collapsed into one and the guard above proves nothing.
+    _avg = _row.get("daily_average_flow_per_hr")
+    if _avg:
+        check(_flow > _avg * 1.2,
+              "%s: priced flow exceeds its daily average" % _row["name"],
+              "priced %.2f vs avg %.2f" % (_flow, _avg))
+
 # ── 4. tenants can only ever cost us trips/DT, never gain ──────────────────
 plan = {"TF>HUAFEI": 500, "TF>POS 12": 300, "TF>FENI KM15": 200,
         "KR>POS 12": 150}

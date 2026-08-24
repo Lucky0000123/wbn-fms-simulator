@@ -85,10 +85,40 @@ from .segments import SEGMENTS, NODE_KM
 # it to the plan vocabulary would offer it as a route in the Plan tab.
 RSF_KM = 26.0
 
-# Operating hours per day for tenant fleets. Ours is 2 x 12 h (config.py
-# shifts_per_day/hours_per_shift) and there is no reason to assume a tenant on
-# the same road keeps a different clock; if one does, this is where it changes.
+# Operating hours per day. Used ONLY to report a tenant's daily-average flow
+# alongside the figure the model actually prices — see _CLOCK note below.
 TENANT_HOURS_PER_DAY = 24.0
+
+# ── The clock (fixed 2026-08-24 after an independent audit) ───────────────
+# Tenant flow MUST be expressed on the same clock the predictor already uses
+# for our own fleet, or the two fleets are weighed differently on one road.
+#
+# predictor._nxt does:      flow_hr = n_trucks / (cycle_min / 60)
+# i.e. every truck completes ONE loaded pass per CYCLE, and all n are treated
+# as in-cycle at once. That is a synchronised/busy-period convention: it is
+# deliberately NOT the daily average, because congestion is what happens while
+# the trucks are actually out there, not averaged across breaks and shift
+# change.
+#
+# This module used to hand the predictor a DAILY AVERAGE instead:
+#     flow_hr = DT * trips_per_day / 24
+# Those differ by (cycle + overhead_per_trip) / cycle -- measured 2.21x on the
+# TF routes, 2.70x on KR>POS 10 and 4.19x on KR>POS 12. So a tenant truck was
+# counted as 2-4x lighter than one of ours on the same kilometre, and the cost
+# the app reported for 1,340 tenant DT (~0.0-0.05% on most paths) was an
+# artefact of that mismatch rather than a finding about the road.
+#
+# Now: flow_hr = DT * 60 / cycle_min, with cycle_min taken from the SAME
+# proxy-road predict() call that supplies the rate. The cycle is a property of
+# the road and the truck, not of the operator's shift pattern, so an owner
+# supplied trips/DT still sets the fleet's PRODUCTIVITY (reported as
+# trips_per_day) while the road cycle sets its INSTANTANEOUS occupancy.
+#
+# Consequence, and it is the point: S3 v/c moves 0.28 -> 0.70 and the cost to
+# our own trips/DT moves from ~0% to 0.07-1.2%. Only tenant-priced numbers
+# move; every clear-road number in the app is untouched, because tenant flow
+# is default-OFF everywhere.
+_CLOCK = "synchronised: DT x 60 / cycle_min, matching predictor._nxt"
 
 # The register. `trips_per_dt` None -> take OUR measured rate for that road
 # (resolved at call time from the calibrated model, see tenant_flow_hr).
@@ -152,58 +182,97 @@ def _span_segments(from_km, to_km):
 
 
 def _resolve_rate(tenant, rate_lookup=None):
-    """(trips_per_dt, basis). Owner-stated rate wins; otherwise our own
-    measured/modelled rate for the proxy road."""
-    if tenant.get("trips_per_dt"):
-        return float(tenant["trips_per_dt"]), "owner-stated"
+    """(trips_per_dt, cycle_min, basis) for one tenant.
+
+    Two separate things come back and they answer different questions:
+
+    * `trips_per_dt` is the fleet's PRODUCTIVITY over a day. An owner-stated
+      figure wins outright — the owner knows their contractors' output better
+      than our model does.
+    * `cycle_min` is how long ONE loaded pass takes on that road, and it is a
+      property of the ROAD and the truck, not of the operator. It always comes
+      from our own calibrated model for the proxy road, even when the owner has
+      stated a rate, because a fleet running the same kilometres at the same
+      speed limits occupies the lane for the same time per pass. What a higher
+      trips/DT actually means is LESS overhead — more passes per day — not a
+      faster pass.
+
+    `cycle_min` is what sets road occupancy (see _CLOCK). A tenant that turns
+    5 trips/day instead of our 2.8 sustains the same instantaneous flow for
+    more of the day; it is not denser on the road at any one moment.
+    """
+    owner_rate = float(tenant["trips_per_dt"]) if tenant.get("trips_per_dt") else None
     key = (tenant["origin"], tenant["dest"])
     proxies = RATE_PROXY.get(key) or []
     if not proxies:
-        return None, "no rate and no proxy road"
+        # No proxy road means no cycle, so no defensible flow. Say so rather
+        # than invent one: a tenant that silently contributes nothing is worse
+        # than a tenant that reports it could not be priced.
+        return owner_rate, None, ("owner-stated, but no proxy road for a cycle"
+                                  if owner_rate else "no rate and no proxy road")
     tried = []
     for route, contractor in proxies:
         tried.append(route)
         rate = None
+        cycle = None
         if rate_lookup is not None:
             rate = rate_lookup(route, contractor)
-        if rate is None:
-            try:
-                from .config import route_params
-                from .predictor import predict
-                if route_params(route).get("calibrated"):
-                    # Priced at the tenant's OWN fleet on an otherwise clear
-                    # road: asking for the rate at our plan's fleet would fold
-                    # our congestion into their tempo and then feed it back as
-                    # their load on us — the double-count this repo has paid
-                    # for before.
-                    rec = predict(route, float(tenant["dt"]), None,
-                                  contractor=contractor, mode="road")
+        try:
+            from .config import route_params
+            from .predictor import predict
+            if route_params(route).get("calibrated"):
+                # Priced at the tenant's OWN fleet on an otherwise clear
+                # road: asking for the rate at our plan's fleet would fold
+                # our congestion into their tempo and then feed it back as
+                # their load on us — the double-count this repo has paid
+                # for before.
+                rec = predict(route, float(tenant["dt"]), None,
+                              contractor=contractor, mode="road")
+                cycle = rec.get("cycle_time_minutes")
+                if rate is None:
                     rate = rec.get("trips_per_DT_per_day")
-            except (ImportError, ValueError, ArithmeticError, KeyError,
-                    TypeError, OSError):
-                rate = None
-        if rate:
+        except (ImportError, ValueError, ArithmeticError, KeyError,
+                TypeError, OSError):
+            cycle = None
+        if owner_rate and cycle:
             note = "" if route == proxies[0][0] else " (fallback)"
-            return float(rate), "proxy: our %s (%s) rate%s" % (route, contractor, note)
-    return None, "no calibrated proxy road (tried %s)" % ", ".join(tried)
+            return owner_rate, float(cycle), (
+                "owner-stated rate; cycle from our %s (%s)%s" % (route, contractor, note))
+        if rate and cycle:
+            note = "" if route == proxies[0][0] else " (fallback)"
+            return float(rate), float(cycle), (
+                "proxy: our %s (%s) rate%s" % (route, contractor, note))
+    if owner_rate:
+        return owner_rate, None, ("owner-stated, but no calibrated proxy road "
+                                  "for a cycle (tried %s)" % ", ".join(tried))
+    return None, None, "no calibrated proxy road (tried %s)" % ", ".join(tried)
 
 
 def tenant_rows(rate_lookup=None):
     """The register, resolved: one dict per tenant with rate, flow and segments."""
     out = []
     for t in TENANTS:
-        rate, basis = _resolve_rate(t, rate_lookup)
+        rate, cycle, basis = _resolve_rate(t, rate_lookup)
         span = LOADED_SPAN.get((t["origin"], t["dest"]))
         trips_day = (float(t["dt"]) * rate) if rate else None
-        flow_hr = (trips_day / TENANT_HOURS_PER_DAY) if trips_day else None
+        # The priced figure: one loaded pass per cycle, every truck in cycle,
+        # exactly as predictor._nxt treats ours (_CLOCK). No cycle -> no flow,
+        # and the row says why instead of quietly contributing zero.
+        flow_hr = (float(t["dt"]) * 60.0 / cycle) if cycle else None
+        avg_hr = (trips_day / TENANT_HOURS_PER_DAY) if trips_day else None
         segs = _span_segments(*span) if span else []
         out.append({
             "name": t["name"], "dt": t["dt"],
             "route": "%s>%s" % (t["origin"], t["dest"]),
             "trips_per_dt": round(rate, 3) if rate else None,
             "rate_basis": basis,
+            "cycle_min": round(cycle, 1) if cycle else None,
             "trips_per_day": round(trips_day, 1) if trips_day else None,
             "loaded_lane_flow_per_hr": round(flow_hr, 2) if flow_hr else None,
+            # Reported for comparison only — NOT what the predictor is given.
+            # Keeping it visible is how the clock mismatch was caught.
+            "daily_average_flow_per_hr": round(avg_hr, 2) if avg_hr else None,
+            "flow_basis": _CLOCK,
             "loaded_span_km": list(span) if span else None,
             "segments": [s["id"] for s, _ov in segs],
         })
@@ -236,8 +305,10 @@ def tenant_summary(rate_lookup=None):
         "segment_capacity_hr": {s["id"]: s["cap_hr"] for s in SEGMENTS},
         "total_dt": sum(t["dt"] for t in TENANTS),
         "hours_per_day": TENANT_HOURS_PER_DAY,
+        "flow_basis": _CLOCK,
         "basis": ("other tenants' fleets on our road: road load only, zero "
-                  "tonnes to us. Each fleet contributes its own trips/day as "
-                  "flow to the loaded lane of every segment it occupies; "
+                  "tonnes to us. Each fleet occupies the loaded lane for one "
+                  "pass per road cycle — the same clock the model already uses "
+                  "for our own trucks — on every segment it crosses; "
                   "empty-carriageway legs contribute nothing."),
     }
