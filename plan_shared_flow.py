@@ -97,6 +97,20 @@ RELEASE_PROFILE_SOURCE = (
     "HAULAGE_CLEAN.TIME_LOADED — n=273,222 loads over 234 days; load starts "
     "by hours-since-shift-start ÷ the uniform rate (chi2 vs uniform = 34,883 "
     "on 23 df)")
+# The changeover stand-down, measured 2026-08-24 when it was proposed as a new
+# model term. It is real and it is already carried by the release warp above
+# plus overhead_per_trip_min, so NOTHING was added — see the long note in
+# _simulate(). Kept as a named constant so the numbers are re-checkable and the
+# question is not re-opened from summary statistics.
+CHANGEOVER_SOURCE = (
+    "HAULAGE_CLEAN 2026-01-01..2026-08-22 — a truck's next load after ONE "
+    "07:00/19:00 changeover comes +270 min later than its next load inside a "
+    "shift (median 435 vs 165; n=72,433 straddling / 126,166 within, "
+    "same-route consecutive pairs, shift-2 midnight fix as in "
+    "scripts/calibrate_congestion.py). The delay is 0.80-1.60x each route's "
+    "OWN cycle, i.e. one missed dispatch slot, not a mid-road freeze: loads "
+    "started in the final 2 h of a shift complete weigh-to-weigh in 55 min "
+    "(median) against 65 mid-shift, p90 185 vs 195, n=187,065 usable")
 SHIFT_STARTS_H = (7, 19)          # the site's two 12-h shifts (owner)
 RELEASE_PROFILE_HOURS = 12        # the profile is defined over one 12-h shift
 # hour-since-shift-start -> measured multiplier, for the hours the measurement
@@ -806,22 +820,68 @@ def shared_flow(
     # WHEN trucks are released must not change HOW MANY trips run. The test file
     # pins this (uniform vs profiled executed_trips, exactly equal).
     #
-    # OPEN, and stated rather than tuned away: PRESENCE still lags the measured
-    # presence profile by each section's TRANSIT TIME, because this model
-    # completes trips in flight across the changeover (`trips_in_flight_complete`
-    # below). Measured against the reconstructed measured presence on the real
-    # 2026-09-03 plan, the amplitude is now right — median absolute hourly error
-    # 0.7-4.1% on three of five sections once the section's own lag is allowed
-    # for, against 17.7-18.6% for the flat model at ANY phase — but the lag
-    # itself is 0-1 h (BLB spur, TF-KR) rising to 2-3 h (KM15-coast), while the
-    # measurement shows ~0-1 h everywhere (its busiest presence hours are
-    # 21:00-04:00, the same hours as the busiest RELEASES, not 2-3 h later).
-    # The likely cause is that real trucks hand over / park at the changeover
-    # instead of finishing the leg. Closing it needs a calibrated changeover
-    # behaviour — how long a truck stands where at handover — which is not in
-    # the release measurement. Inventing a freeze here would either destroy
-    # trips or fabricate a duration, so it is left open and disclosed
-    # (`basis.release_profile.presence_lag`).
+    # The changeover STAND-DOWN was proposed as the missing piece here and was
+    # MEASURED on 2026-08-24 (see CHANGEOVER_SOURCE). It is real, it is large,
+    # and it is ALREADY IN THIS MODEL — do not add a second one.
+    #
+    # What was asked: do trucks freeze mid-leg at 07:00/19:00, so that the
+    # presence this model draws on a far section (which lags its releases by
+    # that section's transit time, 0-1 h near the pit rising to 2-3 h on
+    # KM15-coast) is phase-wrong? Four measurements, all on HAULAGE_CLEAN
+    # 2026-01-01..2026-08-22 unless stated:
+    #
+    # 1. NO mid-leg freeze. Weigh-to-weigh (TIME_EMPTY - TIME_LOADED) for loads
+    #    started in the FINAL 2 h of a shift vs mid-shift: median 55 vs 65 min,
+    #    p90 185 vs 195 (n = 187,065 usable). Late loads finish at least as
+    #    fast, on 14 of 20 routes, and FASTER on the longest ones where a freeze
+    #    would be most visible (TF>HUAFEI 75 vs 195, KR>FENI KM0 45 vs 155).
+    #    15.1% of tickets are excluded because TIME_EMPTY precedes TIME_LOADED
+    #    on the clock (52% of those are midnight wraps, the rest a genuine
+    #    mixture) — this column is not trustworthy row by row, so it is used
+    #    only as a late-vs-mid CONTRAST on the same population.
+    # 2. The stand-down is at the LOADER, between trips. A truck's next load
+    #    after one changeover comes +270 min later than its next load inside a
+    #    shift (median 435 vs 165 min; n = 72,433 straddling / 126,166 within,
+    #    same-route consecutive pairs, ordered by the calibration's own shift-2
+    #    midnight fix). Only 0-6% resume within 2 h of the previous load.
+    # 3. It scales with the CYCLE, not with the haul. Expressed as a multiple
+    #    of each route's own within-shift gap the extra delay is 0.80x-1.60x
+    #    (BLB>POS 14 +150 min on a 115 min cycle; TF>HUAFEI +320 on 365) — the
+    #    truck misses roughly one dispatch slot wherever it runs. A mid-road
+    #    freeze would instead scale with distance from the pit.
+    # 4. This model already reproduces it. Replaying the warp below over the
+    #    real 2026-09-03 plan and measuring the SAME statistic as (2): within
+    #    254 min, straddling 660 min, +406 pooled, +97..+324 per route against
+    #    the measured +130..+340. The measured release profile IS the empirical
+    #    footprint of the changeover on load starts, and `overhead_per_trip_min`
+    #    (dispatch-anchored, and named for breaks/dispatch/SHIFT CHANGE/refuel)
+    #    already carries the dead time. Adding a stand-down would double-count
+    #    it and, unlike the warp, could not conserve trips.
+    #
+    # Corroboration that the on-road freeze is small: haul-truck GPS
+    # (FMS_DB.FMS_GPS_Historical, 631 plates joined on PLATE, 2026-07-15..08-07)
+    # stopped-share (< 3 km/h) of on-corridor fixes is 5.2% site-wide, rising to
+    # 6.7% at 07:00 and 8.1% at 19:00 — POS 12-KM15 5.0% -> 11.9%/10.9%, TF-KR
+    # 2.1% with no spike at all. Trucks do pause briefly at handover; +2..+7 pp
+    # of an hour is 1-4 minutes, two orders of magnitude short of a 2-3 h phase.
+    #
+    # STILL OPEN, and now stated precisely: the phase itself is UNVERIFIED, not
+    # known-wrong. The reference the 2026-08-24 scoring used (tmp/presence_ref)
+    # reconstructs presence as the release profile seen through ONE fitted
+    # trailing window, and the fit chose 1.25 h — shorter than every section
+    # transit time here — so its phase is the RELEASE phase by construction and
+    # it cannot show a lag. It is also site-wide pooled while each section
+    # legitimately has its own phase. The two feeds that could settle it cannot
+    # today: FMS_CONGESTION_SEG is per-hour per-km and direction-split but
+    # covers 2026-07-15.. , a window in which HAULAGE_CLEAN carries ~340
+    # loads/day against ~1,700/day in Jan-Apr, so it and the release profile do
+    # not describe the same operation; and the haul GPS archive's own hourly
+    # reporting rate varies MORE than the presence signal it would measure
+    # (CV 0.309 vs 0.282), so its raw hourly presence is mostly device uptime.
+    # What would settle it: matched-period haul-truck presence per section per
+    # hour — i.e. either backfilled tickets for the GPS window or an uptime
+    # model for the archive. Until then the lag stays as drawn, because it is
+    # transit time, and no freeze is invented (`basis.release_profile`).
     #
     # Still NOT modelled, and still not invented: synchronised meal breaks
     # (there is no meal-break dip in the data — 12:00 = 1.05x, 13:00 = 1.11x)
@@ -1316,11 +1376,29 @@ def shared_flow(
                     "the RELEASE hours are measured; the PRESENCE hours drawn "
                     "on a section lag them by that section's transit time "
                     "(0-1 h near the pit, 2-3 h on KM15-coast) because trips "
-                    "in flight are completed across the changeover. The "
-                    "measured presence lags by ~0-1 h everywhere, so the far "
-                    "sections' trough is drawn 2-3 h late. Amplitude is right, "
-                    "phase is not; a changeover behaviour is not calibrated "
-                    "and is not invented here"),
+                    "in flight are completed across the changeover. That is "
+                    "transit time, and the changeover stand-down that was "
+                    "proposed to replace it is measured to happen at the "
+                    "LOADER, between trips, and is already carried here — see "
+                    "changeover_standdown. The phase itself is unverified "
+                    "rather than known-wrong: no matched-period per-section "
+                    "presence measurement exists yet (the hourly GPS window "
+                    "and the ticket window do not overlap in volume)"),
+                "changeover_standdown": {
+                    "applied": False,
+                    "reason": ("already carried by the release warp and by "
+                               "overhead_per_trip_min; adding it again would "
+                               "double-count the dead time and could not "
+                               "conserve trips"),
+                    "measured_extra_gap_min": 270,
+                    "model_extra_gap_min": 406,
+                    "on_road_freeze": ("not supported — late-shift loads "
+                                       "complete weigh-to-weigh as fast as "
+                                       "mid-shift; corridor stopped-share "
+                                       "rises only 5.2% -> 6.7%/8.1% at "
+                                       "07:00/19:00"),
+                    "source": CHANGEOVER_SOURCE,
+                },
             },
             "segment_time_split": {
                 "basis": ("official directional speed-limit times × measured "
