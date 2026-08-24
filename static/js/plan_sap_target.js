@@ -2108,6 +2108,13 @@
   // loaders per §10.9, hybrid curves resolved, then the section pricing for
   // the current division. Used by the allocate flow and scripted re-saves.
   window.planRulesPrepare=async function(){
+    // Tenant register FIRST. planTenantsOn() gates the tenants=1 flag on every
+    // curve fetch and is part of the curve cache key, so loading it after the
+    // warm pass priced the whole first Allocate on a clear road and then
+    // silently re-fetched under a different key. The owner asked for tenant
+    // pricing to hold "specially after we reallocate" — that means it has to
+    // be true on pass one, not true eventually.
+    if(typeof planTenantsLoad==='function'){try{await planTenantsLoad();}catch(e){}}
     await planRulesApplyLoaders();
     // Segment background (owner, 2026-08-22): snapshot the whole draft's
     // per-route trucks (foreign/IWIP included — they occupy the road) so

@@ -3135,6 +3135,12 @@ def api_plan_shared_flow():
     use_fixture = str(request.args.get("fixture") or body.get("fixture") or "").strip() in ("1", "true", "yes")
     whole_day = str(body.get("whole_day") or request.args.get("whole_day") or "").strip().lower() in ("1", "true", "yes")
     path = pch._FIXTURE if use_fixture else None
+    # Other tenants on the same road (owner, 2026-08-24: "start showing tenant
+    # pricing in everything ... in road congestion"). Defaults ON here, unlike
+    # the pricing endpoints: this card answers "how busy is the road", and the
+    # road does not care whose trucks they are. Pass tenants=0 for the
+    # our-plan-only view. Either way the response says which it gave you.
+    _t = str(body.get("tenants", request.args.get("tenants", "1"))).strip().lower()
     payload = psf.shared_flow(
         plans=plans,
         shift_hours=shift_h,
@@ -3142,6 +3148,7 @@ def api_plan_shared_flow():
         start_hour=start_h,
         path=path,
         whole_day=whole_day,
+        tenants=_t not in ("0", "false", "no", "off"),
     )
     return jsonify(payload), (200 if payload.get("ok") else 400)
 

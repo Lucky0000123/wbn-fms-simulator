@@ -1952,8 +1952,11 @@ def _corridor_run(plans):
         return None
     try:
         import plan_shared_flow as _sf
+        # tenants=True: the workbook's road view must match the Plan tab's, and
+        # the road carries the other tenants whether or not our plan mentions
+        # them. The block states the DT and that they are not ours to move.
         res = _sf.shared_flow(plans, shift_hours=12, rain_mm=0, start_hour=7,
-                              whole_day=True)
+                              whole_day=True, tenants=True)
     except Exception:  # noqa: BLE001 — a report must not die on an advisory panel
         return None
     if not res.get("ok"):
@@ -2046,7 +2049,9 @@ def _xlsx_road_corridor_block(ws, r, cards):
     r += 1
     ws.cell(row=r, column=1, value=(
         "Advisory. Distribution of the FINALISED plan across the road — it never "
-        "changes plan tonnage. Normal-day basis (0-1 mm rain)."))
+        "changes plan tonnage. Normal-day basis (0-1 mm rain). Includes the other "
+        "tenants' 1,340 DT, which share the road and are NOT ours to move: only "
+        "our own trucks can be replanned."))
     ws.cell(row=r, column=1).font = Font(italic=True, size=9)
     r += 2
     for c, h in enumerate(["Month", "Section", "Peak trucks (any instant)",

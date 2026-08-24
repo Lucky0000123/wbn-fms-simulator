@@ -390,5 +390,57 @@ check("doctrine unchanged on every call",
           and (x.get("basis") or {}).get("simulate_unchanged") is True
           for x in (fwd, rev, big, unseen)))
 
+# ── other tenants on the road (owner, 2026-08-24) ──────────────────────────
+# "Start showing tenant pricing in everything ... in road congestion." The
+# corridor now carries the register's 1,340 DT as a constant background.
+# Asserted in BOTH directions, and with our own trucks held separate: a gate
+# that only checked "the number went up" is passed by adding traffic anywhere,
+# including to our own fleet, which would misreport what the planner can fix.
+_tp = [{"id": "t1", "source": "TF", "destination": "HUAFEI", "n_trucks": 120,
+        "contractor": "RIM"},
+       {"id": "t2", "source": "BLB", "destination": "FENI KM0", "n_trucks": 30,
+        "contractor": "RIM"}]
+_off = sf.shared_flow(_tp, shift_hours=12, whole_day=True, tenants=False)
+_on = sf.shared_flow(_tp, shift_hours=12, whole_day=True, tenants=True)
+_off_s = {s["section"]: s for s in _off["sections"]}
+_on_s = {s["section"]: s for s in _on["sections"]}
+
+check("tenants OFF says so, and adds nothing",
+      (_off["basis"].get("tenant_traffic") is False
+       and all(s.get("tenant_trucks_present", 0) == 0 for s in _off["sections"])),
+      _off["basis"].get("tenant_traffic"))
+check("tenants ON says so, and names the DT",
+      (_on["basis"].get("tenant_traffic") is True
+       and _on["basis"].get("tenant_dt") == 1340),
+      _on["basis"].get("tenant_dt"))
+_main = "POS 12–KM15"
+if _main in _on_s:
+    check("tenants raise the busiest mainline section",
+          _on_s[_main]["peak_concurrent"] > _off_s[_main]["peak_concurrent"] * 1.5,
+          (_off_s[_main]["peak_concurrent"], _on_s[_main]["peak_concurrent"]))
+    check("tenants raise its v/c too",
+          _on_s[_main]["ratio"] > _off_s[_main]["ratio"],
+          (_off_s[_main]["ratio"], _on_s[_main]["ratio"]))
+    # The load the planner CAN move must be reported unchanged, or the card
+    # cannot answer "would moving our trucks help?".
+    check("our own trucks are unchanged by the tenant flag",
+          abs(_on_s[_main]["our_peak_concurrent"]
+              - _off_s[_main]["peak_concurrent"]) < 0.05,
+          (_off_s[_main]["peak_concurrent"], _on_s[_main]["our_peak_concurrent"]))
+# The BLB spur is off the shared mainline: no tenant runs it, so it must be
+# byte-identical with the flag on. Catches a blanket "add background
+# everywhere" implementation, which would read as tenants on a road they
+# have never driven.
+_spur = [s for s in _on["sections"] if s["section"].endswith(" spur")]
+check("the BLB spur gets no tenant load at all",
+      bool(_spur) and all(s.get("tenant_trucks_present", 0) == 0 for s in _spur)
+      and all(abs(_on_s[s["section"]]["peak_concurrent"]
+                  - _off_s[s["section"]]["peak_concurrent"]) < 1e-9
+              for s in _spur),
+      [(s["section"], s.get("tenant_trucks_present")) for s in _spur])
+check("tenant traffic still never clips tonnes",
+      (_on["basis"].get("congestion_clips_tonnes") is False
+       and _on["basis"].get("simulate_unchanged") is True))
+
 print("\n%s" % ("ALL PASS" if not fails else "FAILED: " + ", ".join(fails)))
 sys.exit(1 if fails else 0)

@@ -556,6 +556,7 @@ def shared_flow(
     path=None,
     bin_hours: float = BIN_HOURS,
     whole_day: bool = False,
+    tenants: bool = False,
 ) -> dict:
     """Build shared-section occupancy timeline for a holding plan.
 
@@ -1040,6 +1041,42 @@ def shared_flow(
 
     from congestion.segments import SEGMENTS as _SEGS
     _seg_by_label = {s['label']: s for s in _SEGS}
+
+    # ── Other tenants on the same road (owner register; congestion/tenants.py)
+    # They are not in `plans` and never will be: they are somebody else's
+    # trucks, carry no tonnage for us, and are not ours to schedule. But they
+    # are on the road, so leaving them out of the road view answers "how busy
+    # is the corridor if we are the only ones on it" — which is not the
+    # question this card is asked.
+    #
+    # They enter as a CONSTANT background, not as simulated trucks:
+    #   flow    = their loaded-lane trucks/hr on that segment (already on the
+    #             predictor's clock — see congestion.tenants._CLOCK)
+    #   present = flow x time to cross the segment          (Little's law)
+    # Constant across the clock because we do not know their release pattern.
+    # Assuming one would be inventing a shape; a flat line is the honest
+    # default and is labelled as such in the payload and the caption.
+    _ten_flow_hr: dict = {}
+    _ten_present: dict = {}
+    _ten_total_dt = 0
+    if tenants:
+        try:
+            from congestion.tenants import tenant_segment_flow_hr, TENANTS as _TREG
+            from congestion.speed_limits import span_times_min as _stm
+            _ten_total_dt = sum(t["dt"] for t in _TREG)
+            _by_id = tenant_segment_flow_hr()
+            for _s in _SEGS:
+                _f_hr = float(_by_id.get(_s["id"], 0.0) or 0.0)
+                if _f_hr <= 0:
+                    continue
+                _loaded_min, _ = _stm(_s["bottom_km"], _s["top_km"])
+                _ten_flow_hr[_s["label"]] = _f_hr
+                _ten_present[_s["label"]] = _f_hr * (float(_loaded_min) / 60.0)
+        except (ImportError, ValueError, ArithmeticError, KeyError, TypeError):
+            # An advisory panel must not die because a register is unreadable,
+            # but it must not silently claim a clear road either: tenants_applied
+            # in the payload says which of the two happened.
+            _ten_flow_hr, _ten_present, _ten_total_dt = {}, {}, 0
     all_secs = [s['label'] for s in _SEGS] + sorted(
         s for s in section_plans if s not in {x['label'] for x in _SEGS})
     used_secs = [s for s in all_secs if s in section_plans or s in occ_h]
@@ -1100,6 +1137,22 @@ def shared_flow(
                                        for s in subs)))
         else:
             flow_basis = "uniform section: every truck runs its whole length"
+        # Other tenants ride the same lane. Added to OUR flow and OUR presence
+        # after both are computed, and carried separately in the payload so the
+        # two fleets can always be told apart — the plan can only be changed by
+        # moving our own trucks.
+        ours_flow = peak_lane_flow
+        ours_peak_conc = peak_conc
+        ten_f = float(_ten_flow_hr.get(sec, 0.0))
+        ten_p = float(_ten_present.get(sec, 0.0))
+        if ten_f > 0:
+            peak_lane_flow += ten_f
+            flow_basis += (" · plus %.1f/h of other tenants' trucks on this lane"
+                           % ten_f)
+        if ten_p > 0:
+            peak_conc += ten_p
+            peak_mean += ten_p
+            occ_mean = [x + ten_p for x in occ_mean]
         ratio = (peak_lane_flow / lane_cap_tph) if lane_cap_tph > 0 else 0.0
         status = "High" if ratio >= 1.0 else ("Watch" if ratio >= 0.7 else "Open")
         plans_here = sorted(section_plans.get(sec) or [])
@@ -1123,6 +1176,13 @@ def shared_flow(
             "flow_basis": flow_basis,
             "uniform_section": not subs,
             "cross_sections": subs,
+            # ── OTHER TENANTS: broken out, never merged away. Our own figures
+            # stay recoverable so "can we fix this by moving trucks?" has an
+            # answer — tenant load is not ours to move.
+            "tenant_flow_per_h": round(ten_f, 1),
+            "tenant_trucks_present": round(ten_p, 1),
+            "our_peak_flow_per_h": round(ours_flow, 1),
+            "our_peak_concurrent": round(ours_peak_conc, 1),
             # ── PRESENCE: a stock, with a stock denominator.
             "peak_trucks": int(round(peak_conc)),
             "peak_concurrent": round(peak_conc, 1),
@@ -1419,6 +1479,19 @@ def shared_flow(
             "tail_wraps_to_start": True,
             "occupancy_metric": "mean concurrent trucks per bin (time-weighted)",
             "occupancy_capacity": "trucks that fit at the following distance, both lanes",
+            # Stated on EVERY response, true or false. An absent flag would let
+            # a clear-road corridor be read as a shared-road one, which is the
+            # failure this whole register exists to prevent.
+            "tenant_traffic": bool(_ten_flow_hr),
+            "tenant_dt": _ten_total_dt,
+            "tenant_basis": (
+                "other tenants' %d DT added as a CONSTANT background: flow from "
+                "congestion/tenants.py (their own clock), presence = flow x "
+                "section crossing time. Flat across the clock because their "
+                "release pattern is unknown — assuming one would be inventing "
+                "a shape. Their trucks are not ours to move."
+                % _ten_total_dt) if _ten_flow_hr else
+                "other tenants NOT included: this is the road with our plan only",
             "vc_metric": ("peak %g-h directional passages ÷ official lane capacity "
                           "flow — invariant to bin size" % VC_WINDOW_H),
             "following_distance_m": _FOLLOW_M,
