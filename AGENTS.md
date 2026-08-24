@@ -1860,3 +1860,64 @@ wave failures through.
 chainage is the one node where evidence disagrees with NODE_KM (p10 cycle
 implies ~21 km vs the stored 17.0, ~1 sigma, so not solid). A geofence
 centroid for POS 10 would settle it in minutes.
+
+## 2026-08-24 — HANDOFF TO FOX (or whoever picks this up next)
+
+**Read this first if you are the agent who had uncommitted work here.**
+Your changes to monthly_api.py, scenario_api.py, export_saturation_curves.py,
+plan_sensitivity.js, planning_rules.md, templates/* and the rest sat
+untouched from 2026-08-21 to 2026-08-23 — dormant, not in flight. The owner
+authorised finishing the blocked defects that lived in those files, so your
+work was **backed up to /tmp/coagent_backup_0823/, built ON TOP OF (never
+reverted), and committed in c840db8** with attribution. Nothing was lost;
+your SVG restyle, chart-ink change and plan_sensitivity rewrite all shipped.
+If you return expecting a dirty tree, that is why it is clean.
+
+### Ground rules that cost us this week
+- ONE server on :5055 (PID 69368 today), loopback only. Do not restart it
+  while someone else is mid-run — `use_reloader=False`, so your edits do
+  NOT affect a running process; verify by importing modules directly.
+- Never run `scripts/calibrate_congestion.py` casually: it rewrites
+  data/congestion_params.json and invalidates every baseline in flight.
+  Back it up first and re-verify anchors + backtest before shipping.
+- `git add -A` in a shared tree commits someone else's work. Check
+  `git diff --cached` against what you think you wrote.
+
+### Open work, highest value first
+
+1. **POS 10 chainage — the one node where evidence disagrees with the map.**
+   `NODE_KM['POS 10'] = 17.0`, but its p10 cycle implies ~21 km (about 1
+   sigma, so suggestive, not proof). A geofence centroid for POS 10 from
+   `FMS_GEOFENCES` (CENTER_LAT/LNG), snapped to
+   data/haul_road_chainage_public.csv, settles it in minutes. If it moves,
+   segment overlaps and every POS 10 route's pricing move with it.
+2. **`DISTANCE_HAULING` no longer exists in any of the 14 databases.**
+   `physics.HAUL_KM_SOURCE` cites it ("p50 6.7 km n=2204", "p50 63.7 km
+   n=51") and those citations can no longer be re-checked. Find the
+   successor column or re-derive the distances from a source that exists,
+   then update the provenance. Do not delete the citations silently.
+   Related: BLB>POS 14/15/16 at 6.7 km look SHORT (p10 cycles imply
+   9-13 km) while BLB's other four routes reproduce within ~1.5 km.
+3. **NODE_KM has two homes.** `congestion/segments.py` retypes
+   `physics.NODE_KM` and is missing the POS16 / FENI / POS CBB aliases
+   physics has. One home, imported — this repo has paid for duplicate
+   constants repeatedly (the 0.85 availability, three shift controls,
+   three contractor-pricing owners).
+4. **Foreign trucks are priced at the HOST route's tempo**
+   (predictor.py ~159-169): segment v/c uses this route's cycle for
+   everyone on the window, under-weighting faster foreign fleets ~1.8x.
+   Direction is monotone-correct, magnitude approximate. Needs a
+   per-route flow term, and a re-anchor check afterwards.
+5. **`total_trips` is demand and is never clipped** while tonnage is
+   (documented open item). There is still no `achievable_trips` field.
+   The only consumer today labels it correctly as demand; the next one
+   will not.
+6. **IWIP rows are sized without IWIP's own baseline** — `planRulesTripsFor`
+   omits `contractor=IWIP` although calibration carries ratio 1.088, so
+   IWIP fleets are ~9% over-sized (conservative direction).
+
+### Anything you touch, prove with a number
+Every claim in reports/QA_AUDIT_2026-08-23_FIX_PLAN.md carries the probe
+that produced it. Keep that bar: a fix that cannot be measured cannot be
+verified, and an unverifiable calibration change is what this repo has
+been burned by more than once.
