@@ -1157,10 +1157,11 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
         cell.alignment = mid
         _xlsx_total_border(cell)
         _rate_col = (col in (9, 10) if achv else col in (12, 13, 14, 15))
-        if ten and col == len(tot_vals):
+        _ten_total = bool(ten) and col == len(tot_vals)
+        if _ten_total:
             _rate_col = True
         if _rate_col and isinstance(val, (int, float)):
-            cell.number_format = "0.00"
+            cell.number_format = "0.000" if _ten_total else "0.00"
         elif col >= 5 and isinstance(val, (int, float)):
             cell.number_format = "#,##0"
     r += 1
