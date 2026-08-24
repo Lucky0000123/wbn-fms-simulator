@@ -62,6 +62,169 @@ SPUR_KM_FALLBACK = 19.9      # BLB spur length when the route has no distance
 EMPTY_SPEED_FACTOR = 1.25    # site GPS: empty runs ~1.25x loaded (spur only;
                              # the stick uses the official directional limits)
 
+# ── Release profile: WHEN the day's trips start ──────────────────────────────
+# MEASURED, not assumed.  Source: HAULAGE_CLEAN.TIME_LOADED, n = 273,222 loads
+# over 234 days, load starts binned by hours-since-shift-start (the site runs
+# two 12-h shifts, 07:00 and 19:00) and expressed as a MULTIPLIER on the
+# uniform release rate.  chi-square against uniform = 34,883 on 23 df: "flat"
+# is not a rounding difference from this data, it is refuted by it.
+#
+# What the measurement does and does not say:
+#
+#  * There IS a 1-hour ramp-up at shift start and a 2-hour wind-down, with the
+#    FINAL hour of each shift near-zero (0.15 day / 0.17 night) — the road
+#    empties for the changeover.  A flat model put a full hour of traffic on a
+#    road that is emptying, which is where its worst errors lived (+238% at
+#    19:00, +202% at 07:00, +161% at 18:00 against measured presence).
+#  * There is NO meal-break dip: 12:00 = 1.05x and 13:00 = 1.11x, both ABOVE
+#    the shift-start hour.  Do not add one.
+#  * The interior hours (+2..+8) are reported as a BAND (1.05-1.31 day,
+#    0.98-1.47 night) with no reproducible shape inside it, so they are held
+#    at ONE constant here rather than given invented hour-to-hour structure.
+#    That constant is not a guess either: it is whatever makes the twelve
+#    hours sum to 12, i.e. conserve the shift's total releases.  It lands at
+#    1.190 (day) / 1.229 (night), both INSIDE the measured band — which is the
+#    consistency check that the anchors and the band agree.  If a future
+#    measurement resolves the interior hour by hour, replace the constant with
+#    the series; the band check below is what will tell you they disagree.
+#
+# The profile is applied as a monotone TIME WARP of the schedule inside each
+# shift (_warp_release_time): the same SET of load starts is re-timed, never
+# added to or removed from, so the executed trip count is conserved EXACTLY
+# rather than to within rounding.  Reshaping WHEN trucks are released must not
+# change HOW MANY trips are executed.
+RELEASE_PROFILE_SOURCE = (
+    "HAULAGE_CLEAN.TIME_LOADED — n=273,222 loads over 234 days; load starts "
+    "by hours-since-shift-start ÷ the uniform rate (chi2 vs uniform = 34,883 "
+    "on 23 df)")
+SHIFT_STARTS_H = (7, 19)          # the site's two 12-h shifts (owner)
+RELEASE_PROFILE_HOURS = 12        # the profile is defined over one 12-h shift
+# hour-since-shift-start -> measured multiplier, for the hours the measurement
+# resolves individually. The rest are filled by _fill_release_profile().
+_RELEASE_ANCHORS_DAY = {0: 0.56, 1: 1.22, 9: 1.14, 10: 0.60, 11: 0.15}
+_RELEASE_ANCHORS_NIGHT = {0: 0.51, 1: 1.19, 9: 0.98, 10: 0.55, 11: 0.17}
+# measured band for the un-resolved interior hours (+2..+8)
+_RELEASE_INTERIOR_BAND = {"day": (1.05, 1.31), "night": (0.98, 1.47)}
+
+
+def _fill_release_profile(anchors: Dict[int, float],
+                          band: Tuple[float, float]) -> Tuple[float, ...]:
+    """12 hourly multipliers: measured anchors + ONE constant interior.
+
+    The interior constant is fixed by conservation (the twelve multipliers
+    must average 1.0, so the shift's total releases are unchanged) and is then
+    CHECKED against the measured band. A constant outside the band would mean
+    the anchors and the band disagree — that is a data problem, not something
+    to clamp away quietly, so it raises here at import.
+    """
+    free = [h for h in range(RELEASE_PROFILE_HOURS) if h not in anchors]
+    interior = (RELEASE_PROFILE_HOURS - sum(anchors.values())) / len(free)
+    lo, hi = band
+    if not (lo - 1e-9 <= interior <= hi + 1e-9):
+        raise ValueError(
+            "release profile interior %.3f falls outside the measured band "
+            "%.2f-%.2f: the anchors and the band no longer agree, re-derive "
+            "the profile from %s" % (interior, lo, hi, RELEASE_PROFILE_SOURCE))
+    return tuple(anchors.get(h, interior) for h in range(RELEASE_PROFILE_HOURS))
+
+
+RELEASE_PROFILE_DAY = _fill_release_profile(
+    _RELEASE_ANCHORS_DAY, _RELEASE_INTERIOR_BAND["day"])
+RELEASE_PROFILE_NIGHT = _fill_release_profile(
+    _RELEASE_ANCHORS_NIGHT, _RELEASE_INTERIOR_BAND["night"])
+
+# ── Per-segment time split: the official limits are NOT uniformly optimistic ─
+# The route's TOTAL road time stays dispatch-anchored (the calibrated cycle);
+# NOTHING below changes it. These factors only change how that total is
+# DISTRIBUTED over S1-S4, and they are applied BEFORE the normalisation that
+# re-anchors the total, so only their RATIOS matter (the common level is
+# absorbed by the anchor — which is why they sit near the repo's site-wide
+# speed_factor of 1.59-1.86 with S4 as the outlier).
+#
+# Splitting by official speed-limit time assumes the limits are wrong by the
+# same factor everywhere. Measured two independent ways — 463,060 vendor
+# segment traversals (22 days) and 11,611 haul-truck GPS bin-traversals
+# (8 days), agreeing within 6% — they are not:
+#
+#   segment           limit share   measured (vendor / GPS)   measured ÷ limit
+#   S1 TF-KR             42.2%         47.1% / 44.5%            1.60-1.67
+#   S2 KR-POS 12         14.9%         17.3% / 19.9%            1.67-2.11
+#   S3 POS 12-KM15       15.4%         15.9% / 15.3%            1.49-1.57  (ok)
+#   S4 KM15-coast        27.5%         19.7% / 20.3%            1.03-1.17
+#
+# S4 is the defect: the posted limits are essentially ACCURATE there while
+# S1-S3 run 1.5-2.1x their posted time, so a limit-proportional split
+# mechanically dumps 7.2-7.8 pp (36% relative) of every route's road time onto
+# S4 — the tightest section on the road, and the one the card is read for.
+# This is BIAS, not variance: S4's measured share never reaches 27.5% in ANY
+# of the 24 hours (range 18.9-23.9%). The obvious suspect — the un-sheeted
+# KM 0-5 port assumption (speed_limits.ASSUMPTIONS) — was tested and explains
+# only 1.2 of the 7.8 pp, so it is not the cause and is left alone.
+SEGMENT_TIME_FACTORS = {
+    "S1": {"loaded": 1.60, "empty": 1.28},
+    "S2": {"loaded": 1.67, "empty": 1.35},
+    "S3": {"loaded": 1.50, "empty": 1.35},
+    "S4": {"loaded": 1.05, "empty": 1.03},
+}
+SEGMENT_TIME_FACTORS_SOURCE = (
+    "463,060 vendor segment traversals (22 days) + 11,611 haul-truck GPS "
+    "bin-traversals (8 days), agreeing within 6%: measured segment share ÷ "
+    "official-speed-limit share, applied before normalisation so the route's "
+    "dispatch-anchored TOTAL road time is unchanged")
+# The BLB spur has no limit sheet and no vendor/GPS traversal study of its own,
+# so it keeps 1.0 — stated as un-measured rather than borrowed from the stick.
+SPUR_TIME_FACTOR = 1.0
+
+
+def _release_profile_for_clock(clock_h: float) -> Tuple[Tuple[float, ...], str]:
+    """(profile, name) for the shift that starts at this clock hour."""
+    c = float(clock_h) % 24.0
+    if SHIFT_STARTS_H[0] <= c < SHIFT_STARTS_H[1]:
+        return RELEASE_PROFILE_DAY, "day"
+    return RELEASE_PROFILE_NIGHT, "night"
+
+
+def _release_cdf(profile: Tuple[float, ...]) -> List[float]:
+    """Cumulative share of the shift's releases at each hour boundary."""
+    tot = float(sum(profile)) or 1.0
+    out = [0.0]
+    for v in profile:
+        out.append(out[-1] + float(v) / tot)
+    out[-1] = 1.0
+    return out
+
+
+def _warp_unit(u: float, cdf: List[float]) -> float:
+    """Inverse CDF: uniform position u in [0,1) -> profile position in [0,1).
+
+    Monotone and onto, so it re-times a schedule without changing how many
+    departures it contains — the conservation property the whole fix rests on.
+    """
+    n = len(cdf) - 1
+    if not (u > 0.0):
+        return 0.0
+    if u >= 1.0:
+        return 1.0 - 1e-12
+    i = min(max(bisect.bisect_right(cdf, u) - 1, 0), n - 1)
+    span = cdf[i + 1] - cdf[i]
+    frac = 0.0 if span <= 1e-15 else (u - cdf[i]) / span
+    return (i + frac) / n
+
+
+def _warp_release_time(t: float, shift_hours: float, n_shifts: int,
+                       cdfs: List[List[float]]) -> float:
+    """Re-time one load start inside its own shift window.
+
+    Each window [s*shift_hours, (s+1)*shift_hours) maps onto ITSELF, so the
+    warp is a bijection of the horizon: the trip count per row, per shift and
+    in total is identical before and after.
+    """
+    if shift_hours <= 0 or not cdfs:
+        return t
+    s = min(max(int(t // shift_hours), 0), n_shifts - 1)
+    u = (t - s * shift_hours) / shift_hours
+    return (s + _warp_unit(u, cdfs[s])) * shift_hours
+
 
 def _f(x, default=None):
     try:
@@ -291,6 +454,58 @@ def _peak_flow_per_h(entries: List[Tuple[float, float]], horizon: float,
     return best / window_h
 
 
+def _cross_sections(passes: List[Tuple[float, float, float, float, float, str]],
+                    horizon: float, min_km: float = 0.05) -> List[dict]:
+    """Split a section at every leg boundary and report each cross-section.
+
+    A section is honestly ONE number only when every truck on it runs its whole
+    length. BLB breaks that: a BLB truck joins the stick at SPUR_JOIN_KM = 2.45
+    and occupies 2.45 km of KM15-coast's 15 km (16%), but a single section row
+    counts it as a full passage. Measured on the real 2026-09-03 plan the
+    loaded flow BELOW the junction is 50.7/h against 30.2/h above it — a 68%
+    step hidden inside one reported number. POS 10 (km 17.0) does the same
+    thing to POS 12-KM15 on a smaller scale.
+
+    So report the pieces, and let the caller label the section headline as the
+    WORST cross-section rather than an average of two different roads. Returns
+    [] for a uniform section, where the split would be the section itself.
+    """
+    if not passes or horizon <= 0:
+        return []
+    edges = sorted({round(x, 6) for p in passes for x in (p[0], p[1])})
+    if len(edges) <= 2:
+        return []
+    out: List[dict] = []
+    for a, b in zip(edges, edges[1:]):
+        if b - a < min_km:
+            continue
+        ent: Dict[str, List[Tuple[float, float]]] = {"loaded": [], "empty": []}
+        th = 0.0
+        for k_lo, k_hi, t_in, dur, w, dirn in passes:
+            if k_lo > a + 1e-9 or k_hi < b - 1e-9:
+                continue                      # this leg does not cover [a, b]
+            span = k_hi - k_lo
+            th += w * dur * (b - a) / span
+            # Loaded runs DOWN-chainage (enters the slice at its top, b);
+            # empty runs UP (enters at the bottom, a). 100.0% of loaded
+            # corridor hauls run down-chainage — see CLAUDE.md, 298,340 trips,
+            # zero counter-examples.
+            off = (k_hi - b) / span if dirn == "loaded" else (a - k_lo) / span
+            ent[dirn].append(((t_in + off * dur) % horizon, w))
+        fl = _peak_flow_per_h(ent["loaded"], horizon, VC_WINDOW_H)
+        fe = _peak_flow_per_h(ent["empty"], horizon, VC_WINDOW_H)
+        out.append({
+            "km_lo": round(a, 2), "km_hi": round(b, 2),
+            "length_km": round(b - a, 2),
+            "peak_flow_loaded_per_h": round(fl, 1),
+            "peak_flow_empty_per_h": round(fe, 1),
+            "peak_flow_per_h": round(max(fl, fe), 1),
+            "mean_concurrent": round(th / horizon, 2),
+            "truck_hours": round(th, 1),
+        })
+    return out
+
+
 def _norm_plans(plans: Optional[List[dict]]) -> List[dict]:
     # canonical_area is the repo's ONE normaliser (see CLAUDE.md). Without it
     # an alias row ("TOFU>FENI KM0") builds a route key the calibration has
@@ -454,9 +669,13 @@ def shared_flow(
                 if not (route_km and (c_hi - c_lo) > route_km + 0.5):
                     lo, hi = c_lo, c_hi
 
-        # raw = [(label, overlap_km, loaded_min, empty_min, speed_kmh)] in
-        # travel order (pit -> coast): the spur leg first, then the mainline
-        # segments from the junction down.
+        # raw = [(label, overlap_km, loaded_min, empty_min, speed_kmh,
+        #         km_lo, km_hi)] in travel order (pit -> coast): the spur leg
+        # first, then the mainline segments from the junction down. km_lo/km_hi
+        # are the mainline chainage this leg actually occupies, and are None on
+        # the spur (its own chainage is a different datum) — they are what lets
+        # a section that is NOT uniform be reported cross-section by
+        # cross-section instead of as one mixed number (_cross_sections).
         raw = []
         main_km = 0.0
         if lo is not None and hi is not None and hi - lo > 1e-9:
@@ -466,8 +685,17 @@ def shared_flow(
                 if ov <= 1e-9:
                     continue
                 tl, te = _span_times(o_lo, o_hi)
-                raw.append((s['label'], ov, tl or ov, te or ov,
-                            (s.get('speeds') or {}).get('loaded', {}).get('mean')))
+                # MEASURED correction: the official limits are 40-65% optimistic
+                # on S1-S3 and accurate on S4, so splitting by limit time alone
+                # pushes 7-8 pp of every route's road time onto S4. Applied
+                # before the normalisation below, so the route TOTAL is
+                # untouched — only its distribution moves.
+                fac = SEGMENT_TIME_FACTORS.get(s['id']) or {}
+                raw.append((s['label'], ov,
+                            (tl or ov) * float(fac.get('loaded', 1.0)),
+                            (te or ov) * float(fac.get('empty', 1.0)),
+                            (s.get('speeds') or {}).get('loaded', {}).get('mean'),
+                            o_lo, o_hi))
                 main_km += ov
         if join is not None or not raw:
             # spur remainder: the route's calibrated distance less whatever of
@@ -481,18 +709,25 @@ def shared_flow(
                 km = km or SPUR_KM_FALLBACK
                 spur_km[lbl] = max(spur_km.get(lbl, 0.0), float(km))
                 tl_spur = 60.0 * km / SPUR_SPEED_FLOOR_KMH
-                raw.insert(0, (lbl, km, tl_spur, tl_spur / EMPTY_SPEED_FACTOR, None))
+                raw.insert(0, (lbl, km, tl_spur * SPUR_TIME_FACTOR,
+                               tl_spur / EMPTY_SPEED_FACTOR * SPUR_TIME_FACTOR,
+                               None, None, None))
 
         # The route's TOTAL road time stays dispatch-anchored; the official
-        # limits (and the spur floor) only set each leg's SHARE of it.
+        # limits (corrected by the measured SEGMENT_TIME_FACTORS) and the spur
+        # floor only set each leg's SHARE of it. Because the factors are inside
+        # `tot`, the normalisation absorbs their common level: the route total
+        # is bit-for-bit what it was, and only the split moves.
         tot = sum(r[2] + r[3] for r in raw) or 1.0
         k = road_min / tot
         sec_loaded, sec_empty = [], []
-        for lbl_, ov, tl, te, spd in raw:
+        for lbl_, ov, tl, te, spd, k_lo, k_hi in raw:
             sec_loaded.append({"section": lbl_, "hours": tl * k / 60.0,
-                               "speed_kmh": spd, "km": round(ov, 2)})
+                               "speed_kmh": spd, "km": round(ov, 2),
+                               "km_lo": k_lo, "km_hi": k_hi})
             sec_empty.append({"section": lbl_, "hours": te * k / 60.0,
-                              "km": round(ov, 2)})
+                              "km": round(ov, 2),
+                              "km_lo": k_lo, "km_hi": k_hi})
         travel_h = sum(x["hours"] for x in sec_loaded)
         cycle_h = cyc_min / 60.0
         interval_h = max((cyc_min + overhead_min) / 60.0, 1e-3)  # inter-trip spacing
@@ -546,12 +781,51 @@ def shared_flow(
     #    dropped 66 of 1512 planned trips outright and clipped the rest at the
     #    changeover, losing 18% of road truck-hours.
     #
-    # Releasing uniformly over the interval makes the per-shift re-stagger a
-    # no-op (the same departure times either way), which is why the shift loop
-    # is gone: what it used to add was the boundary loss, not a pattern.
-    # Hour-to-hour structure needs synchronised breaks — a calibration this
-    # model does not have (see reports/ROAD_CROWDING_BY_HOUR_PLAN.md §6), and
-    # inventing it here would be worse than a flat profile.
+    # The uniform schedule is then RE-TIMED by the measured release profile
+    # (RELEASE_PROFILE_DAY / _NIGHT). Until 2026-08-24 this model released
+    # uniformly and the hour section of the card came out flat — CV 0.014-0.030
+    # on real plans, 23 of 24 identical cells — against a measured presence CV
+    # of 0.319 and a peak/trough of 2.6x-7.7x. That flat profile was wrong in a
+    # specific, same-signed way: it put a full hour of traffic on a road that
+    # empties for the shift changeover (+238% at 19:00, +202% at 07:00, +161%
+    # at 18:00) and paid for it by understating 21:00-04:00, the genuinely
+    # busiest hours, by 16-29%.
+    #
+    # The warp is anchored on the LOAD START, because that is what was measured
+    # (HAULAGE_CLEAN.TIME_LOADED). The row's queue wait sits BEFORE the load, so
+    # the schedule generated below is shifted by queue_min and wrapped onto the
+    # horizon first (the plan repeats), and road entry is then load_min later.
+    # Under a flat profile that shift was invisible — a uniform train rotated is
+    # the same uniform train — which is exactly why it had never mattered; with
+    # a profile it decides which clock hour a row's ramp lands on, and TF>HUAFEI
+    # queues 182.6 min, three whole hours of it.
+    #
+    # CONSERVATION IS THE POINT: _warp_release_time maps each shift window onto
+    # itself, so it re-times the SAME SET of departures. Executed trips per row,
+    # per shift and in total are identical to the uniform schedule — reshaping
+    # WHEN trucks are released must not change HOW MANY trips run. The test file
+    # pins this (uniform vs profiled executed_trips, exactly equal).
+    #
+    # OPEN, and stated rather than tuned away: PRESENCE still lags the measured
+    # presence profile by each section's TRANSIT TIME, because this model
+    # completes trips in flight across the changeover (`trips_in_flight_complete`
+    # below). Measured against the reconstructed measured presence on the real
+    # 2026-09-03 plan, the amplitude is now right — median absolute hourly error
+    # 0.7-4.1% on three of five sections once the section's own lag is allowed
+    # for, against 17.7-18.6% for the flat model at ANY phase — but the lag
+    # itself is 0-1 h (BLB spur, TF-KR) rising to 2-3 h (KM15-coast), while the
+    # measurement shows ~0-1 h everywhere (its busiest presence hours are
+    # 21:00-04:00, the same hours as the busiest RELEASES, not 2-3 h later).
+    # The likely cause is that real trucks hand over / park at the changeover
+    # instead of finishing the leg. Closing it needs a calibrated changeover
+    # behaviour — how long a truck stands where at handover — which is not in
+    # the release measurement. Inventing a freeze here would either destroy
+    # trips or fabricate a duration, so it is left open and disclosed
+    # (`basis.release_profile.presence_lag`).
+    #
+    # Still NOT modelled, and still not invented: synchronised meal breaks
+    # (there is no meal-break dip in the data — 12:00 = 1.05x, 13:00 = 1.11x)
+    # and a loader-face schedule (reports/ROAD_CROWDING_BY_HOUR_PLAN.md §6).
     #
     # Loading faces (rules §10.9, ~1 loader per 15 trucks) are no longer the
     # stagger: the model's interval already carries the loader queue
@@ -559,8 +833,23 @@ def shared_flow(
     # double-counted it — and produced an 11 h release window for POS 12's 36
     # trucks while TF's 471 spread over 4.6 h. Faces are CHECKED and reported
     # against the release rate instead (`sources` in the payload).
-    events: List[Tuple[str, float, float, float, str, str]] = []
+    events: List[Tuple[str, float, float, float, str, str,
+                       Optional[float], Optional[float]]] = []
     section_plans: Dict[str, set] = defaultdict(set)
+
+    # One inverse-CDF per shift window, picked by the CLOCK hour that window
+    # starts on (07:00 -> day, 19:00 -> night), so the same code serves
+    # whole_day=True (two windows) and whole_day=False (one).
+    release_windows = []
+    for s in range(n_shifts):
+        clock = (start_hour + s * shift_hours) % 24
+        prof, pname = _release_profile_for_clock(clock)
+        release_windows.append({"shift": s, "clock_start": round(clock, 2),
+                                "profile": pname,
+                                "multipliers": [round(v, 3) for v in prof]})
+    release_cdfs = [_release_cdf(RELEASE_PROFILE_DAY if w["profile"] == "day"
+                                 else RELEASE_PROFILE_NIGHT)
+                    for w in release_windows]
 
     for pr in path_rows:
         n = pr["n_trucks"]
@@ -572,7 +861,8 @@ def shared_flow(
         # millions of iterations and hang the endpoint; 3 minutes is already
         # far below any measured cycle here.
         interval_h = max(pr["interval_h"], 0.05)
-        entry_lag_h = (pr["queue_min"] + pr["load_min"]) / 60.0
+        queue_h = pr["queue_min"] / 60.0
+        load_h = pr["load_min"] / 60.0
         executed = 0.0
         for j in range(n_sim):
             phase = (j + 0.5) / n_sim * interval_h
@@ -581,16 +871,23 @@ def shared_flow(
                 if t_depart >= horizon_h:
                     break
                 executed += weight
-                t_cursor = t_depart + entry_lag_h      # queue + load, then road
+                # Dispatch -> queue -> LOAD START (what TIME_LOADED measures,
+                # and what the release profile re-times) -> road.
+                t_load = _warp_release_time(
+                    (t_depart + queue_h) % horizon_h,
+                    shift_hours, n_shifts, release_cdfs)
+                t_cursor = t_load + load_h
                 for st in pr["sec_times"]:             # loaded pass, pit -> dump
                     events.append((st["section"], t_cursor, t_cursor + st["hours"],
-                                   weight, "loaded", pr["id"]))
+                                   weight, "loaded", pr["id"],
+                                   st.get("km_lo"), st.get("km_hi")))
                     section_plans[st["section"]].add(pr["label"])
                     t_cursor += st["hours"]
                 t_cursor += pr["dump_min"] / 60.0       # dump dwell (off road)
                 for st in reversed(pr["sec_times_empty"]):   # EMPTY return
                     events.append((st["section"], t_cursor, t_cursor + st["hours"],
-                                   weight, "empty", pr["id"]))
+                                   weight, "empty", pr["id"],
+                                   st.get("km_lo"), st.get("km_hi")))
                     section_plans[st["section"]].add(pr["label"])
                     t_cursor += st["hours"]
         pr["executed_trips"] = round(executed, 1)
@@ -646,14 +943,21 @@ def shared_flow(
     sweep: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
     truck_h: Dict[str, float] = defaultdict(float)
     truck_h_path: Dict[str, float] = defaultdict(float)
+    # (km_lo, km_hi, t_enter, duration, weight, direction) per section, for the
+    # cross-section split of sections that are NOT uniform (see _cross_sections)
+    passages: Dict[str, List[Tuple[float, float, float, float, float, str]]] = \
+        defaultdict(list)
 
     # keyed on row id, NOT the display label: two rows can share a label
     # (TF>HUAFEI · SMA carries both a LIM-TOS and a LIM-LD row) and summing
     # them under one key would double-count each row's truck-hours.
-    for sec, t0, t1, w, dirn, pid in events:
+    for sec, t0, t1, w, dirn, pid, km_lo, km_hi in events:
         dur = t1 - t0
         truck_h[sec] += w * dur
         truck_h_path[pid] += w * dur
+        if km_lo is not None and km_hi is not None and km_hi - km_lo > 1e-9:
+            passages[sec].append((float(km_lo), float(km_hi),
+                                  t0 % horizon_h, dur, w, dirn))
         for a, b in _wrap_spans(t0, dur, horizon_h):
             b0 = min(n_bins - 1, max(0, int(a / bin_hours)))
             b1 = min(n_bins - 1, max(0, int(max(a, b - 1e-12) / bin_hours)))
@@ -719,6 +1023,23 @@ def shared_flow(
         peak_lane_flow = max(flow_loaded, flow_empty)
         peak_both_flow = _peak_flow_per_h(
             entry_times[sec]["loaded"] + entry_times[sec]["empty"], horizon_h, VC_WINDOW_H)
+        # A section whose trucks do not all run its whole length is not one
+        # number. Split it at every leg boundary (BLB joins the stick at
+        # km 2.45, POS 10 sits at km 17.0) and take the WORST cross-section as
+        # the headline, labelled as such, instead of quietly mixing a 50.7/h
+        # cross-section with a 30.2/h one.
+        subs = _cross_sections(passages.get(sec) or [], horizon_h)
+        if subs:
+            peak_lane_flow = max([peak_lane_flow]
+                                 + [s["peak_flow_per_h"] for s in subs])
+            flow_basis = ("WORST CROSS-SECTION of %d: this section is not "
+                          "uniform (%s), so one flow number would mix them"
+                          % (len(subs),
+                             ", ".join("km %g-%g %.1f/h" % (s["km_lo"], s["km_hi"],
+                                                            s["peak_flow_per_h"])
+                                       for s in subs)))
+        else:
+            flow_basis = "uniform section: every truck runs its whole length"
         ratio = (peak_lane_flow / lane_cap_tph) if lane_cap_tph > 0 else 0.0
         status = "High" if ratio >= 1.0 else ("Watch" if ratio >= 0.7 else "Open")
         plans_here = sorted(section_plans.get(sec) or [])
@@ -739,6 +1060,9 @@ def shared_flow(
             "flow_window_h": VC_WINDOW_H,
             "vc_basis": ("busiest %g h of passages in one direction ÷ that "
                          "lane's capacity flow" % VC_WINDOW_H),
+            "flow_basis": flow_basis,
+            "uniform_section": not subs,
+            "cross_sections": subs,
             # ── PRESENCE: a stock, with a stock denominator.
             "peak_trucks": int(round(peak_conc)),
             "peak_concurrent": round(peak_conc, 1),
@@ -913,15 +1237,26 @@ def shared_flow(
         "note": (
             "DES on the segment model: per-truck timing from the calibrated hybrid "
             "(plan segment fleets, contractor baselines, cycle + overhead cadence), "
-            "road time split over S1–S4 by the official directional speed limits, "
-            "loaded pass + dump + EMPTY return both occupy the road; BLB rides its "
-            "spur pseudo-section. Cells are the MEAN trucks on the section during "
-            "the hour against the number that fit at %.0f m spacing; the v/c "
-            "verdict is the busiest hour of passages against the official lane "
-            "capacity flow, so neither moves with the bin size. A steady dispatch "
-            "gives a flat profile — meal breaks and shift-change gaps are not "
-            "calibrated (see reports/ROAD_CROWDING_BY_HOUR_PLAN.md §6). "
-            "Advisory — never clips simulate tonnes." % _FOLLOW_M
+            "road time split over S1–S4 by the official directional speed limits "
+            "CORRECTED by the measured segment factors (463k vendor traversals + "
+            "11.6k GPS bin-traversals: the limits run 1.5–2.1x optimistic on "
+            "S1–S3 but are accurate on S4, so an uncorrected split over-loaded "
+            "KM15–coast by 7–8 pp), loaded pass + dump + EMPTY return both occupy "
+            "the road; BLB rides its spur pseudo-section. Release times follow the "
+            "MEASURED load-start profile by hours-since-shift-start (%s) — a "
+            "1-hour ramp-up, a 2-hour wind-down and a near-empty final hour at "
+            "each changeover; there is no meal-break dip in the data and none is "
+            "added. Reshaping the release times does not change the trip count. "
+            "Cells are the MEAN trucks on the section during the hour against the "
+            "number that fit at %.0f m spacing; the v/c verdict is the busiest "
+            "hour of passages against the official lane capacity flow, so neither "
+            "moves with the bin size — and on a section that is not uniform "
+            "(BLB joins the stick at km 2.45) it is the WORST cross-section, "
+            "listed per cross-section on the row. Synchronised breaks and the "
+            "loader-face schedule are still not modelled "
+            "(reports/ROAD_CROWDING_BY_HOUR_PLAN.md §6). "
+            "Advisory — never clips simulate tonnes."
+            % (RELEASE_PROFILE_SOURCE, _FOLLOW_M)
         ),
         "basis": {
             **basis,
@@ -938,8 +1273,70 @@ def shared_flow(
             "max_truck_weight": round(max((p["sim_weight"] for p in path_rows),
                                           default=1.0), 3),
             "max_trucks_sim_per_row": MAX_TRUCKS_SIM,
-            "release_model": ("uniform over one inter-trip interval, repeating "
-                              "every interval (order-invariant, steady state)"),
+            "release_model": ("one inter-trip interval, repeating every interval "
+                              "(order-invariant, steady state), then re-timed "
+                              "inside each shift by the measured load-start "
+                              "profile — same trips, different hours"),
+            # What the card is allowed to say it applied. Everything here is
+            # measured or derived from the measurement by conservation; nothing
+            # is a modelling choice dressed as data.
+            "release_profile": {
+                "applied": True,
+                "source": RELEASE_PROFILE_SOURCE,
+                "table": "HAULAGE_CLEAN.TIME_LOADED",
+                "n_loads": 273222,
+                "n_days": 234,
+                "chi2_vs_uniform": 34883.0,
+                "chi2_df": 23,
+                "units": ("multiplier on the uniform release rate, by "
+                          "hours-since-shift-start"),
+                "anchored_on": "load start (TIME_LOADED), not dispatch",
+                "shift_starts_h": list(SHIFT_STARTS_H),
+                "profile_hours": RELEASE_PROFILE_HOURS,
+                "day": [round(v, 3) for v in RELEASE_PROFILE_DAY],
+                "night": [round(v, 3) for v in RELEASE_PROFILE_NIGHT],
+                "interior_hours_held_constant": [
+                    h for h in range(RELEASE_PROFILE_HOURS)
+                    if h not in _RELEASE_ANCHORS_DAY],
+                "interior_measured_band": _RELEASE_INTERIOR_BAND,
+                "meal_break_dip": False,
+                "meal_break_measured": {"12:00": 1.05, "13:00": 1.11},
+                "structure": ("1-hour ramp-up at shift start, 2-hour wind-down, "
+                              "final hour near-zero for the changeover"),
+                "method": ("monotone time warp inside each shift window: the "
+                           "same SET of load starts is re-timed, so executed "
+                           "trips are conserved exactly, not to rounding"),
+                "conserves_executed_trips": True,
+                "windows": release_windows,
+                "start_hour_is_shift_start": start_hour in SHIFT_STARTS_H,
+                "peak_over_trough": round(
+                    max(max(RELEASE_PROFILE_DAY), max(RELEASE_PROFILE_NIGHT))
+                    / min(min(RELEASE_PROFILE_DAY), min(RELEASE_PROFILE_NIGHT)), 2),
+                "presence_lag": (
+                    "the RELEASE hours are measured; the PRESENCE hours drawn "
+                    "on a section lag them by that section's transit time "
+                    "(0-1 h near the pit, 2-3 h on KM15-coast) because trips "
+                    "in flight are completed across the changeover. The "
+                    "measured presence lags by ~0-1 h everywhere, so the far "
+                    "sections' trough is drawn 2-3 h late. Amplitude is right, "
+                    "phase is not; a changeover behaviour is not calibrated "
+                    "and is not invented here"),
+            },
+            "segment_time_split": {
+                "basis": ("official directional speed-limit times × measured "
+                          "per-segment correction factors, then normalised to "
+                          "the route's dispatch-anchored total road time"),
+                "source": SEGMENT_TIME_FACTORS_SOURCE,
+                "factors": SEGMENT_TIME_FACTORS,
+                "spur_factor": SPUR_TIME_FACTOR,
+                "spur_factor_note": ("BLB spur has no limit sheet and no "
+                                     "traversal study — left at 1.0, not "
+                                     "borrowed from the stick"),
+                "changes_total_road_time": False,
+                "measured_target_share_loaded": {
+                    "S1": "47.1 / 44.5%", "S2": "17.3 / 19.9%",
+                    "S3": "15.9 / 15.3%", "S4": "19.7 / 20.3%"},
+            },
             "trips_in_flight_complete": True,
             "tail_wraps_to_start": True,
             "occupancy_metric": "mean concurrent trucks per bin (time-weighted)",

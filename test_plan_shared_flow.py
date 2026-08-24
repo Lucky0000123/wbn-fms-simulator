@@ -6,6 +6,8 @@ import sys
 
 import plan_corridor_hours as pch
 import plan_shared_flow as sf
+from congestion.segments import SEGMENTS as _SEGS
+from congestion.speed_limits import span_times_min as _span
 
 fails = []
 
@@ -18,6 +20,18 @@ def check(name, cond, detail=""):
 
 
 FX = pch._FIXTURE
+
+
+def _cv(xs):
+    """Coefficient of variation — the flat-profile detector."""
+    xs = [float(x) for x in xs]
+    if not xs:
+        return 0.0
+    m = sum(xs) / len(xs)
+    if m <= 0:
+        return 0.0
+    var = sum((x - m) ** 2 for x in xs) / len(xs)
+    return (var ** 0.5) / m
 
 print("=== shared-flow DES-lite ===")
 multi = [
@@ -183,6 +197,168 @@ th_got = fwd["summary"]["road_truck_hours"]
 check("road truck-hours within 1%% of n x trips x time-in-section",
       abs(th_got - th_exp) / max(th_exp, 1e-9) < 0.01,
       "expected %.1f served %.1f" % (th_exp, th_got))
+
+# ── release profile: reshaping WHEN must not change HOW MANY ───────────────
+# The hour section of the card used to come out flat (CV 0.014-0.030 on real
+# plans, 23 of 24 identical cells) against a MEASURED presence CV of 0.319.
+# The profile that fixes it (HAULAGE_CLEAN.TIME_LOADED, n=273,222 loads over
+# 234 days) is applied as a monotone time warp inside each shift, so it
+# re-times the SAME SET of departures. That is the whole safety argument: if
+# a release-shape change can move the trip count, it is a production model
+# wearing a visibility model's clothes. Pin it against the uniform schedule.
+print("\n=== release profile: conservation ===")
+
+_warp = sf._warp_release_time
+try:
+    sf._warp_release_time = lambda t, sh, ns, cd: t     # uniform releases
+    flat = sf.shared_flow(pair, shift_hours=12, rain_mm=0, path=FX, whole_day=True)
+finally:
+    sf._warp_release_time = _warp
+
+check("profile conserves executed trips exactly",
+      abs(fwd["summary"]["executed_trips"] - flat["summary"]["executed_trips"]) < 1e-9,
+      (flat["summary"]["executed_trips"], fwd["summary"]["executed_trips"]))
+check("profile conserves expected trips exactly",
+      abs(fwd["summary"]["expected_trips"] - flat["summary"]["expected_trips"]) < 1e-9,
+      (flat["summary"]["expected_trips"], fwd["summary"]["expected_trips"]))
+check("profile conserves road truck-hours exactly",
+      abs(fwd["summary"]["road_truck_hours"]
+          - flat["summary"]["road_truck_hours"]) < 1e-6,
+      (flat["summary"]["road_truck_hours"], fwd["summary"]["road_truck_hours"]))
+worst_row = max([abs(a["executed_trips"] - b["executed_trips"])
+                 for a, b in zip(fwd["paths"], flat["paths"])] or [0])
+check("profile conserves executed trips PER ROW", worst_row < 1e-9,
+      "max |delta| = %s" % worst_row)
+
+# ...and it must actually reshape something, or the constant is decoration.
+flat_s, prof_s = by_sec(flat), by_sec(fwd)
+worst_cv_flat = max(_cv(flat_s[k]["occupancy_mean"]) for k in flat_s)
+best_cv_prof = min(_cv(prof_s[k]["occupancy_mean"]) for k in prof_s)
+check("uniform releases really were flat (CV < 0.05)", worst_cv_flat < 0.05,
+      "worst CV = %.4f" % worst_cv_flat)
+check("profiled releases carry real hourly structure (CV > 0.10)",
+      best_cv_prof > 0.10, "weakest CV = %.4f" % best_cv_prof)
+
+# The profile is data + one conservation constraint, never a free parameter:
+# the interior constant is whatever makes the 12 hours average 1.0, and it
+# must land inside the measured band. Both profiles must sum to 12.
+for nm, prof in (("day", sf.RELEASE_PROFILE_DAY),
+                 ("night", sf.RELEASE_PROFILE_NIGHT)):
+    check("%s profile averages 1.0 (conserves the shift total)" % nm,
+          abs(sum(prof) - 12.0) < 1e-9, sum(prof))
+    check("%s profile is 12 hourly multipliers" % nm, len(prof) == 12, len(prof))
+check("no meal-break dip invented (midday >= shift-start hour)",
+      min(sf.RELEASE_PROFILE_DAY[4:8]) > sf.RELEASE_PROFILE_DAY[0],
+      sf.RELEASE_PROFILE_DAY)
+check("final hour of each shift is near-zero (measured changeover)",
+      sf.RELEASE_PROFILE_DAY[11] < 0.25 and sf.RELEASE_PROFILE_NIGHT[11] < 0.25,
+      (sf.RELEASE_PROFILE_DAY[11], sf.RELEASE_PROFILE_NIGHT[11]))
+# the warp must be monotone and onto, or it is not a re-timing
+_cdf = sf._release_cdf(sf.RELEASE_PROFILE_DAY)
+_u = [i / 200.0 for i in range(200)]
+_w = [sf._warp_unit(u, _cdf) for u in _u]
+check("warp is monotone", all(_w[i] <= _w[i + 1] + 1e-12 for i in range(199)))
+check("warp is onto [0,1)", _w[0] == 0.0 and _w[-1] > 0.9, (_w[0], _w[-1]))
+
+rp = (fwd.get("basis") or {}).get("release_profile") or {}
+check("release profile exposed in basis for the card", rp.get("applied") is True, rp)
+check("release profile states its provenance",
+      "273,222" in (rp.get("source") or "") and rp.get("n_days") == 234,
+      rp.get("source"))
+check("release profile declares conservation",
+      rp.get("conserves_executed_trips") is True, rp)
+check("release profile discloses the presence lag it does NOT fix",
+      "phase" in (rp.get("presence_lag") or ""), rp.get("presence_lag"))
+
+# ── segment time split: measured, and it must not move the route total ─────
+# Splitting road time by the official speed limits assumed they are wrong by
+# the same factor everywhere. Measured (463,060 vendor traversals + 11,611 GPS
+# bin-traversals) they are 1.5-2.1x optimistic on S1-S3 and accurate on S4, so
+# the uncorrected split pushed 7.2-7.8 pp of every route's road time onto S4.
+print("\n=== segment time split ===")
+_fac = sf.SEGMENT_TIME_FACTORS
+try:
+    sf.SEGMENT_TIME_FACTORS = {k: {"loaded": 1.0, "empty": 1.0} for k in _fac}
+    limit_split = sf.shared_flow(pair, shift_hours=12, rain_mm=0, path=FX,
+                                 whole_day=True)
+finally:
+    sf.SEGMENT_TIME_FACTORS = _fac
+
+check("split conserves road truck-hours (total is dispatch-anchored)",
+      abs(fwd["summary"]["road_truck_hours"]
+          - limit_split["summary"]["road_truck_hours"]) < 1e-6,
+      (limit_split["summary"]["road_truck_hours"],
+       fwd["summary"]["road_truck_hours"]))
+for a, b in zip(fwd["paths"], limit_split["paths"]):
+    tot_a = sum(a["sec_times_h"].values()) + sum(a["sec_times_empty_h"].values())
+    tot_b = sum(b["sec_times_h"].values()) + sum(b["sec_times_empty_h"].values())
+    # 4e-4: sec_times_h is rounded to 4 dp in the payload and a route can carry
+    # four legs, so the ONLY admissible difference is that rounding. The exact
+    # statement is the road_truck_hours check above, which is unrounded.
+    check("split keeps %s total road time" % a["label"][:28],
+          abs(tot_a - tot_b) < 4e-4, (tot_b, tot_a))
+
+# The full corridor (TF km 67.8 -> coast km 0) is the case the vendor/GPS study
+# reported. S4's measured loaded share is 19.7-20.3%; the limit split gives
+# 27.5% and never reaches the measured value in any of the 24 hours.
+_tl, _te = [], []
+for _s in _SEGS:
+    _a, _b = _span(_s["bottom_km"], _s["top_km"])
+    _tl.append(_a * _fac[_s["id"]]["loaded"])
+    _te.append(_b * _fac[_s["id"]]["empty"])
+_shares_l = [100 * x / sum(_tl) for x in _tl]
+_shares_e = [100 * x / sum(_te) for x in _te]
+check("S4 loaded share lands on measured 19.7-20.3%%",
+      19.4 <= _shares_l[3] <= 20.6, "%.1f%%" % _shares_l[3])
+check("S4 empty share lands on measured 22.4-22.5%%",
+      22.0 <= _shares_e[3] <= 23.0, "%.1f%%" % _shares_e[3])
+check("S1 loaded share lands on measured 44.5-47.1%%",
+      44.0 <= _shares_l[0] <= 47.6, "%.1f%%" % _shares_l[0])
+check("S2 loaded share lands on measured 17.3-19.9%%",
+      17.0 <= _shares_l[1] <= 20.2, "%.1f%%" % _shares_l[1])
+check("S3 loaded share stays on measured 15.3-15.9%% (it was already right)",
+      15.0 <= _shares_l[2] <= 16.4, "%.1f%%" % _shares_l[2])
+check("factors are ratios only: S4 is the outlier, not the level",
+      _fac["S4"]["loaded"] < 1.2 < min(_fac[k]["loaded"] for k in ("S1", "S2", "S3")),
+      _fac)
+
+# ── BLB partial section: not one number, and labelled as not one number ────
+# A BLB truck occupies 2.45 km of KM15-coast's 15 km (16%) but was counted as
+# a full passage. Measured on the real 2026-09-03 plan: loaded flow 50.7/h
+# below km 2.45 against 30.2/h above it - a 68% step inside one reported cell.
+print("\n=== BLB partial section ===")
+mixed = sf.shared_flow(
+    [{"id": "s", "source": "TF", "destination": "FENI KM0", "n_trucks": 120,
+      "contractor": "RIM"},
+     {"id": "b", "source": "BLB", "destination": "FENI KM0", "n_trucks": 60,
+      "contractor": "RIM"}],
+    shift_hours=12, rain_mm=0, path=FX, whole_day=True)
+s4 = next((s for s in (mixed.get("sections") or [])
+           if s["section"] == "KM15–coast"), None)
+check("KM15–coast row exists on a mixed BLB + stick plan", s4 is not None)
+if s4:
+    subs = s4.get("cross_sections") or []
+    check("KM15–coast is split at the BLB junction", len(subs) == 2, subs)
+    check("junction is at km 2.45 (survey)",
+          any(abs(c["km_hi"] - 2.45) < 0.01 for c in subs), subs)
+    if len(subs) == 2:
+        low = min(subs, key=lambda c: c["km_lo"])
+        high = max(subs, key=lambda c: c["km_lo"])
+        check("flow below the junction really is higher (the hidden step)",
+              low["peak_flow_per_h"] > high["peak_flow_per_h"] * 1.15,
+              (low["peak_flow_per_h"], high["peak_flow_per_h"]))
+        check("headline flow is the WORST cross-section, not a blend",
+              abs(s4["peak_flow_per_h"] - low["peak_flow_per_h"]) < 1e-6,
+              (s4["peak_flow_per_h"], low["peak_flow_per_h"]))
+    check("the row SAYS it is a worst cross-section",
+          "WORST CROSS-SECTION" in (s4.get("flow_basis") or "")
+          and s4.get("uniform_section") is False, s4.get("flow_basis"))
+s1 = next((s for s in (mixed.get("sections") or []) if s["section"] == "TF–KR"),
+          None)
+if s1:
+    check("a uniform section is labelled uniform and not split",
+          s1.get("uniform_section") is True and not s1.get("cross_sections"),
+          s1.get("flow_basis"))
 
 # ── stock vs flow are labelled, and a big fleet discloses its basis ────────
 print("\n=== disclosure ===")
