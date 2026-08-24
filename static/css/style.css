@@ -960,7 +960,15 @@ tbody tr:hover{background:var(--panel-hover)}
    never rendered, while the card above them read "Shortfall 0 t". */
 .plan-cap-warn{margin:7px 0 0;padding:0 0 0 15px;list-style:disc}
 .plan-cap-warn li{font-size:10.5px;line-height:1.45;color:var(--bad,#e5534b)}
-/* B · Fleet sensitivity (plan_sensitivity.js) */
+/* B · Fleet sensitivity — last, collapsed (plan_sensitivity.js) */
+.plan-sens-fold>summary{
+  cursor:pointer;list-style:none;font-size:11px;font-weight:700;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--txt-muted);padding:2px 0 4px}
+.plan-sens-fold>summary::-webkit-details-marker{display:none}
+.plan-sens-fold>summary::before{content:'▸';display:inline-block;width:14px;color:var(--txt-muted)}
+.plan-sens-fold[open]>summary::before{transform:rotate(90deg)}
+.plan-sens-fold:not([open]){padding-bottom:8px}
+.plan-sens-fold[open]>summary{margin-bottom:10px}
 .plan-sens-wrap{display:flex;gap:14px;align-items:flex-start}
 .plan-sens-side{flex:0 0 220px;min-width:0}
 .plan-sens-main{flex:1;min-width:0}

@@ -362,6 +362,37 @@ try:
                    for cell in row]
         check("%s Year sheet has no August row" % label,
               "Aug" not in yr_vals, [v for v in yr_vals if v in ("Aug", "Sep")])
+        # Each month sheet carries the Plan-tab hour grid (owner 2026-08-24):
+        # corridor × 07..06, mean concurrent trucks. Both directions: the
+        # title is present AND a real occupancy number lands (a title-only
+        # stub would pass the first and fail the second).
+        month_sheets = [s for s in names_d if s not in ("Year", "Paths")]
+        n_grid = 0
+        n_occ = 0
+        hour_ok = False
+        for ms in month_sheets:
+            ws = wbd[ms]
+            col_a = [cell.value for row in ws.iter_rows(min_row=1, max_col=1)
+                     for cell in row]
+            if any(isinstance(v, str) and "Road crowding by hour" in v for v in col_a):
+                n_grid += 1
+            for row in ws.iter_rows(min_row=1, max_col=25):
+                vals = [c.value for c in row]
+                if vals and vals[0] == "Corridor" and vals[1] == "07":
+                    hours = vals[1:25]
+                    if (hours[:2] == ["07", "08"] and hours[-1] == "06"
+                            and len(hours) == 24):
+                        hour_ok = True
+                lab = vals[0] if vals else None
+                if isinstance(lab, str) and lab.startswith("TF") and "KR" in lab:
+                    nums = [v for v in vals[1:25] if isinstance(v, (int, float))]
+                    n_occ = max(n_occ, len(nums))
+        check("%s every month sheet has the hour-crowding table" % label,
+              n_grid == len(month_sheets) and month_sheets,
+              "%s/%s sheets" % (n_grid, len(month_sheets)))
+        check("%s hour axis is 07..06 (24 h)" % label, hour_ok)
+        check("%s Sep-class sheet has TF–KR hourly occupancy" % label,
+              n_occ >= 20, "n=%s" % n_occ)
         wbd.close()
 except ImportError as e:
     print("  SKIP export-full checks (%s)" % e)

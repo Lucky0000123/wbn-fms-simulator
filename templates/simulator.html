@@ -633,39 +633,6 @@
               </div>
             </section>
 
-            <!-- B · Fleet sensitivity — nonlinear DT sweep per plan (ECharts). -->
-            <section class="plan-s2-block" id="plan-s2-sensitivity" style="display:none">
-              <div class="plan-s2-label">Fleet sensitivity <span class="muted">(hybrid saturation curve vs fleet size)</span></div>
-              <div class="plan-sens-wrap">
-                <div class="plan-sens-side">
-                  <div class="plan-sens-side-h muted">Plans</div>
-                  <div id="plan-sens-cards"></div>
-                  <button type="button" class="ms-btn plan-sens-back" id="plan-sens-back" style="display:none" onclick="planSensIsolate(null)">← All plans</button>
-                  <!-- Y-metric. Efficiency is the SAME path model, re-expressed
-                       as a share of each path's own free rate, so it never
-                       disagrees with the Output view. -->
-                  <div class="plan-sens-side-h muted" style="margin-top:10px">Show</div>
-                  <div class="plan-sens-gran" role="group" aria-label="Chart metric">
-                    <button type="button" data-m="output" class="on" onclick="planSensMetric('output')">Output</button>
-                    <button type="button" data-m="efficiency" onclick="planSensMetric('efficiency')">Efficiency</button>
-                  </div>
-                  <div class="plan-sens-side-h muted" style="margin-top:10px">Scale</div>
-                  <div class="plan-sens-gran" role="group" aria-label="Time granularity">
-                    <button type="button" data-g="hour" onclick="planSensGran('hour')">Per hour</button>
-                    <button type="button" data-g="shift" onclick="planSensGran('shift')">Per shift</button>
-                    <button type="button" data-g="day" class="on" onclick="planSensGran('day')">Per day</button>
-                  </div>
-                  <!-- Live values at the hovered truck count (mirrors the tooltip). -->
-                  <div id="plan-sens-readout" class="plan-sens-readout"></div>
-                </div>
-                <div class="plan-sens-main">
-                  <div id="plan-sens-chart" style="height:520px"></div>
-                  <div id="plan-sens-opt" class="plan-sens-opt"></div>
-                  <p class="muted" id="plan-sens-caption" style="font-size:11px;margin:8px 0 0;line-height:1.45">Hybrid saturation curve from /api/congestion_curve (proportional loaders — same basis the plan table prices with). Trips/DT is per day on the Per day scale. ● = planned DT.</p>
-                </div>
-              </div>
-            </section>
-
             <!-- GPS corridor — play here; C · Road crowding loads after ▶ Run -->
             <section class="plan-s2-block plan-s2-corridor" id="plan-s2-corridor">
               <div class="plan-s2-label">GPS corridor <span class="muted">(illustration · ▶ Run opens road crowding)</span></div>
@@ -949,6 +916,36 @@
                 </div>
               </div>
             </section>
+
+            <!-- Fleet sensitivity — last, collapsed. Same curves as the plan
+                 table; optional inspection, not a Step 2 decision surface. -->
+            <details class="plan-s2-block plan-sens-fold" id="plan-s2-sensitivity" style="display:none">
+              <summary>Fleet sensitivity <span class="muted">(hybrid saturation curve vs fleet size)</span></summary>
+              <div class="plan-sens-wrap">
+                <div class="plan-sens-side">
+                  <div class="plan-sens-side-h muted">Plans</div>
+                  <div id="plan-sens-cards"></div>
+                  <button type="button" class="ms-btn plan-sens-back" id="plan-sens-back" style="display:none" onclick="planSensIsolate(null)">← All plans</button>
+                  <div class="plan-sens-side-h muted" style="margin-top:10px">Show</div>
+                  <div class="plan-sens-gran" role="group" aria-label="Chart metric">
+                    <button type="button" data-m="output" class="on" onclick="planSensMetric('output')">Output</button>
+                    <button type="button" data-m="efficiency" onclick="planSensMetric('efficiency')">Efficiency</button>
+                  </div>
+                  <div class="plan-sens-side-h muted" style="margin-top:10px">Scale</div>
+                  <div class="plan-sens-gran" role="group" aria-label="Time granularity">
+                    <button type="button" data-g="hour" onclick="planSensGran('hour')">Per hour</button>
+                    <button type="button" data-g="shift" onclick="planSensGran('shift')">Per shift</button>
+                    <button type="button" data-g="day" class="on" onclick="planSensGran('day')">Per day</button>
+                  </div>
+                  <div id="plan-sens-readout" class="plan-sens-readout"></div>
+                </div>
+                <div class="plan-sens-main">
+                  <div id="plan-sens-chart" style="height:520px"></div>
+                  <div id="plan-sens-opt" class="plan-sens-opt"></div>
+                  <p class="muted" id="plan-sens-caption" style="font-size:11px;margin:8px 0 0;line-height:1.45">Hybrid saturation curve from /api/congestion_curve (proportional loaders — same basis the plan table prices with). Trips/DT is per day on the Per day scale. ● = planned DT.</p>
+                </div>
+              </div>
+            </details>
           </div>
         </div>
         <!-- Haul GPS days — moved out of the page topbar 2026-08-12. It is

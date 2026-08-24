@@ -854,6 +854,119 @@ def _pick_mat_achv(m, before=True, grain="month"):
     return v if v is not None else m.get("achv_after_" + grain)
 
 
+def _ten_key(row):
+    """Key into _tenant_trips_per_dt.
+
+    Identity of a ROW, not of a road: id() of the row dict, because the same
+    (path, contractor) legitimately appears more than once in one month —
+    TF>HUAFEI/RIM is both a P2 LIM-TOS row and a P3 LIM-LD row, at different
+    rates. Keying on (path, contractor) let the second row's answer overwrite
+    the first, and the P2 row then printed the P3 row's 2.15 over its own
+    2.11: a +1.9% GAIN from added traffic.
+
+    The ROAD key (path, contractor) is still what the engine ratio is cached
+    under inside _tenant_trips_per_dt — that one really is a road property.
+    ONE home for each, so the lookup and the build cannot drift apart.
+    """
+    return id(row)
+
+
+def _tenant_trips_per_dt(rows):
+    """{(path, contractor) -> Trips/DT with the OTHER TENANTS on the road}.
+
+    Owner, 2026-08-24: several tenants (MHM, POSITION, PMA, HSM, KR>RSF,
+    HUAFEI>RSF — 1,340 DT) run our haul road and give us no tonnage. Every
+    Trips/DT this workbook has ever shown was therefore the clear-road answer.
+    This adds one column with the same routes re-priced under that traffic.
+
+    It does NOT move tonnage, targets, DT or the allocation. Tenant trucks are
+    road load only, so the honest report is "here is the rate you would
+    actually turn", beside the plan, not a silently re-planned month.
+
+    ## Why this is a RATIO applied to the sheet's own number
+
+    The first version printed the engine's tenant-priced rate directly and it
+    came out HIGHER than the clear-road column beside it (BLB>FENI KM0 4.61
+    against 4.58) — adding traffic appearing to speed trucks up. The two
+    numbers had two causes, not one: the sheet's Trips/DT comes from the
+    FROZEN allocation saved on the plan date, which predates the current
+    hybrid calibration, while the new column was a fresh engine call. The
+    tenant effect (~-1%) was smaller than the drift between the two vintages,
+    so the drift showed and the tenants did not.
+
+    So the engine is asked BOTH questions — same route, same fleet, same
+    contractor, same segment map, tenants off then on — and only their RATIO
+    is used, applied to whatever the sheet already shows. The column is then
+    exactly "your own number, degraded by the tenant traffic and nothing
+    else", and it can never disagree with its neighbour for a reason the
+    caption does not name. Re-freezing the saved allocations under the hybrid
+    model is a separate open thread (HANDOFF §14) and this must not pre-empt
+    it silently.
+
+    Returns {} when the congestion package or its calibration is unavailable
+    (fixture mode, fresh clone) — the caller then omits the column rather than
+    printing a blank one that looks like zero traffic.
+    """
+    try:
+        from congestion.config import route_params
+        from congestion.predictor import predict
+        from congestion.segments import segment_trucks
+    except ImportError:
+        return {}
+    combined = {}
+    for row in rows or []:
+        k = row.get("key")
+        dt = _finite(row.get("dt_after"))
+        if k and dt:
+            combined[k] = combined.get(k, 0.0) + float(dt)
+    if not combined:
+        return {}
+    # Every route the plan runs is on the road together, so the segment map is
+    # built from the WHOLE plan and both calls share it. Only the tenant flag
+    # differs between them.
+    seg = segment_trucks(combined)
+    out = {}
+    # Cache the RATIO per (road, contractor), never the finished value: the
+    # ratio is a property of the road and the fleet, but the value it is
+    # applied to is the ROW's own rate. Caching the value made the second
+    # TF>HUAFEI/SMA row (217 DT, 2.36) print the first row's answer (52 DT,
+    # 2.37) and so appear to GAIN 0.4% from added traffic.
+    ratios = {}
+    for row in rows or []:
+        k = row.get("key")
+        shown = _path_rates(row).get("trips_per_dt_after")
+        # The engine ratio is cached per (road, contractor): RIM and SMA run
+        # the same road at different overheads, and caching on the path alone
+        # gave both of them whichever was priced first (TF>HUAFEI SMA printed
+        # RIM's 2.17 against its own 2.36).
+        ck = (k, (row.get("contractor") or "").strip().upper())
+        if not k or not shown:
+            continue
+        if ck not in ratios:
+            ratios[ck] = None
+            try:
+                if route_params(k).get("calibrated"):
+                    kw = dict(segment_fleet=seg, mode="road",
+                              contractor=ck[1] or None)
+                    clear = predict(k, combined[k], None, **kw)
+                    withn = predict(k, combined[k], None,
+                                    tenant_flow_hr=True, **kw)
+                    base = clear.get("trips_per_DT_per_day")
+                    tenv = withn.get("trips_per_DT_per_day")
+                    # A route not on the shared mainline (the BLB spur) comes
+                    # back with tenant_traffic False and its clear-road answer.
+                    # Leave it blank rather than repeating the neighbouring
+                    # column, so "no tenant traffic here" cannot be misread as
+                    # "tenants made no difference".
+                    if base and tenv and withn.get("tenant_traffic"):
+                        ratios[ck] = float(tenv) / float(base)
+            except (ValueError, ArithmeticError, KeyError, TypeError, OSError):
+                ratios[ck] = None
+        if ratios[ck]:
+            out[_ten_key(row)] = round(float(shown) * ratios[ck], 2)
+    return out
+
+
 def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
     """Old vs new path table: WMT, DT, trips, plus trips/DT and WMT/DT.
     achv=True appends the engine's achievable (t/day) old vs new."""
@@ -863,6 +976,23 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
     rows.sort(key=lambda x: (x.get("prio") or 9, x.get("key") or ""))
     if not rows:
         return r
+    # One extra column: the same paths priced with the other tenants' trucks
+    # on the road (congestion/tenants.py). Empty dict -> no column at all.
+    ten = _tenant_trips_per_dt(rows)
+    if ten:
+        try:
+            from congestion.tenants import TENANTS as _TEN_REG
+            _n_dt = sum(t["dt"] for t in _TEN_REG)
+            _names = ", ".join(t["name"] for t in _TEN_REG)
+        except ImportError:
+            _n_dt, _names = 0, ""
+        # State the basis in the sheet. A lower Trips/DT with no explanation
+        # beside it is how a reader concludes the model changed its mind.
+        sub = (sub or "") + (
+            " · 'Trips/DT w/ other tenants' re-prices the SAME fleet with the "
+            "other tenants' %s DT on the shared road (%s). They carry no "
+            "tonnage for us and take no trucks from us — only road. Tonnes, "
+            "targets and DT in this table are unchanged." % (_n_dt, _names))
     r = _xlsx_section(ws, r, title, sub)
     if achv:
         # Achievable view drops every "old" column (owner, 2026-08-19):
@@ -881,6 +1011,8 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
             "WMT/DT old", "WMT/DT new",
             "Trips/DT old", "Trips/DT new",
         ]
+    if ten:
+        heads.append("Trips/DT w/ other tenants")
     _xlsx_headers(ws, r, heads, center=True)
     tot = {
         "tgt": 0, "dt_b": 0, "dt_a": 0, "tr_b": 0, "tr_a": 0,
@@ -912,11 +1044,19 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
                 rates["wmt_per_trip_before"], rates["wmt_per_trip_after"],
                 rates["trips_per_dt_before"], rates["trips_per_dt_after"],
             ]
+        ten_col = len(vals) + 1 if ten else None
+        if ten:
+            vals.append(ten.get(_ten_key(row)))
         for col, val in enumerate(vals, start=1):
             cell = ws.cell(row=r, column=col, value=val)
             cell.border = box
             cell.alignment = mid
             cell.font = _xlsx_font(col in (2, 7, 9, 11), 9)
+            if ten_col and col == ten_col:
+                if isinstance(val, (int, float)):
+                    cell.number_format = "0.00"
+                cell.font = _xlsx_font(True, 9, _XLSX_NAVY)
+                continue
             if achv:
                 if col in (9, 10) and isinstance(val, (int, float)):
                     cell.number_format = "0.00"
@@ -975,12 +1115,32 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
             tot["pr_b"] or None, tot["pr_a"] or None,
             pay_b, pay_a, tpd_b, tpd_a,
         ]
+    if ten:
+        # DT-weighted over EVERY row, exactly the denominator tpd_a uses.
+        # Summing only the rows that have a tenant value put the two totals on
+        # different fleets: the BLB spur and the IWIP rows dropped out and the
+        # "with tenants" total read 2.92 against a clear-road 2.74 — 6.6% HIGH
+        # for a column that can only ever be lower. A row the tenants do not
+        # touch keeps its own rate, because that IS its rate under this traffic.
+        t_tr = 0.0
+        for x in rows:
+            dt_x = _finite(x.get("dt_after")) or 0
+            if not dt_x:
+                continue
+            rate = ten.get(_ten_key(x))
+            if rate is None:
+                rate = _path_rates(x).get("trips_per_dt_after")
+            t_tr += (rate or 0) * dt_x
+        tot_vals.append(round(t_tr / tot["dt_a"], 2) if tot["dt_a"] else None)
     for col, val in enumerate(tot_vals, start=1):
         cell = ws.cell(row=r, column=col, value=val)
         cell.font = _xlsx_font(True, 9, _XLSX_NAVY)
         cell.alignment = mid
         _xlsx_total_border(cell)
-        if (col in (9, 10) if achv else col in (12, 13, 14, 15)) and isinstance(val, (int, float)):
+        _rate_col = (col in (9, 10) if achv else col in (12, 13, 14, 15))
+        if ten and col == len(tot_vals):
+            _rate_col = True
+        if _rate_col and isinstance(val, (int, float)):
             cell.number_format = "0.00"
         elif col >= 5 and isinstance(val, (int, float)):
             cell.number_format = "#,##0"
@@ -989,7 +1149,7 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
     pct_lab.font = _xlsx_font(True, 9, _XLSX_MUTED)
     pct_lab.alignment = mid
     pct_lab.border = box
-    last_col = 11 if achv else 15
+    last_col = (11 if achv else 15) + (1 if ten else 0)
     for col in range(2, last_col + 1):
         ws.cell(row=r, column=col).border = box
         ws.cell(row=r, column=col).alignment = mid
@@ -1361,7 +1521,11 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None, achv=False):
             ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=10)
             r += 1
 
-    r += 3
+    # Hour grid sits ABOVE the 30-day daily table so it is not buried under
+    # a chart. Same table as Plan → C · Road crowding by hour.
+    r = _xlsx_month_corridor_block(ws, r + 2, alloc=alloc)
+
+    r += 2
     days = _days_in(month)
     points = [{
         "name": d,
@@ -1608,6 +1772,10 @@ def _xlsx_fill_month(ws, st, title, achv=False):
         _xlsx_line_chart(ws, "Daily WMT", "t/day", 2, tgt_dcol, daily_head, last_daily,
                          "A%d" % (dr + 2), colors=pal)
 
+    last_chart_row = dr + 18
+    r = _xlsx_month_corridor_block(ws, last_chart_row, alloc=day_alloc if day_alloc.get("frozen") else None,
+                                  paths=paths)
+
     _xlsx_widths(ws, [22, 14, 14, 13, 12, 14, 13, 16, 20, 16, 14, 10])
     ws.freeze_panes = "A4"
     ws.row_dimensions[1].height = 24
@@ -1725,6 +1893,301 @@ def _xlsx_plan_source_block(ws, r, cards):
         r += 1
     return r + 1
 
+
+
+def _plans_from_alloc_rows(rows):
+    """Allocation / holding rows → shared_flow plans. Includes IWIP on the plan."""
+    plans = []
+    for i, r in enumerate(rows or []):
+        if not isinstance(r, dict):
+            continue
+        dt = r.get("dt_after")
+        if dt is None:
+            dt = r.get("n_trucks") if r.get("n_trucks") is not None else r.get("dt")
+        if not (dt or 0) > 0:
+            continue
+        key = str(r.get("key") or "")
+        if ">" in key:
+            src, dst = key.split(">", 1)
+        else:
+            src = r.get("source") or r.get("origin")
+            dst = r.get("destination") or r.get("dest")
+        if not src or not dst:
+            continue
+        plans.append({
+            "id": r.get("id") or ("r%d" % i),
+            "source": src, "destination": dst,
+            "n_trucks": int(round(dt)),
+            "contractor": r.get("contractor"),
+        })
+    return plans
+
+
+def _corridor_run(plans):
+    """Time the given trucks onto the stick. Advisory — never clips tonnes."""
+    if not plans:
+        return None
+    try:
+        import plan_shared_flow as _sf
+        res = _sf.shared_flow(plans, shift_hours=12, rain_mm=0, start_hour=7,
+                              whole_day=True)
+    except Exception:  # noqa: BLE001 — a report must not die on an advisory panel
+        return None
+    if not res.get("ok"):
+        return None
+    return res, sum(p["n_trucks"] for p in plans)
+
+
+def _corridor_for_alloc(alloc):
+    """Hourly corridor from the SAME rows the month sheet already printed."""
+    if not isinstance(alloc, dict):
+        return None
+    plans = _plans_from_alloc_rows(alloc.get("rows") or [])
+    got = _corridor_run(plans)
+    if got:
+        return got
+    src = alloc.get("source_date") or alloc.get("alloc_source_date")
+    if not src:
+        return None
+    return _corridor_for_month({"alloc_source_date": src})
+
+
+def _corridor_for_month(card):
+    """Per-section road occupancy for ONE finalised month, or None.
+
+    The corridor sits DOWNSTREAM of the plan (owner, 2026-08-24): once a
+    month's allocation is finalised, the corridor's only job is to distribute
+    THOSE trucks across sections and hours. It does not re-derive or
+    second-guess the plan's tonnage — that was settled upstream.
+
+    Rain is forced to the normal-day basis. The owner plans normal days and
+    applies rain deliberately as a scenario; the wet response is physically
+    derived but has never been validated on site (zero wet days in every
+    measurement window), so it must not silently shape a published number.
+
+    IWIP / POS-transit rows that are already on the allocated plan ARE
+    included — they share the road when this plan runs. Extra measured
+    Other-trips (the Plan-tab checkbox, not saved on the allocation) are not.
+    """
+    # Prefer rows already on the card/view so the grid cannot drift from
+    # the path table above it. Fall back to the named saved file.
+    rows = (card.get("alloc") or {}).get("rows") or card.get("rows") or []
+    plans = _plans_from_alloc_rows(rows)
+    got = _corridor_run(plans)
+    if got:
+        return got
+    src = card.get("alloc_source_date") or (card.get("alloc") or {}).get("source_date")
+    if not src:
+        return None
+    path = os.path.join(_ROOT, "data", "saved_plans", "%s.json" % str(src)[:10])
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            saved = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    plans = _plans_from_alloc_rows((saved.get("allocation") or {}).get("rows") or [])
+    return _corridor_run(plans)
+
+
+def _xlsx_road_corridor_block(ws, r, cards):
+    """Page-one road corridor: trucks per section, and WHEN each section peaks.
+
+    Advisory, and labelled as such on the sheet — this never clips simulate
+    tonnes (J53). What is measured and what is not is stated on the face of the
+    block rather than in a footnote nobody reads: the release shape comes from
+    273,222 weighbridge loads over 234 days; the section split from 463,060
+    measured traversals; the capacity from the official speed-limit sheets.
+    Presence trails the loading peak by each section's transit time, which is
+    physics, not a fitted lag.
+    """
+    from openpyxl.styles import Font
+    ws.cell(row=r, column=1, value="Road corridor — trucks on each section")
+    ws.cell(row=r, column=1).font = Font(bold=True, size=12)
+    r += 1
+    ws.cell(row=r, column=1, value=(
+        "Summary only. The hour-by-hour table (07:00–06:00, same as Plan → "
+        "Road crowding) is on each month tab: Sep, Oct, Nov, Dec."))
+    ws.cell(row=r, column=1).font = Font(italic=True, size=9)
+    r += 1
+    ws.cell(row=r, column=1, value=(
+        "Advisory. Distribution of the FINALISED plan across the road — it never "
+        "changes plan tonnage. Normal-day basis (0-1 mm rain)."))
+    ws.cell(row=r, column=1).font = Font(italic=True, size=9)
+    r += 2
+    for c, h in enumerate(["Month", "Section", "Peak trucks", "Average trucks",
+                           "Busiest hour", "Share of road capacity"], start=1):
+        ws.cell(row=r, column=c, value=h).font = Font(bold=True)
+    r += 1
+    any_row = False
+    for card in cards:
+        got = _corridor_for_month(card)
+        if not got:
+            continue
+        res, dt = got
+        first = True
+        for s in (res.get("sections") or []):
+            occ = s.get("occupancy") or []
+            if not occ:
+                continue
+            peak = max(occ)
+            hr = (int(res.get("start_hour") or 7) + occ.index(peak)) % 24
+            ws.cell(row=r, column=1,
+                    value=("%s (%d DT)" % (card.get("name") or "", dt)) if first else "")
+            ws.cell(row=r, column=2, value=s.get("section"))
+            ws.cell(row=r, column=3, value=round(s.get("peak_concurrent") or peak, 1))
+            ws.cell(row=r, column=4, value=round(sum(occ) / len(occ), 1))
+            ws.cell(row=r, column=5, value="%02d:00" % hr)
+            vc = s.get("ratio")
+            ws.cell(row=r, column=6, value=(round(vc, 3) if vc is not None else None))
+            first = False
+            any_row = True
+            r += 1
+    if not any_row:
+        ws.cell(row=r, column=1, value="No finalised allocation to distribute.")
+        return r + 1
+    return r + 1
+
+
+# Presence colours match the Plan-tab Road crowding card (stock ÷ how many
+# trucks FIT). The verdict above the grid uses the v/c FLOW ratio.
+_RC_OPEN, _RC_WATCH, _RC_HIGH, _RC_IDLE = "BBF7D0", "FDE68A", "FCA5A5", "F8FAFC"
+_RC_DAY_H, _RC_NIGHT_H = "E2E8F0", "DBEAFE"
+
+
+def _xlsx_road_corridor_hourly(ws, r, res, dt, source=None):
+    """The Plan-tab hour grid: mean concurrent trucks per section × hour.
+
+    Same engine as /api/plan/shared-flow (whole day, 2 × 12 h, rain 0).
+    Advisory — never clips simulate tonnes (J53).
+    """
+    from openpyxl.styles import Alignment, PatternFill
+
+    n_hour_cols = 24
+    r = _xlsx_section(ws, r, "Road crowding by hour")
+    if not res or not res.get("ok"):
+        ws.cell(row=r, column=1, value="No finalised allocation to time onto the road.")
+        ws.cell(row=r, column=1).font = _xlsx_font(False, 9, _XLSX_MUTED)
+        return r + 1
+
+    secs = res.get("sections") or []
+    start_h = int(res.get("start_hour") or 7) % 24
+    bin_h = float(res.get("bin_hours") or 1) or 1
+    n_bins = max((len(s.get("occupancy") or []) for s in secs), default=0)
+    if n_bins <= 0:
+        ws.cell(row=r, column=1, value="Corridor engine returned no hourly bins.")
+        ws.cell(row=r, column=1).font = _xlsx_font(False, 9, _XLSX_MUTED)
+        return r + 1
+    n_bins = min(n_bins, n_hour_cols)
+    hours = [((start_h + int(round(b * bin_h))) % 24) for b in range(n_bins)]
+    shift_len = int(round(float(res.get("shift_hours") or 12) / bin_h))
+
+    mid = _xlsx_mid()
+    box = _xlsx_sides()[0]
+    day_fill = PatternFill("solid", fgColor=_RC_DAY_H)
+    night_fill = PatternFill("solid", fgColor=_RC_NIGHT_H)
+    fills = {
+        "high": PatternFill("solid", fgColor=_RC_HIGH),
+        "watch": PatternFill("solid", fgColor=_RC_WATCH),
+        "open": PatternFill("solid", fgColor=_RC_OPEN),
+        "idle": PatternFill("solid", fgColor=_RC_IDLE),
+    }
+
+    # Band row: Day 07–18 / Night 19–06
+    band = ws.cell(row=r, column=1, value="Corridor")
+    band.font = _xlsx_font(True, 9, _XLSX_NAVY)
+    band.border = box
+    day_end = min(shift_len, n_bins)
+    if day_end > 0:
+        c = ws.cell(row=r, column=2, value="Day shift 07–18")
+        c.font = _xlsx_font(True, 8, _XLSX_NAVY)
+        c.fill = day_fill
+        c.alignment = mid
+        c.border = box
+        if day_end > 1:
+            ws.merge_cells(start_row=r, start_column=2, end_row=r,
+                           end_column=1 + day_end)
+            for col in range(3, 2 + day_end):
+                ws.cell(row=r, column=col).fill = day_fill
+                ws.cell(row=r, column=col).border = box
+    if n_bins > shift_len:
+        c = ws.cell(row=r, column=2 + shift_len, value="Night shift 19–06")
+        c.font = _xlsx_font(True, 8, _XLSX_NAVY)
+        c.fill = night_fill
+        c.alignment = mid
+        c.border = box
+        night_n = n_bins - shift_len
+        if night_n > 1:
+            ws.merge_cells(start_row=r, start_column=2 + shift_len, end_row=r,
+                           end_column=1 + n_bins)
+            for col in range(3 + shift_len, 2 + n_bins):
+                ws.cell(row=r, column=col).fill = night_fill
+                ws.cell(row=r, column=col).border = box
+    r += 1
+
+    heads = ["Corridor"] + ["%02d" % h for h in hours]
+    _xlsx_headers(ws, r, heads, start=1, center=True)
+    for b, h in enumerate(hours):
+        cell = ws.cell(row=r, column=2 + b)
+        cell.fill = night_fill if b >= shift_len else day_fill
+    r += 1
+
+    for s in secs:
+        occ = list(s.get("occupancy") or [])
+        cap = float(s.get("cap_trucks_bin") or 0) or 0.0
+        name = s.get("section") or ""
+        shared = s.get("shared")
+        lab = name + ("  (shared)" if shared else "")
+        lab_c = ws.cell(row=r, column=1, value=lab)
+        lab_c.font = _xlsx_font(True, 9, _XLSX_INK)
+        lab_c.border = box
+        lab_c.alignment = Alignment(vertical="center")
+        for b in range(n_bins):
+            val = occ[b] if b < len(occ) else 0
+            try:
+                num = float(val or 0)
+            except (TypeError, ValueError):
+                num = 0.0
+            cell = ws.cell(row=r, column=2 + b)
+            cell.border = box
+            cell.alignment = mid
+            cell.font = _xlsx_font(False, 9)
+            if num <= 0:
+                cell.value = None
+                cell.fill = fills["idle"]
+                continue
+            cell.value = int(round(num))
+            cell.number_format = "0"
+            ratio = (num / cap) if cap > 0 else 0.0
+            if ratio >= 1.0:
+                cell.fill = fills["high"]
+            elif ratio >= 0.7:
+                cell.fill = fills["watch"]
+            else:
+                cell.fill = fills["open"]
+        r += 1
+
+    _xlsx_widths(ws, [5.5] * n_bins, start=2)
+    return r + 1
+
+
+def _xlsx_month_corridor_block(ws, r, alloc=None, card=None, paths=None):
+    """Hourly grid for one month sheet. alloc/card preferred; paths as fallback."""
+    got = None
+    source = None
+    if alloc:
+        got = _corridor_for_alloc(alloc)
+        source = alloc.get("source_date")
+    if not got and card:
+        got = _corridor_for_month(card)
+        source = card.get("alloc_source_date") or (card.get("alloc") or {}).get("source_date")
+    if not got and paths:
+        got = _corridor_run(_plans_from_alloc_rows(paths))
+    if not got:
+        return _xlsx_road_corridor_hourly(ws, r, None, 0)
+    res, dt = got
+    return _xlsx_road_corridor_hourly(ws, r, res, dt, source=source)
 
 def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
     """Year dashboard sheet: KPIs, five-clock charts, coverage table.
@@ -1919,6 +2382,8 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
               "old_achv": c.get("achv_month") if achv else None,
               "new_achv": None} for c in cards],
             start=1, chart_col="I", achv=achv)
+
+    r = _xlsx_road_corridor_block(ws, r + 2, cards)
 
     _xlsx_widths(ws, [16, 14, 14, 14, 12, 14, 14, 12, 14, 12, 10, 12, 12, 12])
     ws.freeze_panes = "A4"

@@ -71,6 +71,32 @@ $PY train_model.py >/dev/null 2>&1
 B=$($PY -c "import json;m=json.load(open('data/model_metadata.json'));print(round(m['r2'],6),round(m['mae'],6))" 2>/dev/null)
 [ -n "$A" ] && [ "$A" = "$B" ]; chk $? "C13  retraining is idempotent" "metrics drifted: '$A' vs '$B'"
 
+# Wait for the model to be SERVING before measuring it. F23 fires /api/retrain,
+# and a retrain still reloading — from this run or from a previous one minutes
+# earlier — makes /api/predict answer slowly and can serve a transitional
+# model. That is what failed D16 (p95) and D18b (canonicalisation) repeatedly on
+# 2026-08-23/24 while both passed every direct probe against an idle server
+# (p95 2.0 ms against a 100 ms gate — a 50x margin). Measuring a warming model
+# and calling it a latency or naming defect is how a suite teaches people to
+# ignore it. Poll until answers are fast and stable, then measure.
+$PY - <<'EOF' >/dev/null 2>&1
+import json,sys,time,urllib.request
+req=json.dumps({"contractor":"RIM","source":"TF","destination":"FENI KM0","trucks":19,
+ "shift_hours":12,"rainfall":0,"shift":"day","weighbridges_open":8,"mode":"dt_to_wmt"}).encode()
+def one():
+    t=time.perf_counter()
+    urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:5055/api/predict",req,
+        {'Content-Type':'application/json'}),timeout=120).read()
+    return (time.perf_counter()-t)*1000
+deadline=time.time()+300
+while time.time()<deadline:
+    try:
+        if max(one() for _ in range(5))<50: sys.exit(0)
+    except Exception: pass
+    time.sleep(5)
+sys.exit(0)   # never block the suite; the gates below report the truth
+EOF
+
 echo "── D · prediction API ────────────────────────────────────────────"
 REQ='{"contractor":"RIM","source":"TF","destination":"FENI KM0","trucks":19,"shift_hours":12,"rainfall":0,"shift":"day","weighbridges_open":8,"mode":"dt_to_wmt"}'
 curl -s -X POST -H 'Content-Type: application/json' -d "$REQ" $BASE/api/predict > /tmp/p2_pred.json 2>/dev/null

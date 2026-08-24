@@ -425,16 +425,27 @@
       });
     }
     _curves=buildCurves();
-    if(!_curves.length){sec.style.display='none';return;}
+    if(!_curves.length){sec.style.display='none';sec.open=false;return;}
     if(_sel&&!_curves.some(p=>p.id===_sel))_sel=null;
     Object.keys(_hidden).forEach(id=>{if(!_curves.some(p=>p.id===id))delete _hidden[id];});
     sec.style.display='';
-    renderCards();renderChart();
+    // Stay collapsed until the user opens the dropdown. Painting while closed
+    // sizes ECharts to a zero-width box (same trap as the hidden-tab map).
+    if(sec.open){renderCards();renderChart();}
     if(pending){
       if(_sensWarmT)clearTimeout(_sensWarmT);
       _sensWarmT=setTimeout(window.planSensRefresh, 280);
     }
   };
+
+  const _sensHost=el('plan-s2-sensitivity');
+  if(_sensHost){
+    _sensHost.addEventListener('toggle',function(){
+      if(!_sensHost.open)return;
+      renderCards();renderChart();
+      if(typeof paResizeAll==='function')paResizeAll();
+    });
+  }
 
   document.addEventListener('click',ev=>{
     const eye=ev.target&&ev.target.closest?ev.target.closest('.plan-sens-eye'):null;
