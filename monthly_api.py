@@ -2011,12 +2011,23 @@ def _xlsx_road_corridor_block(ws, r, cards):
         "Road crowding) is on each month tab: Sep, Oct, Nov, Dec."))
     ws.cell(row=r, column=1).font = Font(italic=True, size=9)
     r += 1
+    # Peak here is the BIN-FREE instantaneous maximum; the month grid shows the
+    # MEAN concurrent within each hour. Both are real and they are not the same
+    # number — the peak legitimately exceeds every cell of the grid. Say so on
+    # the face of the table: two panels quoting one concept is how this project
+    # has been misread before.
+    ws.cell(row=r, column=1, value=(
+        "Peak = most trucks on the section at any instant. The month tabs show the "
+        "AVERAGE across each hour, so the peak sits above every cell there."))
+    ws.cell(row=r, column=1).font = Font(italic=True, size=9)
+    r += 1
     ws.cell(row=r, column=1, value=(
         "Advisory. Distribution of the FINALISED plan across the road — it never "
         "changes plan tonnage. Normal-day basis (0-1 mm rain)."))
     ws.cell(row=r, column=1).font = Font(italic=True, size=9)
     r += 2
-    for c, h in enumerate(["Month", "Section", "Peak trucks", "Average trucks",
+    for c, h in enumerate(["Month", "Section", "Peak trucks (any instant)",
+                           "Average trucks (per hour)",
                            "Busiest hour", "Share of road capacity"], start=1):
         ws.cell(row=r, column=c, value=h).font = Font(bold=True)
     r += 1
@@ -2070,6 +2081,15 @@ def _xlsx_road_corridor_hourly(ws, r, res, dt, source=None):
         ws.cell(row=r, column=1, value="No finalised allocation to time onto the road.")
         ws.cell(row=r, column=1).font = _xlsx_font(False, 9, _XLSX_MUTED)
         return r + 1
+
+    # Name the quantity. These cells are the MEAN concurrent trucks within each
+    # hour, not the instantaneous peak the Year sheet reports, so the two pages
+    # legitimately differ and must each say which they are.
+    ws.cell(row=r, column=1, value=(
+        "Average trucks on the section during each hour (the Year sheet's peak is "
+        "an instantaneous maximum and sits above every cell here)."))
+    ws.cell(row=r, column=1).font = _xlsx_font(False, 9, _XLSX_MUTED)
+    r += 1
 
     secs = res.get("sections") or []
     start_h = int(res.get("start_hour") or 7) % 24

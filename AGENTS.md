@@ -1921,3 +1921,81 @@ Every claim in reports/QA_AUDIT_2026-08-23_FIX_PLAN.md carries the probe
 that produced it. Keep that bar: a fix that cannot be measured cannot be
 verified, and an unverifiable calibration change is what this repo has
 been burned by more than once.
+
+## 2026-08-24 — road crowding validated on the WEIGHBRIDGE, then put on page one
+
+Owner: "see if it predicts for a truck the right way, then how many trucks
+in a section" — validate per-truck first, per-section second, and only
+"put it in the excel file in the first page after we are confident."
+
+**The validation source is tickets, not GPS, and that was the owner's
+call.** Haul GPS is too thin to score an hourly corridor (11.6% plate
+overlap; re-levelling on it made MAPE *worse*, 48.8% -> 59%). The release
+shape was therefore measured from `HAULAGE_CLEAN.TIME_LOADED` — 273,222
+loads over 234 days — and the per-segment time split from 463,060 vendor
+traversals plus 11,611 haul-truck bin-traversals, two independent sources
+agreeing within 6%.
+
+Two real biases were found and fixed in `plan_shared_flow.py` (a4a6a2f):
+a flat release profile (real one ramps at shift start and winds down at
+shift end, with NO meal-break dip) and a mis-split of road time across
+segments. The reshape is a monotone time-warp, so total executed trips
+and truck-hours are conserved EXACTLY (verified to 1e-6) — a reshape that
+changes the totals is a different plan, not a better clock.
+
+**A third "defect" was measured and REJECTED** (8363505). The apparent
+shift-changeover phase lag was a scoring artifact: the reference used a
+fitted 1.25 h trailing window, shorter than any real section transit
+time, so it was structurally incapable of showing the lag. The real
+changeover stand-down (+270 min at the loader) is ALREADY carried by
+`overhead_per_trip_min` (dispatch-anchored, +406 min modelled); adding an
+explicit term would double-count. Do not "fix" this again without a
+reference window longer than the transit time.
+
+### Corridor sits DOWNSTREAM of the plan (owner doctrine)
+
+Once a month's allocation is finalised, the corridor's ONLY job is to
+distribute those trucks across sections and hours. It does not re-derive,
+second-guess or re-price the plan's tonnage — that was settled upstream.
+`_corridor_for_month` in `monthly_api.py` therefore reads the finalised
+`data/saved_plans/{date}.json` rows and nothing else.
+
+**Rain is forced to 0 mm** in the export on the owner's instruction:
+plans are judged on a normal day (0-1 mm) for now, the rain model stays
+ACTIVE for scenarios that need it, and the owner personally fixes any
+saved plan whose `rain_mm` is above that. Do not disable the rain path to
+"simplify" this, and do not silently rewrite a saved plan's rain value.
+
+### Peak and average are DIFFERENT quantities — both are labelled
+
+The Year sheet's peak is the **bin-free instantaneous maximum**
+(`peak_concurrent`); the month tabs' grid cells are the **mean concurrent
+within each hour**. Sep TF-KR: 136 against a grid maxing at 133. Both are
+correct and the means reconcile exactly (107.9). Caught in self-audit
+before shipping, because an unlabelled 3-truck gap between two pages is
+read as one of them being wrong — the same failure as the capacity card
+and the 0.85 availability. Each table now names its own quantity on its
+face. If you add a third view of section occupancy, label it too.
+
+### Gates
+`J72` (`scripts/check_scenarios.py`) now asserts every S3/S4 month sheet
+carries the hour grid, that the axis really is 07..06 over 24 h, and that
+REAL occupancy numbers land — mutation-tested four ways (title-only stub,
+wrong axis start, heading removed, and a silently-swallowed engine
+failure). The last one matters most: `_corridor_run` deliberately
+swallows exceptions so a report never dies on an advisory panel, which is
+the 2026-08-21 Cycle Breakdown shape — a graceful fallback that hides a
+contract mismatch. The gate is what stops it hiding; it fails 4 checks
+loudly when the engine returns nothing.
+
+`scripts/verify_phase2.sh` gained a polling settle-wait after the
+retrain-adjacent gates (blocks until 5 consecutive `/api/predict` calls
+return under 50 ms, 5-minute deadline, never hard-blocks the suite).
+D16/D18b were flaking on a model-reload race; this is the root cause, not
+another point patch on D18b.
+
+**Suite note:** `check_assessment_view.py` (J56) is a browser gate and
+starves when stale Playwright/Chromium processes accumulate from repeated
+runs — 33 were leaked here. It passed standalone every time. `pkill` the
+strays before believing a J56 failure, the same way F23/D18b are probed
+before investigating.
