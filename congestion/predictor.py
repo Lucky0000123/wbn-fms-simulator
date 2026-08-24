@@ -30,6 +30,7 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
             payload_t: float | None = None, rain_mm: float = 0.0,
             contractor: str | None = None,
             segment_fleet: dict | None = None,
+            tenant_flow_hr: dict | bool | None = None,
             legacy_cap: float | None = None, legacy_rate: float | None = None,
             mode: str = "full") -> dict:
     """Hybrid trips/DT/day prediction for one route.
@@ -47,6 +48,19 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
     Build it with congestion.segments.segment_trucks(), which as of
     2026-08-23 also counts spur-origin (BLB) trucks onto the lower mainline
     they physically run — they were invisible to S4 before.
+
+    tenant_flow_hr: {segment_id: extra trucks/hr in the loaded lane} from the
+    OTHER TENANTS who share our road and give us no tonnage (owner register,
+    2026-08-24 — congestion/tenants.py). True -> take the register's own
+    numbers; None/False -> our plan alone, the pre-2026-08-24 behaviour, which
+    is the answer to "what if we had the road to ourselves".
+
+    It is a FLOW and not a truck count on purpose. segment_fleet is converted
+    to flow at THIS route's tempo, which is right for our own plan (similar
+    cycles) and wrong for a tenant: 40 KR>RSF trucks turning 5 trips/day push
+    more than three times the flow of 40 TF>HUAFEI trucks turning ~1.2. Adding
+    tenants as trucks would understate exactly the traffic the owner is asking
+    about, so they arrive already converted.
 
     Road capacity is the OFFICIAL geometric one (speed-limit sheets / 50 m
     following, one loaded lane; the BLB spur has no sheet and carries the
@@ -189,6 +203,34 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
     from .segments import route_segments as _route_segments, node_km as _node_km
     from .speed_limits import span_times_min as _span_times
     _segs = _route_segments(origin, dest)
+    # Tenant road load. Resolved ONCE, outside the fixed-point loop: the
+    # register does not depend on our cycle time, and re-resolving it inside
+    # _nxt would re-price the proxy roads 50+ times per call.
+    _tenant_flow = None
+    if tenant_flow_hr:
+        if tenant_flow_hr is True:
+            try:
+                from .tenants import tenant_segment_flow_hr
+                _tenant_flow = tenant_segment_flow_hr()
+            except (ImportError, ValueError, ArithmeticError, KeyError,
+                    TypeError, OSError):
+                _tenant_flow = None
+                warnings.append("tenant road load requested but unavailable")
+        elif isinstance(tenant_flow_hr, dict):
+            _tenant_flow = {k: float(v or 0) for k, v in tenant_flow_hr.items()}
+    if _tenant_flow and not _segs:
+        # Off-stick route (a BLB spur haul priced on its own distance): the
+        # tenants are on the mainline, not the spur, so there is nothing to
+        # add here. Say so rather than silently returning the clear-road
+        # answer under a flag that claims tenants were included.
+        warnings.append("tenant road load does not apply: route is not priced "
+                        "on the shared mainline segments")
+        # And DROP the flag, because the answer really is the clear-road one.
+        # Leaving it True let the Excel column print the spur's unchanged rate
+        # under a "with other tenants" heading, which reads as "the tenants
+        # cost this route nothing" when the truth is "this route was never
+        # priced against them".
+        _tenant_flow = None
     _seg_w = []
     if _segs:
         _a, _b = _node_km(origin), _node_km(dest)
@@ -213,7 +255,11 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
                 trucks_here = n_trucks
                 if segment_fleet:
                     trucks_here = max(float(segment_fleet.get(s['id'], 0.0)), n_trucks)
-                vc = (trucks_here / (cyc_try / 60.0)) / max(1.0, s['cap_hr'])
+                # Ours converts at our tempo; tenants arrive as flow already.
+                flow_hr = trucks_here / (cyc_try / 60.0)
+                if _tenant_flow:
+                    flow_hr += float(_tenant_flow.get(s['id'], 0.0))
+                vc = flow_hr / max(1.0, s['cap_hr'])
                 worst_vc = max(worst_vc, vc)
                 tf_seg = t_free_road * (w / _seg_total_ov)
                 t_road += min(3.0, 1.0 + alpha * (vc ** beta)) * tf_seg
@@ -347,6 +393,12 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
         "congestion_status": status,
         "bpr_regime": bp.get("regime"),
         "bunching_capped": bunch_capped,
+        # Was other-tenant road load priced into this answer, and how much.
+        # Reported unconditionally so a caller can never mistake a clear-road
+        # number for a shared-road one by its absence.
+        "tenant_traffic": bool(_tenant_flow),
+        "tenant_flow_hr": ({k: round(v, 2) for k, v in _tenant_flow.items()}
+                           if _tenant_flow else None),
         "rho": round(qq["rho"], 3),
         "road_vc": round(bp["vc"], 3),
         # ROAD capacity, and only the road's — the field is named for it.

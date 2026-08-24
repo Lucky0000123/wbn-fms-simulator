@@ -3322,6 +3322,12 @@ def api_congestion_model():
     ctr = (a.get('contractor') or '').strip().upper()
     if ctr:
         kw['contractor'] = ctr
+    # tenants=1 prices the OTHER tenants' fleets onto the shared segments
+    # (congestion/tenants.py; owner register 2026-08-24). Default OFF so no
+    # existing caller's number moves under it; the response always states
+    # which of the two questions it answered via `tenant_traffic`.
+    if str(a.get('tenants') or '').strip().lower() in ('1', 'true', 'yes', 'on'):
+        kw['tenant_flow_hr'] = True
     try:
         out = predict(route, n_trucks, n_loaders, **kw)
     except (ValueError, ArithmeticError) as exc:
@@ -3353,6 +3359,27 @@ def api_congestion_model():
 
 _SAT_REF_CACHE = {"at": 0.0, "data": None}
 _SAT_REF_STALE = {"at": 0.0, "verdict": None, "mod": None}
+
+
+@bp.route('/api/congestion_tenants', methods=['GET'])
+def api_congestion_tenants():
+    """The other-tenant road register (owner, 2026-08-24).
+
+    GET /api/congestion_tenants
+
+    Who else is on our haul road, at what rate, and how much loaded-lane flow
+    each one puts on each shared segment. These fleets give us no tonnage;
+    they only take road. Served so the Plan tab and the Excel note can name
+    the traffic behind the shared-road Trips/DT column instead of showing a
+    lower number with no explanation.
+    """
+    try:
+        from congestion.tenants import tenant_summary
+    except ImportError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    out = tenant_summary()
+    out["ok"] = True
+    return jsonify(out)
 
 
 def _saturation_reference_freshness():

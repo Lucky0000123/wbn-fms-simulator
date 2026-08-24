@@ -431,6 +431,19 @@ chk $? "J75  road crowding: order- and bin-invariant, trips match the cadence" "
 $PY scripts/export_saturation_curves.py --check >/dev/null 2>&1
 chk $? "J76  frozen saturation curves match the current model" "stale: python scripts/export_saturation_curves.py --check"
 
+# Other tenants (owner register 2026-08-24): 1,340 DT that take our road and
+# give us no tonnage. The register is the owner's; what this gate pins is the
+# WIRING, and each assertion below is one that broke on the way in:
+# direction (the empty-carriageway leg must cost no loaded-lane capacity),
+# UNIT (tenants arrive as flow, not trucks, or a 5-trip/day fleet is priced
+# as if it turned 2), MONOTONICITY (adding traffic can never raise trips/DT —
+# the first Excel column read 6.6% HIGH), and the off-mainline BLB spur, which
+# must be blank rather than repeating its clear-road rate under a "with other
+# tenants" heading. Mutation-tested three ways before being wired here.
+# Needs no DB or VPN.
+$PY test_tenant_traffic.py >/dev/null 2>&1
+chk $? "J77  other tenants take road, never tonnage" "see: python test_tenant_traffic.py"
+
 # Pure local test with a stubbed connection, so it needs no VPN.
 $PY test_accumulator.py >/dev/null 2>&1
 chk $? "J54  the GPS accumulator is idempotent and loses no history" "see: python test_accumulator.py"

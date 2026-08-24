@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-08-24T01:13:14Z",
+ "generated_at": "2026-08-24T08:01:51Z",
  "method": {
   "trips_formula": "1440 / (road_congested + ops + queue + bunching + overhead_per_trip)",
   "bpr": "applied to road_free only, capped at 3x",
@@ -12,9 +12,9 @@
   "calibration_source": "WBN_DATABASE.dbo.HAULAGE_CLEAN 2026-01-01.. (day-shift trip gaps)",
   "calibration_fingerprint": "sha256:a57ce03e3021c983",
   "network_fingerprint": "sha256:bc48f67671f41c45",
-  "model_fingerprint": "sha256:c386142088e605df",
+  "model_fingerprint": "sha256:54e2d540947c1551",
   "model_files": {
-   "predictor.py": "sha256:47f7dcba23fd748f",
+   "predictor.py": "sha256:926db48f27cb7743",
    "physics.py": "sha256:af54d2015e7711af",
    "queueing.py": "sha256:8463b02a713b2a5f",
    "bpr.py": "sha256:fa7b7509e2d20031",

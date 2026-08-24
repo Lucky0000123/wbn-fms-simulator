@@ -963,7 +963,13 @@ def _tenant_trips_per_dt(rows):
             except (ValueError, ArithmeticError, KeyError, TypeError, OSError):
                 ratios[ck] = None
         if ratios[ck]:
-            out[_ten_key(row)] = round(float(shown) * ratios[ck], 2)
+            # THREE decimals, not two. At official capacities the tenants cost
+            # 0.1-1.5% of trips/DT, and 2 dp rounds that straight back onto the
+            # neighbouring column: TF>FENI KM15 — the road carrying 800 of the
+            # 1,340 tenant DT — printed an identical number to its own rate, so
+            # the one row the reader checks first said the tenants did nothing.
+            # A column whose answer is always invisible is not a column.
+            out[_ten_key(row)] = round(float(shown) * ratios[ck], 3)
     return out
 
 
@@ -992,7 +998,14 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
             " · 'Trips/DT w/ other tenants' re-prices the SAME fleet with the "
             "other tenants' %s DT on the shared road (%s). They carry no "
             "tonnage for us and take no trucks from us — only road. Tonnes, "
-            "targets and DT in this table are unchanged." % (_n_dt, _names))
+            "targets and DT in this table are unchanged. The cost is small "
+            "(roughly 0.1–1.5%%, shown to 3 decimals) because at the official "
+            "surveyed capacities the corridor still has headroom: the tenants "
+            "raise v/c on the busiest section from about 0.03 to 0.32, and "
+            "delay grows with the FOURTH power of v/c, so it stays flat until "
+            "v/c approaches 1. Blank = that route is off the shared mainline "
+            "(the BLB spur), not that the tenants made no difference."
+            % (_n_dt, _names))
     r = _xlsx_section(ws, r, title, sub)
     if achv:
         # Achievable view drops every "old" column (owner, 2026-08-19):
@@ -1054,7 +1067,10 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
             cell.font = _xlsx_font(col in (2, 7, 9, 11), 9)
             if ten_col and col == ten_col:
                 if isinstance(val, (int, float)):
-                    cell.number_format = "0.00"
+                    # 3 dp: the tenant effect is sub-1% on most roads and a
+                    # "0.00" format hides it behind the column it is meant to
+                    # be compared against.
+                    cell.number_format = "0.000"
                 cell.font = _xlsx_font(True, 9, _XLSX_NAVY)
                 continue
             if achv:
@@ -1131,7 +1147,10 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
             if rate is None:
                 rate = _path_rates(x).get("trips_per_dt_after")
             t_tr += (rate or 0) * dt_x
-        tot_vals.append(round(t_tr / tot["dt_a"], 2) if tot["dt_a"] else None)
+        # 3 dp for the same reason as the per-row value: at 2 dp the total sat
+        # on top of the clear-road total while every one of its own rows had
+        # moved down.
+        tot_vals.append(round(t_tr / tot["dt_a"], 3) if tot["dt_a"] else None)
     for col, val in enumerate(tot_vals, start=1):
         cell = ws.cell(row=r, column=col, value=val)
         cell.font = _xlsx_font(True, 9, _XLSX_NAVY)
