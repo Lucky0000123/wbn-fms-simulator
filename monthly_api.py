@@ -1931,11 +1931,21 @@ def _is_tenant_row(r):
         return False
     if r.get("_tenant"):
         return True
+    # The row ID survives a save where the _tenant flag does not.
+    if str(r.get("id") or "").upper().startswith("TENANT|"):
+        return True
     key = str(r.get("key") or "").strip().upper()
     if key.endswith(">RSF"):
         return True
     ctr = str(r.get("contractor") or "").strip().upper()
     if not ctr:
+        return False
+    # Never match on a name we also use OURSELVES — over-matching here destroys
+    # the plan this guard exists to protect. That list is IWIP alone: POSITION
+    # was one of ours until 2026-08-24, when the owner made it tenant-only
+    # ("just one Position row with that 500 trucks"), so a POSITION row now IS
+    # a tenant. IWIP stays ours: it moves our material off the POS stockpiles.
+    if ctr == "IWIP":
         return False
     try:
         from congestion.tenants import TENANTS as _T

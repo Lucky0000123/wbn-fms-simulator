@@ -2932,7 +2932,16 @@ def _frozen_allocation_error(alloc):
 
     new = alloc.get("new") or {}
     if not finite(new.get("achv_sim")):
-        return "run Check capacity after Allocate: raw simulated achievable total is missing"
+        # Say ALLOCATE, not "Check capacity". A plan loaded from disk comes back
+        # frozen, which DISABLES the Check capacity button — so the old wording
+        # pointed the planner at a control they cannot press and left them with
+        # a save that never worked (owner, 2026-08-24: "why is it not getting
+        # saved"). Re-running Allocate re-prices the plan and lands the raw
+        # simulated achievable in a few seconds, after which the save succeeds.
+        return ("run Allocate to re-price this plan before saving: the raw "
+                "simulated achievable total is missing. A plan just loaded from "
+                "disk has not been simulated in this session yet. (If the plan "
+                "is unlocked, Check capacity does the same job.)")
     missing = []
     for row in alloc.get("rows") or []:
         if row.get("foreign") or not finite(row.get("dt_after")) or row.get("dt_after") <= 0:

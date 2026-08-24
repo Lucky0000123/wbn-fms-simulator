@@ -227,6 +227,12 @@ check(not _is_tenant_row({"key": "TF>HUAFEI", "contractor": "RIM"}),
       "our own rows are NOT mistaken for tenants")
 check(not _is_tenant_row({"key": "POS 12>FENI KM0", "contractor": "IWIP"}),
       "IWIP road-only rows are NOT mistaken for tenants")
+# POSITION is TENANT-ONLY from 2026-08-24 (owner: "delete the old Position rows
+# ... so we will have just one Position row with that 500 trucks"). It used to
+# be one of ours as well, and being both is what let the same fleet onto the
+# road twice. IWIP is the only road-only contractor we still add ourselves.
+check(_is_tenant_row({"key": "TF>FENI KM15", "contractor": "POSITION"}),
+      "POSITION is a tenant, not one of our own road-only rows")
 
 _mixed = [{"key": "TF>HUAFEI", "contractor": "RIM", "dt_after": 50},
           {"key": "TF>FENI KM15", "contractor": "MHM", "dt_after": 100},
