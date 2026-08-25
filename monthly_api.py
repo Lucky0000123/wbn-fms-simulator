@@ -808,7 +808,7 @@ def _xlsx_saved_day_allocation(ws, r, alloc):
     if rows:
         r = _xlsx_path_alloc_table(
             ws, r, rows, "New Allocation Plan table",
-            "Old = Your plan as checked. New = after Allocate DT. "
+            "Allocated plan (after Allocate DT). "
             "WMT/DT is tonnes per truck-trip (payload).")
     return r
 
@@ -869,6 +869,22 @@ def _ten_key(row):
     ONE home for each, so the lookup and the build cannot drift apart.
     """
     return id(row)
+
+
+def _tenant_cap_note():
+    """Live official-capacity sentence so the Excel caption cannot go stale."""
+    try:
+        from congestion.segments import SEGMENTS
+        from congestion.speed_limits import FOLLOWING_DISTANCE_M
+        s1 = next((s["cap_hr"] for s in SEGMENTS if s["id"] == "S1"), None)
+        s4 = next((s["cap_hr"] for s in SEGMENTS if s["id"] == "S4"), None)
+        if s1 and s4:
+            return ("capacity (S1–S3 %.0f/hr, S4 %.0f/hr) is derived from posted "
+                    "speed limits and a %.0f m following distance"
+                    % (s1, s4, FOLLOWING_DISTANCE_M))
+    except ImportError:
+        pass
+    return "capacity is derived from posted speed limits and following distance"
 
 
 def _tenant_trips_per_dt(rows):
@@ -974,17 +990,26 @@ def _tenant_trips_per_dt(rows):
 
 
 def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
-    """Old vs new path table: WMT, DT, trips, plus trips/DT and WMT/DT.
-    achv=True appends the engine's achievable (t/day) old vs new."""
+    """Allocated-plan path table: WMT, DT, trips, plus trips/DT and WMT/DT.
+    The pre-Allocate (old) columns are omitted — month sheets show the
+    optimized plan only, with no 'old' / 'new' suffix on the headers
+    (owner, 2026-08-24). achv=True appends the engine's achievable (t/day)."""
     box = _xlsx_sides()[0]
     mid = _xlsx_mid()
-    rows = list(rows or [])
-    rows.sort(key=lambda x: (x.get("prio") or 9, x.get("key") or ""))
+    rows = _ensure_tenant_rows(rows)
+    rows.sort(key=lambda x: (
+        2 if _is_tenant_row(x) else (1 if x.get("foreign") else 0),
+        x.get("prio") or 9,
+        x.get("contractor") or "",
+        x.get("key") or "",
+    ))
     if not rows:
         return r
     # One extra column: the same paths priced with the other tenants' trucks
     # on the road (congestion/tenants.py). Empty dict -> no column at all.
-    ten = _tenant_trips_per_dt(rows)
+    # Tenant rows themselves are the register, not something to re-price.
+    ours = [x for x in rows if not _is_tenant_row(x)]
+    ten = _tenant_trips_per_dt(ours)
     if ten:
         try:
             from congestion.tenants import TENANTS as _TEN_REG
@@ -1001,32 +1026,27 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
             "targets and DT in this table are unchanged. Both fleets are on ONE "
             "clock: a tenant truck occupies the loaded lane for one pass per "
             "road cycle, exactly as ours does, so they take the busiest section "
-            "(POS 12–KM15) to about 70%% of its capacity. Remaining caveat: that "
-            "capacity (600/hr S1-S3, 400/hr S4) is derived from posted speed "
-            "limits and an assumed 50 m following distance, NOT a counted "
+            "(POS 12–KM15) against that official capacity. Remaining caveat: that "
+            "%s, NOT a counted "
             "traffic survey — if the real lane carries less, this cost grows "
             "sharply, because delay rises with the fourth power of v/c. Blank = "
             "that route is off the shared mainline (the BLB spur), not that the "
-            "tenants made no difference."
-            % (_n_dt, _names))
+            "tenants made no difference. Other-tenant fleets are listed at the "
+            "bottom of this table (material 'other tenant') — the same rows as "
+            "Plan → New Allocation Plan. They take road, not WMT, and are not "
+            "in TOTAL DT. IWIP POS-transit (material 'road') is its OWN "
+            "fleet too: on the road, 0 WMT, counted on its own line "
+            "under TOTAL, never out of the contractor pools."
+            % (_n_dt, _names, _tenant_cap_note()))
     r = _xlsx_section(ws, r, title, sub)
+    # Optimized plan only. Year-board Path sheet already uses these names
+    # (no "new" prefix); month sheets now match.
+    heads = [
+        "P", "Path", "Contractor", "Material", "Target WMT/day",
+        "DT", "Trips", "WMT", "WMT/DT", "Trips/DT",
+    ]
     if achv:
-        # Achievable view drops every "old" column (owner, 2026-08-19):
-        # Target · DT · Trips · Predicted · rates · Achievable, new plan only.
-        heads = [
-            "P", "Path", "Contractor", "Material", "Target WMT/day",
-            "DT", "Trips", "Predicted WMT", "WMT/DT", "Trips/DT",
-            "Achievable",
-        ]
-    else:
-        heads = [
-            "P", "Path", "Contractor", "Material", "Target WMT/day",
-            "DT old", "DT new",
-            "Trips old", "Trips new",
-            "WMT old", "WMT new",
-            "WMT/DT old", "WMT/DT new",
-            "Trips/DT old", "Trips/DT new",
-        ]
+        heads.append("Achievable")
     if ten:
         heads.append("Trips/DT w/ other tenants")
     _xlsx_headers(ws, r, heads, center=True)
@@ -1037,37 +1057,26 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
     for row in rows:
         r += 1
         rates = _path_rates(row)
-        mat = "%s%s" % (row.get("material") or "",
-                        (" · " + row["otype"]) if row.get("otype") else "")
         av_new = _finite(row.get("achv_sim"))
         if av_new is None:
             av_new = _finite(row.get("achv_after"))
+        vals = [
+            _prio_cell(row), row.get("key"), row.get("contractor"),
+            _path_mat_label(row), row.get("target"),
+            row.get("dt_after"), rates["trips_after"], row.get("pred_after"),
+            rates["wmt_per_trip_after"], rates["trips_per_dt_after"],
+        ]
         if achv:
-            vals = [
-                "P%s" % (row.get("prio") or ""), row.get("key"), row.get("contractor"),
-                mat, row.get("target"),
-                row.get("dt_after"), rates["trips_after"], row.get("pred_after"),
-                rates["wmt_per_trip_after"], rates["trips_per_dt_after"],
-                av_new,
-            ]
-        else:
-            vals = [
-                "P%s" % (row.get("prio") or ""), row.get("key"), row.get("contractor"),
-                mat, row.get("target"),
-                row.get("dt_before"), row.get("dt_after"),
-                rates["trips_before"], rates["trips_after"],
-                row.get("pred_before"), row.get("pred_after"),
-                rates["wmt_per_trip_before"], rates["wmt_per_trip_after"],
-                rates["trips_per_dt_before"], rates["trips_per_dt_after"],
-            ]
+            vals.append(av_new)
         ten_col = len(vals) + 1 if ten else None
         if ten:
             vals.append(ten.get(_ten_key(row)))
+        rate_cols = {9, 10}  # WMT/DT, Trips/DT
         for col, val in enumerate(vals, start=1):
             cell = ws.cell(row=r, column=col, value=val)
             cell.border = box
             cell.alignment = mid
-            cell.font = _xlsx_font(col in (2, 7, 9, 11), 9)
+            cell.font = _xlsx_font(col == 2, 9)
             if ten_col and col == ten_col:
                 if isinstance(val, (int, float)):
                     # 3 dp: the tenant effect is sub-1% on most roads and a
@@ -1076,24 +1085,27 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
                     cell.number_format = "0.000"
                 cell.font = _xlsx_font(True, 9, _XLSX_NAVY)
                 continue
-            if achv:
-                if col in (9, 10) and isinstance(val, (int, float)):
-                    cell.number_format = "0.00"
-                elif col >= 5 and isinstance(val, (int, float)):
-                    cell.number_format = "#,##0"
-                if col in (6, 7, 8):
-                    cell.font = _xlsx_font(True, 9, _XLSX_INK)
-                if col == 11:
-                    cell.font = _xlsx_font(True, 9, _XLSX_INK)
-            else:
-                if col in (12, 13, 14, 15) and isinstance(val, (int, float)):
-                    cell.number_format = "0.00"
-                elif col >= 5 and isinstance(val, (int, float)):
-                    cell.number_format = "#,##0"
-                if col in (6, 8, 10, 12, 14):
-                    cell.font = _xlsx_font(False, 9, _XLSX_INK)
-                if col in (7, 9, 11, 13, 15):
-                    cell.font = _xlsx_font(True, 9, _XLSX_INK)
+            if col in rate_cols and isinstance(val, (int, float)):
+                cell.number_format = "0.00"
+            elif col >= 5 and isinstance(val, (int, float)):
+                cell.number_format = "#,##0"
+            if col in (6, 7, 8) or (achv and col == 11):
+                cell.font = _xlsx_font(True, 9, _XLSX_INK)
+        if _is_tenant_row(row):
+            continue
+        if row.get("foreign"):
+            # IWIP POS-transit is its OWN fleet and never comes out of the
+            # contractor pools (rules §10.8; the Plan navbar has said
+            # "581 DT + 27 IWIP" since 2026-08-21). Summing it into TOTAL DT
+            # put Sep at 707 against the pool figure 581 printed elsewhere on
+            # the same sheet. It also silently deflated Trips/DT, because these
+            # rows carry DT but 0 trips/0 WMT/0 achievable — so our trips were
+            # being divided by a fleet that included them (Sep 21.7% low).
+            # Counted on its own line under TOTAL instead.
+            tot["dt_iwip"] = tot.get("dt_iwip", 0) + (row.get("dt_after") or 0)
+            tot["dt_iwip_b"] = tot.get("dt_iwip_b", 0) + (row.get("dt_before") or 0)
+            tot["n_iwip"] = tot.get("n_iwip", 0) + 1
+            continue
         tot["tgt"] += row.get("target") or 0
         tot["dt_b"] += row.get("dt_before") or 0
         tot["dt_a"] += row.get("dt_after") or 0
@@ -1113,27 +1125,18 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
         elif rates["trips_per_dt_after"] is not None and row.get("dt_after"):
             tot["tr_a"] += rates["trips_per_dt_after"] * (row.get("dt_after") or 0)
     r += 1
-    tpd_b = round(tot["tr_b"] / tot["dt_b"], 2) if tot["dt_b"] else None
     tpd_a = round(tot["tr_a"] / tot["dt_a"], 2) if tot["dt_a"] else None
-    pay_b = round(tot["pr_b"] / tot["tr_b"], 2) if tot["tr_b"] else None
     pay_a = round(tot["pr_a"] / tot["tr_a"], 2) if tot["tr_a"] else None
+    n_ours = sum(1 for x in rows
+                 if not _is_tenant_row(x) and not x.get("foreign"))
+    tot_vals = [
+        "TOTAL", "%s paths" % n_ours, "", "",
+        tot["tgt"] or None, tot["dt_a"] or None,
+        int(round(tot["tr_a"])) if tot["tr_a"] else None,
+        tot["pr_a"] or None, pay_a, tpd_a,
+    ]
     if achv:
-        tot_vals = [
-            "TOTAL", "%s paths" % len(rows), "", "",
-            tot["tgt"] or None, tot["dt_a"] or None,
-            int(round(tot["tr_a"])) if tot["tr_a"] else None,
-            tot["pr_a"] or None, pay_a, tpd_a,
-            int(round(tot.get("av_a") or 0)) or None,
-        ]
-    else:
-        tot_vals = [
-            "TOTAL", "%s paths" % len(rows), "", "",
-            tot["tgt"] or None, tot["dt_b"] or None, tot["dt_a"] or None,
-            int(round(tot["tr_b"])) if tot["tr_b"] else None,
-            int(round(tot["tr_a"])) if tot["tr_a"] else None,
-            tot["pr_b"] or None, tot["pr_a"] or None,
-            pay_b, pay_a, tpd_b, tpd_a,
-        ]
+        tot_vals.append(int(round(tot.get("av_a") or 0)) or None)
     if ten:
         # DT-weighted over EVERY row, exactly the denominator tpd_a uses.
         # Summing only the rows that have a tenant value put the two totals on
@@ -1143,6 +1146,13 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
         # touch keeps its own rate, because that IS its rate under this traffic.
         t_tr = 0.0
         for x in rows:
+            # Skip foreign/IWIP for the SAME reason tot["dt_a"] now does:
+            # numerator and denominator must be one fleet. These rows carry DT
+            # but no trips, so leaving them in the denominator alone would
+            # under-state the with-tenants rate exactly as it under-stated
+            # tpd_a.
+            if _is_tenant_row(x) or x.get("foreign"):
+                continue
             dt_x = _finite(x.get("dt_after")) or 0
             if not dt_x:
                 continue
@@ -1159,7 +1169,7 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
         cell.font = _xlsx_font(True, 9, _XLSX_NAVY)
         cell.alignment = mid
         _xlsx_total_border(cell)
-        _rate_col = (col in (9, 10) if achv else col in (12, 13, 14, 15))
+        _rate_col = col in (9, 10)
         _ten_total = bool(ten) and col == len(tot_vals)
         if _ten_total:
             _rate_col = True
@@ -1172,16 +1182,43 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
     pct_lab.font = _xlsx_font(True, 9, _XLSX_MUTED)
     pct_lab.alignment = mid
     pct_lab.border = box
-    last_col = (11 if achv else 15) + (1 if ten else 0)
+    last_col = (11 if achv else 10) + (1 if ten else 0)
     for col in range(2, last_col + 1):
         ws.cell(row=r, column=col).border = box
         ws.cell(row=r, column=col).alignment = mid
-    pred_col = 8 if achv else 11
+    pred_col = 8  # WMT (predicted)
     _xlsx_pct_cell(ws.cell(row=r, column=pred_col), _cov_pct(tot["pr_a"], tot["tgt"]))
     ws.cell(row=r, column=pred_col).font = _xlsx_font(True, 9, _XLSX_PRED)
     if achv:
         _xlsx_pct_cell(ws.cell(row=r, column=11), _cov_pct(tot.get("av_a"), tot["tgt"]))
         ws.cell(row=r, column=11).font = _xlsx_font(True, 9, _XLSX_ACHV)
+    # Three fleets, three lines, each named: ours in TOTAL, IWIP POS-transit
+    # and the other tenants beside it. Before this, IWIP was invisible because
+    # it was folded INTO TOTAL DT, which is how Sep read 707 against a pool of
+    # 581 on the same sheet.
+    if tot.get("dt_iwip"):
+        r += 1
+        note = ws.cell(
+            row=r, column=1,
+            value=("IWIP POS-transit · %s DT on the road · %s paths · 0 WMT · "
+                   "own fleet, not from the contractor pools, not in TOTAL"
+                   % (int(round(tot["dt_iwip"])), tot.get("n_iwip", 0))))
+        note.font = _xlsx_font(False, 8, _XLSX_MUTED)
+        note.alignment = mid
+        ws.merge_cells(start_row=r, start_column=1, end_row=r,
+                       end_column=last_col)
+    ten_rows = [x for x in rows if _is_tenant_row(x)]
+    if ten_rows:
+        r += 1
+        dt_ten = int(round(sum((_finite(x.get("dt_after")) or 0) for x in ten_rows)))
+        note = ws.cell(
+            row=r, column=1,
+            value=("Other tenants · %s DT on the road · 0 WMT · not in TOTAL"
+                   % dt_ten))
+        note.font = _xlsx_font(False, 8, _XLSX_MUTED)
+        note.alignment = mid
+        ws.merge_cells(start_row=r, start_column=1, end_row=r,
+                       end_column=last_col)
     return r + 1
 
 
@@ -1194,14 +1231,190 @@ def _split_route_key(key):
     return src.strip(), dst.strip()
 
 
+# Pit → plant KPI (owner 2026-08-25): dest rows × pit columns, t/day.
+# Lead dests stay visible even at 0 so the sheet layout does not jump.
+_PIT_ORDER = ("TF", "BLB", "KR")
+_PIT_ALIASES = {"TOFU": "TF", "KRENE": "KR"}
+_DEST_LEAD = ("FENI KM0", "FENI KM15", "POS")
+_MAT_LEAD = (("sap", "SAP"), ("tos", "LIM-TOS"), ("ld", "LIM-LD"))
+
+
+def _pit_name(origin):
+    o = (origin or "").strip().upper()
+    o = _ORIGIN_MAP.get(o, o)
+    return _PIT_ALIASES.get(o, o) or "?"
+
+
+def _dest_plant(dest):
+    """Group tips the planner actually asks about: FeNi plants + POS together."""
+    d = _canon_dest(dest)
+    if "KM15" in d:
+        return "FENI KM15"
+    if "FENI" in d:
+        return "FENI KM0"
+    if d.startswith("POS"):
+        return "POS"
+    if "HUAFEI" in d:
+        return "HUAFEI"
+    if d == "BSE" or d.startswith("BSE"):
+        return "BSE"
+    return d or "Other"
+
+
+def _mat_bucket(row):
+    """sap / tos / ld, or None for IWIP, tenants, and unlabelled road rows."""
+    if row.get("foreign") or _is_tenant_row(row):
+        return None
+    mat = (row.get("material") or "").strip().upper()
+    otype = (row.get("otype") or "").strip().upper()
+    if " - " in mat and not otype:
+        left, right = mat.split(" - ", 1)
+        mat, otype = left.strip(), right.strip()
+    if mat in ("ROAD", "OTHER TENANT") or not mat:
+        return None
+    if mat == "SAP":
+        return "sap"
+    if otype == "LD" or mat.endswith("LD"):
+        return "ld"
+    if mat.startswith("LIM") or otype == "TOS":
+        return "tos"
+    return None
+
+
+def _dest_pit_flow(rows):
+    """{(mat, dest, pit) -> t/day} from allocation / path rows. Production WMT only."""
+    out = {}
+    for row in rows or []:
+        b = _mat_bucket(row)
+        t = _finite(row.get("pred_after"))
+        if t is None:
+            t = _finite(row.get("pred_wmt_day"))
+        if not b or not t:
+            continue
+        origin, dest = _split_route_key(row.get("key"))
+        if not origin:
+            origin = row.get("source") or row.get("origin") or ""
+        if not dest:
+            dest = row.get("dest") or row.get("destination") or ""
+        pit = _pit_name(origin)
+        plant = _dest_plant(dest)
+        key = (b, plant, pit)
+        out[key] = out.get(key, 0.0) + float(t)
+    return out
+
+
+def _xlsx_dest_from_pits(ws, r, rows, grain="t / day"):
+    """KPI table: how much of each material each pit sends to each plant, per day."""
+    flow = _dest_pit_flow(rows)
+    if not flow:
+        return r
+    pits = {pit for (_, _, pit) in flow}
+    dests = {dest for (_, dest, _) in flow}
+    pit_cols = [p for p in _PIT_ORDER if p in pits] + sorted(pits - set(_PIT_ORDER))
+    extra_dests = sorted(dests - set(_DEST_LEAD))
+    dest_rows = list(_DEST_LEAD) + extra_dests
+    r = _xlsx_section(
+        ws, r, "Where material goes · %s" % grain,
+        "One day of this month's plan (same every day). Rows are plants; "
+        "columns are pits. POS is POS 6 / 10 / 12 / 14 / 15 / 16 together. "
+        "Predicted tonnes — not target, not achievable. HUAFEI / BSE rows "
+        "appear when this plan tips there, so the totals still add up.")
+    box = _xlsx_sides()[0]
+    mid = _xlsx_mid()
+    heads = ["Material", "To plant"] + list(pit_cols) + ["Total"]
+    last_col = len(heads)
+
+    def _cell_t(mat, dest, pit):
+        if mat is None:
+            return sum(v for (m, d, p), v in flow.items()
+                       if d == dest and p == pit)
+        return flow.get((mat, dest, pit), 0.0)
+
+    def _write_block(mat_key, mat_label, plants):
+        nonlocal r
+        _xlsx_headers(ws, r, heads, center=True)
+        for dest in plants:
+            r += 1
+            tot = 0.0
+            ws.cell(row=r, column=1, value=mat_label).border = box
+            ws.cell(row=r, column=1).alignment = mid
+            ws.cell(row=r, column=1).font = _xlsx_font(False, 10, _XLSX_MUTED)
+            _xlsx_text(ws.cell(row=r, column=2), dest, center=True)
+            for i, pit in enumerate(pit_cols):
+                val = _cell_t(mat_key, dest, pit)
+                tot += val
+                cell = ws.cell(row=r, column=3 + i)
+                _xlsx_num(cell, val if val else None, center=True)
+            _xlsx_num(ws.cell(row=r, column=last_col), tot if tot else None,
+                      True, center=True)
+        r += 1
+        _xlsx_text(ws.cell(row=r, column=1), mat_label, True, _XLSX_NAVY, center=True)
+        _xlsx_text(ws.cell(row=r, column=2), "Total", True, _XLSX_NAVY, center=True)
+        grand = 0.0
+        for i, pit in enumerate(pit_cols):
+            col_tot = sum(_cell_t(mat_key, dest, pit) for dest in plants)
+            grand += col_tot
+            _xlsx_num(ws.cell(row=r, column=3 + i),
+                      col_tot if col_tot else None, True, center=True)
+        _xlsx_num(ws.cell(row=r, column=last_col),
+                  grand if grand else None, True, center=True)
+        _xlsx_total_border(ws.cell(row=r, column=1))
+        _xlsx_total_border(ws.cell(row=r, column=2))
+        for col in range(3, last_col + 1):
+            _xlsx_total_border(ws.cell(row=r, column=col))
+        r += 2
+
+    mats_present = {m for (m, _, _) in flow}
+    for mk, title in _MAT_LEAD:
+        if mk not in mats_present:
+            continue
+        used = {d for (m, d, _) in flow if m == mk}
+        plants = [d for d in _DEST_LEAD] + sorted(used - set(_DEST_LEAD))
+        _write_block(mk, title, plants)
+    _write_block(None, "Together", dest_rows)
+    return r
+
+
+def _paths_as_flow_rows(paths):
+    """Month-file path dicts → the shape _dest_pit_flow reads."""
+    out = []
+    for prow in paths or []:
+        if not isinstance(prow, dict) or prow.get("foreign"):
+            continue
+        out.append({
+            "key": prow.get("key"),
+            "source": prow.get("source") or prow.get("origin"),
+            "dest": prow.get("dest") or prow.get("destination"),
+            "material": prow.get("material"),
+            "otype": prow.get("otype") or "",
+            "pred_after": prow.get("pred_wmt_day"),
+            "foreign": False,
+        })
+    return out
+
+
 def _path_mat_label(row):
+    """Material cell: production ore, IWIP POS-transit as 'road', other tenants named."""
+    if _is_tenant_row(row):
+        return "other tenant"
     mat = (row.get("material") or "").strip()
     otype = (row.get("otype") or "").strip()
+    if row.get("foreign") and not mat:
+        return "road"
+    if mat.lower() in ("other tenant", "road"):
+        return mat
     if mat.upper() == "SAP":
         return "SAP"
     if mat and otype:
         return "%s - %s" % (mat, otype)
     return mat or otype
+
+
+def _prio_cell(row):
+    if _is_tenant_row(row):
+        return "—"
+    p = row.get("prio")
+    return "P%s" % p if p not in (None, "") else ""
 
 
 def _card_alloc_detail(c):
@@ -1224,11 +1437,12 @@ def _collect_year_path_rows(cards):
         alloc, n = _card_alloc_detail(c)
         if not alloc:
             continue
-        for row in alloc.get("rows") or []:
+        for row in _ensure_tenant_rows(alloc.get("rows") or []):
             dt = _finite(row.get("dt_after"))
             wmt = _finite(row.get("pred_after"))
             if not dt and not wmt:
                 continue
+            is_ten = _is_tenant_row(row)
             rates = _path_rates(row)
             origin, dest = _split_route_key(row.get("key"))
             achv_new = _finite(row.get("achv_sim"))
@@ -1237,7 +1451,7 @@ def _collect_year_path_rows(cards):
             out.append({
                 "month": c.get("name") or c.get("month"),
                 "month_key": c.get("month") or "",
-                "prio": row.get("prio") or 9,
+                "prio": None if is_ten else (row.get("prio") or 9),
                 "origin": origin,
                 "dest": dest,
                 "key": row.get("key"),
@@ -1253,8 +1467,16 @@ def _collect_year_path_rows(cards):
                 "n_days": n,
                 "pred_month": int(round(wmt * n)) if wmt is not None and n else None,
                 "achv_month": int(round(achv_new * n)) if achv_new is not None and n else None,
+                "_tenant": is_ten,
+                "foreign": bool(row.get("foreign")),
             })
-    out.sort(key=lambda x: (x["month_key"], x["prio"], x.get("key") or ""))
+    out.sort(key=lambda x: (
+        x["month_key"],
+        2 if x.get("_tenant") else (1 if x.get("foreign") else 0),
+        x["prio"] if x["prio"] is not None else 9,
+        x.get("contractor") or "",
+        x.get("key") or "",
+    ))
     return out
 
 
@@ -1267,7 +1489,10 @@ def _xlsx_all_paths_table(ws, r, cards, achv=False):
     r = _xlsx_section(
         ws, r, "Paths — all months",
         "Optimized plan only. WMT is t/day. Predicted / month = WMT × NB Days. "
-        "WMT/DT is tonnes per truck-trip (payload)."
+        "WMT/DT is tonnes per truck-trip (payload). Other-tenant fleets sit at "
+        "the end of each month (material 'other tenant') — same rows as Plan → "
+        "New Allocation Plan, 0 WMT, not in TOTAL DT. IWIP POS-transit "
+        "('road') is its own fleet and is listed under TOTAL, not in it."
         + (" Achievable is /api/simulate, t/day." if achv else ""))
     heads = [
         "Month", "Priority", "Origin", "Destination", "Path", "Contractor", "Material",
@@ -1292,7 +1517,9 @@ def _xlsx_all_paths_table(ws, r, cards, achv=False):
     for row in rows:
         r += 1
         vals = [
-            row["month"], "P%s" % row["prio"], row["origin"], row["dest"],
+            row["month"],
+            "—" if row.get("_tenant") else "P%s" % row["prio"],
+            row["origin"], row["dest"],
             row["key"], row["contractor"], row["material"],
             row["target"], row["dt"], row["trips"], row["wmt"],
             row["wmt_per_trip"], row["trips_per_dt"],
@@ -1316,6 +1543,14 @@ def _xlsx_all_paths_table(ws, r, cards, achv=False):
                 cell.font = _xlsx_font(True, 9, _XLSX_ACHV)
             if col == pred_col:
                 cell.font = _xlsx_font(True, 9, _XLSX_PRED)
+        if row.get("_tenant"):
+            continue
+        if row.get("foreign"):
+            # Same rule as the month sheets: IWIP POS-transit is its own fleet.
+            # The Year Paths TOTAL read 5,261 DT = 4,073 ours + 1,188 IWIP.
+            tot["dt_iwip"] = tot.get("dt_iwip", 0) + (row["dt"] or 0)
+            tot["n_iwip"] = tot.get("n_iwip", 0) + 1
+            continue
         tot["tgt"] += row["target"] or 0
         tot["dt"] += row["dt"] or 0
         tot["tr"] += row["trips"] or 0
@@ -1325,8 +1560,10 @@ def _xlsx_all_paths_table(ws, r, cards, achv=False):
     r += 1
     pay = round(tot["wmt"] / tot["tr"], 2) if tot["tr"] else None
     tpd = round(tot["tr"] / tot["dt"], 2) if tot["dt"] else None
+    n_ours = sum(1 for x in rows
+                 if not x.get("_tenant") and not x.get("foreign"))
     tot_vals = [
-        "TOTAL", "%s paths" % len(rows), "", "", "", "", "",
+        "TOTAL", "%s paths" % n_ours, "", "", "", "", "",
         tot["tgt"] or None, tot["dt"] or None,
         int(round(tot["tr"])) if tot["tr"] else None,
         tot["wmt"] or None, pay, tpd,
@@ -1347,6 +1584,16 @@ def _xlsx_all_paths_table(ws, r, cards, achv=False):
             cell.font = _xlsx_font(True, 9, _XLSX_PRED)
         if achv and col == 14:
             cell.font = _xlsx_font(True, 9, _XLSX_ACHV)
+    if tot.get("dt_iwip"):
+        r += 1
+        note = ws.cell(
+            row=r, column=1,
+            value=("IWIP POS-transit · %s DT-months on the road · %s rows · "
+                   "0 WMT · own fleet, not in TOTAL"
+                   % (int(round(tot["dt_iwip"])), tot.get("n_iwip", 0))))
+        note.font = _xlsx_font(False, 8, _XLSX_MUTED)
+        note.alignment = mid
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n_cols)
     from openpyxl.utils import get_column_letter
     ws.auto_filter.ref = "A%d:%s%d" % (
         header_row, get_column_letter(n_cols), r - 1)
@@ -1376,7 +1623,8 @@ def _xlsx_append_paths_sheet(wb, year, cards, used, prefix="", achv=False,
     ws.merge_cells("A1:P1")
     ws["A2"] = (
         "One row per route per month. Filter Month. "
-        "Predicted / month = WMT (t/day) × NB Days."
+        "Predicted / month = WMT (t/day) × NB Days. "
+        "Other-tenant fleets (material 'other tenant') are listed, 0 WMT."
         + (" Achievable is /api/simulate." if achv else ""))
     ws["A2"].font = _xlsx_font(False, 10, _XLSX_MUTED)
     ws.merge_cells("A2:P2")
@@ -1442,6 +1690,8 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None, achv=False):
     r = _xlsx_kpi_strip(ws, r, month_kpis, start=1)
     r = _xlsx_kpi_strip(ws, r, day_kpis, start=1)
 
+    r = _xlsx_dest_from_pits(ws, r, alloc.get("rows") or [])
+
     mats = alloc.get("materials") or {}
     r = _xlsx_section(
         ws, r, "Materials — t / day",
@@ -1505,7 +1755,7 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None, achv=False):
     if rows:
         r += 2
         r = _xlsx_path_alloc_table(
-            ws, r, rows, "Paths — old predicted plan vs optimized predicted plan",
+            ws, r, rows, "Paths — optimized predicted plan",
             "P1 SAP · P2 LIM-TOS · P3 LIM-LD. WMT is predicted tonnes. DT is trucks. "
             "Trips are predicted trips. WMT/DT is tonnes per truck-trip (payload)."
             + (" Achievable is /api/simulate (effective cycle + loader clip), t/day." if achv else ""),
@@ -1623,6 +1873,7 @@ def _xlsx_fill_month(ws, st, title, achv=False):
     if achv:
         day_kpis.append(("Achievable", achv_day, _XLSX_ACHV, "t / day"))
     r = _xlsx_kpi_strip(ws, r, day_kpis, start=1)
+    r = _xlsx_dest_from_pits(ws, r, _paths_as_flow_rows(paths))
     box = _xlsx_sides()[0]
     mid = _xlsx_mid()
     r = _xlsx_section(ws, r, "Production",
@@ -1921,37 +2172,89 @@ def _xlsx_plan_source_block(ws, r, cards):
 def _is_tenant_row(r):
     """Is this saved allocation row one of the OTHER tenants' fleets?
 
-    Recognised by name as well as by flag: the save format carries `foreign`
-    but not `_tenant`, so any plan frozen before that was fixed holds tenant
-    rows indistinguishable from our own except by their names and routes. The
-    ">RSF" backstop covers the same case if the register cannot be imported —
-    nothing of ours hauls to RSF.
+    ONE home: congestion.tenants.is_tenant_plan. Recognised by name as well
+    as by flag so a plan frozen before `_tenant` was stamped still drops
+    them — sending them into shared_flow would charge the register twice.
     """
-    if not isinstance(r, dict):
-        return False
-    if r.get("_tenant"):
-        return True
-    # The row ID survives a save where the _tenant flag does not.
-    if str(r.get("id") or "").upper().startswith("TENANT|"):
-        return True
-    key = str(r.get("key") or "").strip().upper()
-    if key.endswith(">RSF"):
-        return True
-    ctr = str(r.get("contractor") or "").strip().upper()
-    if not ctr:
-        return False
-    # Never match on a name we also use OURSELVES — over-matching here destroys
-    # the plan this guard exists to protect. That list is IWIP alone: POSITION
-    # was one of ours until 2026-08-24, when the owner made it tenant-only
-    # ("just one Position row with that 500 trucks"), so a POSITION row now IS
-    # a tenant. IWIP stays ours: it moves our material off the POS stockpiles.
-    if ctr == "IWIP":
-        return False
-    try:
-        from congestion.tenants import TENANTS as _T
-        return ctr in {str(t["name"]).upper() for t in _T}
-    except (ImportError, KeyError, TypeError):
-        return False
+    from congestion.tenants import is_tenant_plan
+    return is_tenant_plan(r)
+
+
+_TENANT_SHEET_CACHE = None
+
+
+def _tenant_sheet_rows():
+    """Allocation-shaped rows for the other-tenant register (display only).
+
+    Saved plans usually omit these — the Plan tab injects them live from
+    congestion/tenants.py. Excel was listing only IWIP POS-transit (blank /
+    'road' material) and dropping MHM / POSITION / PMA / HSM / KR>RSF /
+    HUAFEI>RSF. Same fleets as New Allocation Plan; still never simulated.
+    """
+    global _TENANT_SHEET_CACHE
+    if _TENANT_SHEET_CACHE is not None:
+        return [dict(x) for x in _TENANT_SHEET_CACHE]
+    from congestion.tenants import tenant_rows as _trows
+    out = []
+    for t in _trows():
+        dt = int(round(float(t.get("dt") or 0)))
+        if dt <= 0:
+            continue
+        tpd = t.get("trips_per_dt")
+        trips_day = t.get("trips_per_day")
+        if trips_day is None and tpd:
+            trips_day = dt * float(tpd)
+        trips = int(round(trips_day)) if trips_day else 0
+        out.append({
+            "id": "TENANT|%s|road" % t["name"],
+            "key": t.get("route"),
+            "contractor": t["name"],
+            "material": "other tenant",
+            "otype": "",
+            "prio": None,
+            "target": 0,
+            "foreign": True,
+            "_tenant": True,
+            "dt_before": dt,
+            "dt_after": dt,
+            "pred_before": 0,
+            "pred_after": 0,
+            "achv_before": 0,
+            "achv_after": 0,
+            "achv_sim": 0,
+            "trips": trips,
+            "trips_before": trips,
+        })
+    _TENANT_SHEET_CACHE = out
+    return [dict(x) for x in out]
+
+
+def _ensure_tenant_rows(rows):
+    """Plan UI shows other-tenant DT; Excel must list the same fleets.
+
+    Does not send them into shared_flow — `_plans_from_alloc_rows` still
+    drops them so the register is charged once as background flow.
+    """
+    out = []
+    seen = set()
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        rr = dict(r)
+        if _is_tenant_row(rr):
+            if not (rr.get("material") or "").strip():
+                rr["material"] = "other tenant"
+            seen.add(str(rr.get("contractor") or "").upper())
+        elif rr.get("foreign") and not (rr.get("material") or "").strip():
+            rr["material"] = "road"
+        out.append(rr)
+    for t in _tenant_sheet_rows():
+        name = str(t.get("contractor") or "").upper()
+        if name in seen:
+            continue
+        out.append(t)
+        seen.add(name)
+    return out
 
 
 def _plans_from_alloc_rows(rows):
@@ -2079,8 +2382,8 @@ def _xlsx_road_corridor_block(ws, r, cards):
     ws.cell(row=r, column=1).font = Font(bold=True, size=12)
     r += 1
     ws.cell(row=r, column=1, value=(
-        "Summary only. The hour-by-hour table (07:00–06:00, same as Plan → "
-        "Road crowding) is on each month tab: Sep, Oct, Nov, Dec."))
+        "Hour-by-hour tables (same numbers and colours as Plan → Road crowding) "
+        "are on the Road crowding sheet and each month tab."))
     ws.cell(row=r, column=1).font = Font(italic=True, size=9)
     r += 1
     # Peak here is the BIN-FREE instantaneous maximum; the month grid shows the
@@ -2089,8 +2392,10 @@ def _xlsx_road_corridor_block(ws, r, cards):
     # the face of the table: two panels quoting one concept is how this project
     # has been misread before.
     ws.cell(row=r, column=1, value=(
-        "Peak = most trucks on the section at any instant. The month tabs show the "
-        "AVERAGE across each hour, so the peak sits above every cell there."))
+        "Peak = most trucks on the LOADED lane at any instant (empty uses the "
+        "other carriageway). Colour and % are the same one-lane packing as Plan "
+        "(50 m). The month tabs show the AVERAGE across each hour, so the peak "
+        "sits above every cell there."))
     ws.cell(row=r, column=1).font = Font(italic=True, size=9)
     r += 1
     ws.cell(row=r, column=1, value=(
@@ -2100,11 +2405,20 @@ def _xlsx_road_corridor_block(ws, r, cards):
         "our own trucks can be replanned."))
     ws.cell(row=r, column=1).font = Font(italic=True, size=9)
     r += 2
-    for c, h in enumerate(["Month", "Section", "Peak trucks (any instant)",
-                           "Average trucks (per hour)",
-                           "Busiest hour", "Share of road capacity"], start=1):
+    for c, h in enumerate(["Month", "Section", "Peak loaded-lane trucks (any instant)",
+                           "Average loaded-lane trucks (per hour)",
+                           "Busiest hour", "One-lane packing %"], start=1):
         ws.cell(row=r, column=c, value=h).font = Font(bold=True)
     r += 1
+    from openpyxl.styles import Alignment, PatternFill
+    fills = {
+        "high": PatternFill("solid", fgColor=_RC_HIGH),
+        "hot": PatternFill("solid", fgColor=_RC_HOT),
+        "watch": PatternFill("solid", fgColor=_RC_WATCH),
+        "open": PatternFill("solid", fgColor=_RC_OPEN),
+        "idle": PatternFill("solid", fgColor=_RC_IDLE),
+    }
+    mid = Alignment(horizontal="center")
     any_row = False
     for card in cards:
         got = _corridor_for_month(card)
@@ -2118,14 +2432,21 @@ def _xlsx_road_corridor_block(ws, r, cards):
                 continue
             peak = max(occ)
             hr = (int(res.get("start_hour") or 7) + occ.index(peak)) % 24
+            pack = _xlsx_pack_cap(s)
+            inst = round(s.get("peak_concurrent") or peak, 1)
+            vc = (inst / pack) if pack > 0 else 0.0
+            tone = _xlsx_crowd_tone(vc)
             ws.cell(row=r, column=1,
                     value=("%s (%d DT)" % (card.get("name") or "", dt)) if first else "")
             ws.cell(row=r, column=2, value=s.get("section"))
-            ws.cell(row=r, column=3, value=round(s.get("peak_concurrent") or peak, 1))
+            peak_c = ws.cell(row=r, column=3, value=inst)
+            peak_c.fill = fills.get(tone) or fills["idle"]
+            peak_c.alignment = mid
             ws.cell(row=r, column=4, value=round(sum(occ) / len(occ), 1))
             ws.cell(row=r, column=5, value="%02d:00" % hr)
-            vc = s.get("ratio")
-            ws.cell(row=r, column=6, value=(round(vc, 3) if vc is not None else None))
+            pct_c = ws.cell(row=r, column=6, value=round(vc, 3) if pack else None)
+            pct_c.number_format = "0%"
+            pct_c.fill = fills.get(tone) or fills["idle"]
             first = False
             any_row = True
             r += 1
@@ -2135,33 +2456,75 @@ def _xlsx_road_corridor_block(ws, r, cards):
     return r + 1
 
 
-# Presence colours match the Plan-tab Road crowding card (stock ÷ how many
-# trucks FIT). The verdict above the grid uses the v/c FLOW ratio.
-_RC_OPEN, _RC_WATCH, _RC_HIGH, _RC_IDLE = "BBF7D0", "FDE68A", "FCA5A5", "F8FAFC"
+# Presence colours match Plan → C · Road crowding: sitting ÷ ONE loaded
+# lane at FOLLOWING_DISTANCE_M. GREEN <40% · YELLOW 40–70% · ORANGE 70–100%
+# · RED at/over packing (614 on TF–KR is red against 576, not 1,152).
+_RC_OPEN, _RC_WATCH, _RC_HOT, _RC_HIGH, _RC_IDLE = (
+    "BBF7D0", "FDE68A", "FDBA74", "FCA5A5", "F8FAFC")
 _RC_DAY_H, _RC_NIGHT_H = "E2E8F0", "DBEAFE"
+
+
+def _xlsx_pack_cap(section):
+    """One loaded lane at the live following distance — same as the Plan grid."""
+    try:
+        cap = float(section.get("cap_trucks_lane") or 0)
+    except (TypeError, ValueError):
+        cap = 0.0
+    if cap > 0:
+        return cap
+    try:
+        km = float(section.get("section_km") or 0)
+    except (TypeError, ValueError):
+        km = 0.0
+    from congestion.speed_limits import FOLLOWING_DISTANCE_M
+    if km > 0:
+        return km * 1000.0 / FOLLOWING_DISTANCE_M
+    try:
+        both = float(section.get("cap_trucks_present")
+                     or section.get("cap_trucks_bin") or 0)
+    except (TypeError, ValueError):
+        both = 0.0
+    return both / 2.0 if both > 0 else 0.0
+
+
+def _xlsx_crowd_tone(vc):
+    if not vc or vc <= 0 or vc != vc:
+        return "idle"
+    if vc >= 1:
+        return "high"
+    if vc >= 0.7:
+        return "hot"
+    if vc >= 0.4:
+        return "watch"
+    return "open"
 
 
 def _xlsx_road_corridor_hourly(ws, r, res, dt, source=None):
     """The Plan-tab hour grid: mean concurrent trucks per section × hour.
 
     Same engine as /api/plan/shared-flow (whole day, 2 × 12 h, rain 0).
-    Advisory — never clips simulate tonnes (J53).
+    Colour = sitting ÷ one loaded lane at 50 m — same as Plan (J53: advisory).
     """
-    from openpyxl.styles import Alignment, PatternFill
+    from openpyxl.styles import Alignment, PatternFill, Font
+    from congestion.speed_limits import FOLLOWING_DISTANCE_M
 
     n_hour_cols = 24
-    r = _xlsx_section(ws, r, "Road crowding by hour")
+    title = "Road crowding by hour"
+    if source:
+        title = "Road crowding by hour · %s" % source
+    r = _xlsx_section(ws, r, title)
     if not res or not res.get("ok"):
         ws.cell(row=r, column=1, value="No finalised allocation to time onto the road.")
         ws.cell(row=r, column=1).font = _xlsx_font(False, 9, _XLSX_MUTED)
         return r + 1
 
-    # Name the quantity. These cells are the MEAN concurrent trucks within each
-    # hour, not the instantaneous peak the Year sheet reports, so the two pages
-    # legitimately differ and must each say which they are.
+    follow = float((res.get("basis") or {}).get("following_distance_m")
+                   or FOLLOWING_DISTANCE_M)
     ws.cell(row=r, column=1, value=(
-        "Average trucks on the section during each hour (the Year sheet's peak is "
-        "an instantaneous maximum and sits above every cell here)."))
+        "Loaded-lane trucks sitting each hour (empty is the other carriageway). "
+        "Colour vs one loaded lane at %.0f m "
+        "(TF–KR 576): GREEN <40%% · YELLOW 40–70%% · ORANGE 70–100%% · RED over."
+        % follow))
     ws.cell(row=r, column=1).font = _xlsx_font(False, 9, _XLSX_MUTED)
     r += 1
 
@@ -2183,6 +2546,7 @@ def _xlsx_road_corridor_hourly(ws, r, res, dt, source=None):
     night_fill = PatternFill("solid", fgColor=_RC_NIGHT_H)
     fills = {
         "high": PatternFill("solid", fgColor=_RC_HIGH),
+        "hot": PatternFill("solid", fgColor=_RC_HOT),
         "watch": PatternFill("solid", fgColor=_RC_WATCH),
         "open": PatternFill("solid", fgColor=_RC_OPEN),
         "idle": PatternFill("solid", fgColor=_RC_IDLE),
@@ -2229,14 +2593,25 @@ def _xlsx_road_corridor_hourly(ws, r, res, dt, source=None):
 
     for s in secs:
         occ = list(s.get("occupancy") or [])
-        cap = float(s.get("cap_trucks_bin") or 0) or 0.0
+        cap = _xlsx_pack_cap(s)
         name = s.get("section") or ""
         shared = s.get("shared")
-        lab = name + ("  (shared)" if shared else "")
+        peak_vc = max(((float(x or 0) / cap) if cap else 0.0) for x in occ) if occ else 0.0
+        tone = _xlsx_crowd_tone(peak_vc)
+        tag = {"high": "RED · over", "hot": "ORANGE", "watch": "YELLOW",
+               "open": "GREEN"}.get(tone, "")
+        if tag and peak_vc < 1:
+            tag = "%s · %d%% left" % (tag.split(" · ")[0], round(100 * max(0, 1 - peak_vc)))
+        lab = name
+        if tag:
+            lab = "%s  %s" % (name, tag)
+        if shared:
+            lab += "  (shared)"
         lab_c = ws.cell(row=r, column=1, value=lab)
         lab_c.font = _xlsx_font(True, 9, _XLSX_INK)
         lab_c.border = box
         lab_c.alignment = Alignment(vertical="center")
+        lab_c.fill = fills.get(tone) or fills["idle"]
         for b in range(n_bins):
             val = occ[b] if b < len(occ) else 0
             try:
@@ -2254,15 +2629,12 @@ def _xlsx_road_corridor_hourly(ws, r, res, dt, source=None):
             cell.value = int(round(num))
             cell.number_format = "0"
             ratio = (num / cap) if cap > 0 else 0.0
-            if ratio >= 1.0:
-                cell.fill = fills["high"]
-            elif ratio >= 0.7:
-                cell.fill = fills["watch"]
-            else:
-                cell.fill = fills["open"]
+            cell.fill = fills.get(_xlsx_crowd_tone(ratio)) or fills["open"]
+            if ratio >= 1:
+                cell.font = Font(name="Calibri", bold=True, size=9, color="7F1D1D")
         r += 1
 
-    _xlsx_widths(ws, [5.5] * n_bins, start=2)
+    _xlsx_widths(ws, [28] + [5.5] * n_bins, start=1)
     return r + 1
 
 
@@ -2281,7 +2653,42 @@ def _xlsx_month_corridor_block(ws, r, alloc=None, card=None, paths=None):
     if not got:
         return _xlsx_road_corridor_hourly(ws, r, None, 0)
     res, dt = got
-    return _xlsx_road_corridor_hourly(ws, r, res, dt, source=source)
+    return _xlsx_road_corridor_hourly(ws, r, res, dt)
+
+
+def _xlsx_append_crowding_sheet(wb, cards, used, prefix="", after_sheet=None):
+    """Workbook sheet of Plan-tab hour grids, one block per month.
+
+    Year keeps a peak summary; this sheet is the same 07..06 colour grid as
+    Plan → C · Road crowding (one loaded lane at 50 m).
+    """
+    name = _xlsx_unique_sheet_name((prefix or "") + "Road crowding", used)
+    idx = None
+    if after_sheet and after_sheet in wb.sheetnames:
+        idx = wb.sheetnames.index(after_sheet) + 1
+    ws = wb.create_sheet(name, idx)
+    _xlsx_sheet_setup(ws)
+    r = _xlsx_board_header(
+        ws, "Road crowding by hour",
+        "Same numbers and colours as Plan → C · Road crowding. "
+        "One loaded lane at 50 m. Advisory — never changes plan tonnes.",
+        start=1)
+    any_grid = False
+    for card in cards:
+        got = _corridor_for_month(card)
+        if not got:
+            continue
+        res, dt = got
+        any_grid = True
+        r = _xlsx_road_corridor_hourly(
+            ws, r + 1, res, dt,
+            source="%s (%d DT)" % (card.get("name") or card.get("month") or "", dt))
+        r += 1
+    if not any_grid:
+        ws.cell(row=r, column=1, value="No finalised allocation to time onto the road.")
+        ws.cell(row=r, column=1).font = _xlsx_font(False, 9, _XLSX_MUTED)
+    ws.freeze_panes = "B4"
+    return name
 
 def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
     """Year dashboard sheet: KPIs, five-clock charts, coverage table.
@@ -2521,8 +2928,9 @@ def append_year_book_sheets(wb, year, cards, used=None, prefix="", achv=False):
     yr = _xlsx_unique_sheet_name(prefix + "Year", used)
     ws = wb.create_sheet(yr)
     _xlsx_fill_year_dashboard(ws, year, cards, title_prefix=prefix.rstrip(" · "), achv=achv)
+    crowd = _xlsx_append_crowding_sheet(wb, cards, used, prefix=prefix, after_sheet=yr)
     _xlsx_append_paths_sheet(wb, year, cards, used, prefix=prefix, achv=achv,
-                             after_sheet=yr)
+                             after_sheet=crowd or yr)
     _xlsx_append_month_sheets(wb, year, cards, used, prefix=prefix, achv=achv)
     return used
 
@@ -2535,8 +2943,9 @@ def _xlsx_year_book(year, cards, achv=False):
     key.title = "Year"
     used = {"Year"}
     _xlsx_fill_year_dashboard(key, year, cards, achv=achv)
+    crowd = _xlsx_append_crowding_sheet(wb, cards, used, prefix="", after_sheet="Year")
     _xlsx_append_paths_sheet(wb, year, cards, used, prefix="", achv=achv,
-                             after_sheet="Year")
+                             after_sheet=crowd or "Year")
     _xlsx_append_month_sheets(wb, year, cards, used, prefix="", achv=achv)
     return wb
 

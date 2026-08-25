@@ -65,17 +65,35 @@ function flowPointAt(r,phase){
   return {x,y,km,road:'CORRIDOR',roadKm:km,lat:ll&&ll[0],lng:ll&&ll[1],spur:false};
 }
 function flowNormName(x){return (x||'').trim().toUpperCase().replace(/\s+/g,' ');}
+// Spurs that hang off ANOTHER spur's road instead of the stick. EMPTY today:
+// the 2026-08-24 override that hung HUAFEI on the BLB road was deleted on
+// 2026-08-25, exactly as its own comment instructed, when the owner confirmed
+// the survey ("go for survey"). Three sources now agree HUAFEI is its own
+// branch off the stick at km 5.5: the survey polyline (HFC's first point
+// 0.8 m from CRD km 5.500), the dispatch road book's literal "HFC KM5,5 -
+// KM6,4" segment column (flagged on every HUAFEI.C01 haul), and that book's
+// gross km reproducing |origin − 5.5| + 0.925. Gate J80 pins the geometry;
+// the model side moved the same day (congestion NODE_KM 0.0 → 5.5).
+const FLOW_SPUR_PARENTS={};
 function flowJoins(){
   const a=(_flowGeom&&_flowGeom.joins)||[];
   const b=(((_D&&_D.corridor)||{}).joins)||[];
-  if(a.length)return a;
-  if(b.length)return b;
   // Survey fallback (haul_road_chainage_public.csv) so BLB paints before geometry fetch.
-  return [
+  const raw=a.length?a:b.length?b:[
     {id:'blb',road:'BLB',label:'BLB',aliases:['BLB'],joinKm:2.45,joinRoad:'CRD',joinLat:0.483061,joinLng:127.968764,spurJoinKm:2.45,endKm:19.825,endLat:0.540268,endLng:127.963169,lengthKm:17.375},
     {id:'hfc',road:'HFC',label:'HUAFEI',aliases:['HUAFEI','HUAFEI.B01','HUAFEI.C01'],joinKm:5.5,joinRoad:'CRD',joinLat:0.482365,joinLng:127.949115,spurJoinKm:5.525,endKm:6.425,endLat:0.48646,endLng:127.943539,lengthKm:0.9},
     {id:'cbb',road:'CBB',label:'POS CBB',aliases:['POS CBB','CBB','POSCBB'],joinKm:7.875,joinRoad:'KR',joinLat:0.47953,joinLng:127.936987,spurJoinKm:6.3,endKm:17.125,endLat:0.534598,endLng:127.955861,lengthKm:10.825}
   ];
+  // HUAFEI is its own branch off the stick at km 5.5 (survey, confirmed by
+  // the owner 2026-08-25 — see FLOW_SPUR_PARENTS above for the evidence).
+  const list=raw.map(j=>({...j}));
+  list.forEach(j=>{
+    const o=FLOW_SPUR_PARENTS[j.road];
+    if(!o)return;
+    const p=list.find(q=>q.road===o.parentRoad);
+    if(p){j.parent=p;j.parentAtKm=o.atKm;}
+  });
+  return list;
 }
 function flowLocate(name){
   const n=flowNormName(name);
@@ -97,7 +115,7 @@ function flowLocate(name){
     kind:'spur',label:join.label,joinKm:join.joinKm,road:join.road,
     endKm:join.endKm,lat:join.endLat,lng:join.endLng,
     joinLat:join.joinLat,joinLng:join.joinLng,lengthKm:join.lengthKm,
-    spurJoinKm:join.spurJoinKm
+    spurJoinKm:join.spurJoinKm,parent:join.parent||null,parentAtKm:join.parentAtKm
   };
 }
 function flowInterpLoop(loop,phase){
@@ -161,6 +179,16 @@ function flowLookupLL(road,km){
 function flowSpurJoinKm(loc){
   return Number.isFinite(loc.spurJoinKm)?loc.spurJoinKm:loc.joinKm;
 }
+// ONE spur height scale, shared by drawing and particle geometry (owner,
+// 2026-08-24: make BLB a bit bigger — 13 px/km, cap 260).
+function flowSpurH(loc){
+  // Spur drop, px. Capped low (was 260): the BLB leg used to hang ~226px
+  // under the road and the bottom half of the panel was dead space with two
+  // bulbs in it (owner, 2026-08-25). 8 px/km keeps relative length readable
+  // — BLB 17.4 km still draws ~3x CBB's span — without donating a third of
+  // the canvas to empty background.
+  return Math.max(40,Math.min(140,(loc.lengthKm||8)*8));
+}
 function flowKmSamples(road,fromKm,toKm){
   const lo=Math.min(fromKm,toKm),hi=Math.max(fromKm,toKm);
   let kms=[];
@@ -179,16 +207,37 @@ function flowKmSamples(road,fromKm,toKm){
   if(uniq[uniq.length-1]!==toKm)uniq.push(toKm);
   return uniq;
 }
-function flowLoadedLegs(r){
-  const o=r.originLoc,d=r.destLoc,legs=[];
-  if(!o||!d)return legs;
-  if(o.kind==='spur'){
-    legs.push({kind:'spur',loc:o,fromKm:o.endKm,toKm:flowSpurJoinKm(o)});
-    legs.push({kind:'corridor',fromKm:o.joinKm,toKm:d.kind==='spur'?d.joinKm:d.km});
-  }else{
-    legs.push({kind:'corridor',fromKm:o.km,toKm:d.kind==='spur'?d.joinKm:d.km});
+// Road-graph walk: each spur may itself hang off another spur's road (HUAFEI
+// sits on the road to BLB — FLOW_SPUR_PARENTS). flowUpChain climbs from a point
+// on a road up to the stick, one leg per road crossed.
+function flowUpChain(loc,fromKm){
+  const legs=[];let cur=loc,km=fromKm;
+  while(cur){
+    legs.push({kind:'spur',loc:cur,fromKm:km,toKm:flowSpurJoinKm(cur)});
+    if(!cur.parent)return {legs,stickKm:cur.joinKm};
+    km=cur.parentAtKm;   // junction chainage in the PARENT road's own km
+    cur=cur.parent;
   }
-  if(d.kind==='spur')legs.push({kind:'spur',loc:d,fromKm:flowSpurJoinKm(d),toKm:d.endKm});
+  return {legs,stickKm:km};
+}
+function flowLoadedLegs(r){
+  const o=r.originLoc,d=r.destLoc;
+  if(!o||!d)return [];
+  const upO=o.kind==='spur'?flowUpChain(o,o.endKm):{legs:[],stickKm:o.km};
+  const upD=d.kind==='spur'?flowUpChain(d,d.endKm):{legs:[],stickKm:d.km};
+  const lo=upO.legs[upO.legs.length-1],ld=upD.legs[upD.legs.length-1];
+  let legs;
+  if(lo&&ld&&lo.loc.road===ld.loc.road&&(upO.legs.length>1||upD.legs.length>1)){
+    // Both endpoints live on the same road (e.g. BLB→HUAFEI): cut at the
+    // junction, no pointless round-trip down to the stick and back.
+    legs=upO.legs.slice(0,-1);
+    legs.push({kind:'spur',loc:lo.loc,fromKm:lo.fromKm,toKm:ld.fromKm});
+    legs.push(...upD.legs.slice(0,-1).reverse().map(l=>({...l,fromKm:l.toKm,toKm:l.fromKm})));
+  }else{
+    legs=[...upO.legs];
+    legs.push({kind:'corridor',fromKm:upO.stickKm,toKm:upD.stickKm});
+    legs.push(...upD.legs.slice().reverse().map(l=>({...l,fromKm:l.toKm,toKm:l.fromKm})));
+  }
   return legs.filter(leg=>Number.isFinite(leg.fromKm)&&Number.isFinite(leg.toKm));
 }
 function flowVerticesFromLegs(legs,X,y){
@@ -202,12 +251,29 @@ function flowVerticesFromLegs(legs,X,y){
         const ll=flowMapLatLngAt(km);
         pts.push({x:X(km),y,km,road:'CORRIDOR',roadKm:km,lat:ll&&ll[0],lng:ll&&ll[1],spur:false});
       }else{
-        const loc=leg.loc,h=Math.max(44,Math.min(220,(loc.lengthKm||8)*11));
-        const pit=loc.endKm,join=flowSpurJoinKm(loc);
-        const t=(pit===join)?0:Math.abs(km-join)/Math.max(1e-6,Math.abs(pit-join));
-        const ll=flowLatLngOnRoad(loc.road,km);
-        pts.push({x:X(loc.joinKm),y:y+h*t,km:loc.joinKm,road:loc.road,roadKm:km,
-          lat:ll&&ll[0],lng:ll&&ll[1],spur:t>0.02});
+        const loc=leg.loc,ll=flowLatLngOnRoad(loc.road,km);
+        const laneDx=y<200?-4.5:4.5;
+        if(loc.parent){
+          // Nested spur (HUAFEI on the road to BLB): a horizontal two-lane
+          // branch leaving the parent's vertical road at the junction height.
+          const p=loc.parent,pH=flowSpurH(p);
+          const pJoin=flowSpurJoinKm(p),pPit=p.endKm;
+          const pT=(pPit===pJoin)?0:Math.abs(loc.parentAtKm-pJoin)/Math.max(1e-6,Math.abs(pPit-pJoin));
+          const yJ=226+pH*pT;
+          const join=flowSpurJoinKm(loc),pit=loc.endKm;
+          const t=(pit===join)?0:Math.abs(km-join)/Math.max(1e-6,Math.abs(pit-join));
+          const len=Math.max(40,(loc.lengthKm||1)*44);
+          pts.push({x:X(p.joinKm)-4.5-len*t,y:yJ+(y<200?-4.5:4.5),km:p.joinKm,road:loc.road,roadKm:km,
+            lat:ll&&ll[0],lng:ll&&ll[1],spur:t>0.02});
+        }else{
+          // Top-level spur: two-lane vertical road hanging off the stick's
+          // bottom edge (y=226); loaded (y=180) keeps left, empty (y=210) right.
+          const h=flowSpurH(loc);
+          const pit=loc.endKm,join=flowSpurJoinKm(loc);
+          const t=(pit===join)?0:Math.abs(km-join)/Math.max(1e-6,Math.abs(pit-join));
+          pts.push({x:X(loc.joinKm)+laneDx,y:226+h*t,km:loc.joinKm,road:loc.road,roadKm:km,
+            lat:ll&&ll[0],lng:ll&&ll[1],spur:t>0.02});
+        }
       }
     });
   });
@@ -247,10 +313,24 @@ function updateFlowSimulator(){
   moving.forEach(p=>{p.el.setAttribute('transform',`translate(${p.x.toFixed(1)} ${p.y.toFixed(1)})`);
     // Highlight a truck while it's crossing between the loaded and empty lanes (the dump/load turnaround)
     // so the state change is clearly visible instead of an instant lane-swap.
-    const cross=Math.abs(p.y-180)>=.8&&Math.abs(p.y-210)>=.8;
+    const cross=!p.spur&&Math.abs(p.y-180)>=.8&&Math.abs(p.y-210)>=.8;
     if(p.el._cross!==cross){const c=p.el._c||(p.el._c=p.el.querySelector('circle'));if(c){c.setAttribute('r',cross?'3':'1.2');c.setAttribute('opacity',cross?'1':'0.85');c.setAttribute('stroke',cross?'#fff':'none');c.setAttribute('stroke-width',cross?'0.6':'0');}p.el._cross=cross;}
   });
-  const loadedNow=moving.filter(p=>Math.abs(p.y-180)<.8&&p.el.getAttribute('visibility')!=='hidden').length,emptyNow=moving.filter(p=>Math.abs(p.y-210)<.8&&p.el.getAttribute('visibility')!=='hidden').length,crossoverNow=moving.filter(p=>Math.abs(p.y-180)>=.8&&Math.abs(p.y-210)>=.8&&p.el.getAttribute('visibility')!=='hidden').length;
+  const visNow=moving.filter(p=>p.el.getAttribute('visibility')!=='hidden');
+  const loadedNow=visNow.filter(p=>Math.abs(p.y-180)<.8).length,emptyNow=visNow.filter(p=>Math.abs(p.y-210)<.8).length,crossoverNow=visNow.filter(p=>!p.spur&&Math.abs(p.y-180)>=.8&&Math.abs(p.y-210)>=.8).length;
+  const onRoadEl=flowQ('flow-onroad');
+  if(onRoadEl){
+    const onLab=flowQ('flow-onroad-label');
+    if(s.running){
+      const onRoad=visNow.reduce((n,p)=>n+(Number(p.weight)||1),0);
+      onRoadEl.textContent=fmt(onRoad,0);
+      if(onLab)onLab.textContent='DT now · illustration';
+    }else{
+      const fleet=s.routes.reduce((n,r)=>n+(Number(r.dt)||0)*((s.inputs&&s.inputs.fleet)||1),0);
+      onRoadEl.textContent=fmt(fleet,0);
+      if(onLab)onLab.textContent='DT on corridor';
+    }
+  }
   const metaHost=flowQ('c3-flow-meta');
   if(metaHost){
     const tripSrc=_flowMode==='plan'?'Path-response':'Dispatch';
@@ -448,30 +528,65 @@ function buildFlowMotion(r,p,vc){
   r.startTimes=r.startTimes.map((_,j)=>p.start==='destination'?r.destTimeFraction:p.start==='split'&&j%2?r.destTimeFraction:0);
   return total;
 }
-function flowLaneCapacity(p){
-  // Prefer measured peak segment-hour trucks (GPS congestion extract). Fall
-  // back to assumed headway only when that extract is missing.
-  const mc=((_D&&_D.corridor)||{}).measuredCapacity||{};
-  const measured=Number(mc.trucksPerHour);
-  if(Number.isFinite(measured)&&measured>5){
-    return {laneCapacity:measured,capSource:'measured',
-      equivHeadway:mc.equivHeadwaySec||Math.round(3600/measured),
-      method:mc.method||'measured GPS peak trucks/h',
-      bySection:mc.bySection||null};
-  }
-  const assumed=3600/Math.max(1,p.headway||90);
-  return {laneCapacity:assumed,capSource:'assumed-headway',
-    equivHeadway:p.headway||90,method:'assumed min headway',bySection:null};
+// ── Official road geometry — the ONE capacity basis ─────────────────────────
+// This readout used to divide by `_D.corridor.measuredCapacity` (~54 tph, the
+// Jul GPS "struggle-season" extract). That is a DEMONSTRATED PEAK, not a
+// capacity — the same "the most we ever did read as the most we can do" trap
+// that sections.py (2026-08-23) and the BLB pricing capacity were already
+// migrated off. Measured on the 2026-12-04 plan it put Peak V/C at 7.13 on the
+// same screen where the crowding grid, Excel and the physics model all read
+// under 1.0, because they divide by the official geometry and this did not.
+//
+// Capacity now comes from /api/road_segments (congestion/speed_limits.py:
+// min bin speed x 1000 / FOLLOWING_DISTANCE_M, one loaded lane). The literals
+// below are the OFFLINE FALLBACK only, matching congestion/segments.py at
+// 50 m following — edit the Python, not this, and let the fetch hydrate.
+const FLOW_SEG_FALLBACK=[
+  {id:'S1',label:'TF–KR',      top_km:67.8,bottom_km:39.0,cap_hr:600},
+  {id:'S2',label:'KR–POS 12',  top_km:39.0,bottom_km:27.0,cap_hr:600},
+  {id:'S3',label:'POS 12–KM15',top_km:27.0,bottom_km:15.0,cap_hr:600},
+  {id:'S4',label:'KM15–coast', top_km:15.0,bottom_km:0.0, cap_hr:400},
+];
+let _flowSegs=FLOW_SEG_FALLBACK.slice(),_flowSegMeta={source:'fallback',followingM:50};
+function flowRoadSegments(){return _flowSegs;}
+
+// Other tenants' trucks: a FLOW, never a truck count at our tempo.
+// congestion/tenants.py owns the register and serves {segment_id: trucks/hr}
+// on the loaded lane, each fleet clocked on ITS OWN cycle. The tenant plan
+// rows are deliberately kept out of _flowSim.routes (see planDraftToFlowSeed),
+// so this is where their road demand comes back in. Empty until fetched, so a
+// cold page under-states the road rather than inventing traffic.
+let _flowTenantFlow={};
+function flowTenantSegmentFlow(segId){
+  const v=Number(_flowTenantFlow[segId]);
+  return Number.isFinite(v)&&v>0?v:0;
+}
+function flowHydrateSegments(d){
+  const segs=d&&d.ok&&Array.isArray(d.segments)?d.segments:null;
+  if(!segs||!segs.length)return;
+  _flowSegs=segs.map(s=>({id:s.id,label:s.label,top_km:s.top_km,bottom_km:s.bottom_km,
+    cap_hr:Number(s.cap_hr)||0})).filter(s=>s.cap_hr>0);
+  _flowSegMeta={source:'api',followingM:((d.road||{}).following_distance_m)||50,
+    basis:d.capacity_basis||null};
+  if(typeof _flowSim!=='undefined'&&_flowSim&&typeof evaluateFlowScenario==='function')evaluateFlowScenario();
+}
+function flowLaneCapacity(){
+  // Corridor-wide figure = the TIGHTEST official section, so the headline can
+  // never claim more headroom than the binding kilometre allows.
+  const segs=flowRoadSegments();
+  const laneCapacity=segs.reduce((m,s)=>Math.min(m,s.cap_hr),Infinity);
+  return {laneCapacity:Number.isFinite(laneCapacity)?laneCapacity:400,
+    capSource:'official',
+    equivHeadway:_flowSegMeta.followingM,
+    method:_flowSegMeta.basis||'official speed limits ÷ following distance, one loaded lane',
+    segSource:_flowSegMeta.source};
 }
 function flowSectionCapacity(cap,label){
-  // Phase C: per-section measured peak when available; else global lane capacity.
-  const row=cap.bySection&&cap.bySection[label];
-  const tph=row&&Number(row.trucksPerHour);
-  if(Number.isFinite(tph)&&tph>5)return tph;
-  return cap.laneCapacity;
+  const row=flowRoadSegments().find(s=>s.label===label||s.id===label);
+  return row&&row.cap_hr>0?row.cap_hr:cap.laneCapacity;
 }
 function evaluateFlowScenario(){
-  const s=_flowSim;if(!s)return;const p=flowInputs(),cap=flowLaneCapacity(p),laneCapacity=cap.laneCapacity;
+  const s=_flowSim;if(!s)return;const p=flowInputs(),cap=flowLaneCapacity(),laneCapacity=cap.laneCapacity;
   let demand=s.routes.reduce((n,r)=>n+r.dt*p.fleet*flowRouteTarget(r)/p.hours,0);
   // Plan host: non-plan (IWIP/Position) trucks share the same road. Their trips
   // come from the Step-1 "Other trips" input (measured last shift, editable).
@@ -487,7 +602,24 @@ function evaluateFlowScenario(){
   // so kinematics invent the trip rate (old sharedOpenFactor behaviour).
   p.sharedOpenFactor=1;
   const motionVc=Math.max(0,vc-.7,Math.max(0,1-_flowSimRatio)*0.9);
-  let target=0,achieved=0,dbTrips=0,fleetTotal=0;s.routes.forEach(r=>{const trucks=r.dt*p.fleet;r.targetTr=flowRouteTarget(r);buildFlowMotion(r,p,motionVc);r.achievedTr=r.targetTr;r.targetTrips=trucks*r.targetTr;r.achievedTrips=r.targetTrips;dbTrips+=r.dbTrips;target+=r.targetTrips;achieved+=r.achievedTrips;fleetTotal+=trucks;});
+  // PRODUCTION vs ROAD. Every route drives motion and takes road capacity, but
+  // only OUR rows produce trips and tonnes for us. IWIP POS-transit rows are
+  // real trucks with 0 WMT for us — planPredictTotals has filtered them since
+  // 2026-08-21 and the engine payload marks them foreign, but this readout
+  // summed them, so it quoted more trips than the page's own hero and priced
+  // them at the TF payload. Road demand keeps every truck; production does not.
+  let target=0,achieved=0,dbTrips=0,fleetTotal=0,foreignDt=0,foreignTrips=0;
+  s.routes.forEach(r=>{
+    const trucks=r.dt*p.fleet;
+    r.targetTr=flowRouteTarget(r);
+    buildFlowMotion(r,p,motionVc);
+    r.achievedTr=r.targetTr;
+    r.targetTrips=trucks*r.targetTr;
+    r.achievedTrips=r.targetTrips;
+    if(r.foreign&&_flowHost==='plan'){foreignDt+=trucks;foreignTrips+=r.targetTrips;return;}
+    dbTrips+=r.dbTrips;target+=r.targetTrips;achieved+=r.achievedTrips;fleetTotal+=trucks;
+  });
+  s.foreignDt=foreignDt;s.foreignTrips=foreignTrips;
   s.dbTrips=dbTrips;s.targetTrips=target;s.achievedTrips=achieved;s.vc=vc;s.queue=Math.max(0,Math.ceil((demand-laneCapacity)*p.hours));s.inputs=p;
   const setTxt=(id,v)=>{const el=flowQ(id);if(el)el.textContent=v;};
   const setHtml=(id,v)=>{const el=flowQ(id);if(el)el.innerHTML=v;};
@@ -505,12 +637,18 @@ function evaluateFlowScenario(){
     const onStick=new Set(s.routes.map(r=>r.key));
     const excluded=draftKeys.filter(k=>!onStick.has(k));
     const exclDt=excluded.reduce((n,k)=>n+(Number.isFinite(_flowPlanDraft[k])?_flowPlanDraft[k]:0),0);
+    // Name every fleet that is on the road but NOT in this trip figure, so a
+    // smaller number than the fleet total never reads as a missing truck.
+    const extra=[];
+    if(foreignDt>0)extra.push(fmt(foreignDt,0)+' IWIP DT (road only, 0 WMT for us)');
+    const tenTot=Object.keys(_flowTenantFlow||{}).length
+      ?Object.values(_flowTenantFlow).reduce((a,b)=>a+(Number(b)||0),0):0;
+    if(_flowHost==='plan'&&tenTot>0)extra.push('other tenants (flow only, own tempo)');
     if(excluded.length&&exclDt>0){
-      attainLabel='trips '+hzUnit+' · corridor routes only ('+fmt(fleetTotal,0)+' DT — excludes '
-        +fmt(exclDt,0)+' DT off-corridor: '+excluded.map(k=>k.replace('>','→')).join(', ')+')';
-    }else{
-      attainLabel='trips '+hzUnit+' · '+fmt(fleetTotal,0)+' DT on corridor';
+      extra.unshift(fmt(exclDt,0)+' DT off-corridor: '+excluded.map(k=>k.replace('>','→')).join(', '));
     }
+    attainLabel='trips '+hzUnit+' · our '+fmt(fleetTotal,0)+' DT on corridor'
+      +(extra.length?' — excludes '+extra.join('; '):'');
   }
   setTxt('flow-attain-label',_flowHost==='plan'
     ?attainLabel
@@ -521,18 +659,12 @@ function evaluateFlowScenario(){
     ?('includes '+fmt(otherPlanTph*p.hours,0)+' non-plan (other) trips from Step 1 — remove them there to see plan-only V/C')
     :'plan trips only';
   setTxt('flow-queue',fmt(s.queue));
+  setTxt('flow-onroad',fmt(fleetTotal,0));
+  setTxt('flow-onroad-label','DT on corridor');
   const winMeta=(((_D&&_D.corridor)||{}).measuredWindow)||{};
   const gpsStruggle=!!winMeta.struggleSeasonExtract;
-  const vcHint=flowQ('flow-vc-hint');
-  if(vcHint){
-    if(cap.capSource==='measured'){
-      vcHint.textContent=gpsStruggle
-        ?(`~${fmt(laneCapacity,0)} tph · Jul GPS struggle extract`)
-        :(`~${fmt(laneCapacity,0)} tph · ≡${fmt(cap.equivHeadway)}s`);
-    }else{
-      vcHint.textContent=`assumed headway ${fmt(cap.equivHeadway)}s`;
-    }
-  }
+  // The V/C hint is written AFTER the hotspots exist (below): it names the
+  // binding section, and s.hotspots is not built until then.
   // Production KPI: Cap what-if = predict WMT; Plan host after simulate = achievable tonnes.
   const _tf=(_D&&_D.kpi&&_D.kpi.tf)||0,_trips=(_flowMode==='plan'?achieved:dbTrips),_prod=_tf?_trips*_tf:0;
   const _prodBase=_tf?dbTrips*_tf:0,_dWMT=_prod-_prodBase;
@@ -550,7 +682,13 @@ function evaluateFlowScenario(){
       :((_flowMode==='plan'?'predict · WMT / shift':'dispatch · WMT / shift')+(_tf?' · TF '+fmt(_tf,1)+' t':'')));
   }
   updateFlowModeBadge();
-  const sectionDefs=[{id:1,label:'TOFU–KR',from:67.8,to:39},{id:2,label:'KR–POS 12',from:39,to:27},{id:3,label:'POS 12–POS 10',from:27,to:17},{id:4,label:'POS 10–FENI',from:17,to:0}];
+  // Sections are the OFFICIAL stick (congestion/segments.py via
+  // /api/road_segments), not the legacy POS 10 split this file used to carry.
+  // The old boundaries (POS 12–POS 10 27→17, POS 10–FENI 17→0) named a
+  // bottleneck the crowding grid and Excel do not have, so the two panels
+  // disagreed on WHICH section was worst as well as by how much.
+  const sectionDefs=flowRoadSegments().map((s,i)=>(
+    {id:i+1,segId:s.id,label:s.label,from:s.top_km,to:s.bottom_km}));
   s.hotspots=sectionDefs.map(z=>{
     const secCap=flowSectionCapacity(cap,z.label);
     const wbnTrips=s.routes.filter(r=>{
@@ -559,20 +697,54 @@ function evaluateFlowScenario(){
       const slo=Math.min(z.from,z.to),shi=Math.max(z.from,z.to);
       return hi>slo&&lo<shi;
     }).reduce((n,r)=>n+r.dt*p.fleet*flowRouteTarget(r),0),
-      otherTrips=otherSectionTrips(z.label),trips=wbnTrips+otherTrips,hourly=trips/p.hours,
+      otherTrips=otherSectionTrips(z.label),trips=wbnTrips+otherTrips,
+      // Tenants arrive as trucks/hr already — add to the HOURLY rate, not to
+      // the shift trip count, because their clock is not ours.
+      tenantHourly=_flowHost==='plan'?flowTenantSegmentFlow(z.segId):0,
+      hourly=trips/p.hours+tenantHourly,
       ratio=hourly/secCap,status=ratio>=1?'High':ratio>=.7?'Watch':'Open',
       colour=ratio>=1?'#ef4444':ratio>=.7?'#f59e0b':'#22c55e';
-    return {...z,trips,wbnTrips,otherTrips,hourly,ratio,status,colour,secCap};
+    return {...z,trips,wbnTrips,otherTrips,tenantHourly,hourly,ratio,status,colour,secCap};
   });
-  // Peak corridor V/C = worst section (per-section measured capacity when present).
+  // Peak corridor V/C = worst section against its OFFICIAL capacity.
   const peakVc=s.hotspots.reduce((m,z)=>Math.max(m,z.ratio),0);
   s.vc=peakVc;setTxt('flow-vc',fmt(peakVc,2));
-  s.hotspots.forEach(z=>{const el=flowQ('flow-risk-zone-'+z.id);if(el){el.setAttribute('fill',z.colour);el.setAttribute('opacity',z.ratio>=1?'.38':z.ratio>=.7?'.25':'.10');}});
+  {
+    // Name the quantity. The crowding grid under this card ranks sections by
+    // lane OCCUPANCY against the same geometry, and the two can name different
+    // worst sections (measured 2026-08-25: flow peaks on KM15-coast, occupancy
+    // on POS 12-KM15). Two real metrics, so each says which one it is.
+    const vcHint=flowQ('flow-vc-hint');
+    const wz=s.hotspots.length?s.hotspots.reduce((a,b)=>b.ratio>a.ratio?b:a,s.hotspots[0]):null;
+    if(vcHint)vcHint.textContent=wz
+      ?`flow v/c · ${wz.label} ${fmt(wz.hourly,0)}/hr ÷ ${fmt(wz.secCap,0)}/hr official cap `
+        +`(one loaded lane at ${fmt(cap.equivHeadway,0)} m)`
+      :`flow v/c · official caps, one loaded lane at ${fmt(cap.equivHeadway,0)} m`;
+  }
+  // The replay's own hotspot colours no longer paint anywhere: the segment
+  // strip is owned by the plan's shared-flow v/c (same number as the crowding
+  // grid and Excel, J79), and giving this illustration model a colour voice
+  // beside it produced a strip that said RED over the text 'v/c 0.41'. The
+  // hotspot RATIOS still feed the readouts below; only the paint is gone.
+  s.hotspots.forEach(z=>{const el=flowQ('flow-risk-zone-'+z.id);if(el){el.setAttribute('fill',z.colour);el.setAttribute('opacity',z.ratio>=1?'.55':z.ratio>=.7?'.42':'.28');}});
   const hs=flowQ('flow-hotspots');
-  if(hs)hs.innerHTML=s.hotspots.map(z=>`<span class="flow-hotspot"><i style="background:${z.colour}"></i><b>${escH(z.label)}</b> ${z.status} · V/C ${fmt(z.ratio,2)} <span class="muted">@ ${fmt(z.secCap,0)} tph</span></span>`).join('');
+  if(hs)hs.innerHTML=s.hotspots.map(z=>`<span class="flow-hotspot"><i style="background:${z.colour}"></i><b>${escH(z.label)}</b> ${z.status} · V/C ${fmt(z.ratio,2)} <span class="muted">@ ${fmt(z.secCap,0)}/hr official${z.tenantHourly>0?` · incl. ${fmt(z.tenantHourly,0)}/hr other tenants`:''}</span></span>`).join('');
   const worst=s.hotspots.reduce((a,b)=>b.ratio>a.ratio?b:a,s.hotspots[0]),
-    picked=_flowHost==='plan'?'Holding plan illustration. ':(_flowPointScenario?`3D scenario: ${_flowPointScenario.date} · ${_flowPointScenario.label}. `:''),
-    basis=_flowHost==='plan'?'Particles are illustration density from the Plan DT list. ':
+    picked=_flowHost==='plan'
+      ?((typeof planAllocFrozen==='function'&&planAllocFrozen())
+        ?'ALLOCATED fleet illustration. ':'Holding plan illustration. ')
+      :(_flowPointScenario?`3D scenario: ${_flowPointScenario.date} · ${_flowPointScenario.label}. `:''),
+    // Say what these trips ARE. They are the path-response rate applied to the
+    // fleet drawn here, which on a frozen plan is the ALLOCATED fleet — while
+    // Step 2's Predicted headline prices the ORIGINAL plan on the segment
+    // curves. Two different fleets on two different models, both legitimate,
+    // so neither may sit unlabelled next to the other and be read as a check
+    // on it. Production is owned by Step 2, never by this card.
+    basis=_flowHost==='plan'
+      ?'Trips are the path-response illustration rate on the fleet drawn here; '
+       +'Step 2 Predicted (segment curves, original plan) and Achievable (simulate) own production. '
+       +'Particles are illustration density from the Plan DT list. '
+      :
       (s.shiftExplicit?'DB shift basis confirmed by NB_SHIFT. ':'Some source rows have no explicit NB_SHIFT; those values remain on their original basis. '),
     fleetGap=_flowMode==='plan'&&_flowHost!=='plan'&&Number.isFinite(_flowFleetAvailable)?_flowFleetAvailable-fleetTotal:null,
     fleetWarning=fleetGap!=null&&fleetGap<0?` Fleet is over-allocated by ${fmt(-fleetGap,0)} DT.`:'',
@@ -593,14 +765,15 @@ function evaluateFlowScenario(){
     const winTxt=(win.from&&win.to)?`${win.from} → ${win.to}`:'(no GPS window)';
     const peak=win.peakSeason||{};
     const peakTxt=(peak.from&&peak.to)?`${peak.from} → ${peak.to}`:'Jan–May peak';
-    const secN=cap.bySection?Object.keys(cap.bySection).length:0;
-    const capTxt=cap.capSource==='measured'
-      ?(gpsStruggle
-        ?`V/C capacity = Jul GPS peaks (${fmt(laneCapacity,0)} tph) — struggle-season extract, not ${peakTxt}`
-        :`V/C = measured peaks (${secN?secN+' sections · ':''}corridor ${fmt(laneCapacity,0)} tph)`)
-      :`V/C = assumed ${fmt(cap.equivHeadway)}s headway (no measured peaks)`;
+    const secN=flowRoadSegments().length;
+    // The capacity is GEOMETRY, not a GPS peak. Jul GPS still drives the
+    // motion bands above; it no longer divides the V/C.
+    const capTxt=`V/C = flow ÷ official capacity (${secN} sections · `
+      +`${fmt(cap.equivHeadway,0)} m following, one loaded lane`
+      +`${cap.segSource==='api'?'':' · offline fallback'})`
+      +(gpsStruggle?` — GPS motion is the Jul struggle extract, not ${peakTxt}`:'');
     const eng=_flowHost==='plan'
-      ?'Plan: trips = predict · tonnes = simulate · particles = illustration only.'
+      ?'Plan: trips = path-response illustration on the fleet drawn · tonnes = simulate when a run exists · particles = illustration only.'
       :'Capability: trips/WMT = dispatch (or path-response what-if) · particles = illustration.';
     note.textContent=`${eng} GPS motion ${gpsN} bands (${winTxt})${gpsStruggle?` · no segment GPS in ${peakTxt}`:''} · posted limits ${limN} · ${capTxt}.`;
   }
@@ -785,11 +958,12 @@ function renderFlowSimulator(P,colours){
   if(selectedDate&&selectedDate!=='plan')loadShiftContext(selectedDate);
   stopFlowSimulator();_flowSource={P,colours};const svg=flowQ('c3-flow-svg'),fallback={source:'WBN_DATABASE.dbo.HAUL_ROAD_STA',basis:'road chainage',lengthKm:67.8,nodes:[{id:'tf',label:'TF',km:67.8,aliases:['TF','TOFU']},{id:'kr',label:'KR',km:39,aliases:['KR','KRENE']},{id:'pos12',label:'POS 12',km:27,aliases:['POS 12','POS12']},{id:'pos10',label:'POS 10',km:17,aliases:['POS 10','POS10']},{id:'feni15',label:'FENI 15',km:15,aliases:['FENI KM15','FENI 15']},{id:'pos6',label:'POS 6',km:12,aliases:['POS 6','POS6','POS 06']},{id:'feni0',label:'FENI 0',km:0,aliases:['FENI KM0','FENI 0']} ]},corridor=(_D&&_D.corridor)||fallback,by={},scenarioP=_flowPointScenario?P.filter(p=>p.date===_flowPointScenario.date):P;
   if(!svg)return;
-  scenarioP.forEach(p=>{const g=by[p.pathKey]||(by[p.pathKey]={key:p.pathKey,label:p.label,dt:0,tr:0,trips:0,n:0,shiftExplicit:true});g.dt+=p.path;g.tr+=Number.isFinite(p.shiftTr)?p.shiftTr:p.tr;g.trips+=Number.isFinite(p.shiftTrips)?p.shiftTrips:p.trips;g.shiftExplicit=g.shiftExplicit&&p.shiftExplicit!==false;g.n++;});
+  scenarioP.forEach(p=>{const g=by[p.pathKey]||(by[p.pathKey]={key:p.pathKey,label:p.label,dt:0,tr:0,trips:0,n:0,shiftExplicit:true,foreign:!!p.foreign});g.dt+=p.path;g.tr+=Number.isFinite(p.shiftTr)?p.shiftTr:p.tr;g.trips+=Number.isFinite(p.shiftTrips)?p.shiftTrips:p.trips;g.shiftExplicit=g.shiftExplicit&&p.shiftExplicit!==false;if(!p.foreign)g.foreign=false;g.n++;});
   const routeParts=k=>{const i=k.indexOf('>');return i<0?['','']:[k.slice(0,i),k.slice(i+1)];};
   let routes=Object.values(by).map(g=>{
     const [o,d]=routeParts(g.key),ol=flowLocate(o),dl=flowLocate(d),dbDt=g.dt/g.n,scenarioDt=Number.isFinite(_flowPlanDraft[g.key])?_flowPlanDraft[g.key]:dbDt;
-    const fromKm=ol&&(ol.kind==='spur'?ol.joinKm:ol.km),toKm=dl&&(dl.kind==='spur'?dl.joinKm:dl.km);
+    const stickKmOf=loc=>!loc?null:loc.kind==='spur'?(loc.parent?loc.parent.joinKm:loc.joinKm):loc.km;
+    const fromKm=stickKmOf(ol),toKm=stickKmOf(dl);
     return {...g,origin:o,dest:d,originLoc:ol,destLoc:dl,fromKm,toKm,dbDt,dt:scenarioDt,tr:g.tr/g.n,dbTrips:g.trips/g.n,col:colours[g.key]};
   }).filter(r=>r.originLoc&&r.destLoc&&Number.isFinite(r.fromKm)&&Number.isFinite(r.toKm)).sort((a,b)=>b.dt-a.dt);
   if(!routes.length){svg.innerHTML='<text x="220" y="270" text-anchor="middle" fill="#94a3b8" font-size="12">Selected routes are not mapped to the haul-road survey (TF–FENI + BLB/HUAFEI/CBB spurs).</text>';_flowSim=null;return;}
@@ -805,7 +979,7 @@ function renderFlowSimulator(P,colours){
   // element is released at the source belonging to its own path. Weighted elements are spread over
   // the full 12-hour shift and never emitted as a batch.
   let releaseOrder=[],maxParticles=Math.max(...routes.map(r=>r.particles));for(let j=0;j<maxParticles;j++)routes.forEach(r=>{if(j<r.particles)releaseOrder.push({r,j});});let releaseSeconds=0;const shiftStep=FLOW_SHIFT_HOURS*3600/releaseOrder.length;releaseOrder.forEach(x=>{x.r.departures[x.j]=releaseSeconds/3600;releaseSeconds+=Math.max(shiftStep,Math.max(fp.headway,fp.stagger*60)*x.r.particleWeight);});
-  const avgSection=_avg(scenarioP,p=>p.section),groups=c3LoadGroups(P),band=(groups.find(g=>avgSection>=g.min&&avgSection<=g.max)||groups.reduce((a,b)=>Math.abs(b.section-avgSection)<Math.abs(a.section-avgSection)?b:a,groups[0])).label,pipeCol=band==='Congested'?'#ef4444':'#22c55e',left=55,right=945,length=corridor.lengthKm||Math.max(...corridor.nodes.map(n=>n.km)),X=km=>left+(length-km)/length*(right-left);
+  const avgSection=_avg(scenarioP,p=>p.section),groups=c3LoadGroups(P),band=(groups.find(g=>avgSection>=g.min&&avgSection<=g.max)||groups.reduce((a,b)=>Math.abs(b.section-avgSection)<Math.abs(a.section-avgSection)?b:a,groups[0])).label,pipeCol=band==='Congested'?'#ef4444':'#22c55e',left=30,right=975,length=corridor.lengthKm||Math.max(...corridor.nodes.map(n=>n.km)),X=km=>left+(length-km)/length*(right-left);
   const usedSpurs=[];
   routes.forEach(r=>{
     r.loop=flowBuildRouteLoop(r,X);
@@ -816,48 +990,236 @@ function renderFlowSimulator(P,colours){
     r.corrX2=xs.length?Math.max(...xs):Math.max(r.sourceX,r.destX);
     r.corrLo=Math.min(r.fromKm,r.toKm);r.corrHi=Math.max(r.fromKm,r.toKm);
     [r.originLoc,r.destLoc].forEach(loc=>{
-      if(loc&&loc.kind==='spur'&&!usedSpurs.some(s=>s.road===loc.road))usedSpurs.push(loc);
+      if(!loc||loc.kind!=='spur')return;
+      // A nested spur's parent road is part of the drive — draw it too.
+      if(!usedSpurs.some(s=>s.road===loc.road))usedSpurs.push(loc);
+      if(loc.parent&&!usedSpurs.some(s=>s.road===loc.parent.road))usedSpurs.push(loc.parent);
     });
   });
-  const spurH=usedSpurs.length?Math.max(...usedSpurs.map(s=>Math.max(44,Math.min(220,(s.lengthKm||8)*11)))):0;
-  const viewH=usedSpurs.length?Math.round(390+spurH+24):390;
+  const topSpurs=usedSpurs.filter(s=>!s.parent);
+  const spurH=topSpurs.length?Math.max(...topSpurs.map(s=>flowSpurH(s))):0;
+  // Height budget from CONTENT: ledger rows + road + ribbons + label tier +
+  // the deepest spur. The fixed 390+spur used to reserve the old arrow band
+  // even when the ledger only needs two rows.
+  // Tallest family column decides the ledger's height share.
+  const famOf=o=>o.startsWith('TF')||o.startsWith('TOFU')?0:o.startsWith('KR')?1:o.startsWith('BLB')?2:3;
+  const famCount=[0,0,0,0];routes.forEach(r=>famCount[famOf(r.origin)]++);
+  const ledgerRows=Math.max(...famCount,2);
+  let baseH=300+Math.max(0,ledgerRows-4)*14;
+  // The Capability host draws the IWIP/Position white-path legend at
+  // y=316..388 (its own block below the axis). 300 clipped it to nothing the
+  // moment the spur drop stopped reserving height — found by probing every
+  // painted y against the computed viewBox, not by eye.
+  if(_otherCtx&&_otherCtx.paths&&_otherCtx.paths.length&&_flowHost!=='plan')baseH=Math.max(baseH,392);
+  const viewH=topSpurs.length?Math.round(baseH+spurH+40):baseH;
   svg.setAttribute('viewBox','0 0 1000 '+viewH);
-  let out='<title>07:00 to 19:00 finite-truck road simulation</title><desc>Every particle represents one average selected DT for a 12-hour shift. Loaded and empty trucks share one no-overtaking left-hand-traffic road. BLB/HUAFEI/CBB are survey spurs off the TF–FENI stick.</desc>';
+  let out='<title>07:00 to 19:00 finite-truck road simulation</title><desc>Every particle represents one average selected DT for a 12-hour shift. Loaded and empty trucks share one no-overtaking left-hand-traffic road. BLB/CBB are survey spurs off the TF–FENI stick; HUAFEI is its own short branch at km 5.5 (survey, owner-confirmed 2026-08-25).</desc>';
   for(let km=0;km<=60;km+=10){const x=X(km);out+=`<line x1="${x.toFixed(1)}" y1="236" x2="${x.toFixed(1)}" y2="248" stroke="#334155"/><text x="${x.toFixed(1)}" y="260" fill="#64748b" font-size="9" text-anchor="middle">km ${km}</text>`;}
   const win=((corridor.measuredWindow)||{});
   const winLbl=(win.from&&win.to)?` · GPS ${win.from}→${win.to}`:'';
-  out+=`<text x="20" y="24" fill="#64748b" font-size="9">DB road chainage · ${escH(corridor.source||'haul-road source')}${escH(winLbl)}${usedSpurs.length?' · spurs '+usedSpurs.map(s=>s.label+' @'+fmt(s.joinKm,1)+' km').join(', '):''}</text><rect x="${left}" y="164" width="${right-left}" height="62" rx="14" fill="#17263e"/><rect x="${left}" y="172" width="${right-left}" height="46" rx="9" fill="#334155"/><line x1="${left}" y1="195" x2="${right}" y2="195" stroke="#94a3b8" stroke-width="1" stroke-dasharray="8 8" opacity=".45"/><text x="${left}" y="150" fill="#94a3b8" font-size="9">LOADED →</text><text x="${right}" y="248" fill="#94a3b8" font-size="9" text-anchor="end">← EMPTY RETURN</text>`;
+  out+=`<text x="20" y="24" fill="#64748b" font-size="9">DB road chainage · ${escH(corridor.source||'haul-road source')}${escH(winLbl)}${usedSpurs.length?' · spurs '+usedSpurs.map(s=>s.parent?s.label+' on '+s.parent.label+' road':s.label+' @'+fmt(s.joinKm,1)+' km').join(', '):''}</text><rect x="${left}" y="164" width="${right-left}" height="62" rx="14" fill="#17263e"/><rect x="${left}" y="172" width="${right-left}" height="46" rx="9" fill="#334155"/><line x1="${left}" y1="195" x2="${right}" y2="195" stroke="#94a3b8" stroke-width="1" stroke-dasharray="8 8" opacity=".45"/><text x="${left+8}" y="183" fill="#cbd5e1" font-size="9" font-weight="700" opacity=".8">LOADED →</text><text x="${right-8}" y="211" fill="#cbd5e1" font-size="9" font-weight="700" text-anchor="end" opacity=".8">← EMPTY RETURN</text>`;
+  // ── S1–S4 segment blocks, tinted by the plan's own v/c (owner redesign,
+  // 2026-08-25: "no segment demarcation ... the user must see which segment
+  // is the bottleneck"). Colour source is _planSharedFlow — the SAME payload
+  // the Road-crowding grid and the Excel corridor read (J79) — so this stick
+  // can never name a different bottleneck than the grid. No payload (e.g. the
+  // Capability tab before a plan run) → neutral boundaries only, no invented
+  // colour. Thresholds mirror cbTone/crowdTone: .6 / .85 / 1.0.
+  {
+    const SEGS=[{id:'S1',lab:'TF–KR',hi:67.8,lo:39,sec:'TF–KR'},
+                {id:'S2',lab:'KR–POS 12',hi:39,lo:27,sec:'KR–POS 12'},
+                {id:'S3',lab:'POS 12–KM15',hi:27,lo:15,sec:'POS 12–KM15'},
+                {id:'S4',lab:'KM15–coast',hi:15,lo:0,sec:'KM15–coast'}];
+    const sf=(typeof _planSharedFlow!=='undefined'&&_planSharedFlow&&_planSharedFlow.ok)?_planSharedFlow:null;
+    const bySec={};(sf&&sf.sections||[]).forEach(s=>{bySec[s.section]=s;});
+    // One HEADER STRIP directly above the road (owner, 2026-08-25: "the
+    // signage on the top, make it more clear and sleek"). The first version
+    // floated S-ids at y≈136 in the same airspace as the route arrows, which
+    // recreated the crowding the redesign was meant to remove. The strip is a
+    // solid banded bar: segment id + name + v/c in ONE line per block, tinted
+    // the same colour as the block below it, nothing floating.
+    let worst=null,worstOcc=null;
+    SEGS.forEach(sg=>{
+      const x1=X(sg.hi),x2=X(sg.lo);
+      const sec=bySec[sg.sec];
+      const vc=sec?sec.ratio:null;
+      // The road band carries NO v/c fill — the strip above is the single
+      // colour voice for congestion (one encoding, one place). The first
+      // pass tinted both and the band turned into the same red soup the
+      // owner rejected.
+      // header strip cell
+      const stripFill=vc==null?'rgba(51,65,85,.55)':vc>=1?'rgba(220,38,38,.5)':vc>=.85?'rgba(239,68,68,.38)':vc>=.6?'rgba(249,115,22,.32)':'rgba(34,197,94,.22)';
+      // No live-animation id on this rect, deliberately. The first wiring let
+      // updateFlowSimulator recolour these cells from ITS hotspot model, whose
+      // sections are the old 27-17/17-0 split and whose v/c is the replay
+      // illustration — the strip then showed RED beside its own text reading
+      // "v/c 0.41". One cell, one owner: the plan's shared-flow ratio, which
+      // is the same number the crowding grid and Excel print (J79).
+      out+=`<rect x="${x1.toFixed(1)}" y="146" width="${(x2-x1).toFixed(1)}" height="17" rx="3" fill="${stripFill}" stroke="#0b1220" stroke-width="1"/>`;
+      const mid=(x1+x2)/2;
+      const ink=vc==null?'#cbd5e1':vc>=.85?'#fecaca':vc>=.6?'#fed7aa':'#bbf7d0';
+      const wide=(x2-x1)>170;
+      const txt=wide?`${sg.id} · ${sg.lab}${vc!=null?' · v/c '+vc.toFixed(2):''}`:`${sg.id}${vc!=null?' · '+vc.toFixed(2):''}`;
+      out+=`<text x="${mid.toFixed(1)}" y="158" fill="${ink}" font-size="10.5" font-weight="800" letter-spacing=".04em" text-anchor="middle">${escH(txt)}</text>`;
+      out+=`<line x1="${x2.toFixed(1)}" y1="146" x2="${x2.toFixed(1)}" y2="230" stroke="#64748b" stroke-width="1" opacity=".55"/>`;
+      if(sec&&(!worst||(sec.ratio||0)>(worst.ratio||0)))worst={...sec,segId:sg.id};
+      if(sec&&(!worstOcc||(sec.ratio_presence_lane||0)>(worstOcc.ratio_presence_lane||0)))
+        worstOcc={...sec,segId:sg.id};
+    });
+    // TWO REAL METRICS, and they rank sections differently. `ratio` is FLOW
+    // (busiest hour of passages ÷ that lane's capacity flow); the Road-crowding
+    // grid below colours by OCCUPANCY (mean concurrent trucks ÷ how many fit on
+    // the loaded lane). Measured on the 2026-12-04 plan: flow peaks on
+    // KM15–coast (0.90) while occupancy peaks on POS 12–KM15 (0.87), so an
+    // unlabelled "worst section" here contradicted the grid's banner on the
+    // same screen. Neither is wrong; each now says which question it answers.
+    // (AGENTS.md: give the concept one owner, or label both on their face.)
+    if(worst&&worst.ratio>=.6){
+      const lab=worst.ratio>=1?'OVER CAPACITY':worst.ratio>=.85?'CONGESTED':'BUSIEST';
+      out+=`<text x="${right}" y="24" fill="${worst.ratio>=.85?'#fca5a5':'#fdba74'}" font-size="12" font-weight="800" text-anchor="end">⚠ ${escH(worst.segId)} ${escH(worst.section)} — ${lab} BY FLOW · v/c ${worst.ratio.toFixed(2)}</text>`;
+      if(worstOcc&&worstOcc.section!==worst.section&&worstOcc.ratio_presence_lane>=.6){
+        out+=`<text x="${right}" y="38" fill="#cbd5e1" font-size="9.5" font-weight="600" text-anchor="end">tightest by OCCUPANCY: ${escH(worstOcc.segId)} ${escH(worstOcc.section)} · ${(100*worstOcc.ratio_presence_lane).toFixed(0)}% of one loaded lane</text>`;
+      }
+    }
+    if(sf){
+      out+=`<text x="${left}" y="141" fill="#94a3b8" font-size="8.5" font-weight="600">STRIP = FLOW v/c · busiest hour of passages ÷ lane capacity flow · grid below = lane occupancy</text>`;
+    }
+  }
+  // Spurs are two-lane roads in the stick's own language: dark shoulder, asphalt,
+  // dashed centreline. Roads first, nodes/labels last, so one spur's road never
+  // paints over another's label.
+  const spurCol=loc=>loc.road==='BLB'?'#a78bfa':loc.road==='HFC'?'#f472b6':'#2dd4bf';
+  const spurJoinY=(parent,atKm)=>{
+    const pH=flowSpurH(parent),pJoin=flowSpurJoinKm(parent),pPit=parent.endKm;
+    const t=(pPit===pJoin)?0:Math.abs(atKm-pJoin)/Math.max(1e-6,Math.abs(pPit-pJoin));
+    return 226+pH*t;
+  };
+  topSpurs.forEach(loc=>{
+    const x=X(loc.joinKm),h=flowSpurH(loc),y0=226,y2=226+h,rw=26;
+    const col=spurCol(loc);
+    // Two-lane vertical road. The 8 px tuck under the stick (y0-8) merges the junction.
+    out+=`<rect x="${(x-rw/2).toFixed(1)}" y="${y0-8}" width="${rw}" height="${h+8}" rx="12" fill="#17263e"/>`;
+    out+=`<rect x="${(x-rw/2+4).toFixed(1)}" y="${y0}" width="${rw-8}" height="${h}" rx="8" fill="#334155"/>`;
+    out+=`<line x1="${x.toFixed(1)}" y1="${y0+6}" x2="${x.toFixed(1)}" y2="${y2-4}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="6 7" opacity=".4"/>`;
+    out+=`<line x1="${(x-rw/2+1).toFixed(1)}" y1="${y0}" x2="${(x-rw/2+1).toFixed(1)}" y2="${y2}" stroke="${col}" stroke-width="1.4" opacity=".55"/>`;
+    out+=`<line x1="${(x+rw/2-1).toFixed(1)}" y1="${y0}" x2="${(x+rw/2-1).toFixed(1)}" y2="${y2}" stroke="${col}" stroke-width="1.4" opacity=".55"/>`;
+    out+=`<circle cx="${x.toFixed(1)}" cy="214" r="3.4" fill="#0b1220" stroke="${col}" stroke-width="1.4"><title>${escH(loc.label)} spur joins the TF–FENI stick at ${fmt(loc.joinKm,1)} km</title></circle>`;
+  });
+  usedSpurs.filter(l=>l.parent).forEach(loc=>{
+    // Nested spur: horizontal two-lane branch off the parent's road at the
+    // junction height, running west (HUAFEI lies west of the BLB road).
+    const p=loc.parent,px=X(p.joinKm),yJ=spurJoinY(p,loc.parentAtKm),len=Math.max(40,(loc.lengthKm||1)*44),x1=px-4.5,x0=x1-len,col=spurCol(loc);
+    out+=`<rect x="${(x0-2).toFixed(1)}" y="${(yJ-13).toFixed(1)}" width="${(px-x0+4).toFixed(1)}" height="26" rx="12" fill="#17263e"/>`;
+    out+=`<rect x="${(x0+2).toFixed(1)}" y="${(yJ-9).toFixed(1)}" width="${(px-x0-2).toFixed(1)}" height="18" rx="8" fill="#334155"/>`;
+    out+=`<line x1="${(x0+8).toFixed(1)}" y1="${yJ.toFixed(1)}" x2="${(px-8).toFixed(1)}" y2="${yJ.toFixed(1)}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="6 7" opacity=".4"/>`;
+    out+=`<line x1="${x0.toFixed(1)}" y1="${(yJ-12).toFixed(1)}" x2="${px.toFixed(1)}" y2="${(yJ-12).toFixed(1)}" stroke="${col}" stroke-width="1.4" opacity=".55"/>`;
+    out+=`<line x1="${x0.toFixed(1)}" y1="${(yJ+12).toFixed(1)}" x2="${px.toFixed(1)}" y2="${(yJ+12).toFixed(1)}" stroke="${col}" stroke-width="1.4" opacity=".55"/>`;
+    out+=`<circle cx="${x1.toFixed(1)}" cy="${yJ.toFixed(1)}" r="3.2" fill="#0b1220" stroke="${col}" stroke-width="1.3"><title>${escH(loc.label)} leaves the ${escH(p.label)} road at ${fmt(loc.parentAtKm,1)} km</title></circle>`;
+  });
   usedSpurs.forEach(loc=>{
-    const x=X(loc.joinKm),h=Math.max(44,Math.min(220,(loc.lengthKm||8)*11)),y1=226,y2=226+h;
-    const col=loc.road==='BLB'?'#a78bfa':loc.road==='HFC'?'#f472b6':'#2dd4bf';
-    out+=`<line x1="${x.toFixed(1)}" y1="${y1}" x2="${x.toFixed(1)}" y2="${y2}" stroke="${col}" stroke-width="10" opacity=".28"/>`;
-    out+=`<line x1="${x.toFixed(1)}" y1="${y1}" x2="${x.toFixed(1)}" y2="${y2}" stroke="${col}" stroke-width="2.2"/>`;
-    out+=`<circle cx="${x.toFixed(1)}" cy="${y2}" r="5.5" fill="#0b1220" stroke="${col}" stroke-width="1.6"/>`;
-    out+=`<text x="${(x+8).toFixed(1)}" y="${(y2+4).toFixed(1)}" fill="#e2e8f0" font-size="10" font-weight="700">${escH(loc.label)}</text>`;
-    out+=`<text x="${(x+8).toFixed(1)}" y="${(y2+16).toFixed(1)}" fill="#94a3b8" font-size="8">${fmt(loc.lengthKm,1)} km branch · joins stick at ${fmt(loc.joinKm,1)} km</text>`;
+    const col=spurCol(loc);
+    if(loc.parent){
+      // Branch terminus bulb + label, clear of the parent road.
+      const p=loc.parent,px=X(p.joinKm),yJ=spurJoinY(p,loc.parentAtKm),len=Math.max(40,(loc.lengthKm||1)*44),x0=px-4.5-len;
+      out+=`<circle cx="${x0.toFixed(1)}" cy="${yJ.toFixed(1)}" r="11" fill="#17263e" stroke="${col}" stroke-width="1.6"/>`;
+      out+=`<circle cx="${x0.toFixed(1)}" cy="${yJ.toFixed(1)}" r="6.5" fill="#334155"/>`;
+      out+=`<circle cx="${x0.toFixed(1)}" cy="${yJ.toFixed(1)}" r="2.2" fill="${col}"/>`;
+      out+=`<text x="${(x0-4).toFixed(1)}" y="${(yJ+24).toFixed(1)}" fill="#e2e8f0" font-size="10" font-weight="700" text-anchor="middle">${escH(loc.label)}</text>`;
+      out+=`<text x="${(x0-4).toFixed(1)}" y="${(yJ+35).toFixed(1)}" fill="#94a3b8" font-size="8" text-anchor="middle">${fmt(loc.lengthKm,1)} km · on the ${escH(p.label)} road</text>`;
+    }else{
+      const x=X(loc.joinKm),h=flowSpurH(loc),y2=226+h;
+      // Pit terminus: turnaround bulb — the loop's loaded/empty hop happens inside it.
+      out+=`<circle cx="${x.toFixed(1)}" cy="${y2}" r="15" fill="#17263e" stroke="${col}" stroke-width="1.8"/>`;
+      out+=`<circle cx="${x.toFixed(1)}" cy="${y2}" r="10" fill="#334155"/>`;
+      out+=`<circle cx="${x.toFixed(1)}" cy="${y2}" r="2.8" fill="${col}"/>`;
+      out+=`<text x="${x.toFixed(1)}" y="${(y2+29).toFixed(1)}" fill="#e2e8f0" font-size="11" font-weight="700" text-anchor="middle">${escH(loc.label)}</text>`;
+      out+=`<text x="${x.toFixed(1)}" y="${(y2+41).toFixed(1)}" fill="#94a3b8" font-size="8" text-anchor="middle">${fmt(loc.lengthKm,1)} km branch · joins stick at ${fmt(loc.joinKm,1)} km</text>`;
+    }
   });
   // Dual ribbon: posted FMS limits (top) vs measured GPS loaded speed (bottom).
-  out+=`<text x="${left-4}" y="223" fill="#94a3b8" font-size="7" text-anchor="end">Posted</text>`;
-  (corridor.speedLimits||[]).forEach(z=>{const x1=X(z.fromKm),x2=X(z.toKm),col=z.limit<=20?'#ef4444':z.limit<=30?'#f59e0b':'#22c55e';out+=`<rect x="${x1.toFixed(1)}" y="218" width="${Math.max(1,x2-x1).toFixed(1)}" height="6" fill="${col}" opacity=".85"><title>Posted ${escH(z.chainage||z.segment)} · ${fmt(z.limit)} km/h</title></rect><text x="${((x1+x2)/2).toFixed(1)}" y="223" fill="#0b1220" font-size="6" font-weight="700" text-anchor="middle">${fmt(z.limit)}</text>`;});
-  out+=`<text x="${left-4}" y="233" fill="#94a3b8" font-size="7" text-anchor="end">GPS</text>`;
-  const meas=corridor.measuredSpeeds||[];
-  const gpsCol=v=>{if(!(v>0))return'#475569';if(v<12)return'#ef4444';if(v<18)return'#f59e0b';if(v<25)return'#38bdf8';return'#22c55e';};
-  meas.forEach(z=>{const v=z.loadedKmh,x1=X(z.fromKm),x2=X(z.toKm);if(!Number.isFinite(v))return;
-    out+=`<rect x="${x1.toFixed(1)}" y="227" width="${Math.max(1,x2-x1).toFixed(1)}" height="6" fill="${gpsCol(v)}" opacity=".9"><title>GPS loaded ${escH(z.seg)} · ${fmt(v,1)} km/h (empty ${fmt(z.emptyKmh,1)})</title></rect>`;});
+  // ONE speed ribbon (owner, 2026-08-25): GPS measured where it exists, the
+  // posted limit as the fallback where GPS has no bin. Two stacked ribbons of
+  // 6px colour chips doubled the small-print at the bottom of the band and
+  // said nearly the same thing twice; a reader who wants both numbers still
+  // gets them — the tooltip carries "GPS x km/h · posted y".
+  {
+    const meas=corridor.measuredSpeeds||[];
+    const lims=corridor.speedLimits||[];
+    const gpsCol=v=>{if(!(v>0))return'#475569';if(v<12)return'#ef4444';if(v<18)return'#f59e0b';if(v<25)return'#38bdf8';return'#22c55e';};
+    const postedAt=km=>{const z=lims.find(l=>km>=Math.min(l.fromKm,l.toKm)&&km<=Math.max(l.fromKm,l.toKm));return z?z.limit:null;};
+    out+=`<text x="${left-4}" y="228" fill="#94a3b8" font-size="7" text-anchor="end">Speed</text>`;
+    meas.forEach(z=>{const v=z.loadedKmh;if(!Number.isFinite(v))return;const x1=X(z.fromKm),x2=X(z.toKm);
+      const post=postedAt((z.fromKm+z.toKm)/2);
+      out+=`<rect x="${Math.min(x1,x2).toFixed(1)}" y="222" width="${Math.max(1,Math.abs(x2-x1)).toFixed(1)}" height="7" fill="${gpsCol(v)}" opacity=".9"><title>GPS loaded ${escH(z.seg)} · ${fmt(v,1)} km/h (empty ${fmt(z.emptyKmh,1)})${post?' · posted '+fmt(post)+' km/h':''}</title></rect>`;});
+    lims.forEach(z=>{const x1=X(z.fromKm),x2=X(z.toKm);
+      const covered=meas.some(m=>Number.isFinite(m.loadedKmh)&&Math.min(m.fromKm,m.toKm)<=Math.min(z.fromKm,z.toKm)&&Math.max(m.fromKm,m.toKm)>=Math.max(z.fromKm,z.toKm));
+      if(covered)return;
+      const col=z.limit<=20?'#ef4444':z.limit<=30?'#f59e0b':'#22c55e';
+      out+=`<rect x="${Math.min(x1,x2).toFixed(1)}" y="222" width="${Math.max(1,Math.abs(x2-x1)).toFixed(1)}" height="7" fill="${col}" opacity=".45"><title>No GPS bin · posted ${fmt(z.limit)} km/h</title></rect>`;});
+  }
   // Each named road section receives an independent risk overlay; selected constraints get an outline.
   const pid=base=>_flowIdPrefix+base;
-  const secRange={1:[67.8,39],2:[39,27],3:[27,17],4:[17,0]};Object.entries(secRange).forEach(([id,z])=>{const x1=X(z[0]),x2=X(z[1]);out+=`<rect id="${pid('flow-risk-zone-'+id)}" x="${x1.toFixed(1)}" y="164" width="${(x2-x1).toFixed(1)}" height="62" fill="#22c55e" opacity=".10"/>`;});[..._gSelSec].forEach(id=>{const z=secRange[+id];if(!z)return;const x1=X(z[0]),x2=X(z[1]);out+=`<rect x="${x1.toFixed(1)}" y="164" width="${(x2-x1).toFixed(1)}" height="62" fill="none" stroke="${pipeCol}" stroke-width="2" opacity=".9"/>`;});
+  // ONE colour layer (owner, 2026-08-25): the road band itself stays tarmac.
+  // The live hotspot recolour (updateFlowSimulator) and the constraint
+  // selection now target the SEGMENT STRIP cells drawn above the road, via
+  // the same flow-risk-zone-N ids the animation already updates. The old
+  // full-height wash + green selection boxes stacked two more colour fields
+  // onto a band that already carried tint, ribbons and particles.
+  const secRange={1:[67.8,39],2:[39,27],3:[27,17],4:[17,0]};
+  [..._gSelSec].forEach(id=>{const z=secRange[+id];if(!z)return;const x1=X(z[0]),x2=X(z[1]);
+    out+=`<rect x="${x1.toFixed(1)}" y="145" width="${(x2-x1).toFixed(1)}" height="19" rx="3" fill="none" stroke="${pipeCol}" stroke-width="2" opacity=".95"/>`;});
   // Every logical path shares these same two travel lanes; colour belongs only to its trucks and
   // endpoint crossovers. The long vertical legs dominate each closed cycle.
+  const ledger=[];
   routes.forEach((r,i)=>{
     const loaded=flowVerticesFromLegs(flowLoadedLegs(r),X,180);
     if(loaded.length<2)return;
     r.sourceX=loaded[0].x;r.destX=loaded[loaded.length-1].x;
-    const c1=X(r.fromKm),c2=X(r.toKm),gy=42+(i%10)*10;
+    const c1=X(r.fromKm),c2=X(r.toKm);
     const d=loaded.map((p,idx)=>(idx?'L':'M')+' '+p.x.toFixed(1)+' '+p.y.toFixed(1)).join(' ');
-    out+=`<path d="M ${c1.toFixed(1)} ${gy} L ${c2.toFixed(1)} ${gy}" stroke="${r.col}" stroke-width="1.5" opacity="0.7"/><circle cx="${c1.toFixed(1)}" cy="${gy}" r="2.8" fill="${r.col}"/><path d="M ${(c2-3).toFixed(1)} ${gy-3} L ${(c2+3).toFixed(1)} ${gy} L ${(c2-3).toFixed(1)} ${gy+3} Z" fill="${r.col}"/><text x="${((c1+c2)/2).toFixed(1)}" y="${gy-2}" fill="${r.col}" font-size="7.5" text-anchor="middle">${escH(r.origin)} → ${escH(r.dest)}</text><line x1="${c1.toFixed(1)}" y1="176" x2="${c1.toFixed(1)}" y2="214" stroke="${r.col}" stroke-width="2" opacity="0.55"/><line x1="${c2.toFixed(1)}" y1="176" x2="${c2.toFixed(1)}" y2="214" stroke="${r.col}" stroke-width="2" opacity="0.55"/><path id="${pid('flow-path-'+i)}" d="${d}" fill="none" stroke="none"/>`;
+    // ROUTE LEDGER, not arrows (owner, 2026-08-25: the stacked arrow band
+    // "still look crowded"). Default view carries NO route geometry at all —
+    // the span, endpoint ticks and arrowhead live in a hidden per-route group
+    // that hover reveals. Ledger rows are laid out in fixed columns grouped
+    // by origin (TF, KR, BLB, POS/other), 12 chips per column max, so twelve
+    // routes occupy two clean lines of text instead of twelve crossing lines.
+    const fam=r.origin.startsWith('TF')||r.origin.startsWith('TOFU')?0:r.origin.startsWith('KR')?1:r.origin.startsWith('BLB')?2:3;
+    if(!ledger[fam])ledger[fam]=[];
+    ledger[fam].push({i,r});
+    out+=`<g id="${pid('flow-span-'+i)}" opacity="0" pointer-events="none">`
+      +`<rect x="${Math.min(c1,c2).toFixed(1)}" y="168" width="${Math.abs(c2-c1).toFixed(1)}" height="54" fill="${r.col}" opacity=".14"/>`
+      +`<line x1="${c1.toFixed(1)}" y1="168" x2="${c1.toFixed(1)}" y2="222" stroke="${r.col}" stroke-width="2.5"/>`
+      +`<line x1="${c2.toFixed(1)}" y1="168" x2="${c2.toFixed(1)}" y2="222" stroke="${r.col}" stroke-width="2.5"/>`
+      +`<path d="M ${(c2-5).toFixed(1)} 165 L ${(c2+1).toFixed(1)} 168 L ${(c2-5).toFixed(1)} 171 Z" fill="${r.col}"/>`
+      +`<text x="${((c1+c2)/2).toFixed(1)}" y="140" fill="${r.col}" font-size="11" font-weight="700" text-anchor="middle">${escH(r.origin)} → ${escH(r.dest)} · ${fmt(r.dt,0)} DT</text>`
+      +`</g><path id="${pid('flow-path-'+i)}" d="${d}" fill="none" stroke="none"/>`;
     for(let j=0;j<r.particles;j++){const staged=fp.start==='destination'||fp.start==='split'&&j%2?'destination':'source';out+=`<g id="${pid('flow-p-'+i+'-'+j)}" visibility="hidden"><title>Element ${j+1}/${r.particles} · staged at ${staged} · weight ${fmt(r.particleWeight,3)} DT · ${escH(r.origin)} → ${escH(r.dest)} · release +${fmt(r.departures[j]*60,1)} min</title><circle r="1.15" fill="${r.col}" opacity="0.88"/></g>`;}
   });
+  // ── the ledger itself: four origin columns across the top ───────────────
+  {
+    const famNames=['TF','KR','BLB','POS / other'];
+    const famCols=['#fb923c','#60a5fa','#2dd4bf','#c084fc'];
+    // Vertical list per family, columns sized by CONTENT. The first cut used
+    // two chips per row inside quarter-width columns and "TF → FENI KM15 ·
+    // 36 DT" ran under the KR header (owner screenshot). Text width is
+    // estimated at 6.2 px/char for the 10px font + 26 px chrome; each column
+    // starts where the previous one's longest row ends.
+    const est=({r})=>(r.origin.length+r.dest.length+String(Math.round(r.dt)).length+8)*6.2+26;
+    let cx=left;
+    ledger.forEach((rows,f)=>{
+      if(!rows||!rows.length)return;
+      const w=Math.max(90,...rows.map(est));
+      out+=`<text x="${cx.toFixed(1)}" y="34" fill="${famCols[f]}" font-size="9" font-weight="800" letter-spacing=".08em">${famNames[f]}</text>`;
+      rows.forEach(({i,r},k)=>{
+        const gy=48+k*14;
+        out+=`<g class="flow-ledger" data-span="${pid('flow-span-'+i)}" style="cursor:default">`
+          +`<circle cx="${(cx+4).toFixed(1)}" cy="${gy-3}" r="3" fill="${r.col}"/>`
+          +`<text x="${(cx+11).toFixed(1)}" y="${gy}" fill="#cbd5e1" font-size="10">${escH(r.origin)} → ${escH(r.dest)} <tspan fill="#64748b">· ${fmt(r.dt,0)} DT</tspan></text>`
+          +`</g>`;
+      });
+      cx+=w+18;
+    });
+  }
   // Non-WBN (IWIP / Position) trucks as WHITE particles on their own paths — congestion only, no WMT.
   let otherRoutes=[];
   if(_otherCtx&&_otherCtx.paths&&_otherCtx.paths.length&&_flowHost!=='plan'){
@@ -870,7 +1232,36 @@ function renderFlowSimulator(P,colours){
       out+=`<line x1="${lo.toFixed(1)}" y1="${gy}" x2="${hi.toFixed(1)}" y2="${gy}" stroke="#e2e8f0" stroke-width="1.3" opacity=".7"/><circle cx="${xo.toFixed(1)}" cy="${gy}" r="2.1" fill="#e2e8f0" opacity=".85"/><path d="M ${(rt?xd-3:xd+3).toFixed(1)} ${(gy-3).toFixed(1)} L ${(rt?xd+2:xd-2).toFixed(1)} ${gy} L ${(rt?xd-3:xd+3).toFixed(1)} ${(gy+3).toFixed(1)} Z" fill="#e2e8f0" opacity=".85"/><text x="${((lo+hi)/2).toFixed(1)}" y="${(gy-2.5).toFixed(1)}" fill="#cbd5e1" font-size="7.5" text-anchor="middle">${escH(p.label)}</text>`;});
   }
   // Nodes remain at true proportional chainage; labels alternate sides to keep POS 10 / FENI 15 legible.
-  corridor.nodes.forEach((n,i)=>{const x=X(n.km),above=i%2===0,y=above?130:286;out+=`<line x1="${x.toFixed(1)}" y1="${above?164:226}" x2="${x.toFixed(1)}" y2="${above?145:267}" stroke="#64748b"/><circle cx="${x.toFixed(1)}" cy="195" r="5" fill="#0b1220" stroke="#cbd5e1" stroke-width="1.5"/><text x="${x.toFixed(1)}" y="${y}" fill="#e2e8f0" font-size="10" font-weight="700" text-anchor="middle">${escH(n.label)}</text><text x="${x.toFixed(1)}" y="${y+12}" fill="#64748b" font-size="8.5" text-anchor="middle">${fmt(n.km,1)} km</text>`;});
+  // DETERMINISTIC label tiers (owner, 2026-08-25). The old rule was "even
+  // index above, odd below", so which side a node landed on depended on array
+  // ORDER, and POS 12/POS 10/FENI 15 fell wherever they fell — that is the
+  // pile-up in the owner's screenshot. Tiering is now by IMPORTANCE: majors
+  // (pits + smelter ends) above in 13px, minors below in 10px, and both tiers
+  // nudge horizontally when two labels would overlap. Same data, same km.
+  {
+    const MAJOR=new Set(['TF','KR','POS 12','FENI 15','FENI 0']);
+    const placed={above:[],below:[]};
+    corridor.nodes.forEach(n=>{
+      const x=X(n.km);
+      const isMaj=MAJOR.has((n.label||'').toUpperCase());
+      const side=isMaj?'above':'below';
+      const fs=isMaj?13:10;
+      const halfW=(String(n.label).length*fs*0.62)/2+6;
+      let lx=x;
+      // nudge until clear of already placed labels on this tier
+      for(let guard=0;guard<8;guard++){
+        const clash=placed[side].find(q=>Math.abs(q.x-lx)<q.halfW+halfW);
+        if(!clash)break;
+        lx=clash.x+(lx>=clash.x?1:-1)*(clash.halfW+halfW+2);
+      }
+      placed[side].push({x:lx,halfW});
+      const ly=side==='above'?126:262;
+      out+=`<line x1="${x.toFixed(1)}" y1="${side==='above'?164:226}" x2="${x.toFixed(1)}" y2="${side==='above'?138:250}" stroke="#64748b" opacity=".7"/>`
+        +`<circle cx="${x.toFixed(1)}" cy="195" r="${isMaj?5:4}" fill="#0b1220" stroke="#cbd5e1" stroke-width="1.5"/>`
+        +`<text x="${lx.toFixed(1)}" y="${ly}" fill="${isMaj?'#f1f5f9':'#cbd5e1'}" font-size="${fs}" font-weight="700" text-anchor="middle">${escH(n.label)}</text>`
+        +`<text x="${lx.toFixed(1)}" y="${ly+12}" fill="#64748b" font-size="9" text-anchor="middle">${fmt(n.km,1)} km</text>`;
+    });
+  }
   const seenExtra=new Set();
   routes.forEach(r=>{
     [r.originLoc,r.destLoc].forEach(loc=>{
@@ -878,7 +1269,7 @@ function renderFlowSimulator(P,colours){
       if(corridor.nodes.some(n=>Math.abs(n.km-loc.km)<0.35))return;
       const k=loc.km.toFixed(1);if(seenExtra.has(k))return;seenExtra.add(k);
       const x=X(loc.km);
-      out+=`<circle cx="${x.toFixed(1)}" cy="195" r="4" fill="#0b1220" stroke="#f59e0b" stroke-width="1.4"/><text x="${x.toFixed(1)}" y="108" fill="#f59e0b" font-size="9" font-weight="700" text-anchor="middle">${escH(loc.label)}</text><text x="${x.toFixed(1)}" y="119" fill="#64748b" font-size="8" text-anchor="middle">${fmt(loc.km,1)} km</text>`;
+      out+=`<circle cx="${x.toFixed(1)}" cy="195" r="4" fill="#0b1220" stroke="#f59e0b" stroke-width="1.4"/><text x="${x.toFixed(1)}" y="96" fill="#f59e0b" font-size="9" font-weight="700" text-anchor="middle">${escH(loc.label)}</text><text x="${x.toFixed(1)}" y="107" fill="#64748b" font-size="8" text-anchor="middle">${fmt(loc.km,1)} km</text>`;
     });
   });
   // Only weighbridges used on this shift are shown. Position is estimated by snapping each
@@ -897,7 +1288,17 @@ function renderFlowSimulator(P,colours){
     let lastX=-99,lvl=0;order.forEach(o=>{lvl=(o.x-lastX<30)?(lvl+1)%2:0;lastX=o.x;o.lvl=lvl;});
     order.forEach(o=>{const w=o.w,col=wbCol(o.i),x=o.x,ly=166-o.lvl*9;
       out+=`<line x1="${x.toFixed(1)}" y1="173" x2="${x.toFixed(1)}" y2="${(ly+2).toFixed(1)}" stroke="${col}" stroke-width=".7" opacity=".45"/><circle cx="${x.toFixed(1)}" cy="176" r="3.4" fill="${w.onCorridor===false?'none':col}" stroke="${col}" stroke-width="${w.onCorridor===false?1.4:1}"><title>${escH(wbNm(w))} (${escH(w.name)}) · stick ~${fmt(w.km,1)} km${w.offM!=null?' · '+fmt(w.offM,0)+' m off centreline':''}${w.trucks?(' · '+fmt(w.trucks)+' weigh events'):''}${o.i===0&&w.trucks?' · busiest':''}${w.onCorridor===false?' · off-corridor spur':''}</title></circle><text x="${x.toFixed(1)}" y="${ly.toFixed(1)}" fill="${col}" font-size="8" font-weight="700" text-anchor="middle">${escH(wbNm(w))}</text>`;});}
-  out+=`<text x="980" y="24" fill="${pipeCol}" font-size="9" text-anchor="end">selected constraint · ${escH(band)} load</text>`;svg.innerHTML=out;
+  out+=`<text x="980" y="38" fill="${pipeCol}" font-size="9" text-anchor="end">selected constraint · ${escH(band)} load</text>`;svg.innerHTML=out;
+  // Ledger hover → reveal that route's span on the road, dim the other rows.
+  // Listeners, not inline handlers: `out` is innerHTML, and inline onmouseover
+  // strings would be a second place that knows the span ids.
+  svg.querySelectorAll('.flow-ledger').forEach(g=>{
+    const span=document.getElementById(g.dataset.span);
+    g.addEventListener('mouseenter',()=>{if(span)span.setAttribute('opacity','1');
+      svg.querySelectorAll('.flow-ledger').forEach(o=>{if(o!==g)o.setAttribute('opacity','.35');});});
+    g.addEventListener('mouseleave',()=>{if(span)span.setAttribute('opacity','0');
+      svg.querySelectorAll('.flow-ledger').forEach(o=>o.setAttribute('opacity','1'));});
+  });
   _flowSim={routes,otherRoutes,hour:0,running:false,raf:null,last:0,avgSection,band,dbTrips:0,targetTrips:0,achievedTrips:0,corridorKm:length,roadLeft:left,roadRight:right,liveCongestion:0,liveDensity:0,shiftExplicit:routes.every(r=>r.shiftExplicit),X};flowDeriveMode();renderFlowPlanner();
   // Default: GPS motion. Do not auto-call flowEstimateSpeeds (that overrides GPS).
   if(!_flowSpeedOverride){_flowMotionMode='gps';flowSeedGpsInputs();}
@@ -1098,3 +1499,16 @@ function flowMapSync(particles){
     delete st.markers[id];
   });
 }
+
+// Hydrate the official road geometry once. The literals in FLOW_SEG_FALLBACK
+// are the offline copy; this is what keeps them from going stale the way the
+// hardcoded densityFit and the crowding caption did.
+document.addEventListener('DOMContentLoaded',function(){
+  fetch('/api/road_segments').then(function(r){return r.json();})
+    .then(flowHydrateSegments).catch(function(){});
+  fetch('/api/congestion_tenants').then(function(r){return r.json();}).then(function(d){
+    if(!d||!d.ok||!d.segment_flow_hr)return;
+    _flowTenantFlow=d.segment_flow_hr;
+    if(typeof _flowSim!=='undefined'&&_flowSim)evaluateFlowScenario();
+  }).catch(function(){});
+});

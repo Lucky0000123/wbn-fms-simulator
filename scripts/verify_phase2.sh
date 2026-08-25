@@ -465,6 +465,22 @@ chk $? "J79  Excel road grid == app road grid" "see: python test_corridor_parity
 $PY test_huafei_geometry.py >/dev/null 2>&1
 chk $? "J80  HUAFEI is a junction at km 5.5, not the coast" "see: python test_huafei_geometry.py"
 
+# J81-J86 — the 2026-08-25 three-agent QA audit fixes, one gate script:
+# J81 flow readout divides by OFFICIAL geometry (600/600/600/400), never the
+#     ~54 tph Jul GPS demonstrated peak ("most we ever did" != "most we can");
+# J82 tenant DT never reach the readout's production math, their road flow IS
+#     charged at their own tempo; J83 (browser) frozen loads open with the
+#     alloc panel, no stale required-DT board, and REBUILT pricing state
+#     (totals round-trip <0.5%); J84 priority board sums ONE fleet basis and
+#     an unknown achievable renders as a dash, never 0; J85 Excel TOTAL DT is
+#     our fleet with IWIP named beside it; J86 every offered scenario exports
+#     (S4 has no file by design) with no phantom scenarios from legacy saves.
+# Mutation-tested 7 ways 2026-08-25 (incl. two gate weaknesses the mutants
+# exposed and fixed: a two-call-site substring and an unbounded browser wait).
+# Needs the server on :5055; the J83 sub-check skips without playwright.
+$PY scripts/check_qa_2026_08_25.py >/dev/null 2>&1
+chk $? "J81-J86  2026-08-25 QA audit fixes hold (6 gates in one script)" "see: python scripts/check_qa_2026_08_25.py"
+
 # J78 — the tenants are VISIBLE in the plan (owner: "I didn't see all these new
 # DT in my plan"), drawn the same way the POS-transit IWIP rows are. A tenant
 # fleet has two representations and only ONE may reach pricing: the ROW the

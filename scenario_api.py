@@ -80,17 +80,22 @@ LIM_LD_CAP_T = LIM_LD_TARGET_T  # back-compat alias (old name, same number)
 LD_ROUTE_KEY = "TF>HUAFEI"
 RIM_ONLY_PITS = ("BLB",)
 
-# SAP routing conditions for imported scenarios (owner, 2026-08-19):
-#   10 kt/day TOFU -> FENI KM15,  10 kt/day BLB -> FENI KM0,
+# SAP routing for imported scenarios (owner, 2026-08-25):
+#   2 kt/day TOFU -> FENI KM15,  2 kt/day BLB -> FENI KM0 (±2 kt landing band),
 #   TOFU's remaining SAP -> POS 12,  BLB's remaining SAP -> POS 14,
-#   KRENE SAP -> POS 12 (its only SAP route).
-# S1 keeps the matrix's own split. Fixed amounts are t/day ceilings for the
-# FENI routes; everything above them goes to the pit's "rest" destination.
+#   KRENE SAP -> POS 12 (its only SAP route). Leftover does NOT go to the
+#   other FeNi plant. S1 keeps the matrix's own split. Fixed amounts are
+#   t/day ceilings; everything above them goes to the pit's POS buffer.
 SAP_ROUTING = {
-    "BLB":  {"fixed": [("FENI KM 0", 10000.0)], "rest": "POS 14"},
-    "TOFU": {"fixed": [("FENI KM 15", 10000.0)], "rest": "POS 12"},
+    "BLB":  {"fixed": [("FENI KM0", 2000.0)], "rest": "POS 14"},
+    "TOFU": {"fixed": [("FENI KM15", 2000.0)], "rest": "POS 12"},
     "KRENE": {"fixed": [], "rest": "POS 12"},
 }
+
+
+def _norm_sap_dest(d):
+    s = re.sub(r"\s+", " ", str(d or "").upper().strip())
+    return s.replace("KM 0", "KM0").replace("KM 15", "KM15").replace("KM 10", "KM10")
 
 
 def _split_sap_conditions(pit, T, grp, m):
@@ -100,16 +105,25 @@ def _split_sap_conditions(pit, T, grp, m):
     if not rule:
         return None
     for dest, amt in rule["fixed"]:
-        rows = [r for r in grp if r["dest"].upper() == dest]
+        want = _norm_sap_dest(dest)
+        rows = [r for r in grp if _norm_sap_dest(r["dest"]) == want]
         if not rows or left <= 0:
             continue
         w = min(left, amt)
         out.append((rows[0], w))
         left -= w
-    rest_rows = [r for r in grp if r["dest"].upper() == rule["rest"]]
+    rest_want = _norm_sap_dest(rule["rest"])
+    rest_rows = [r for r in grp if _norm_sap_dest(r["dest"]) == rest_want]
+    if left > 0 and not rest_rows:
+        rest_rows = [r for r in grp if "POS" in _norm_sap_dest(r["dest"])]
+    if left > 0 and not rest_rows:
+        # Matrix never had a POS SAP haul for this pit (the old 10 kt FeNi
+        # cap absorbed BLB's whole SAP). Clone onto the buffer dest so the
+        # leftover is not silently dumped back on FeNi.
+        probe = dict(grp[0])
+        probe["dest"] = rule["rest"]
+        rest_rows = [probe]
     if left > 0:
-        if not rest_rows:
-            return None  # no route to the required destination - fall back
         base = sum(r["wmt"].get(m, 0) for r in rest_rows)
         for r in rest_rows:
             share = (r["wmt"].get(m, 0) / base) if base else 1.0 / len(rest_rows)
@@ -897,17 +911,37 @@ def _scenario_year_cards(sc, year):
     return cards, None
 
 
-def _scenario_results_for_export():
-    ids = ["S1"] + [s for s in _scenario_ids() if s != "S1"]
-    results = []
-    for sid in ids:
+def _scenario_results_for_export(ids=None):
+    """(results, skipped). `ids` filters; None means every waterfall scenario.
+
+    Returns SKIPPED ids as well, because this sheet can only ever show
+    waterfall runs. A day-convention scenario like S4 has no targets file to
+    run a waterfall on, so asking for it here used to be dropped in silence
+    and `?ids=S3,S4` returned the same workbook as no arguments at all. Naming
+    the skip — and where the scenario CAN be had — is the difference between a
+    gap and a lie.
+    """
+    known = ["S1"] + [s for s in _scenario_ids() if s != "S1"]
+    want = list(ids) if ids else known
+    results, skipped = [], []
+    for sid in want:
         sc = _load_scenario(sid)
         if not sc:
+            day = _day_for_scenario_id(sid)
+            skipped.append((sid, (
+                "day-%02d saved-plan scenario: no waterfall targets file, so it "
+                "cannot appear on a Compare sheet. Export it from "
+                "/api/scenarios/export-full?id=%s or "
+                "/api/monthly/export-year?day=%d, or read the saved_day_plans "
+                "block of /api/scenarios/compare?ids=%s" % (day, sid, day, sid))
+                if day else "no such scenario"))
             continue
         res, err = waterfall(sc)
-        if not err:
-            results.append(res)
-    return results
+        if err:
+            skipped.append((sid, err))
+            continue
+        results.append(res)
+    return results, skipped
 
 
 def _write_compare_sheet(ws, results):
@@ -1019,27 +1053,106 @@ def _export_filename(year, sid):
     return "monthly_plan_%s_%s.xlsx" % (year, sid)
 
 
-def _xlsx_all_scenarios_zip(year, achv=False):
+def _exportable_scenario_ids():
+    """Every scenario the app OFFERS, not every scenario that has a file.
+
+    A scenario reaches the user two different ways and this function is the
+    only place that has to know both:
+
+      * waterfall imports  -> data/scenarios/<id>.json  (S1 derived, S3, ...)
+      * day-of-month saves -> data/saved_plans/YYYY-MM-<day>.json
+
+    S4 is the second kind and always will be (see _day_for_scenario_id): it is
+    S3 with the leftover TF LD trucks split 50/50, expressed as day-04 Plan-tab
+    saves. Listing only the files is why `export-full` shipped a zip with S1
+    and S3 in it and `?id=S4` returned 404, while /monthly's own
+    `export-year?day=4` built the S4 workbook perfectly well.
+    """
+    ids = ["S1"] + [s for s in _scenario_ids() if s != "S1"]
+    for sid in _saved_day_scenario_ids():
+        if sid not in ids:
+            ids.append(sid)
+    return ids
+
+
+# The day-of-month scenario convention, spelled out. ONE owner for it.
+#   01 = S1   03 = S3   04 = S4      (02 is reserved: S2 deleted 2026-08-21)
+# It is a CLOSED list on purpose. Deriving it from whatever days happen to have
+# saves turns the legacy August dailies (2026-08-05 / -07 / -13, which predate
+# the convention and are plain daily plans) into phantom scenarios S5/S7/S13 —
+# measured, all three appeared. Adding a scenario day must be a deliberate edit
+# here, not an accident of someone saving a plan on the 9th.
+_DAY_SCENARIOS = {1: "S1", 3: "S3", 4: "S4"}
+
+
+def _saved_day_scenario_ids():
+    """Convention scenario ids that actually have saves on their day."""
+    import monthly_api as ma
+    out = []
+    d = getattr(ma, "_SAVED_DIR", None)
+    if not d or not os.path.isdir(d):
+        return out
+    days = set()
+    for name in sorted(os.listdir(d)):
+        if not name.endswith(".json"):
+            continue
+        m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", name[:-5])
+        if m:
+            days.add(int(m.group(3)))
+    for day in sorted(_DAY_SCENARIOS):
+        if day in days:
+            out.append(_DAY_SCENARIOS[day])
+    return out
+
+
+def _year_book_for_scenario(sid, year, achv=False):
+    """The workbook for `sid`, whichever kind of scenario it is.
+
+    Returns (workbook, error). A day-convention scenario is built from the
+    SAME cards /api/monthly/export-year?day=N uses, so the two endpoints can
+    never disagree about what S4 contains.
+    """
+    import monthly_api as ma
+    sc = _load_scenario(sid)
+    if sc:
+        return _scenario_year_book(sc, year, achv=achv)
+    day = _day_for_scenario_id(sid)
+    if not day:
+        return None, "no such scenario"
+    _yearly, cards = ma._year_cards(year, day=day)
+    if not cards:
+        return None, ("no day-%02d plans stored for %s — %s is the day-%02d "
+                      "saved-plan convention, so it needs saves on that day"
+                      % (day, year, sid, day))
+    return ma._xlsx_year_book(year, cards, achv=achv), None
+
+
+def _xlsx_all_scenarios_zip(year, achv=False, ids=None):
     """Zip of one monthly_plan workbook per scenario — same files as Year board Excel."""
     import zipfile
-    ids = ["S1"] + [s for s in _scenario_ids() if s != "S1"]
+    ids = list(ids) if ids else _exportable_scenario_ids()
     buf = io.BytesIO()
-    written = []
+    written, errors = [], []
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for sid in ids:
-            sc = _load_scenario(sid)
-            if not sc:
-                continue
-            wb, err = _scenario_year_book(sc, year, achv=achv)
+            wb, err = _year_book_for_scenario(sid, year, achv=achv)
             if err or wb is None:
+                errors.append("%s: %s" % (sid, err or "no workbook"))
                 continue
             inner = io.BytesIO()
             wb.save(inner)
             name = _export_filename(year, sid)
             zf.writestr(name, inner.getvalue())
             written.append(name)
+        if written and errors:
+            # Say what is NOT in the zip. A member silently missing is how the
+            # S4 gap survived: the download succeeded, so nothing looked wrong.
+            zf.writestr("_MISSING.txt",
+                        "These scenarios were requested but could not be "
+                        "built:\n" + "\n".join(errors) + "\n")
     if not written:
-        return None, "no scenario year sheets could be built — load the matrix and import scenarios"
+        return None, ("no scenario year sheets could be built — load the matrix "
+                      "and import scenarios (%s)" % "; ".join(errors))
     buf.seek(0)
     return buf, None
 
@@ -1268,9 +1381,15 @@ def api_scenarios_export():
     from openpyxl.utils import get_column_letter
     from flask import send_file
 
-    results = _scenario_results_for_export()
+    want = (request.args.get("ids") or "").strip()
+    ids = [_safe_id(x) for x in want.split(",") if _safe_id(x)] if want else None
+    results, skipped = _scenario_results_for_export(ids)
     if not results:
-        return jsonify({"ok": False, "error": "no scenarios to export"}), 404
+        return jsonify({
+            "ok": False,
+            "error": "no scenarios to export",
+            "skipped": [{"id": s, "why": w} for s, w in skipped],
+        }), 404
 
     bold = Font(bold=True)
     head_fill = PatternFill("solid", fgColor="1F2937")
@@ -1281,6 +1400,21 @@ def api_scenarios_export():
     ws = wb.active
     ws.title = "Compare"
     _write_compare_sheet(ws, results)
+    if skipped:
+        # In the workbook, not just the log. A requested scenario missing from
+        # a file that opened fine reads as "there was nothing to show".
+        sk = wb.create_sheet("Not in this file")
+        sk.append(["Requested but NOT included"])
+        sk["A1"].font = Font(bold=True, size=13)
+        sk.append([])
+        sk.append(["Scenario", "Why", ])
+        for c in sk[3]:
+            c.font = head_font
+            c.fill = head_fill
+        for sid, why in skipped:
+            sk.append([sid, why])
+        sk.column_dimensions["A"].width = 14
+        sk.column_dimensions["B"].width = 120
 
     for r in results:
         d = wb.create_sheet(r["id"][:28])
@@ -1367,17 +1501,20 @@ def api_scenarios_export_full():
     achv = (request.args.get("achv") or "").strip() in ("1", "true", "yes")
     sid = _safe_id(request.args.get("id") or "")
     if sid:
-        sc = _load_scenario(sid)
-        if not sc:
-            return jsonify({"ok": False, "error": "no such scenario"}), 404
-        wb, err = _scenario_year_book(sc, year, achv=achv)
-        if err:
-            return jsonify({"ok": False, "error": err}), 404
+        # _year_book_for_scenario handles BOTH kinds of scenario, so S4 (which
+        # has no data/scenarios/S4.json and never will) exports here exactly as
+        # it does from /api/monthly/export-year?day=4 instead of 404ing.
+        wb, err = _year_book_for_scenario(sid, year, achv=achv)
+        if err or wb is None:
+            return jsonify({"ok": False, "error": err or "no such scenario",
+                            "known": _exportable_scenario_ids()}), 404
         name = _export_filename(year, sid)
         if achv:
             name = name.replace(".xlsx", "_achievable.xlsx")
         return ma._xlsx_send(wb, name)
-    buf, err = _xlsx_all_scenarios_zip(year, achv=achv)
+    want = (request.args.get("ids") or "").strip()
+    ids = [_safe_id(x) for x in want.split(",") if _safe_id(x)] if want else None
+    buf, err = _xlsx_all_scenarios_zip(year, achv=achv, ids=ids)
     if err:
         return jsonify({"ok": False, "error": err}), 404
     zname = "monthly_plan_%s_all_scenarios%s.zip" % (year, "_achievable" if achv else "")

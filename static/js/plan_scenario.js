@@ -58,10 +58,30 @@ function planDraftToFlowSeed(){
   Object.keys(_planDraft||{}).forEach(id=>{
     const r=_planDraft[id];
     if(!r||!r.key)return;
+    // Tenant rows are NOT ours and must never reach this seed. Every row here
+    // becomes a _flowSim route priced at OUR measured trips/DT and OUR payload,
+    // so a tenant row is a phantom truck producing our tonnes. Worse, four of
+    // them share our TF>FENI KM15 key, so they merged into our own row: the
+    // readout showed 896 DT where the plan has 96, and quoted 7,265 trips /
+    // 340k WMT against the page's own 3,736 / 182,303 (measured 2026-08-25).
+    // Their ROAD demand is not lost — flow_sim adds the register's own
+    // per-segment flow (congestion/tenants.py, each fleet at ITS OWN tempo),
+    // which is the only honest way to count them: KR>RSF turns 5 trips/day
+    // against TF>HUAFEI's ~1.2, so counting tenant TRUCKS at our tempo
+    // under-states exactly the fleet the owner is worried about.
+    if(typeof planIsTenantRow==='function'?planIsTenantRow(r,id):r._tenant)return;
     const dt=(frozen&&r._allocDt!=null)?r._allocDt:r.dt;
     if(!(dt>0))return;
-    const g=by[r.key]||(by[r.key]={key:r.key,dt:0});
+    const g=by[r.key]||(by[r.key]={key:r.key,dt:0,foreign:true});
     g.dt+=dt;
+    // A group is production only if SOME row in it is ours. IWIP POS-transit
+    // rows are real trucks on the road but move no WMT for us, and
+    // planPredictTotals already filters them (`if(r.foreign)return`) — the
+    // flow readout did not, so it quoted their trips and priced them at TF
+    // tonnes. Keeping the flag on the group lets the readout count them for
+    // ROAD demand and leave them out of PRODUCTION, which is the same split
+    // the engine payload makes.
+    if(!r.foreign)g.foreign=false;
   });
   const P=Object.values(by).map((g,i)=>{
     const [o,d]=g.key.split('>'),m=(_pathResp&&_pathResp[g.key])||{};
@@ -72,6 +92,7 @@ function planDraftToFlowSeed(){
       date:'plan',pathKey:g.key,label:(o||'')+' → '+(d||''),
       path:g.dt,section:g.dt,tr,trips:g.dt*tr,wmt:g.dt*tr*(m.tf||0),
       shiftTr:tr*sf,shiftTrips:g.dt*tr*sf,shiftExplicit:true,
+      foreign:!!g.foreign,
     };
   });
   const draft={};P.forEach(p=>{draft[p.pathKey]=Math.round(p.path);});
@@ -139,7 +160,7 @@ function planSetIllustBusy(on){
 
 /**
  * Called when Plan host starts ▶ Run on the GPS corridor.
- * Reveals C and times THIS PLAN's road occupancy by hour (+ IWIP option).
+ * Reveals C and times THIS PLAN's road occupancy by hour (IWIP always included).
  */
 function planOnCorridorRun(){
   const illust=q('plan-s2-illust');
@@ -885,46 +906,50 @@ function planFmtN(n,d){
 // One question, answered from THIS plan: at which hours of the shift will each
 // haul-road section be crowded? Occupancy comes from /api/plan/shared-flow
 // (measured load/dump dwell + Jul+ section speeds + staggered releases) for
-// OUR planned trucks; the IWIP toggle adds the measured other-traffic paths
-// (foreign rows from the last ticket shift, scaled to the Other-trips input)
-// so the corridor shows combined crowding. Advisory only — never touches
-// simulate tonnes (basis.congestion_clips_tonnes stays false, J53).
-let _planCrowdIncludeIwip=false;   // default OFF (owner, 2026-08-19)
-let _planCrowdWholeDay=true;       // full 24 h day = two 12 h shifts
+// OUR planned trucks plus measured IWIP/Position paths (last-shift foreign
+// rows, scaled to the Other-trips input) so the corridor shows combined
+// crowding. Advisory only — never touches simulate tonnes
+// (basis.congestion_clips_tonnes stays false, J53).
 function planCrowdIwipPlans(){
   // Measured IWIP paths (from planFetchOtherTraffic) scaled to the Other-trips
   // input: trips in the box ÷ trips measured that shift. Trucks scale the same
   // way; occupancy needs truck counts, not ticket counts.
+  // Other-trips 0 means "do not add extra IWIP" — k=1 used to inject the
+  // whole measured set on top of POS-transit rows already in the draft.
   const paths=(typeof _planOtherPaths!=='undefined'?_planOtherPaths:[])||[];
-  if(!paths.length)return [];
-  const meas=(typeof _planOtherSrcTrips!=='undefined'?_planOtherSrcTrips:0)||0;
   const want=(typeof _planOtherTrips!=='undefined'?_planOtherTrips:0)||0;
-  const k=meas>0&&want>0?want/meas:1;
+  if(!paths.length||!(want>0))return [];
+  const meas=(typeof _planOtherSrcTrips!=='undefined'?_planOtherSrcTrips:0)||0;
+  const k=meas>0?want/meas:1;
   return paths.map((p,i)=>({
     source:p.origin,destination:p.dest,
     n_trucks:Math.max(1,Math.round((p.trucks||1)*k)),
     contractor:'IWIP',id:'iwip'+i,
   }));
 }
-function planCrowdToggleIwip(el){
-  _planCrowdIncludeIwip=!!(el&&el.checked);
-  planFetchRoadCrowding();
-}
-function planCrowdToggleDay(el){
-  _planCrowdWholeDay=!!(el&&el.checked);
-  planFetchRoadCrowding();
-}
-function planFetchRoadCrowding(){
-  // Road crowding must see the ALLOCATED division (S4 split rows, IWIP) —
-  // owner, 2026-08-21: every aspect follows the 50/50 truck division.
+function planRoadCrowdingPlans(){
+  // Same fleet Excel reads from a save: our rows + IWIP already on the
+  // plan. Tenant rows stay OUT — shared_flow(tenants=True) injects the
+  // register as background, and sending the rows as well is why Plan
+  // showed ~416/442/503 on TF–KR while Excel showed ~half of that.
   const frozen=typeof planAllocFrozen==='function'&&planAllocFrozen();
-  const plans=planDraftEntries().map(r=>({
+  const plans=planDraftEntries().filter(r=>
+    !(typeof planIsTenantRow==='function'?planIsTenantRow(r,r.id):r._tenant)
+  ).map(r=>({
     source:r.source,destination:r.dest,
     n_trucks:Math.round(((frozen&&r._allocDt!=null)?r._allocDt:r.dt)||0),
     n_loaders:typeof planNLoaders==='function'?planNLoaders(r):(r.loaders||2),
     contractor:r.contractor||null,id:r.id,
   })).filter(p=>p.n_trucks>0&&p.source&&p.destination);
-  const iwip=_planCrowdIncludeIwip?planCrowdIwipPlans():[];
+  const have=new Set(plans.filter(p=>String(p.contractor||'').toUpperCase()==='IWIP')
+    .map(p=>p.source+'>'+p.destination));
+  const iwip=planCrowdIwipPlans().filter(p=>!have.has(p.source+'>'+p.destination));
+  return {plans,iwip};
+}
+function planFetchRoadCrowding(){
+  // Road crowding must see the ALLOCATED division (S4 split rows, IWIP) —
+  // owner, 2026-08-21: every aspect follows the 50/50 truck division.
+  const {plans,iwip}=planRoadCrowdingPlans();
   const box=q('plan-road-crowding');
   if(box&&!box.querySelector('.plan-rc-grid')){
     box.innerHTML='<p class="muted" style="margin:0;font-size:12px">Timing the plan\u2019s road occupancy\u2026</p>';
@@ -933,10 +958,28 @@ function planFetchRoadCrowding(){
   const rain=Math.max(0,parseFloat((q('plan-rain')||{}).value)||0);
   return fetch('/api/plan/shared-flow',{
     method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({plans:plans.concat(iwip),shift_hours:shiftH,rain_mm:rain,start_hour:7,whole_day:_planCrowdWholeDay}),
+    body:JSON.stringify({plans:plans.concat(iwip),shift_hours:shiftH,rain_mm:rain,start_hour:7,whole_day:true}),
   }).then(r=>r.json()).then(data=>{
     _planSharedFlow=data;
     planRenderRoadCrowding(data,{nPlan:plans.length,nIwip:iwip.length,nIwipAvail:planCrowdIwipPlans().length});
+    // The chainage stick tints S1–S4 from this same payload. It renders once
+    // at startup, BEFORE the payload exists, so without this repaint the
+    // segment blocks stay grey until the user happens to poke the stick —
+    // measured: c3-flow-svg had S1 labels but zero v/c texts after a full
+    // plan load. Repaint only; no state changes, and guarded so a stick
+    // failure can never break the crowding card it rides on.
+    try{
+      if(typeof _flowSource!=='undefined'&&_flowSource&&typeof renderFlowSimulator==='function'){
+        // Mid-animation is fine to repaint too: renderFlowSimulator stops the
+        // sim, rebuilds the SVG (now including strip colours from THIS
+        // payload) and flowToggle can restart it. Skipping while running left
+        // the owner staring at a grey strip whenever data landed during a
+        // replay — which on the Plan tab is every time.
+        const wasRunning=(_flowSim&&_flowSim.running);
+        renderFlowSimulator(_flowSource.P,_flowSource.colours,true);
+        if(wasRunning&&typeof flowToggle==='function')flowToggle();
+      }
+    }catch(e){}
     return data;
   }).catch(e=>{
     _planSharedFlow=null;
@@ -947,16 +990,8 @@ function planFetchRoadCrowding(){
 function planRenderRoadCrowding(data,meta){
   const box=q('plan-road-crowding');if(!box)return;
   meta=meta||{};
-  const iwipChk=`<label class="plan-rc-iwip" title="Full day = two 12 h shifts (07:00 day + 19:00 night). Trips in flight at the changeover run to completion. Untick for the day shift only.">
-      <input type="checkbox" ${_planCrowdWholeDay?'checked':''} onchange="planCrowdToggleDay(this)"> whole day (2\u00d712 h)
-    </label>
-    <label class="plan-rc-iwip" title="Add the measured IWIP/Position trucks (their last-shift paths, scaled to the Other-trips input) to the road occupancy. They share POS 12\u2013FENI with our hauls. Default OFF.">
-      <input type="checkbox" ${_planCrowdIncludeIwip?'checked':''} onchange="planCrowdToggleIwip(this)"> include IWIP trucks
-      ${meta.nIwipAvail?`<span class="muted">(${meta.nIwipAvail} measured path${meta.nIwipAvail===1?'':'s'})</span>`:'<span class="muted">(no measured paths)</span>'}
-    </label>`;
   if(!data||!data.ok){
-    box.innerHTML=`<div class="plan-rc-head">${iwipChk}</div>
-      <p class="muted" style="margin:6px 0 0;font-size:12px">${escH((data&&data.error)||'Road-crowding timing unavailable')}</p>`;
+    box.innerHTML=`<p class="muted" style="margin:0;font-size:12px">${escH((data&&data.error)||'Road-crowding timing unavailable')}</p>`;
     return;
   }
   const secs=data.sections||[];
@@ -966,55 +1001,93 @@ function planRenderRoadCrowding(data,meta){
   // Hour labels across the shift
   const hourLbls=[];
   for(let b=0;b<nBins;b++)hourLbls.push(((startH+Math.round(b*binH))%24));
-  // Grid: one row per section, one cell per hour, colour by occupancy/capacity.
+  // Colour each hour against ONE loaded lane at 50 m (TF–KR fits 576).
+  // 614 sitting on that lane is over packing → RED. Yellow/orange show
+  // remaining room on the way up; do not wait for 600/h flow to paint.
+  const followM=(data.basis&&data.basis.following_distance_m)||50;
+  const capS13=30*1000/followM;
+  // Remaining-room scale vs one-lane packing.
+  // GREEN plenty left · YELLOW filling · ORANGE tight · RED at/over packing.
+  function crowdTone(vc){
+    if(!(vc>0)||!Number.isFinite(vc))return {cls:'rc-idle',lab:'',badge:'free'};
+    if(vc>=1)return {cls:'rc-high',lab:'RED',badge:'overloaded'};
+    if(vc>=0.7)return {cls:'rc-hot',lab:'ORANGE',badge:'warming'};
+    if(vc>=0.4)return {cls:'rc-watch',lab:'YELLOW',badge:'saturated'};
+    return {cls:'rc-open',lab:'GREEN',badge:'free'};
+  }
   const shiftLen=Math.round((data.shift_hours||12)/binH);
+  // Headline must name the section that produced worstVc. Hardcoding
+  // "of 576 on TF–KR" glued S1's packing onto a shorter section's %
+  // (POS 12–KM15 202/240 = 84% was labelled as 84% of 576).
+  let worstVc=0,worstSec='',worstFit=0;
   const rows=secs.map(s=>{
-    const cap=s.cap_trucks_bin||1;
+    const capLane=s.cap_trucks_lane||((s.section_km>0)?s.section_km*1000/followM:((s.cap_trucks_bin||2)/2));
+    const capPack=capLane;
+    const capFlow=s.cap_flow_per_h||capS13;
     const cells=(s.occupancy||[]).map((c,b)=>{
-      const r=cap>0?c/cap:0;
-      const cls=r>=1?'rc-high':r>=0.7?'rc-watch':c>0?'rc-open':'rc-idle';
+      const laneFl=(s.lane_flow_per_h||[])[b];
+      const vcSit=capPack>0?c/capPack:0;
+      const t=crowdTone(c>0?vcSit:0);
       const night=data.whole_day&&b>=shiftLen?' rc-night':'';
       const edge=data.whole_day&&b===shiftLen?' rc-shift-edge':'';
-      // c is MEAN CONCURRENT trucks on the section that hour (a stock), so it
-      // divides by how many FIT at following distance — not by a flow. The
-      // throughput reading lives in flow_per_h / cap_flow_per_h beside it.
       const cShow=Math.round(c);
-      const fl=(s.flow_per_h||[])[b];
-      const tip=`${escH(s.section)} · ${String(hourLbls[b]).padStart(2,'0')}:00 · ${cShow} truck${cShow===1?'':'s'} on the section on average that hour`
-        +` (fits ~${Math.round(cap)} at ${(data.basis&&data.basis.following_distance_m)||50} m spacing${cap?` · ${Math.round(100*r)}%`:''})`
-        +(Number.isFinite(fl)?` · ${Math.round(fl)} passages/h vs ${Math.round(s.cap_flow_per_h||0)}/h per lane`:'')
+      const over=c>capPack;
+      const leftN=Math.max(0,Math.round(capPack-c));
+      const emptySit=(s.occupancy_empty||[])[b];
+      const tip=`${escH(s.section)} · ${String(hourLbls[b]).padStart(2,'0')}:00 · ${cShow} loaded-lane truck${cShow===1?'':'s'} sitting`
+        +` · ${Math.round(capPack)} fit on one loaded lane at ${Math.round(followM)} m`
+        +(capPack?(over?` · OVER by ${Math.round(c-capPack)}`:` · ${Math.round(100*vcSit)}% used · ${leftN} still fit`):'')
+        +(Number.isFinite(laneFl)?` · ${Math.round(laneFl)}/h vs ${Math.round(capFlow)}/h loaded-lane flow`:'')
+        +(Number.isFinite(emptySit)?` · ${Math.round(emptySit)} empty on the other lane`:'')
         +`${night?' · night shift':''}`;
-      return `<div class="rc-cell ${cls}${night}${edge}" title="${tip}">${cShow>0?cShow:''}</div>`;
+      return `<div class="rc-cell ${t.cls}${night}${edge}" title="${tip}">${cShow>0?cShow:''}</div>`;
     }).join('');
     const who=(s.plans||[]).join(' · ');
+    const rowVc=Math.max(s.ratio_presence_lane||0,
+      ...((s.occupancy||[]).map(c=>capPack>0?c/capPack:0)));
+    if(rowVc>worstVc){worstVc=rowVc;worstSec=s.section||'';worstFit=capPack;}
+    const tag=crowdTone(rowVc);
+    const leftPct=rowVc>=1?0:Math.round(100*Math.max(0,1-rowVc));
+    const badgeLab=rowVc>=1?`${tag.lab} · over`:tag.lab?`${tag.lab} · ${leftPct}% left`:'';
+    const badge=badgeLab?` <span class="plan-cong-badge ${tag.badge}">${badgeLab}</span>`:'';
     const shared=s.shared?` <span class="muted">· shared${who.includes('IWIP')?' incl. IWIP':''}</span>`:'';
     return `<div class="rc-row" title="${escH(s.section)} — used by: ${escH(who||'—')}">
-      <div class="rc-sec"><b>${escH(s.section)}</b>${shared}</div>
+      <div class="rc-sec"><b>${escH(s.section)}</b>${badge}${shared}</div>
       <div class="rc-cells">${cells}</div>
     </div>`;
   }).join('');
   const axis=`<div class="rc-row rc-axis"><div class="rc-sec"></div><div class="rc-cells">${
     hourLbls.map((h,b)=>`<div class="rc-cell rc-hour${data.whole_day&&b>=shiftLen?' rc-night':''}${data.whole_day&&b===shiftLen?' rc-shift-edge':''}">${String(h).padStart(2,'0')}</div>`).join('')
   }</div></div>`;
-  // Verdict: worst crowded hours across sections.
-  const chours=data.congestion_hours||[];
-  const verdict=chours.length
-    ?`\u26a0 Crowded: ${chours.slice(0,4).map(h=>`<b>${escH(h.label)}</b> ${escH((h.sections||[]).join(', '))} (${h.peak_trucks} trucks${h.ratio!=null?` · ${Math.round(100*h.ratio)}%`:''})`).join(' · ')}`
-    :`\u2713 No hour reaches 70% of the official lane capacity flow — v/c peaks at ${Math.round(100*Math.max.apply(null,secs.map(x=>x.ratio||0)))}%`;
-  const iwipNote=meta.nIwip&&_planCrowdIncludeIwip
-    ?` · IWIP ${meta.nIwip} path(s) scaled to the Other-trips input`
-    :(_planCrowdIncludeIwip?'':' · IWIP excluded (toggle to include)');
+  const peakSit=worstVc;
+  const leftPeak=peakSit>1?0:Math.round(100*Math.max(0,1-peakSit));
+  const where=worstSec?` of ${Math.round(worstFit)} on ${worstSec}`:'';
+  const verdict=peakSit>=1
+    ?`\u26a0 RED BY OCCUPANCY \u2014 over one-lane packing at ${Math.round(followM)} m \u2014 peak ${Math.round(100*peakSit)}%${where}`
+    :(peakSit>=0.7
+      ?`ORANGE BY OCCUPANCY \u2014 ${leftPeak}% left on one loaded lane (peak ${Math.round(100*peakSit)}%${where})`
+      :(peakSit>=0.4
+        ?`YELLOW BY OCCUPANCY \u2014 ${leftPeak}% left on one loaded lane (peak ${Math.round(100*peakSit)}%${where})`
+        :`GREEN BY OCCUPANCY \u2014 ${leftPeak}% left on one loaded lane (peak ${Math.round(100*peakSit)}%${where})`));
+  // The chainage strip above ranks the SAME payload by FLOW v/c and can name a
+  // DIFFERENT section (measured 2026-08-25 on the 2026-12-04 plan: flow worst
+  // KM15-coast 0.90, occupancy worst POS 12-KM15 0.87). Two real questions --
+  // "how many trucks FIT on the lane" vs "how many PASS per hour" -- so this
+  // banner says which one it answers and prints the other, instead of leaving
+  // two panels on one screen looking like a contradiction. Both numbers come
+  // from /api/plan/shared-flow; neither is re-derived here.
+  const flowWorst=(data.sections||[]).reduce((a,b)=>((b.ratio||0)>((a&&a.ratio)||0)?b:a),null);
+  const flowNote=(flowWorst&&flowWorst.ratio!=null)
+    ? `Busiest by FLOW is ${escH(flowWorst.section)} at v/c ${flowWorst.ratio.toFixed(2)} `
+      +`(${Math.round(flowWorst.peak_flow_per_h||0)}/hr against a ${Math.round(flowWorst.cap_flow_per_h||0)}/hr cap) `
+      +`\u2014 that is what the chainage strip tints.`
+    : '';
   box.innerHTML=`
     <div class="plan-rc-head">
       <span class="plan-rc-verdict">${verdict}</span>
-      ${iwipChk}
     </div>
-    <div class="plan-rc-grid">${axis}${rows}</div>
-    <div class="muted" style="font-size:10.5px;margin-top:6px">
-      Mean trucks on each section per hour \u2014 our ${meta.nPlan||0} plan path(s)${iwipNote}${data.whole_day?' · full day: 07:00 day + 19:00 night shift':''}.
-      Cell colour: share of the trucks that FIT on the section (green &lt;70% · amber \u226570% · red \u2265100%); the verdict above uses the v/c flow ratio.
-      ${escH(data.note||'Advisory only \u2014 never changes simulate tonnes.')}
-    </div>`;
+    <p class="muted" style="margin:4px 0 8px;font-size:11px;line-height:1.4">Loaded-lane trucks <b>sitting</b> each hour (empty is the other carriageway). Colour = occupancy \u00f7 the trucks that <b>fit</b> on one loaded lane at ${Math.round(followM)}&nbsp;m packing \u2014 a different quantity from the <b>flow</b> cap in trucks/hr on the Congestion packing card. ${flowNote}</p>
+    <div class="plan-rc-grid">${axis}${rows}</div>`;
 }
 
 function planRenderDaySegments(data,dateS){
@@ -1320,6 +1393,16 @@ function planDraftFleetDt(plans){
  */
 function planRunScenario(opts){
   opts=opts||{};
+  // A saved plan mid-load is not yet known to be frozen — running here prices
+  // the pre-allocation DT and paints a stale required-DT board over an
+  // already-allocated plan. Defer instead; planLoadSettled re-runs if the
+  // settled plan turns out not to be frozen.
+  if(planLoadInFlight()&&!opts.fromAlloc){
+    _planRunAfterLoad=opts;
+    const st=q('plan-opt-status');
+    if(st)st.textContent='Loading the saved plan — capacity will run once it is in.';
+    return;
+  }
   if(typeof planAllocFrozen==='function'&&planAllocFrozen()&&!opts.fromAlloc){
     if(typeof planLockCapacityBtn==='function')planLockCapacityBtn();
     return;
@@ -1385,12 +1468,17 @@ function planRunScenario(opts){
     const open=q('plan-open-assessment');
     if(open)open.disabled=false;
     planRefreshSaveButtons();
-    // Keep viewport on the prediction hero — GPS ▶ Run opens road crowding below.
-    const hero=q('plan-sec-predict');
-    const jump=hero||est;
-    if(jump&&typeof jump.scrollIntoView==='function'){
-      try{jump.scrollIntoView({behavior:'smooth',block:'nearest'});}
-      catch(_){jump.scrollIntoView(true);}
+    // Keep viewport on the prediction hero after Check capacity. Allocate
+    // re-runs simulate 2–4 times; jumping to the hero each time yanks the
+    // New Allocation Plan scroller (and the page) back to the top.
+    const frozenNow=typeof planAllocFrozen==='function'&&planAllocFrozen();
+    if(!opts.fromAlloc && !frozenNow){
+      const hero=q('plan-sec-predict');
+      const jump=hero||est;
+      if(jump&&typeof jump.scrollIntoView==='function'){
+        try{jump.scrollIntoView({behavior:'smooth',block:'nearest'});}
+        catch(_){jump.scrollIntoView(true);}
+      }
     }
   }).catch(e=>{
     if(gen!==_planScenarioGen||_planScenarioQueued)return;
@@ -1569,15 +1657,16 @@ function planNavSync(){
   // moves OUR material off the POS stockpiles, the tenants move their own and
   // give us nothing. Counting 1,340 tenant DT as "IWIP" would misname the
   // biggest fleet on the road.
-  const iwip=rows.filter(r=>r.foreign&&!r._tenant).reduce((a,r)=>a+(+r.dt||0),0);
-  const ten=rows.filter(r=>r._tenant).reduce((a,r)=>a+(+r.dt||0),0);
+  const isTen=r=>typeof planIsTenantRow==='function'?planIsTenantRow(r,r.id):!!r._tenant;
+  const iwip=rows.filter(r=>r.foreign&&!isTen(r)).reduce((a,r)=>a+(+r.dt||0),0);
+  const ten=rows.filter(isTen).reduce((a,r)=>a+(+r.dt||0),0);
   const d=q('plan-nav-date'); if(d)d.textContent=date||'no date set';
   const s=q('plan-nav-summary');
   if(s)s.textContent=rows.length
     ? rows.length+' path'+(rows.length===1?'':'s')+' · '+Math.round(dt)+' DT'
       +(iwip>0?' + '+Math.round(iwip)+' IWIP':'')
       +(ten>0?' + '+Math.round(ten)+' other tenants':'')
-    : 'no paths yet';
+    : '';
 }
 
 function planNavScrollSpy(){
@@ -1672,8 +1761,14 @@ function planSaveForDate(){
   return fetch('/api/plan/saved',{
     method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify(snap),
-  }).then(r=>r.json()).then(res=>{
-    if(!res||!res.ok){alert((res&&res.error)||'Save failed');if(st)st.textContent='Save failed';return;}
+  }).then(r=>r.json().then(res=>({http:r.status,res}))).then(function(out){
+    const res=out.res;
+    if(!res||!res.ok){
+      const msg=(res&&res.error)||('Save failed ('+out.http+')');
+      alert(msg);
+      if(st)st.textContent='Save failed';
+      return;
+    }
     _planSavedExists=true;
     if(st)st.textContent='Saved for '+snap.date+(res.plan&&res.plan.saved_at?' · '+res.plan.saved_at:'');
     planRefreshSaveButtons();
@@ -1682,12 +1777,33 @@ function planSaveForDate(){
 }
 
 let _planLoadGen=0;
+// How many saved-plan loads are in flight. A load ends in planRestoreAllocation,
+// which is what sets _allocFrozen — so between the fetch starting and that call
+// the page is a frozen plan that does not yet KNOW it is frozen. Check capacity
+// fired in that window renders the required-DT board on the pre-allocation DT
+// ("add 45 DT", "-6,003 t short") for a plan that was already allocated, and
+// leaves the New Allocation panel hidden. planRunScenario refuses to start
+// while this is non-zero, and re-runs once the load settles if it was asked for.
+let _planLoadPending=0,_planRunAfterLoad=null;
+function planLoadInFlight(){return _planLoadPending>0;}
+function planLoadSettled(){
+  _planLoadPending=Math.max(0,_planLoadPending-1);
+  if(_planLoadPending>0)return;
+  const opts=_planRunAfterLoad;
+  _planRunAfterLoad=null;
+  // Only honour the deferred run if the settled plan is NOT frozen. A frozen
+  // plan's Check capacity is gated behind Unlock by design.
+  if(opts&&!(typeof planAllocFrozen==='function'&&planAllocFrozen())){
+    try{planRunScenario(opts);}catch(_){}
+  }
+}
 function planLoadSavedForDate(opts){
   const quiet=opts&&opts.quiet;
   const date=((q('plan-date')||{}).value||'').trim();
   if(!date){if(!quiet)alert('Set a plan date first.');return Promise.resolve(false);}
   const st=q('plan-save-status');
   if(st&&!quiet)st.textContent='Loading…';
+  _planLoadPending++;
   const gen=++_planLoadGen;
   const epoch=window._planDraftEpoch||0;
   const dateAtStart=date;
@@ -1735,10 +1851,23 @@ function planLoadSavedForDate(opts){
           if(hd)hd.textContent=String(res.plan.hours);
         }
       }
-      if(typeof computePlan==='function')computePlan();
-      if(st)st.textContent='Loaded plan for '+date;
-      planRefreshSaveButtons();
-      return true;
+      // Await tenant merge BEFORE the first paint the planner sees. The
+      // previous fire-and-forget lost the race with computePlan, so Your
+      // plan opened without the other tenants until (sometimes never) a
+      // later redraw.
+      const finish=function(){
+        if(gen!==_planLoadGen)return false;
+        if(typeof computePlan==='function')computePlan();
+        if(st)st.textContent='Loaded plan for '+date;
+        planRefreshSaveButtons();
+        return true;
+      };
+      if(typeof planRulesTenants==='function'){
+        return Promise.resolve().then(planRulesTenants).catch(function(){})
+          .then(finish);
+      }
+      return finish();
     })
-    .catch(e=>{if(gen!==_planLoadGen)return false;if(!quiet)alert('Load failed: '+e);if(st)st.textContent='Load failed';return false;});
+    .catch(e=>{if(gen!==_planLoadGen)return false;if(!quiet)alert('Load failed: '+e);if(st)st.textContent='Load failed';return false;})
+    .finally(planLoadSettled);
 }

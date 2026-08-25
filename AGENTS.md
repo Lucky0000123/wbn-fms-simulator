@@ -1092,8 +1092,8 @@ preserve_stamp()` carries `generated_at` forward when nothing else changed, so
 - Forward planning and achievable tonnes belong on Plan Step 2 / `/api/simulate`; Capability Shift Road is for historical replay and illustration, not the planning estimate.
 - Keep the schematic chainage stick always visible with the map; Run should scroll both visuals into view so the user can watch what is playing.
 - Best past days / analogues: filter by selected contractor; rank nearby trip count first, then trips/DT; color wet vs dry; show a loading state while searching; omit “ops only / no haul GPS” caveats from that list. When a day is selected, show that day’s figures — do not label Jan–May season averages as that day’s DT/trips.
-- Keep Plan Step 1 sparse: default haul Source **TF** / Destination **FENI KM0**; Shift/Day is the planning **horizon** (one 12h shift vs one day), not shift length — Day is default and must apply page-wide; date + rain in conditions; estimated output beside plan date; best-past-days collapsed behind a dropdown under conditions; rain outlook at the top of Plan (`#plan-sec-outlook`) is the rainfall picker (auto-fills mm when a day is chosen) — do not add a second Open-Meteo “Use mm” row under Scenario; Conditions and Add-haul-path cards stay compact; holding plan listed under the builder; rainfall moves Step 1 WMT. Loaders on the builder and holding table (`_planDraft.loaders`, default 2); Cycle badge is text road/loader/ok, not emoji. Road-only mode uses **IWIP / POSITION** contractors and measured non-plan locations (no WMT); highlight **+ Road-only paths** as adding average IWIP/Position rows for bridge load and road congestion. Estimate card: WMT stays clear at any width; warnings sit full-width below and never crush tonnage; do not show `est-warn` under plan-preview tonnage. No Auto-balance trucks strip — bridge-over-70% warning sits next to add/change WB.
-- On Run Scenario (Step 2), do **not** show an A · Shift outcomes block. Lettering is **A** Production & capacity, **B** Fleet sensitivity, **C** Road crowding by hour, **D** Full assessment, **E** Insights from history; collapse **B** at the end of Step 2 behind a dropdown so it does not interrupt the outcomes, and plot the live hybrid/segment saturation curves (`/api/congestion_curve`), not the old path-response dayRate sweep; lead with production/capacity and a professional loading state (Allocate’s overlay sits in front until the New Allocation Plan is ready); defer the road/GPS corridor until after the corridor run; hour-of-day charts must show which hour is selected; prefer decision-oriented outcomes over repeating tables. Keep planned WMT vs achievable/adjusted consistent — never average predict + simulate + history into one total, and do not manually floor/min Prediction vs Achievable. Keep each engine's own number. Do not cap Plan achievable to target. Monthly page: one Excel download (year board); no extra export buttons or filler copy. Year board Excel hides old/new achievable (keep target, old predicted, optimized predicted); S3/S4 workbooks start September (no August sheet or Aug rows). Path sheet columns: Priority (not P); DT, Trips, WMT, WMT/DT, Trips/DT, Nb days — no “New” prefix; numbers black, not red.
+- Keep Plan Step 1 sparse: default haul Source **TF** / Destination **FENI KM0**; Shift/Day is the planning **horizon** (one 12h shift vs one day), not shift length — Day is default and must apply page-wide; date + rain in conditions; estimated output beside plan date; best-past-days collapsed behind a dropdown under conditions; rain outlook at the top of Plan (`#plan-sec-outlook`) is the rainfall picker (auto-fills mm when a day is chosen) — do not add a second Open-Meteo “Use mm” row under Scenario; Conditions and Add-haul-path cards stay compact; holding plan listed under the builder; rainfall moves Step 1 WMT. Loaders on the builder and holding table (`_planDraft.loaders`, default 2); Cycle badge is text road/loader/ok, not emoji. Road-only mode uses **IWIP / POSITION** contractors and measured non-plan locations (no WMT); highlight **+ Road-only paths** as adding average IWIP/Position rows for bridge load and road congestion. Estimate card: WMT stays clear at any width; warnings sit full-width below and never crush tonnage; do not show `est-warn` under plan-preview tonnage. No Auto-balance trucks strip — bridge-over-70% warning sits next to add/change WB. Plan sticky navbar stays sparse: hide the planning-rules badge and section jump links; do not show empty “no paths yet”; keep Save/Load on the right.
+- On Run Scenario (Step 2), do **not** show an A · Shift outcomes block. Lettering is **A** Production & capacity, **B** Fleet sensitivity, **C** Road crowding by hour, **D** Full assessment, **E** Insights from history; collapse **B** at the end of Step 2 behind a dropdown so it does not interrupt the outcomes, and plot the live hybrid/segment saturation curves (`/api/congestion_curve`), not the old path-response dayRate sweep; lead with production/capacity and a professional loading state (Allocate’s overlay sits in front until the New Allocation Plan is ready); defer the road/GPS corridor until after the corridor run; hour-of-day charts must show which hour is selected; Road crowding keeps include IWIP trucks always on and has no whole-day option; prefer decision-oriented outcomes over repeating tables. Keep planned WMT vs achievable/adjusted consistent — never average predict + simulate + history into one total, and do not manually floor/min Prediction vs Achievable. Keep each engine's own number. Do not cap Plan achievable to target. Monthly page: one Excel download (year board); no extra export buttons or filler copy, and do not insert model-explanation prose anywhere in the xlsx. Year board Excel hides old/new achievable (keep target, old predicted, optimized predicted); monthly named sheets hide * Old columns (DT old, Trips Old, …) and strip “New” from remaining headers; S3/S4 workbooks start September (no August sheet or Aug rows). Path sheet columns: Priority (not P); DT, Trips, WMT, WMT/DT, Trips/DT, Nb days — no “New” prefix; numbers black, not red. Excel Path/Year sheets include the other-tenant fleets Plan already shows (MHM / POSITION / PMA / HSM / KR>RSF / HUAFEI>RSF, material other tenant); TOTAL DT stays our fleet. Excel road crowding uses the same loaded-lane occupancy as Plan.
 - Plan-impacts: hide weighbridge status rows (Bridge load board owns that); keep ✦ AI analysis but never attribute or name the model underneath; use simple fleet-size language and drop the fleet-size row when AI already covers the same point.
 - Planning goal: best production with less congestion using the minimum required trucks — support edit-from-outcomes once verdicts exist.
 - Allocate DT as per strict target priority (Plan Check capacity): **P1 SAP → P2 LIM-TOS → P3 LIM-LD**. Every supplied target is real, including typed/imported LIM-LD; P3 is filled only after P1/P2. Fleet beyond all targets is reported as unused/excess capacity and must not be credited as production. Leave original Production & capacity / Your plan frozen; edits on a locked plan confirm once, unlock, and apply so Check capacity / Allocate follow the on-screen builder, not a saved snapshot. Separate New Allocation Plan underneath: group production rows by origin; IWIP / POS-transit / road-only (`foreign`/`_posTransit`) rows last. Hide the DT-move log (`#plan-alloc-moves` and the same notes under Allocate) — allocator still computes/saves notes; validation stays, not inside table number cells; omit trips/DT range WARN/PASS lines from the validation summary. Same contractor first; cross-contractor rescue creates a new helper path under the truck's real contractor. Hard walls still apply (BLB=RIM, KR=SMA). P3 remains the first donor when P1/P2 are short. Size target shortfall/surplus from Predicted vs target, not the requiredDt inverse. Keep LIM-TOS and LIM-LD as separate rows even at the same destination. Frozen allocations must contain raw `/api/simulate` achievable values for every active row; target-credited prediction is a separate clock and may never masquerade as achievable.
@@ -1102,7 +1102,7 @@ preserve_stamp()` carries `generated_at` forward when nothing else changed, so
 
 - Simulate tonnes use **effective cycle** `(truck_shifts × 720) / trips`, not weigh-to-weigh predicted cycle (~77 min median). Confusing them overpredicts badly. Site median effective is ~389 min; consecutive start-to-start pairs ~240 min — do not conflate those two “240” stories.
 - `DEFAULT_AVAILABILITY = 1.0` for tonnage (J52 + J55). Downtime is already inside effective cycle; never re-add 0.85/0.80. Measured residual **+5.5%** is exposed as companion `ticket_calibrated_achievable_t` (÷1.055, not primary) with Plan lens default ON. Do not “fix” via availability (×0.85 → −10.3%). Roster sizing may still use mechanical availability (~0.72) for fleet count only.
-- Congestion / road V/C, Jul+ corridor clock (`/api/plan/corridor-hours`, `/api/plan/day-segments`, `/api/plan/gps-coverage`), congestion advice (`/api/plan/congestion-advice`), and shared-road DES-lite (`/api/plan/shared-flow`) are measured or advisory and must **never** modify simulate tonnes (J53); `basis.congestion_clips_tonnes` always false. Stick CSV refresh: `scripts/refresh_stick_from_archive.py` (also after `accumulate_gps`).
+- Congestion / road V/C, Jul+ corridor clock (`/api/plan/corridor-hours`, `/api/plan/day-segments`, `/api/plan/gps-coverage`), congestion advice (`/api/plan/congestion-advice`), and shared-road DES-lite (`/api/plan/shared-flow`) are measured or advisory and must **never** modify simulate tonnes (J53); `basis.congestion_clips_tonnes` always false. Stick CSV refresh: `scripts/refresh_stick_from_archive.py` (also after `accumulate_gps`). GPS packing following distance is **50 m** (`congestion.speed_limits.FOLLOWING_DISTANCE_M`); official section caps are S1–S3 **600/hr** and S4 **400/hr** (trucks per hour through the section, not sitting on it). 600/hr is **one loaded lane**, not both carriageways (~2× would be 1,200/hr and is not used). One loaded lane at 50 m fits 576 trucks on TF–KR, 240 on a 12 km stretch, 300 on KM15–coast. Crowding occupancy / `peak_concurrent` / Plan grid / Excel Road crowding count the loaded lane only (empty sits on the other carriageway). Packing table and Plan road-windows tag v/c GREEN (<0.7) / YELLOW (0.7–1.0) / RED (>1) and caption Cap/hr · loaded lane. Do not hardcode 60 m, 75 m, or 500/hr.
 - Point capacity is a **p99 hourly throughput lookup** (not ML). Shared-loader p99 can clip achievable tonnes — that is point capacity, not a congestion term in cycle. Dwell models: wet/dry are served; day/night may be computed but unused at serve. Dual-mode `_register` wraps **8** simulator endpoints (not “all APIs”) — counted 2026-08-12 at `simulator_api.py:1999-2006`; this said 7 until `weighbridge-by-path` was added.
 - Achievable tonnes / Plan Step 2 outcomes come from `/api/simulate`, never flow particles. Step 1 WMT uses path-response **main-cluster** `avgTr` (mid-60% trimmed mean of daily trips/DT, with P25–P75) × contractor `clamp(tripsPerDT/fleet, 0.5–1.5)` × rain; **simulate ignores contractor factors**. Local `planTripsPerDT` day-cap scales by `nLoaders / (historicalLoaders || 2)`; `/api/simulate` payloads include `n_loaders`. Yearly-matrix paste may include optional LOADERS (default 2). Hybrid/shared-road trips/DT for allocation and Fleet sensitivity follow **road time** via `/api/congestion_curve` (segment/hybrid), not loader-queue collapse or path-response dayRate — BLB must not crater from faces. Rain may move Step 1 WMT; simulate tonnes stay weather-invariant (J57). Do not force Achievable to equal Prediction — they are two clocks (ticket path model vs effective cycle + loader clip).
 - Capability Shift Road is illustration/replay; particles are not production. Flow speeds default to measured GPS; posted limits are overlay only. Offline API payloads live in `fixtures/`; models, GPS archive, snapshots, and saved plans live in `data/` (disk snapshots `cap_snapshot.json` / `pr_snapshot.json` sit between memory and fixtures).
@@ -1999,3 +1999,168 @@ starves when stale Playwright/Chromium processes accumulate from repeated
 runs — 33 were leaked here. It passed standalone every time. `pkill` the
 strays before believing a J56 failure, the same way F23/D18b are probed
 before investigating.
+
+## 2026-08-25 — following distance 50 m → 75 m
+
+Owner: use **75 m between two DTs** on the GPS packing table and in the
+live geometry. `congestion.speed_limits.FOLLOWING_DISTANCE_M = 75`.
+Official caps move with the formula (min bin speed × 1000 / gap):
+
+| Segment | Min posted | Cap at 50 m | Cap at 75 m |
+|---|---|---|---|
+| S1–S3 | 30 km/h | 600/hr | **400/hr** |
+| S4 | 20 km/h | 400/hr | **267/hr** |
+
+The packing table and the Plan road-windows table tag v/c GREEN (<0.7) /
+YELLOW (0.7–1.0, at the 75 m packing) / RED (over capacity). Do not
+hardcode 50 m or 600/hr as the live basis. Regenerate reference curves
+after this (`export_saturation_curves.py`).
+
+## 2026-08-25 (later) — following distance 75 m → 60 m
+
+Owner: 75 m packed too few trucks onto each section. Live gap is **60 m
+between two DTs on every section**; posted / average speeds stay as on
+each stretch. `FOLLOWING_DISTANCE_M = 60`. Caps move with the formula
+(min bin speed × 1000 / gap):
+
+| Segment | Min posted | Cap at 75 m | Cap at 60 m | One-lane trucks that fit |
+|---|---|---|---|---|
+| S1–S3 | 30 km/h | 400/hr | **500/hr** | S1 480 · 12 km 200 |
+| S4 | 20 km/h | 267/hr | **333/hr** | 250 |
+
+GREEN / YELLOW / RED stay 0.7 / 1.0 / >1 against these caps. Do not
+hardcode 75 m or 400/hr as the live basis. Regenerate reference curves
+after this (`export_saturation_curves.py`).
+
+## 2026-08-25 (latest) — following distance 60 m → 50 m
+
+Owner: use **50 m between two DTs** on every section. Posted / average
+speeds stay as on each stretch. `FOLLOWING_DISTANCE_M = 50`. Caps move
+with the formula (min bin speed × 1000 / gap):
+
+| Segment | Min posted | Cap at 60 m | Cap at 50 m | One-lane trucks that fit |
+|---|---|---|---|---|
+| S1–S3 | 30 km/h | 500/hr | **600/hr** | S1 576 · 12 km 240 |
+| S4 | 20 km/h | 333/hr | **400/hr** | 300 |
+
+GREEN / YELLOW / RED stay 0.7 / 1.0 / >1 against these caps. Do not
+hardcode 60 m or 500/hr as the live basis. Regenerate reference curves
+after this (`export_saturation_curves.py`).
+
+## 2026-08-25 — crowding occupancy is the loaded lane only
+
+Owner: 600 trucks/hr at 50 m is **one loaded lane**, not both
+carriageways. `plan_shared_flow` occupancy / `peak_concurrent` / Plan
+grid / Excel Road crowding now count trucks sitting on the loaded lane
+only. Empty return sits on the other carriageway (`occupancy_empty` /
+`occupancy_both`). Colour stays occupancy ÷ one-lane packing (TF–KR 576).
+Mixing both directions with that packing is why Plan S04 sat ~2× the
+packing card.
+
+## 2026-08-25 — Excel lists the other-tenant fleets Plan already shows
+
+Owner: New Allocation Plan on screen has MHM / POSITION / PMA / HSM /
+KR>RSF / HUAFEI>RSF (1,340 DT, material **other tenant**), but the
+xlsx only had production + IWIP POS-transit (blank/`road` material).
+Saved `allocation.rows` never stored the register — Plan injects it
+live. `_ensure_tenant_rows` now merges `congestion.tenants.tenant_rows()`
+into the month Path table and the Year Paths sheet. TOTAL DT stays our
+fleet (tenants are 0 WMT, not in TOTAL). `_plans_from_alloc_rows` still
+drops them so corridor occupancy is not charged twice.
+
+## 2026-08-25 — packing 600/hr is ONE loaded lane; Plan table said 2×
+
+Owner: Congestion packing card still showed 600 trucks/hr and the Plan
+road-windows footnote said crowding was 2× (both sides). 600 is correct:
+30 km/h × 1000 / 50 m, one loaded lane. Empty is the other carriageway
+(~2× would be 1,200/hr and is not used). The footnote was leftover from
+before occupancy switched to loaded-lane only. Caption/column now say
+Cap/hr · loaded lane, same geometry as the packing card.
+
+
+## 2026-08-25 — the three-agent QA audit: eight bugs, eight fixes, six gates
+
+Full evidence: every claim below was measured on the real page with the real
+2026-12-04 save before anything was edited (probes in the session record;
+gates in `scripts/check_qa_2026_08_25.py`, wired as J81–J86, all
+mutation-tested — 7 mutants, and two of them caught weaknesses in the GATE
+that were fixed before the code shipped).
+
+1. **Flow readout divided by the Jul GPS "struggle extract" (~54 tph).**
+   Peak V/C read 7.13 on the same screen where the crowding grid read 0.90 —
+   the "demonstrated peak read as a limit" defect again, THIRD instance
+   (sections.py and BLB pricing were the first two). It also still carried the
+   legacy POS 10 section split, so it named a bottleneck no other panel has.
+   Now: `/api/road_segments` official geometry (600/600/600/400 at 50 m),
+   fallback literals pinned to the served caps by J81.
+2. **Tenant DT were priced as OUR production.** `planDraftToFlowSeed` had no
+   tenant filter, so 4 tenant fleets sharing our TF>FENI KM15 key merged into
+   our row: readout quoted 7,265 trips / 340k WMT against the page's own
+   3,736 / 182k. Tenants now enter as FLOW at their own tempo
+   (`/api/congestion_tenants.segment_flow_hr`), never as trucks at ours; IWIP
+   stays on the road but out of production, and the label names both
+   exclusions. The trips figure this card shows is the path-response
+   ILLUSTRATION on the fleet drawn — Step 2 owns production, and the captions
+   now say so on their face.
+3. **Check capacity racing a saved-plan load painted a pre-allocation
+   shortfall board over an allocated plan** ("add 45 DT", alloc panel hidden).
+   A load now counts as in-flight until planRestoreAllocation lands;
+   planRunScenario defers and re-runs only if the settled plan is unlocked,
+   and freezing retires any stale required-DT board.
+4. **Priority board summed two fleets and printed unknowns as zeros.**
+   boardHtml passed pre-alloc `r.dt` where `routeDt()` sums allocated
+   `workingDt()` — one row claimed 125,450 t (more than its whole route) and
+   the total ran 42% over the plan's achievable. And `achv: c.achv||0`
+   rendered a never-measured achievable as "OLD ACHIEVABLE 0". One basis now
+   (workingDt end to end), null stays null and renders as a dash, and the
+   caption names the priorities actually summed (P3 LD rows carry targets —
+   "P1+P2 rows only" was false).
+   **Mutation lesson: a substring check with TWO call sites passes when one
+   regresses.** The gate now asserts the wrong basis is ABSENT, not that the
+   right one is present somewhere.
+5. **Predicted totals drifted +1.2% across Save → reload → Load** while every
+   DT round-tripped exactly: planRestoreAllocation restored the PLAN but not
+   the PRICING state (warmed segment curves + seg background; loaders were
+   unchanged — measured 91,146 vs saved 90,067, and +0.02% once
+   planRulesPrepare() runs). Restore now rebuilds pricing and recomputes.
+6. **Strip and crowding grid rank sections by different metrics — both
+   real.** Flow v/c (busiest hour of passages ÷ capacity flow) peaked on
+   KM15–coast 0.90; lane occupancy (mean concurrent ÷ trucks that fit)
+   peaked on POS 12–KM15 0.87. Neither is wrong; each caption now names its
+   quantity and cross-references the other's worst section.
+7. **Excel TOTAL DT summed our pool + IWIP** (Sep 707 = 581 + 126) against
+   the pool figure printed elsewhere on the same sheet, and silently deflated
+   Trips/DT (IWIP rows carry DT but 0 trips). TOTAL DT is now our fleet;
+   IWIP is a named line under TOTAL (its own fleet, rules §10.8); tenants
+   were already separate. Three fleets, three lines, each named.
+8. **S4 was unexportable** (`export-full?id=S4` 404, zip had S1+S3 only,
+   `/export?ids=` silently ignored) because export listed scenario FILES and
+   S4 has none by design (day-04 saves). `_exportable_scenario_ids()` now
+   speaks both conventions; the day list is CLOSED (01/03/04) — deriving it
+   from whatever days have saves invented phantom scenarios S5/S7/S13 from
+   the legacy August dailies, measured before it shipped. A zip that cannot
+   build a requested member now says so in a `_MISSING.txt` and the Compare
+   workbook carries a "Not in this file" sheet — a member silently missing
+   reads as "there was nothing to show".
+
+### Do not mutation-test in a live shared tree
+
+The 7-mutant pass proved the gates but was run by editing the REAL files in
+place on the shared checkout while the shared :5055 server was restarted
+around it. Another agent's S4 refreeze was live in the same minutes: its
+browser was served a MUTATED plan_sap_target.js (the 200 vs 304 in the server
+log is the tell), and one of its passes died on my restart
+(ERR_CONNECTION_REFUSED, 2026-11-04 FAILED, later retried). The saves it
+wrote verified internally complete, and the plausible mutant effects were
+display-only — but that is luck, not design. Mutation-test in a worktree
+(`git worktree add`), or at minimum against a private server port, never
+against the checkout and server other agents are using.
+
+### The refrozen S4 saves are the POS 6 rework — do not "restore" them
+
+data/saved_plans/2026-{09..12}-04.json were rewritten 2026-08-25 ~17:00–17:06
+by the parallel agent moving the P3 50/50 split leg from TF>POS 12 to
+TF>POS 6 (splitDest, planning_rules §4). Backups of the older POS 12-split
+files from earlier that day are NOT the newer truth. If the numbers need
+re-deriving, re-run that agent's refreeze on a quiet tree — do not copy old
+JSON over new.
