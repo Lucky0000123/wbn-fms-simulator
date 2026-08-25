@@ -327,11 +327,26 @@ def main():
     for fn in (j81_official_geometry, j82_tenants_out_of_production,
                j83_frozen_load_state, j84_board_one_basis, j85_excel_total_dt,
                j86_every_scenario_exportable):
-        try:
-            fn()
-        except Exception as exc:               # noqa: BLE001 - report, never hide
-            FAILS.append("%s raised %s: %s" % (fn.__name__, type(exc).__name__, exc))
-            CHECKS.append((fn.__name__, False, str(exc)))
+        # ONE bounded retry on an environmental error (browser boot starvation,
+        # a server mid-reload) — the D18b pattern. A retry that keeps failing
+        # is a real failure; a gate that fails on a transient teaches people to
+        # wave failures through. Assertion failures (ok(...) FAILS) never
+        # retry: those are the gate's verdict, not the environment's.
+        for attempt in (1, 2):
+            n_fails, n_checks = len(FAILS), len(CHECKS)
+            try:
+                fn()
+                break
+            except Exception as exc:           # noqa: BLE001 - report, never hide
+                if attempt == 1:
+                    # drop the failed attempt's half-recorded checks, then retry
+                    del FAILS[n_fails:]
+                    del CHECKS[n_checks:]
+                    import time as _t
+                    _t.sleep(10)
+                    continue
+                FAILS.append("%s raised %s: %s" % (fn.__name__, type(exc).__name__, exc))
+                CHECKS.append((fn.__name__, False, str(exc)))
     for name, good, detail in CHECKS:
         print("  %s  %s%s" % ("PASS" if good else "FAIL", name,
                               "" if good else "  <- " + detail))

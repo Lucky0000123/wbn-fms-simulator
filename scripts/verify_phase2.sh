@@ -478,8 +478,11 @@ chk $? "J80  HUAFEI is a junction at km 5.5, not the coast" "see: python test_hu
 # Mutation-tested 7 ways 2026-08-25 (incl. two gate weaknesses the mutants
 # exposed and fixed: a two-call-site substring and an unbounded browser wait).
 # Needs the server on :5055; the J83 sub-check skips without playwright.
-$PY scripts/check_qa_2026_08_25.py >/dev/null 2>&1
-chk $? "J81-J86  2026-08-25 QA audit fixes hold (6 gates in one script)" "see: python scripts/check_qa_2026_08_25.py"
+# Output is KEPT (not /dev/null): this script failed twice in-suite while
+# passing standalone before the log existed, and a failure that names no check
+# cannot be diagnosed — the D18b lesson. Read the log before re-running.
+$PY scripts/check_qa_2026_08_25.py >/tmp/check_qa_2026_08_25_last.log 2>&1
+chk $? "J81-J86  2026-08-25 QA audit fixes hold (6 gates in one script)" "log: /tmp/check_qa_2026_08_25_last.log"
 
 # J78 — the tenants are VISIBLE in the plan (owner: "I didn't see all these new
 # DT in my plan"), drawn the same way the POS-transit IWIP rows are. A tenant
