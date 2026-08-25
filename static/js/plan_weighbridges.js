@@ -356,11 +356,9 @@
         const advice = u >= 1 ? ' · OVERLOADED — add a second bridge or move trips'
           : u >= 0.7 ? ' · heavy — consider a second bridge' : '';
         const lvl = u >= 1 ? 'over' : u >= 0.7 ? 'heavy' : 'ok';
-        const waitBit = wait === Infinity ? ' · ∞'
-          : wait > 5 ? ` · ${Math.round(wait)} min` : '';
         return `<span class="pwb-chip pwb-chip--${lvl}" data-pwid="${escH(mm[1])}" data-wb="${escH(wb)}"`
           + ` title="WB ${escH(wb)} · ${Math.round(rec.trips)} trips assigned (${Math.round(100 * u)}% of ${Math.round(cap)}) · ${waitTxt}${sharedWith}${advice} · click to unassign">`
-          + `<b>WB ${escH(wb)}</b> <span class="pwb-chip-u">${Math.round(100 * u)}%${waitBit}</span></span>`;
+          + `<span class="pwb-n">${escH(wb)}</span><span class="pwb-chip-u">${Math.round(100 * u)}%</span></span>`;
       }).join('');
       const alternates = pw.open
         ? pw.bridges.filter(b => !pw.sel.has(b.wb)).map(b => {
@@ -369,7 +367,7 @@
               ? `assign WB ${escH(b.wb)} (${pct(b.sharePct)} of this route's historical weighs)`
               : `assign WB ${escH(b.wb)} (no history on this route — your choice)`;
             return `<span class="pwb-chip pwb-chip--alt" data-pwid="${escH(mm[1])}" data-wb="${escH(b.wb)}"`
-            + ` title="${t}">+ WB ${escH(b.wb)}${hint}</span>`;
+            + ` title="${t}">+ ${escH(b.wb)}${hint}</span>`;
           }).join('')
         : '';
       const pathHeavy = [...pw.sel].some(wb => ((byWb[wb] || {}).rho || 0) >= 0.7);

@@ -394,23 +394,39 @@ function planTenantsOn(){return !!(_planTenants&&_planTenants.tenants&&_planTena
 function planTenantsInfo(){return _planTenants;}
 // Is this draft row one of the other tenants' fleets?
 //
-// `_tenant` is the flag we set when the row is built, but it does NOT survive a
-// save: buildAllocationPayload writes `foreign` and not `_tenant`, so plans
-// saved before that was fixed carry tenant rows that look like ordinary ones.
+// `_tenant` is the flag we set when the row is built. Saves now stamp it on
+// both paths and allocation.rows, but older files only carried `foreign`, so
+// plans saved before that was fixed carry tenant rows that look like ordinary ones.
 // Those rows then reached the road model, where "KR>RSF" could not be placed on
 // the stick (RSF is not one of our nodes) and fell through to the "<SOURCE>
 // spur" fallback — inventing a "KR spur" and a "HUAFEI spur" that do not exist.
 // So recognition is by NAME as well as by flag, and the name list comes from
 // the register itself. The ">RSF" test is the backstop for a page where the
 // register has not loaded yet: no plan of ours ever hauls to RSF.
-function planIsTenantRow(r){
+function planIsTenantRow(r,id){
   if(!r)return false;
   if(r._tenant)return true;
+  // The ROW ID is the reliable signal across a save: tenant rows are built as
+  // 'TENANT|<name>|road' and buildAllocationPayload writes the id out, so it
+  // survives where the _tenant flag does not.
+  const rid=String(id||r.id||'').toUpperCase();
+  if(rid.indexOf('TENANT|')===0)return true;
+  // RSF is tenant-only; nothing of ours hauls there.
+  if(/(^|>)RSF$/.test(String(r.key||'').trim().toUpperCase()))return true;
+  // Match by name LAST, and never on a name we also use OURSELVES — a guard
+  // that over-matches quietly destroys the plan it is meant to protect.
+  // Today that list is IWIP alone: POSITION used to be one of ours too, which
+  // made this test delete real Position rows, and is now tenant-only by owner
+  // decision (see PLAN_FOREIGN_CONTRACTORS). Reading the constant rather than
+  // hardcoding names keeps the two in step if that ever changes again.
   const c=String(r.contractor||'').trim().toUpperCase();
+  if(!c)return false;
+  const ours=(typeof PLAN_FOREIGN_CONTRACTORS!=='undefined'?PLAN_FOREIGN_CONTRACTORS:['IWIP'])
+    .map(x=>String(x).toUpperCase());
+  if(ours.indexOf(c)>=0)return false;
   const names=(_planTenants&&_planTenants.tenants)
     ? _planTenants.tenants.map(t=>String(t.name||'').toUpperCase()) : [];
-  if(c&&names.indexOf(c)>=0)return true;
-  return /(^|>)RSF$/.test(String(r.key||'').trim().toUpperCase());
+  return c&&names.indexOf(c)>=0;
 }
 async function planTenantsLoad(){
   if(_planTenants)return _planTenants;
@@ -1256,17 +1272,17 @@ function planPathModelWmtAtRain(rainMm){
 }
 function planOutlookDayLabel(iso){
   const p=String(iso||'').split('-').map(Number);
-  if(p.length<3||!p[0])return {text:iso||'',title:iso||''};
+  if(p.length<3||!p[0])return {text:iso||'',wd:'',day:iso||'',title:iso||''};
   const dt=new Date(p[0],p[1]-1,p[2]);
   const mo=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][dt.getMonth()];
   const wd=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dt.getDay()];
-  return {text:dt.getDate()+' '+mo,title:wd+' '+dt.getDate()+' '+mo};
+  return {text:dt.getDate()+' '+mo,wd,day:String(dt.getDate()),title:wd+' '+dt.getDate()+' '+mo};
 }
 function planOutlookCompactT(w){
   if(w==null||!(w>0))return '';
-  if(w>=10000)return Math.round(w/1000)+'k t';
-  if(w>=1000)return (w/1000).toFixed(1).replace(/\.0$/,'')+'k t';
-  return Math.round(w)+' t';
+  if(w>=10000)return Math.round(w/1000)+'k';
+  if(w>=1000)return (w/1000).toFixed(1).replace(/\.0$/,'')+'k';
+  return String(Math.round(w));
 }
 function planRenderComingDays(){
   const box=q('plan-coming-days');
@@ -1280,17 +1296,12 @@ function planRenderComingDays(){
   const sel=(q('plan-date')||{}).value||'';
   const hasPlan=Object.keys(_planDraft||{}).some(id=>_planDraft[id]&&!_planDraft[id].foreign);
   const wmts=hasPlan?days.map(d=>planPathModelWmtAtRain(Math.max(0,Number(d.mm)||0))):[];
-  const maxMm=Math.max(10,...days.map(d=>Number(d.mm)||0));
   box.innerHTML=`<div class="plan-coming-strip">${days.map((d,i)=>{
     const mm=d.mm==null?null:Number(d.mm);
     const wet=mm!=null&&mm>=10,damp=mm!=null&&mm>=2&&mm<10;
     const cls='plan-coming-chip'+(wet?' wet':damp?' damp':'')+(d.date===sel?' on':'');
     const lab=planOutlookDayLabel(d.date);
-    const mmTxt=mm!=null?(mm>=1?Math.round(mm):mm>0?'&lt;1':'0'):'—';
-    const rainPct=mm!=null&&mm>=2?Math.max(18,Math.round(100*Math.min(1,mm/maxMm))):0;
-    const rainLine=rainPct>0
-      ?`<span class="rain" aria-hidden="true"><span class="fill" style="width:${rainPct}%"></span></span>`
-      :'';
+    const mmTxt=mm!=null?(mm>=1?Math.round(mm)+' mm':mm>0?'&lt;1 mm':'0'):'—';
     const w=hasPlan?wmts[i]:null;
     const tTxt=planOutlookCompactT(w);
     const tLine=tTxt?`<span class="t">${tTxt}</span>`:'';
@@ -1299,9 +1310,9 @@ function planRenderComingDays(){
       tTxt?tTxt+' predicted at that rain':'click to set the plan date and rainfall'].join(' · ');
     return `<button type="button" class="${cls}" data-date="${d.date}" title="${tip}"
       onclick="planPickOutlookDay('${d.date}')">
-      <span class="d">${lab.text}</span>
-      <span class="mm">${mmTxt} mm</span>
-      ${rainLine}
+      <span class="wd">${lab.wd}</span>
+      <span class="d">${lab.day}</span>
+      <span class="mm">${mmTxt}</span>
       ${tLine}
     </button>`;
   }).join('')}</div>`;
@@ -1530,8 +1541,17 @@ function planMarkFleetEdit(){ _planUserEditedFleet=true; planPreview(); }
 /** Default haul path in Step 1 builder (owner preference). */
 const PLAN_DEFAULT_SRC='TF';
 const PLAN_DEFAULT_DST='FENI KM0';
-/** Road-only contractors (non-WBN): IWIP haulers vs Position relocation trucks. */
-const PLAN_FOREIGN_CONTRACTORS=['IWIP','POSITION'];
+/** Road-only contractors we still add ourselves. IWIP only.
+ *
+ * POSITION was removed 2026-08-24 (owner): "delete the old Position rows ... so
+ * we will have just one Position row with that 500 trucks". Position is now a
+ * TENANT — one 500 DT fleet in congestion/tenants.py that the road model injects
+ * as background flow — not a road-only row anyone adds by hand. Two ways to put
+ * Position on the road is how it got counted twice. IWIP stays ours: it moves
+ * OUR material off the POS stockpiles and is sized per plan by the POS-transit
+ * rule (planning_rules.md §5).
+ */
+const PLAN_FOREIGN_CONTRACTORS=['IWIP'];
 /** Remember WBN contractor/src/dst while Road-only is checked so we can restore. */
 let _planWbnKeep=null;
 
@@ -2282,6 +2302,22 @@ function planHoldMatHtml(id){
     :(escH(name||code)+' — label only, does not change tonnes · click to change');
   return `<span class="plan-mat-tag${cls}" data-matid="${escH(id)}" title="${escH(tip)}">${escH(code)}${extra}</span>`;
 }
+function planHoldWmtHtml(id, wmt){
+  if(!(wmt>0))return '<span class="muted">\u2014</span>';
+  const r=_planDraft[id];
+  const tgt=Number(r&&r.targetWmt)||0;
+  const planned=Math.round(wmt);
+  let tone='';
+  if(tgt>0){
+    if(planned>=tgt*0.995&&planned<=tgt*1.02)tone=' plan-wmt-tag--ok';
+    else if(planned>tgt*1.02)tone=' plan-wmt-tag--over';
+    else tone=' plan-wmt-tag--short';
+  }
+  const tip=tgt
+    ?('Predicted '+fmtExact(planned)+' t/day · target '+fmtExact(Math.round(tgt))+' t/day')
+    :'Predicted t/day';
+  return `<span class="plan-wmt-tag${tone}" title="${escH(tip)}">${fmtExact(planned)} t</span>`;
+}
 /** View filter for Your plan: '' = all origins. Does not change the holding plan or predicted WMT. */
 let _planHoldOrigin='';
 function planHoldOriginSet(src){
@@ -2332,14 +2368,25 @@ function computePlan(){
   rows.innerHTML=ids.map(id=>{const r=_planDraft[id],m=_pathResp[r.key];
     const path=`<b>${escH(r.key.replace('>',' \u2192 '))}</b>`;
     const show=!_planHoldOrigin||planHoldSrc(r)===_planHoldOrigin;
+    const isTen=typeof planIsTenantRow==='function'?planIsTenantRow(r,id):!!r._tenant;
     if(r.foreign)hasForeign=true;
     if(!r.foreign)totLd+=planNLoaders(r);
     else {fgnN+=1;fgnDt+=r.dt;fgnLd+=planNLoaders(r);}
-    if(!m&&r.foreign&&Number.isFinite(r.measTrips)){
+    // Tenant rows (and any other unmatched road-only haul) must still DRAW.
+    // KR>RSF / HUAFEI>RSF are not in path-response, so the old `if(!m)return ''`
+    // hid 540 of the 1,340 tenant DT after every Save/Load — they were in the
+    // draft, just invisible. Price tenants at THEIR register rate, not ours.
+    if(isTen||(!m&&r.foreign)){
       if(!show)return '';
       visN+=1;visFgnN+=1;visFgnDt+=r.dt;visFgnLd+=planNLoaders(r);
-      const rate=r.measTrucks?r.measTrips/r.measTrucks:0,ftrips=r.dt*rate*hz;
-      return holdTr(id,'plan-hold-road',path+' <span class="plan-hold-tag" title="Road-only: congestion, no WMT">road</span>',fmtExact(Math.round(ftrips)),'<span class="muted">\u2014</span>',null);
+      const daily=Number.isFinite(r._tenantRate)?r._tenantRate
+        :(r.measTrucks?r.measTrips/r.measTrucks:0);
+      const ftrips=r.dt*daily*(hz===2?1:0.5);
+      const tag=isTen?'other tenant':'road';
+      const tip=isTen?'Other tenant: road load only, no WMT':'Road-only: congestion, no WMT';
+      return holdTr(id,'plan-hold-road'+(isTen?' plan-hold-tenant':''),
+        path+' <span class="plan-hold-tag" title="'+tip+'">'+tag+'</span>',
+        fmtExact(Math.round(ftrips)),'<span class="muted">\u2014</span>',null);
     }
     if(!m)return '';
     const c=planContractor(r.contractor),e=planTripsPerDT(r.key,r.dt,rain,c,planTripOpts(id)),pay=planPayload(r.key,c);
@@ -2355,7 +2402,7 @@ function computePlan(){
     totTrips+=trips;totWmt+=wmt;totDt+=r.dt;
     if(!show)return '';
     visN+=1;visTrips+=trips;visWmt+=wmt;visDt+=r.dt;visLd+=planNLoaders(r);
-    return holdTr(id,'',path,fmtExact(Math.round(trips)),fmtExact(Math.round(wmt))+' t',e);
+    return holdTr(id,'',path,fmtExact(Math.round(trips)),planHoldWmtHtml(id,wmt),e);
   }).join('');
   // Road-only / unmatched rows also honour the origin filter (they returned
   // holdTr already). If the filter hid everything, say so.
@@ -2381,7 +2428,7 @@ function computePlan(){
     ?`Contractor fleet only. ${fmtExact(fN)} road-only/IWIP row${fN===1?'':'s'} excluded from DT and loaders (${fmtExact(Math.round(fDt))} DT, ${fmtExact(Math.round(fLd))} loaders) — rules §10.8: IWIP trucks are their own fleet. They still load the road in the pricing.`
     :'Contractor fleet: DT, loaders, trips and tonnes on the rows shown.';
   const footLab=_planHoldOrigin?(_planHoldOrigin+(hz>1?' · day':'')):'TOTAL'+(hz>1?' · day':'');
-  if(foot)foot.innerHTML=`<tr class="plan-total-row" title="${escH(footTip)}"><td><b>${escH(footLab)}</b></td><td class="muted">${footN}</td><td></td><td class="r"><b>${fmtExact(Math.round(footDt))}</b></td><td class="r"><b>${fmtExact(Math.round(footLd))}</b></td><td class="r"><b>${fmtExact(Math.round(footTr))}</b></td><td class="r"><b>${fmtExact(Math.round(footWmt))} t</b></td><td></td><td></td></tr>`;
+  if(foot)foot.innerHTML=`<tr class="plan-total-row" title="${escH(footTip)}"><td><b>${escH(footLab)}</b></td><td class="muted">${footN}</td><td></td><td class="r"><b>${fmtExact(Math.round(footDt))}</b></td><td class="r"><b>${fmtExact(Math.round(footLd))}</b></td><td class="r"><b>${fmtExact(Math.round(footTr))}</b></td><td class="r"><span class="plan-wmt-tag">${fmtExact(Math.round(footWmt))} t</span></td><td></td><td></td></tr>`;
   const names=[...new Set(ids.map(id=>_planDraft[id].contractor))];
   const mats=[...new Set(ids.map(id=>(_planDraft[id].material||'').trim()).filter(Boolean))];
   const otherN=Math.round(_planOtherTrips||0);

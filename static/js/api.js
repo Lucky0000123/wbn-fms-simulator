@@ -131,7 +131,15 @@ async function loadCongModel(){
   const note=q('cong-note');if(note)note.textContent='Loading measured segment data…';
   try{const d=await(await fetch('/api/simulator/congestion-model',{cache:'no-store'})).json();
     if(!d||!d.ok){if(note)note.textContent=(d&&d.error)||'Congestion data unavailable.';return;}
-    _congData=d;const sel=q('cong-seg');sel.innerHTML=(d.segments||[]).map(s=>`<option value="${escH(s.seg)}">${escH(s.seg)} — ${s.n} hrs</option>`).join('');
+    _congData=d;const sel=q('cong-seg');
+    const prev=sel&&sel.value;
+    const segs=[].slice.call(d.segments||[]).sort(function(a,b){
+      const dn=(+a.n||0)-(+b.n||0);return dn||String(a.seg||'').localeCompare(String(b.seg||''));
+    });
+    sel.innerHTML=segs.map(s=>`<option value="${escH(s.seg)}">${escH(s.seg)} — ${s.n} hrs</option>`).join('');
+    const densest=(d.segments||[])[0];
+    if(prev&&[].some.call(sel.options,o=>o.value===prev))sel.value=prev;
+    else if(densest)sel.value=densest.seg;
     renderCongModel();
   }catch(e){if(note)note.textContent='Could not load: '+e.message;}
 }

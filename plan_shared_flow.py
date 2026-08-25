@@ -8,10 +8,12 @@ the road both ways. Advisory only — never clips /api/simulate tonnes.
 Two quantities, deliberately kept apart (they have different units):
 
 * **presence** — trucks ON a section at one moment (a STOCK, trucks).
-  Reported as `occupancy` (mean concurrent trucks per display bin),
-  `peak_trucks` / `peak_concurrent` (bin-free instantaneous maximum) and
-  `ratio_presence` against how many trucks physically FIT on the section
-  at the mining following distance.
+  The grid `occupancy` is the **loaded lane only** — same geometry as
+  600/hr at 50 m (one carriageway). Empty trucks use the other lane and
+  live in `occupancy_empty` / `occupancy_both`. `peak_concurrent` is the
+  bin-free instantaneous maximum on that loaded lane. Colour is
+  occupancy ÷ how many trucks FIT on one loaded lane at the following
+  distance.
 * **flow** — trucks PASSING per hour (a FLOW, trucks/h). This is what the
   official capacity measures (limit speed ÷ following distance), so the
   headline `ratio` (v/c) is flow ÷ flow. Its window is a fixed hour, never
@@ -32,6 +34,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import plan_analogues as pa
 import plan_corridor_hours as pch
+from congestion.speed_limits import FOLLOWING_DISTANCE_M
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 _SEG_CSV = os.path.join(_ROOT, "data", "congestion_seg_by_dir.csv")
@@ -57,7 +60,7 @@ MAX_TRUCKS_SIM = 400
 # over an hour whether the grid draws 15-minute or 1-hour cells.
 VC_WINDOW_H = 1.0
 SPUR_SPEED_FLOOR_KMH = 20.0  # no limit sheet for a spur; slowest posted bin
-SPUR_LANE_CAP_TPH = SPUR_SPEED_FLOOR_KMH * 1000.0 / 50.0   # ONE lane
+SPUR_LANE_CAP_TPH = SPUR_SPEED_FLOOR_KMH * 1000.0 / FOLLOWING_DISTANCE_M  # ONE lane
 SPUR_KM_FALLBACK = 19.9      # BLB spur length when the route has no distance
 EMPTY_SPEED_FACTOR = 1.25    # site GPS: empty runs ~1.25x loaded (spur only;
                              # the stick uses the official directional limits)
@@ -526,9 +529,15 @@ def _norm_plans(plans: Optional[List[dict]]) -> List[dict]:
     # never seen and predict() silently prices it on DEFAULT params — the
     # J52 shape: wrong physics with a healthy-looking answer.
     from prediction_pipeline import canonical_area
+    from congestion.tenants import is_tenant_plan
     out = []
     for i, p in enumerate(plans or []):
         if not isinstance(p, dict):
+            continue
+        # Tenant rows are display-only. The register is injected later as
+        # constant background (tenants=True). Simulating them here as well
+        # is the Plan-vs-Excel ~2× occupancy bug: Excel already drops them.
+        if is_tenant_plan(p):
             continue
         src = canonical_area(str(p.get("source") or p.get("origin") or "").strip())
         dst = canonical_area(str(p.get("destination") or p.get("dest") or "").strip())
@@ -996,12 +1005,16 @@ def shared_flow(
     bin_w = [min((b + 1) * bin_hours, horizon_h) - b * bin_hours
              for b in range(n_bins)]
     occ_h: Dict[str, List[float]] = defaultdict(lambda: [0.0] * n_bins)
+    occ_h_dir: Dict[str, Dict[str, List[float]]] = defaultdict(
+        lambda: {"loaded": [0.0] * n_bins, "empty": [0.0] * n_bins})
     ent: Dict[str, List[float]] = defaultdict(lambda: [0.0] * n_bins)
     ent_dir: Dict[str, Dict[str, List[float]]] = defaultdict(
         lambda: {"loaded": [0.0] * n_bins, "empty": [0.0] * n_bins})
     entry_times: Dict[str, Dict[str, List[Tuple[float, float]]]] = defaultdict(
         lambda: {"loaded": [], "empty": []})
     sweep: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
+    sweep_dir: Dict[str, Dict[str, List[Tuple[float, float]]]] = defaultdict(
+        lambda: {"loaded": [], "empty": []})
     truck_h: Dict[str, float] = defaultdict(float)
     truck_h_path: Dict[str, float] = defaultdict(float)
     # (km_lo, km_hi, t_enter, duration, weight, direction) per section, for the
@@ -1014,6 +1027,7 @@ def shared_flow(
     # them under one key would double-count each row's truck-hours.
     for sec, t0, t1, w, dirn, pid, km_lo, km_hi in events:
         dur = t1 - t0
+        dkey = dirn if dirn in ("loaded", "empty") else "loaded"
         truck_h[sec] += w * dur
         truck_h_path[pid] += w * dur
         if km_lo is not None and km_hi is not None and km_hi - km_lo > 1e-9:
@@ -1027,8 +1041,11 @@ def shared_flow(
                 hi = min(b, (bi + 1) * bin_hours)
                 if hi > lo:
                     occ_h[sec][bi] += w * (hi - lo)
+                    occ_h_dir[sec][dkey][bi] += w * (hi - lo)
             sweep[sec].append((a, w))
             sweep[sec].append((b, -w))
+            sweep_dir[sec][dkey].append((a, w))
+            sweep_dir[sec][dkey].append((b, -w))
         t_in = t0 % horizon_h
         bi = min(n_bins - 1, max(0, int(t_in / bin_hours)))
         ent[sec][bi] += w
@@ -1043,11 +1060,12 @@ def shared_flow(
     _seg_by_label = {s['label']: s for s in _SEGS}
 
     # ── Other tenants on the same road (owner register; congestion/tenants.py)
-    # They are not in `plans` and never will be: they are somebody else's
-    # trucks, carry no tonnage for us, and are not ours to schedule. But they
-    # are on the road, so leaving them out of the road view answers "how busy
-    # is the corridor if we are the only ones on it" — which is not the
-    # question this card is asked.
+    # They are not simulated from `plans`: a TENANT| / RSF / named-register
+    # row is dropped in `_norm_plans` because this block already injects the
+    # same 1,340 DT as constant background. Sending both is how Plan showed
+    # ~416/442/503 on TF–KR while Excel (which already dropped them) showed
+    # about half of that. They carry no tonnage for us and are not ours to
+    # schedule, but they are on the road.
     #
     # They enter as a CONSTANT background, not as simulated trucks:
     #   flow    = their loaded-lane trucks/hr on that segment (already on the
@@ -1103,17 +1121,31 @@ def shared_flow(
         s for s in section_plans if s not in {x['label'] for x in _SEGS})
     used_secs = [s for s in all_secs if s in section_plans or s in occ_h]
 
+    def _occ_cells(xs):
+        return [round(x, 1) if x < 9.95 else int(round(x)) for x in xs]
+
     for sec in used_secs:
         hours_in = occ_h.get(sec) or [0.0] * n_bins
+        hours_loaded = occ_h_dir[sec]["loaded"]
+        hours_empty = occ_h_dir[sec]["empty"]
         # mean concurrent trucks in each bin = truck-hours / bin width. A
         # proper time average: it does not change when the bin does, unlike
         # the old "count 1 for any overlap", which inflated a 1 h bin 3.7x
         # over the road's real truck-hours and 2.5x over a 15-minute bin.
-        occ_mean = [(hours_in[b] / bin_w[b]) if bin_w[b] > 0 else 0.0
+        occ_both = [(hours_in[b] / bin_w[b]) if bin_w[b] > 0 else 0.0
+                    for b in range(n_bins)]
+        occ_empty = [(hours_empty[b] / bin_w[b]) if bin_w[b] > 0 else 0.0
+                     for b in range(n_bins)]
+        # Grid occupancy is the LOADED lane only. 600/hr at 50 m is one
+        # carriageway; empty trucks use the other. Mixing both sides with
+        # that packing is how Plan / S04 Excel read ~2× the packing card.
+        occ_mean = [(hours_loaded[b] / bin_w[b]) if bin_w[b] > 0 else 0.0
                     for b in range(n_bins)]
         peak_mean = max(occ_mean) if occ_mean else 0.0
         peak_bin = occ_mean.index(peak_mean) if occ_mean else 0
-        peak_conc = _peak_concurrent(sweep.get(sec) or [])
+        peak_conc_both = _peak_concurrent(sweep.get(sec) or [])
+        peak_conc_empty = _peak_concurrent(sweep_dir[sec]["empty"])
+        peak_conc = _peak_concurrent(sweep_dir[sec]["loaded"])
 
         seg = _seg_by_label.get(sec)
         if seg:
@@ -1133,7 +1165,8 @@ def shared_flow(
         # Trucks that physically FIT on the section, both lanes: the honest
         # denominator for a presence count. (The old denominator was a FLOW
         # capacity multiplied by the display bin — a stock over a flow.)
-        cap_present = max(1.0, length_km * 1000.0 / _FOLLOW_M * 2.0)
+        cap_lane = max(1.0, length_km * 1000.0 / _FOLLOW_M)
+        cap_present = max(1.0, cap_lane * 2.0)
 
         # v/c: passages per hour against the lane's capacity flow, worst
         # direction, over a FIXED hour — invariant to the display bin.
@@ -1173,8 +1206,10 @@ def shared_flow(
                            % ten_f)
         if ten_p > 0:
             peak_conc += ten_p
+            peak_conc_both += ten_p
             peak_mean += ten_p
             occ_mean = [x + ten_p for x in occ_mean]
+            occ_both = [x + ten_p for x in occ_both]
         ratio = (peak_lane_flow / lane_cap_tph) if lane_cap_tph > 0 else 0.0
         status = "High" if ratio >= 1.0 else ("Watch" if ratio >= 0.7 else "Open")
         plans_here = sorted(section_plans.get(sec) or [])
@@ -1212,21 +1247,39 @@ def shared_flow(
             # ── PRESENCE: a stock, with a stock denominator.
             "peak_trucks": int(round(peak_conc)),
             "peak_concurrent": round(peak_conc, 1),
+            "peak_concurrent_both": round(peak_conc_both, 1),
+            "peak_concurrent_empty": round(peak_conc_empty, 1),
             "peak_bin_mean": round(peak_mean, 1),
             "peak_bin": peak_bin,
             "cap_trucks_present": round(cap_present, 1),
             "cap_trucks_bin": round(cap_present, 1),
-            "ratio_presence": round(peak_conc / cap_present, 3) if cap_present else 0.0,
-            "presence_basis": ("trucks on the section at once ÷ the %d that fit "
-                               "at %.0f m spacing on both lanes"
-                               % (int(round(cap_present)), _FOLLOW_M)),
+            # One loaded lane at 50 m — same packing as the GPS table.
+            # Both-lane fit (cap_trucks_bin) is ~2x this.
+            "cap_trucks_lane": round(cap_lane, 1),
+            "ratio_presence": round(peak_conc_both / cap_present, 3) if cap_present else 0.0,
+            "ratio_presence_lane": round(peak_conc / cap_lane, 3) if cap_lane else 0.0,
+            "presence_basis": ("grid colour = loaded-lane occupancy ÷ one loaded "
+                               "lane (%d trucks at %.0f m). Empty sits on the "
+                               "other carriageway (occupancy_empty). Both lanes "
+                               "fit %d"
+                               % (int(round(cap_lane)), _FOLLOW_M,
+                                  int(round(cap_present)))),
             # one decimal below ~10 trucks: a mean of 0.6 trucks is a real
             # answer and rounding it to 1 or 0 would invent or delete traffic
-            "occupancy": [round(x, 1) if x < 9.95 else int(round(x)) for x in occ_mean],
+            "occupancy": _occ_cells(occ_mean),
             "occupancy_mean": [round(x, 2) for x in occ_mean],
+            "occupancy_both": _occ_cells(occ_both),
+            "occupancy_both_mean": [round(x, 2) for x in occ_both],
+            "occupancy_empty": _occ_cells(occ_empty),
+            "occupancy_empty_mean": [round(x, 2) for x in occ_empty],
             "entries": [round(x, 1) for x in (ent.get(sec) or [0.0] * n_bins)],
             "flow_per_h": [round((ent.get(sec) or [0.0] * n_bins)[b] / bin_w[b], 1)
                            if bin_w[b] > 0 else 0.0 for b in range(n_bins)],
+            "lane_flow_per_h": [round(
+                (max((ent_dir[sec]["loaded"][b]) / bin_w[b],
+                     (ent_dir[sec]["empty"][b]) / bin_w[b])
+                 if bin_w[b] > 0 else 0.0) + ten_f, 1)
+                for b in range(n_bins)],
             "truck_hours": round(truck_h.get(sec, 0.0), 1),
             "section_km": round(length_km, 1),
             "speed_kmh": ((seg.get('speeds') or {}).get('loaded', {}).get('mean')
@@ -1241,7 +1294,9 @@ def shared_flow(
                 continue
             dir_flow = max((ent_dir[sec]["loaded"][b]) / bin_w[b],
                            (ent_dir[sec]["empty"][b]) / bin_w[b])
-            r = dir_flow / lane_cap_tph if lane_cap_tph > 0 else 0.0
+            # Tenants are a constant on this lane — leaving them out here
+            # made congestion_hours empty while section.ratio sat at 147%.
+            r = ((dir_flow + ten_f) / lane_cap_tph) if lane_cap_tph > 0 else 0.0
             if r >= 0.7:
                 clock = (start_hour + int(round(b * bin_hours))) % 24
                 slot = congested_clock[clock]
@@ -1300,18 +1355,18 @@ def shared_flow(
                 "suggestions": suggestions,
             }
 
-    jammed = [s for s in sections_out if s["ratio_presence"] >= 1.0]
+    jammed = [s for s in sections_out if s["ratio_presence_lane"] >= 1.0]
     if jammed:
         # Free-flow DES: trucks pass at the limit speed and do not queue on the
         # road. Past jam density that timing is no longer physical, so say so
         # rather than reporting a section holding more trucks than fit on it.
         warnings.append(
-            "%s hold(s) more trucks at once than fit at %.0f m spacing "
+            "%s hold(s) more loaded-lane trucks at once than fit at %.0f m spacing "
             "(presence ratio up to %.1fx). Past jam density this DES no longer "
             "describes the road: it has no spill-back, so treat those hours as "
             "'over capacity', not as a timetable."
             % (", ".join(s["section"] for s in jammed), _FOLLOW_M,
-               max(s["ratio_presence"] for s in jammed)))
+               max(s["ratio_presence_lane"] for s in jammed)))
 
     weighted = [p for p in path_rows if p["sim_trucks"] < p["n_trucks"]]
     if weighted:
@@ -1393,8 +1448,9 @@ def shared_flow(
             "1-hour ramp-up, a 2-hour wind-down and a near-empty final hour at "
             "each changeover; there is no meal-break dip in the data and none is "
             "added. Reshaping the release times does not change the trip count. "
-            "Cells are the MEAN trucks on the section during the hour against the "
-            "number that fit at %.0f m spacing; the v/c verdict is the busiest "
+            "Cells are the MEAN trucks on the LOADED lane during the hour against the "
+            "number that fit at %.0f m spacing (empty trucks use the other "
+            "carriageway and are occupancy_empty); the v/c verdict is the busiest "
             "hour of passages against the official lane capacity flow, so neither "
             "moves with the bin size — and on a section that is not uniform "
             "(BLB joins the stick at km 2.45) it is the WORST cross-section, "
@@ -1503,8 +1559,9 @@ def shared_flow(
             },
             "trips_in_flight_complete": True,
             "tail_wraps_to_start": True,
-            "occupancy_metric": "mean concurrent trucks per bin (time-weighted)",
-            "occupancy_capacity": "trucks that fit at the following distance, both lanes",
+            "occupancy_metric": ("mean concurrent trucks on the loaded lane per bin "
+                                 "(empty is occupancy_empty; both directions occupancy_both)"),
+            "occupancy_capacity": "trucks that fit on one loaded lane at the following distance",
             # Stated on EVERY response, true or false. An absent flag would let
             # a clear-road corridor be read as a shared-road one, which is the
             # failure this whole register exists to prevent.

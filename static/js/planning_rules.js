@@ -25,13 +25,17 @@ window.PLANNING_RULES = {
     P3: { material: 'LIM-LD', fillsBefore: 'P2' }
   },
   fixedRoutes: [
-    { path: 'BLB>FENI KM0', material: 'SAP', targetWmt: 10000, priority: 'P1', type: 'fixed' },
-    { path: 'TF>FENI KM15', material: 'SAP', targetWmt: 10000, priority: 'P1', type: 'fixed' }
+    { path: 'BLB>FENI KM0', material: 'SAP', targetWmt: 2000, priority: 'P1', type: 'fixed' },
+    { path: 'TF>FENI KM15', material: 'SAP', targetWmt: 2000, priority: 'P1', type: 'fixed' }
   ],
+  // Remaining SAP → POS buffer (not the other FeNi plant).
   overflowRoutes: [
-    { path: 'BLB>FENI KM15', material: 'SAP', priority: 'P1', type: 'overflow', fillsRemaining: true },
-    { path: 'TF>FENI KM0', material: 'SAP', priority: 'P1', type: 'overflow', fillsRemaining: true }
+    { path: 'BLB>POS 14', material: 'SAP', priority: 'P1', type: 'buffer', fillsRemaining: true },
+    { path: 'TF>POS 12', material: 'SAP', priority: 'P1', type: 'buffer', fillsRemaining: true },
+    { path: 'KR>POS 12', material: 'SAP', priority: 'P1', type: 'buffer', fillsRemaining: true }
   ],
+  // FIXED FeNi SAP row may land in [0, target+band] because trucks are integers.
+  sapFeniBand: 2000,
   limTos: {
     primaryDestination: 'HUAFEI',
     blbTarget: 250000, // t/month
@@ -42,8 +46,9 @@ window.PLANNING_RULES = {
     origin: 'TF',
     // splitDest is the OTHER leg of the S4 50/50 split. POS 6 since
     // 2026-08-25 (owner; was POS 12) — the km 12.0 yard on the lower
-    // mainline. Key renamed `pos12` -> `splitShare` + `splitDest` so the
-    // destination is data, not a second hardcode the engine must agree with.
+    // mainline. Key name kept as `pos12` historically; renamed to
+    // `splitShare` + `splitDest` so the destination is data, not a
+    // second hardcode the engine has to agree with.
     split: { huafeiBse: 0.5, splitShare: 0.5 },
     splitDest: 'POS 6',
     destinations: ['HUAFEI', 'BSE', 'POS 6']
@@ -99,7 +104,7 @@ function planRulesParseMd(md){
     touched=true;
     return _;
   });
-  // §4 fixed routes: | BLB → FeNi KM0 | SAP | 10,000 t/day | FIXED |
+  // §4 fixed routes: | BLB → FeNi KM0 | SAP | 2,000 t/day | FIXED |
   const fixed=[];
   md.replace(/\|\s*([^|]+?)\s*\|\s*SAP\s*\|\s*([\d,]+)\s*t\/day\s*\|\s*FIXED\s*\|/g,
     function(_,route,t){
@@ -108,6 +113,17 @@ function planRulesParseMd(md){
       return _;
     });
   if(fixed.length){R.fixedRoutes=fixed;touched=true;}
+  // §4 POS buffer: | BLB → POS 14 | SAP | remaining | BUFFER |
+  const overflow=[];
+  md.replace(/\|\s*([^|]+?)\s*\|\s*SAP\s*\|\s*remaining\s*\|\s*BUFFER\s*\|/g,
+    function(_,route){
+      overflow.push({path:planRulesRouteKey(route), material:'SAP',
+        priority:'P1', type:'buffer', fillsRemaining:true});
+      return _;
+    });
+  if(overflow.length){R.overflowRoutes=overflow;touched=true;}
+  const mBand=md.match(/0\s*[–-]\s*4,000\s*t\/day|2,000\s*[±]\s*2,000/);
+  if(mBand){R.sapFeniBand=2000;touched=true;}
   // §4 P3 split: "50% of leftover DT → TF → HUAFEI / BSE" and "... POS <n>".
   // The destination is CAPTURED from the document, so editing
   // planning_rules.md is enough to retarget the split (owner moved it
@@ -148,27 +164,10 @@ function planRulesParseMd(md){
 }
 
 function planRulesBadge(){
-  const nav=document.getElementById('plan-navbar');
-  if(!nav)return; // /monthly has no plan navbar — badge is a Plan-tab thing
-  let b=document.getElementById('plan-rules-badge');
-  if(!b){
-    b=document.createElement('a');
-    b.id='plan-rules-badge';
-    b.href=window.PLANNING_RULES.sourceUrl;
-    b.target='_blank';
-    b.style.cssText='margin-left:10px;font-size:10.5px;font-weight:650;letter-spacing:.03em;'
-      +'padding:2px 8px;border-radius:8px;text-decoration:none;white-space:nowrap;';
-    nav.appendChild(b);
-  }
-  const active=window.PLANNING_RULES.fileStatus==='active';
-  b.textContent='📋 Planning rules: '+(active?'ACTIVE':'built-in');
-  b.style.background=active?'rgba(34,197,94,.15)':'rgba(148,163,184,.15)';
-  b.style.color=active?'#4ade80':'#94a3b8';
-  b.title=(active
-    ?'planning_rules.md loaded — the plan builder enforces it. Click to read.'
-    :'planning_rules.md not reachable — enforcing the built-in copy of the rules. Click to try the file.')
-    +'\nEnforced: RIM-only on BLB · SMA-only on KR · P1 SAP → P2 LIM-TOS → P3 LIM-LD ·'
-    +'\nP3 leftover split 50/50 HUAFEI/BSE vs POS 12 · POS transit IWIP rows · trips/DT validation bands';
+  // Badge was removed from the sticky bar (owner request). Rules still
+  // parse and enforce; this stays as a no-op so planRulesReady() is unchanged.
+  const stale=document.getElementById('plan-rules-badge');
+  if(stale&&stale.parentNode)stale.parentNode.removeChild(stale);
 }
 
 // Resolves once the .md has been fetched (or given up on); plan code that

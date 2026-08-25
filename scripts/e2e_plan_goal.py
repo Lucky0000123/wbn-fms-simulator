@@ -148,7 +148,8 @@ def main() -> int:
               return el.hidden!==true && window.getComputedStyle(el).display!=='none';
             }"""
             )
-            if c_vis and ("crowded" in rc0 or "section capacity" in rc0 or "iwip" in rc0):
+            if c_vis and ("lane" in rc0 or "green" in rc0 or "yellow" in rc0
+                          or "orange" in rc0 or "red" in rc0 or "iwip" in rc0):
                 print("road crowding at", i)
                 break
             time.sleep(0.5)
@@ -263,16 +264,24 @@ def main() -> int:
         rc = page.evaluate(
             "()=>(document.getElementById('plan-road-crowding')?.innerText||'').toLowerCase()"
         )
-        check("Road crowding panel rendered", "crowded" in rc or "section capacity" in rc, rc[:120])
-        check("Road crowding advisory copy", "advisory" in rc or "not" in rc, rc[:160])
+        check("Road crowding panel rendered",
+              "lane" in rc or "green" in rc or "yellow" in rc or "orange" in rc or "red" in rc,
+              rc[:120])
         rc_rows = page.evaluate(
             "()=>document.querySelectorAll('#plan-road-crowding .rc-row').length"
         )
         check("Road crowding grid has section rows", rc_rows >= 2, "rows=%s" % rc_rows)
         rc_iwip = page.evaluate(
-            "()=>!!document.querySelector('#plan-road-crowding .plan-rc-iwip input')"
+            """()=>{
+          const box=document.getElementById('plan-road-crowding');
+          const txt=(box&&box.innerText||'').toLowerCase();
+          const cb=box&&box.querySelector('.plan-rc-iwip input, input[onchange*="Iwip"], input[onchange*="Day"]');
+          return {hasCb:!!cb, mentionsWholeDayToggle:txt.includes('whole day (2')};
+        }"""
         )
-        check("Road crowding IWIP toggle present", rc_iwip)
+        check("Road crowding has no IWIP/whole-day toggles",
+              not rc_iwip.get("hasCb") and not rc_iwip.get("mentionsWholeDayToggle"),
+              rc_iwip)
         test_prod = page.evaluate(
             """()=>{
           const box=document.getElementById('plan-test-prod');
@@ -423,28 +432,30 @@ def main() -> int:
 
         # C is now the plan-driven road-crowding grid; the congestion-advice and
         # DES-table panels were removed 2026-08-12 (overlapped A/B/E). What must
-        # hold: the crowding payload never claims to clip tonnes, and the IWIP
-        # toggle changes the traffic actually timed.
+        # hold: the crowding payload never claims to clip tonnes, IWIP is always
+        # in the timed traffic, and there is no whole-day / IWIP checkbox.
         shared_ok = page.evaluate(
             "()=>!!(_planSharedFlow&&_planSharedFlow.ok"
             "&&_planSharedFlow.basis&&_planSharedFlow.basis.congestion_clips_tonnes===false)"
         )
         check("Crowding payload never clips tonnes", shared_ok)
-        iwip_paths_before = page.evaluate(
-            "()=>((_planSharedFlow||{}).summary||{}).n_paths||0"
-        )
-        page.evaluate(
-            """()=>{const cb=document.querySelector('#plan-road-crowding .plan-rc-iwip input');
-               if(cb){cb.checked=false;cb.dispatchEvent(new Event('change'));}}"""
-        )
-        time.sleep(2.0)
-        iwip_paths_after = page.evaluate(
-            "()=>((_planSharedFlow||{}).summary||{}).n_paths||0"
+        whole_day = page.evaluate("()=>!!(_planSharedFlow&&_planSharedFlow.whole_day)")
+        check("Crowding is always the full day (2×12 h)", whole_day)
+        iwip_always = page.evaluate(
+            """()=>{
+          const box=document.getElementById('plan-road-crowding');
+          const cb=box&&box.querySelector('input[type=checkbox]');
+          const nIwip=((typeof planCrowdIwipPlans==='function')?planCrowdIwipPlans():[]).length;
+          const ids=((_planSharedFlow&&_planSharedFlow.paths)||[]).map(p=>String(p.id||''));
+          const iwipInPayload=ids.some(id=>id.indexOf('iwip')===0);
+          return {hasCb:!!cb, nIwip, iwipInPayload};
+        }"""
         )
         check(
-            "IWIP toggle changes timed traffic (or no IWIP paths measured)",
-            iwip_paths_after <= iwip_paths_before,
-            "before=%s after=%s" % (iwip_paths_before, iwip_paths_after),
+            "No crowding checkboxes; IWIP paths ride with the plan when measured",
+            (not iwip_always.get("hasCb"))
+            and (iwip_always.get("nIwip") == 0 or iwip_always.get("iwipInPayload")),
+            iwip_always,
         )
 
         peak = page.evaluate(

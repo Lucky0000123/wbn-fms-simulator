@@ -7,6 +7,7 @@ import sys
 import plan_corridor_hours as pch
 import plan_shared_flow as sf
 from congestion.segments import SEGMENTS as _SEGS
+from congestion.speed_limits import FOLLOWING_DISTANCE_M as _FOLLOW_M
 from congestion.speed_limits import span_times_min as _span
 
 fails = []
@@ -442,6 +443,34 @@ check("tenant traffic still never clips tonnes",
       (_on["basis"].get("congestion_clips_tonnes") is False
        and _on["basis"].get("simulate_unchanged") is True))
 
+# Sending the visible TENANT| rows AND tenants=True used to charge the
+# register twice (Plan ~416 vs Excel ~263 on TF–KR). The DES must drop
+# those rows; occupancy then matches the Excel path (plans without them).
+_dup = _tp + [
+    {"id": "TENANT|POSITION|road", "source": "TF", "destination": "FENI KM15",
+     "n_trucks": 800, "contractor": "POSITION", "_tenant": True},
+    {"id": "TENANT|KR>RSF|road", "source": "KR", "destination": "RSF",
+     "n_trucks": 40, "contractor": "KR>RSF", "_tenant": True},
+]
+_dup_on = sf.shared_flow(_dup, shift_hours=12, whole_day=True, tenants=True)
+_dup_s = {s["section"]: s for s in (_dup_on.get("sections") or [])}
+_peak_gap = max(
+    abs((_dup_s.get(k) or {}).get("peak_concurrent", 0)
+        - (_on_s.get(k) or {}).get("peak_concurrent", 0))
+    for k in set(_on_s) | set(_dup_s)
+) if (_on_s or _dup_s) else 99
+check("tenant rows in the payload are not simulated a second time",
+      _peak_gap < 0.05, _peak_gap)
+# The other direction: dropping the feature (never injecting tenants)
+# would also make the two payloads match. Occupancy with tenants ON
+# must still beat tenants OFF, so a silent strip-and-forget fails.
+if _main in _dup_s and _main in _off_s:
+    check("the once-only charge still includes the register",
+          _dup_s[_main]["peak_concurrent"]
+          > _off_s[_main]["peak_concurrent"] * 1.5,
+          (_off_s[_main]["peak_concurrent"],
+           _dup_s[_main]["peak_concurrent"]))
+
 # ── RSF geography: a tenant is only on the kilometres it actually drives ────
 # Two fleets turn off at RSF (km 26), so tenant load is NOT the same set of
 # fleets all the way down the stick. This is the assertion that would catch a
@@ -487,6 +516,42 @@ for _s in _on["sections"]:
           abs(sum(t["trucks_present"] for t in _tp)
               - _s["tenant_trucks_present"]) < 0.15,
           (sum(t["trucks_present"] for t in _tp), _s["tenant_trucks_present"]))
+
+# One-lane packing is half of both-lane fit. The crowding grid colours
+# sitting against ONE loaded lane so 614 on TF–KR reads red (over 576).
+_s1 = _on_s.get("TF–KR") or {}
+if _s1:
+    _lane = 28.8 * 1000.0 / _FOLLOW_M
+    check("TF–KR one-lane packing is section km × 1000 / following distance",
+          abs(float(_s1.get("cap_trucks_lane") or 0) - _lane) < 1.0,
+          (_s1.get("cap_trucks_lane"), _FOLLOW_M, _lane))
+    check("one-lane packing is half of both-lane fit",
+          abs(float(_s1["cap_trucks_lane"]) * 2
+              - float(_s1["cap_trucks_bin"])) < 1.5,
+          (_s1.get("cap_trucks_lane"), _s1.get("cap_trucks_bin")))
+    check("lane_flow_per_h aligns with occupancy hours",
+          len(_s1.get("lane_flow_per_h") or []) == len(_s1.get("occupancy") or []),
+          (len(_s1.get("lane_flow_per_h") or []), len(_s1.get("occupancy") or [])))
+    # Occupancy grid is the loaded lane only. Empty trucks sit on the other
+    # carriageway; mixing them with 600/hr packing is how Plan S04 looked ~2×.
+    _both = sum(_s1.get("occupancy_both_mean") or _s1.get("occupancy_both") or [])
+    _loaded = sum(_s1.get("occupancy_mean") or _s1.get("occupancy") or [])
+    _empty = sum(_s1.get("occupancy_empty_mean") or _s1.get("occupancy_empty") or [])
+    check("TF–KR occupancy is loaded-lane only (less than both directions)",
+          _both > 0 and _loaded < _both - 1.0,
+          (_loaded, _both, _empty))
+    check("TF–KR loaded + empty ≈ both (tenants sit on loaded)",
+          abs(_loaded + _empty - _both) < 0.5,
+          (_loaded, _empty, _both))
+    check("TF–KR peak_concurrent is the loaded-lane peak",
+          float(_s1.get("peak_concurrent") or 0)
+          < float(_s1.get("peak_concurrent_both") or 0) - 0.5,
+          (_s1.get("peak_concurrent"), _s1.get("peak_concurrent_both")))
+_on_max = max((s.get("ratio") or 0) for s in _on["sections"]) if _on["sections"] else 0
+if _on_max >= 0.7:
+    check("crowded hours listed when tenant-inclusive v/c >= 0.7",
+          len(_on.get("congestion_hours") or []) > 0,
+          (_on_max, _on.get("congestion_hours")))
 
 print("\n%s" % ("ALL PASS" if not fails else "FAILED: " + ", ".join(fails)))
 sys.exit(1 if fails else 0)

@@ -1,4 +1,4 @@
-// congestion_charts.js — Congestion Model PREVIEW extras (saturation, cycle, loader sweep).
+// congestion_charts.js — Congestion Model extras (saturation, cycle, loader sweep).
 // Backend endpoints may not exist yet (parallel rebuild). Charts fall back to the
 // local planTripsPerDT ceiling-scale estimate, or a "backend not ready" note.
 
@@ -283,4 +283,202 @@ window.addEventListener('resize',function(){
     const el=document.getElementById(id);
     if(el&&el._congChart){try{el._congChart.resize();}catch(e){}}
   });
+});
+
+// Section packing calculator (Congestion tab, after the model charts).
+// Same geometry as congestion/speed_limits.py: trucks/hr = speed_kmh × 1000 / gap_m,
+// one loaded lane. Live model following distance is FOLLOWING_DISTANCE_M (50 m
+// from 2026-08-25); /api/road_segments hydrates so this table cannot drift.
+let _CONG_FOLLOW_M=50;
+const _CONG_PACK = {
+  S1:{id:'S1',label:'S1 · TF–KR',span:'KM 67.8–39.0',km:28.8,postedKmh:30,postedCap:null,
+      gpsKmh:16.0,gpsPeakKmh:15.3,gpsGapM:410,gpsFlow:66},
+  S2:{id:'S2',label:'S2 · KR–POS 12',span:'KM 39.0–27.0',km:12.0,postedKmh:30,postedCap:null,
+      gpsKmh:16.2,gpsPeakKmh:15.7,gpsGapM:240,gpsFlow:84},
+  S3:{id:'S3',label:'S3 · POS 12–KM15',span:'KM 27.0–15.0',km:12.0,postedKmh:30,postedCap:null,
+      gpsKmh:16.2,gpsPeakKmh:13.7,gpsGapM:340,gpsFlow:74},
+  S4:{id:'S4',label:'S4 · KM15–coast',span:'KM 15.0–0.0',km:15.0,postedKmh:20,postedCap:null,
+      gpsKmh:16.2,gpsPeakKmh:15.9,gpsGapM:340,gpsFlow:83},
+};
+function _congFollow(){return (_CONG_FOLLOW_M>0)?_CONG_FOLLOW_M:50;}
+function _congPostedCap(s){
+  if(Number.isFinite(s.postedCap)&&s.postedCap>0)return s.postedCap;
+  return s.postedKmh*1000/_congFollow();
+}
+function _congVcTone(vc){
+  if(!Number.isFinite(vc)||vc<0)return {cls:'',lab:'—',cell:''};
+  // Official 50 m packing is v/c = 1 → YELLOW (at the limit).
+  // RED is only OVER that packing — the "more congestion" the table exists to flag.
+  if(vc>1)return {cls:'overloaded',lab:'RED',cell:'tone-bad'};
+  if(vc>=0.7)return {cls:'saturated',lab:'YELLOW',cell:'tone-warn'};
+  return {cls:'free',lab:'GREEN',cell:'tone-ok'};
+}
+function _congTag(vc){
+  const t=_congVcTone(vc);
+  if(!t.cls)return '—';
+  return '<span class="plan-cong-badge '+t.cls+'">'+t.lab+'</span>';
+}
+function _congPackN(n,d){
+  d=(d==null)?0:d;
+  const x=Number(n);
+  if(!Number.isFinite(x))return '—';
+  return x.toLocaleString('en-GB',{maximumFractionDigits:d,minimumFractionDigits:d});
+}
+function _congPackSeg(){
+  const sel=document.getElementById('cong-pack-seg');
+  if(sel&&!sel.options.length){
+    sel.innerHTML=Object.keys(_CONG_PACK).map(k=>{
+      const s=_CONG_PACK[k];
+      return '<option value="'+s.id+'">'+s.label+' · '+s.km+' km</option>';
+    }).join('');
+    sel.value='S3';
+  }
+  return _CONG_PACK[(sel&&sel.value)||'S3']||_CONG_PACK.S3;
+}
+function _congPackNums(s,spd,gap){
+  const follow=_congFollow();
+  const cap=_congPostedCap(s);
+  const perKm=1000/gap;
+  return {
+    follow:follow,
+    cap:cap,
+    perKm:perKm,
+    onSec:s.km*perKm,
+    perHr:spd*1000/gap,
+    postedPerKm:1000/follow,
+    postedOnSec:s.km*(1000/follow),
+    gpsPerKm:1000/s.gpsGapM,
+    gpsOnSec:s.km*(1000/s.gpsGapM),
+    gpsAtFollow:s.gpsKmh*1000/follow,
+  };
+}
+function renderCongPack(){
+  const root=document.getElementById('cong-pack');
+  if(!root)return;
+  const s=_congPackSeg();
+  const spdEl=document.getElementById('cong-pack-spd');
+  const gapEl=document.getElementById('cong-pack-gap');
+  const follow=_congFollow();
+  if(spdEl&&!spdEl.dataset.touched) spdEl.value=String(s.postedKmh);
+  const liveTh=document.getElementById('cong-pack-live-th');
+  if(liveTh) liveTh.textContent='Posted (live '+_congPackN(follow,0)+' m)';
+  const spd=Math.max(1,Number(spdEl&&spdEl.value)||s.postedKmh);
+  const gap=Math.max(5,Number(gapEl&&gapEl.value)||follow);
+  const spdV=document.getElementById('cong-pack-spd-v');
+  const gapV=document.getElementById('cong-pack-gap-v');
+  if(spdV)spdV.textContent=_congPackN(spd,0);
+  if(gapV)gapV.textContent=_congPackN(gap,0);
+  const n=_congPackNums(s,spd,gap);
+  const playVc=n.perHr/n.cap;
+  const gpsVc=s.gpsFlow/n.cap;
+  const playTone=_congVcTone(playVc);
+  const gpsTone=_congVcTone(gpsVc);
+  const kpis=document.getElementById('cong-pack-kpis');
+  if(kpis)kpis.innerHTML=[
+    ['Trucks in 1 km',_congPackN(n.perKm,1),'', 'gap '+_congPackN(gap,0)+' m'],
+    ['Trucks on this section',_congPackN(n.onSec,0),'on '+s.id, s.span+' · '+s.km+' km · loaded lane'],
+    ['Can pass per hour',_congPackN(n.perHr,0),'trucks/hr · one loaded lane', 'live '+_congPackN(n.cap,0)+'/hr at '+_congPackN(follow,0)+' m — not both sides'],
+  ].map(c=>'<div class="effkpi"><div class="v">'+c[1]+(c[2]?' <span class="u">'+c[2]+'</span>':'')+'</div><div class="l">'+c[0]+' · '+c[3]+'</div></div>').join('');
+
+  const kmEl=document.getElementById('cong-pack-km');
+  if(kmEl){
+    const W=640,H=72,pad=28,iw=W-pad*2;
+    const count=Math.max(1,Math.round(n.perKm));
+    const truckFill=playTone.cls==='overloaded'?'#ef4444':(playTone.cls==='saturated'?'#facc15':'#22c55e');
+    let svg='<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="transparent"/>';
+    svg+='<line x1="'+pad+'" y1="36" x2="'+(W-pad)+'" y2="36" stroke="#30363d" stroke-width="10" stroke-linecap="round"/>';
+    svg+='<text x="'+pad+'" y="18" fill="#8b98a5" font-size="10">0 km</text>';
+    svg+='<text x="'+(W-pad)+'" y="18" fill="#8b98a5" font-size="10" text-anchor="end">1 km</text>';
+    const drawN=Math.min(count,24);
+    const step=iw/Math.max(1,drawN);
+    for(let i=0;i<drawN;i++){
+      const x=pad+step*(i+0.5);
+      svg+='<rect x="'+(x-7)+'" y="28" width="14" height="16" rx="3" fill="'+truckFill+'" opacity="0.9"/>';
+    }
+    const more=count>24?(' · showing 24 of '+count):'';
+    svg+='<text x="'+(W/2)+'" y="64" fill="#e6edf3" font-size="11" text-anchor="middle" font-weight="600">'
+      +count+' trucks / km'+more+'</text>';
+    kmEl.innerHTML=svg;
+  }
+
+  const flEl=document.getElementById('cong-pack-flow');
+  if(flEl){
+    const W=640,H=160,pl=46,pr=16,pt=14,pb=28,iw=W-pl-pr,ih=H-pt-pb;
+    const g0=20,g1=400;
+    const capY=n.cap;
+    const maxY=Math.max(capY,n.perHr,n.gpsAtFollow)*1.15;
+    const X=g=>pl+iw*(g-g0)/(g1-g0);
+    const Y=v=>pt+ih*(1-v/maxY);
+    let svg='';
+    for(let i=0;i<=4;i++){
+      const v=maxY*(1-i/4), yy=pt+ih*i/4;
+      svg+='<line x1="'+pl+'" y1="'+yy.toFixed(1)+'" x2="'+(W-pr)+'" y2="'+yy.toFixed(1)+'" stroke="#16233c"/>';
+      svg+='<text x="'+(pl-6)+'" y="'+(yy+3).toFixed(1)+'" fill="#64748b" font-size="10" text-anchor="end">'+_congPackN(v,0)+'</text>';
+    }
+    let pts=[];
+    for(let g=g0;g<=g1;g+=4) pts.push(X(g).toFixed(1)+','+Y(spd*1000/g).toFixed(1));
+    svg+='<polyline points="'+pts.join(' ')+'" fill="none" stroke="#f59e0b" stroke-width="2"/>';
+    const xm=X(Math.min(g1,Math.max(g0,follow)));
+    svg+='<line x1="'+xm.toFixed(1)+'" y1="'+pt+'" x2="'+xm.toFixed(1)+'" y2="'+(pt+ih)+'" stroke="#64748b" stroke-dasharray="3 3"/>';
+    svg+='<text x="'+xm.toFixed(1)+'" y="'+(pt+10)+'" fill="#94a3b8" font-size="9" text-anchor="middle">'+_congPackN(follow,0)+' m</text>';
+    svg+='<line x1="'+pl+'" y1="'+Y(capY).toFixed(1)+'" x2="'+(W-pr)+'" y2="'+Y(capY).toFixed(1)+'" stroke="#22c55e" stroke-dasharray="4 3" opacity="0.8"/>';
+    svg+='<text x="'+(W-pr)+'" y="'+(Y(capY)-4).toFixed(1)+'" fill="#22c55e" font-size="9" text-anchor="end">live '+_congPackN(capY,0)+'/hr</text>';
+    svg+='<circle cx="'+X(Math.min(g1,Math.max(g0,gap))).toFixed(1)+'" cy="'+Y(n.perHr).toFixed(1)+'" r="5" fill="#f59e0b" stroke="#111" stroke-width="1"/>';
+    svg+='<text x="'+(W/2)+'" y="'+(H-6)+'" fill="#94a3b8" font-size="10" text-anchor="middle">following distance (m) →</text>';
+    flEl.innerHTML=svg;
+  }
+
+  const tb=document.getElementById('cong-pack-tbl');
+  if(tb){
+    const rows=[
+      {label:'Speed', posted:_congPackN(s.postedKmh,0)+' km/h', play:_congPackN(spd,1)+' km/h', gps:_congPackN(s.gpsPeakKmh,1)+' km/h', tag:''},
+      {label:'Gap between trucks', posted:_congPackN(follow,0)+' m', play:_congPackN(gap,0)+' m', gps:_congPackN(s.gpsGapM,0)+' m', tag:''},
+      {label:'Trucks in 1 km', posted:_congPackN(n.postedPerKm,1), play:_congPackN(n.perKm,1), gps:_congPackN(n.gpsPerKm,1), tag:''},
+      {label:'Trucks on this section', posted:_congPackN(n.postedOnSec,0), play:_congPackN(n.onSec,0), gps:_congPackN(n.gpsOnSec,0), tag:''},
+      {label:'Through the section / hour (one loaded lane)', posted:_congPackN(n.cap,0)+' (live '+_congPackN(follow,0)+' m)',
+        play:_congPackN(n.perHr,0)+' (play)', gps:_congPackN(s.gpsFlow,0)+' (flow seen)',
+        playCell:playTone.cell, gpsCell:gpsTone.cell,
+        tag:_congTag(playVc)+' <span class="muted">play</span> · '+_congTag(gpsVc)+' <span class="muted">GPS</span>'},
+    ];
+    tb.innerHTML=rows.map(r=>'<tr><td>'+r.label+'</td>'
+      +'<td class="r">'+r.posted+'</td>'
+      +'<td class="r you '+(r.playCell||'')+'">'+r.play+'</td>'
+      +'<td class="r '+(r.gpsCell||'')+'">'+r.gps+'</td>'
+      +'<td>'+(r.tag||'')+'</td></tr>').join('');
+  }
+  const note=document.getElementById('cong-pack-note');
+  if(note){
+    let extra=' Live model uses '+_congPackN(follow,0)+' m between DTs on ONE loaded lane ('+_congPackN(n.cap,0)+' trucks/hr). Both carriageways would be ~2× and is not what Plan uses.';
+    extra+=' GREEN = v/c &lt; 0.7 · YELLOW = 0.7–1.0 (at the '+_congPackN(follow,0)+' m packing) · RED = over capacity.';
+    if(gap<follow) extra+=' Your play gap is tighter than the live '+_congPackN(follow,0)+' m, so throughput is higher and the tag moves toward RED.';
+    note.innerHTML=s.label+' · '+s.span+' · ONE loaded lane (empty is the other carriageway) · formula trucks/hr = speed × 1000 / gap.'
+      +' Play is '+_congPackN(100*playVc,0)+'% of live capacity.'
+      +extra+' Plan Road crowding uses this same loaded-lane packing.';
+  }
+}
+function _congPackHydrate(j){
+  if(!j||!j.ok)return;
+  const f=j.road&&j.road.following_distance_m;
+  if(f>0)_CONG_FOLLOW_M=f;
+  (j.segments||[]).forEach(seg=>{
+    const s=_CONG_PACK[seg.id];
+    if(!s)return;
+    if(seg.cap_hr>0)s.postedCap=seg.cap_hr;
+    const pmin=seg.speeds&&seg.speeds.loaded&&seg.speeds.loaded.min;
+    if(pmin>0)s.postedKmh=pmin;
+  });
+  const gapEl=document.getElementById('cong-pack-gap');
+  if(gapEl&&!gapEl.dataset.touched){
+    gapEl.value=String(Math.round(_CONG_FOLLOW_M));
+  }
+  renderCongPack();
+}
+document.addEventListener('DOMContentLoaded',function(){
+  if(!document.getElementById('cong-pack-seg'))return;
+  const gapEl=document.getElementById('cong-pack-gap');
+  if(gapEl)gapEl.addEventListener('input',function(){gapEl.dataset.touched='1';});
+  const spdEl=document.getElementById('cong-pack-spd');
+  if(spdEl)spdEl.addEventListener('input',function(){spdEl.dataset.touched='1';});
+  renderCongPack();
+  fetch('/api/road_segments').then(function(r){return r.json();}).then(_congPackHydrate).catch(function(){});
 });

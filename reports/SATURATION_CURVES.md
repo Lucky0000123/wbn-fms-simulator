@@ -1,12 +1,12 @@
 # Reference saturation curves — trips/DT/day vs fleet
 
-> Generated 2026-08-24T08:01:51Z by scripts/export_saturation_curves.py — regenerate after any
+> Generated 2026-08-25T10:28:51Z by scripts/export_saturation_curves.py — regenerate after any
 > recalibration. Formula: `trips = 1440/(road_congested + ops + queue +
 > bunching + overhead_per_trip)`; BPR on road time only, capped at 3x.
 > `calibrated faces` is what the Congestion-tab chart shows;
 > `proportional` is what the plan builder prices with (rules §10.9).
 
-Built from **data/congestion_params.json** generated 2026-08-23T23:41:19Z (`sha256:a57ce03e3021c983`, `sha256:bc48f67671f41c45`).
+Built from **data/congestion_params.json** generated 2026-08-23T23:41:19Z (`sha256:a57ce03e3021c983`, `sha256:f8efaf136d339a6a`).
 
 Verify this file is still current — exits non-zero when it is not:
 

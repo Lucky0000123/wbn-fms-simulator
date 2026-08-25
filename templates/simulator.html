@@ -45,7 +45,7 @@
     <div id="content" style="display:none">
       <div class="sim-tabs" style="display:flex;gap:4px;margin:0 0 16px;border-bottom:1px solid var(--line)">
         <button class="sim-tab on" id="tabbtn-sim" onclick="setSimTab('sim')">Capability &amp; Scenario</button>
-        <button class="sim-tab" id="tabbtn-cong" onclick="setSimTab('cong')">🔬 Congestion Model <span>PREVIEW</span></button>
+        <button class="sim-tab" id="tabbtn-cong" onclick="setSimTab('cong')">🔬 Congestion Model</button>
         <button class="sim-tab" id="tabbtn-plan" onclick="setSimTab('plan')">🧭 Plan</button>
         <a href="/monthly" class="sim-tab" style="text-decoration:none" title="Paste the yearly matrix — target, old predicted plan and optimized predicted plan for each month">📅 Monthly</a>
       </div>
@@ -316,9 +316,6 @@
       </div><!-- /tab-sim -->
 
       <div id="tab-cong" style="display:none">
-        <div class="info-banner warn">
-          <b>PREVIEW — modeled, not yet validated.</b> <span class="banner-body">At today's ~300–400 trucks/day the roads aren't congested, so speed doesn't yet visibly fall with traffic. This tab shows the <b>speed-vs-traffic data we're collecting</b> per haul-road segment and a <b>tunable model curve</b> so you can see the shape the congestion model will take. Free-flow is measured; the jam point + curvature are assumptions you set. It becomes real as denser data and higher fleets arrive.</span>
-        </div>
         <div class="optbar" style="margin-bottom:10px">
           <span class="muted">Segment</span>
           <select id="cong-seg" onchange="renderCongModel()" style="min-width:200px"></select>
@@ -368,6 +365,60 @@
             adding more loaders won't help; a second route is needed.
           </p>
         </div>
+        <div class="card" id="cong-pack" style="margin-top:12px">
+          <h3 style="font-size:13px;margin:0 0 6px">Section packing — speed × following distance</h3>
+          <p class="muted" style="font-size:11px;margin:0 0 10px;line-height:1.45">
+            Same geometry as the live model: <b>one loaded lane</b>
+            (empty trucks use the other carriageway). trucks/hr =
+            speed × 1000 / gap. The live gap is <b>50&nbsp;m between DTs</b>
+            on every section (owner 2026-08-25). Plan crowding and the
+            monthly Excel colour against this same loaded-lane packing —
+            not both sides added together. GREEN / YELLOW / RED tags
+            compare flow to that capacity (v/c &lt; 0.7 / 0.7–1.0 / over 1).
+            GPS Jul–Aug is a speed check at low production, not a new ceiling.
+          </p>
+          <div class="cong-pack-bar">
+            <label>Section
+              <select id="cong-pack-seg" onchange="renderCongPack()"></select>
+            </label>
+            <label class="cong-pack-sl">Average speed
+              <input id="cong-pack-spd" type="range" min="8" max="50" step="1" value="30"
+                oninput="renderCongPack()">
+              <b id="cong-pack-spd-v">30</b><span class="u">km/h</span>
+            </label>
+            <label class="cong-pack-sl">Gap between trucks
+              <input id="cong-pack-gap" type="range" min="20" max="200" step="5" value="50"
+                oninput="renderCongPack()">
+              <b id="cong-pack-gap-v">50</b><span class="u">m</span>
+            </label>
+          </div>
+          <div class="effkpis cong-pack-kpis" id="cong-pack-kpis"></div>
+          <div class="cong-pack-viz">
+            <div>
+              <div class="cong-pack-viz-h">1 km of loaded lane at this gap</div>
+              <svg id="cong-pack-km" viewBox="0 0 640 72" aria-label="Trucks on one kilometre"></svg>
+            </div>
+            <div>
+              <div class="cong-pack-viz-h">Hourly throughput vs gap at this speed</div>
+              <svg id="cong-pack-flow" viewBox="0 0 640 160" aria-label="Throughput versus following distance"></svg>
+            </div>
+          </div>
+          <div class="scroll" style="margin-top:10px">
+            <table class="cong-pack-tbl">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th class="r" id="cong-pack-live-th">Posted (live 50 m)</th>
+                  <th class="r">Your play</th>
+                  <th class="r">GPS Jul–Aug peak</th>
+                  <th>Tag</th>
+                </tr>
+              </thead>
+              <tbody id="cong-pack-tbl"></tbody>
+            </table>
+          </div>
+          <p class="muted" style="font-size:11px;margin:8px 0 0;line-height:1.45" id="cong-pack-note"></p>
+        </div>
       </div><!-- /tab-cong -->
       <div id="tab-plan" class="plan-tab" style="display:none">
         <!-- Sticky plan nav. The Save controls used to sit in the date card at the
@@ -378,14 +429,14 @@
         <nav class="plan-navbar" id="plan-navbar" aria-label="Plan sections">
           <div class="plan-nav-id">
             <b id="plan-nav-date">—</b>
-            <span class="muted" id="plan-nav-summary">no paths yet</span>
+            <span class="muted" id="plan-nav-summary"></span>
           </div>
           <div class="plan-nav-wmt" id="plan-nav-wmt-wrap" title="Predicted production from the path model (live)">
             <span class="plan-nav-wmt-k">Predicted</span>
             <b id="plan-nav-wmt">—</b>
             <span class="muted" id="plan-nav-wmt-u">t / day</span>
           </div>
-          <div class="plan-nav-links" id="plan-nav-links" role="group" aria-label="Jump to section">
+          <div class="plan-nav-links" id="plan-nav-links" hidden role="group" aria-label="Jump to section">
             <button type="button" data-sec="plan-sec-build">Plan</button>
             <button type="button" data-sec="plan-sec-predict">Prediction</button>
             <button type="button" data-sec="plan-sec-outlook">Outlook</button>
@@ -408,15 +459,9 @@
             </label>
             <span id="plan-date-note" class="muted" style="font-size:12px"></span>
           </div>
-          <details class="card plan-outlook" id="plan-sec-outlook" open>
+          <details class="card plan-outlook" id="plan-sec-outlook" open title="Click a day to set the plan date and rainfall">
             <summary class="plan-outlook-sum">
               <h3>Rain forecast</h3>
-              <span class="muted plan-outlook-hint">Click a day to set date and rain</span>
-              <span class="plan-outlook-keys" aria-hidden="true">
-                <span class="k k-dry">dry</span>
-                <span class="k k-rain">rain</span>
-                <span class="k k-on">plan date</span>
-              </span>
             </summary>
             <p class="muted plan-outlook-note">Click a day to fill Rain. Path-model prediction — simulate tonnes stay dry/wet-invariant.</p>
             <div id="plan-coming-days" class="plan-coming-days" aria-live="polite"></div>
@@ -485,7 +530,7 @@
               </div>
               <!-- Road-only / foreign (IWIP or Position): trucks load corridor, no WMT for us.
                    When checked, contractor + source/dest switch to measured non-plan paths. -->
-              <label id="plan-input-foreign" class="plan-foreign-row" title="Road-only traffic (IWIP or Position trucks moving between site locations): adds congestion on shared roads, no WMT for us. Turns contractor into IWIP / POSITION and locations into their measured paths.">
+              <label id="plan-input-foreign" class="plan-foreign-row" title="Road-only traffic (IWIP trucks moving our material between site locations): adds congestion on shared roads, no WMT for us. Turns contractor into IWIP and locations into their measured paths. Position is no longer added here — it is one of the other tenants (500 DT) and is already on the road automatically.">
                 <input id="plan-foreign" type="checkbox" onchange="planForeignToggle()">
                 <span>Road-only <em>(IWIP / Position — no WMT)</em></span>
               </label>
@@ -658,7 +703,18 @@
                       <b class="plan-readout-value" id="plan-flow-prod">—</b>
                       <span class="plan-readout-unit" id="plan-flow-prod-label">achievable t</span>
                     </div>
+                    <div class="plan-readout-metric">
+                      <span class="plan-readout-kicker" title="Volume ÷ capacity">Peak V/C</span>
+                      <b class="plan-readout-value" id="plan-flow-vc">—</b>
+                      <span class="plan-readout-unit"><span class="muted" id="plan-flow-vc-hint"></span></span>
+                    </div>
+                    <div class="plan-readout-metric">
+                      <span class="plan-readout-kicker">On road</span>
+                      <b class="plan-readout-value" id="plan-flow-onroad">—</b>
+                      <span class="plan-readout-unit" id="plan-flow-onroad-label">DT on corridor</span>
+                    </div>
                   </div>
+                  <p class="plan-vc-note" id="plan-flow-vc-note">V/C is volume ÷ capacity: trucks per hour this plan puts through a section, divided by how many that section can take (measured GPS peak). 1.0 is full; above 1.0 the cartoon is over that peak. Illustration only — does not change tonnes.</p>
                 </div>
                 <div class="flow-planner" id="plan-flow-planner" style="display:none"></div>
                 <div class="plan-illust-meta">
@@ -668,11 +724,6 @@
                   </div>
                   <div class="c3-flow-meta" id="plan-c3-flow-meta"></div>
                   <div class="plan-illust-kpis">
-                    <div class="plan-readout-metric plan-readout-metric--compact">
-                      <span class="plan-readout-kicker">Peak V/C</span>
-                      <b class="plan-readout-value" id="plan-flow-vc">—</b>
-                      <span class="plan-readout-unit"><span class="muted" id="plan-flow-vc-hint"></span></span>
-                    </div>
                     <div class="plan-readout-metric plan-readout-metric--compact">
                       <span class="plan-readout-kicker">Excess DT</span>
                       <b class="plan-readout-value" id="plan-flow-queue">—</b>
@@ -702,6 +753,7 @@
                   <div class="ph-load-sub">measured dwell + section speeds · staggered releases</div>
                 </div>
                 <div id="plan-road-crowding" class="plan-road-crowding" aria-live="polite"></div>
+                </div>
                 <!-- Hidden stubs: flow_sim.js writes plan-host readouts via
                      flowQ('flow-…'), which FALLS BACK to the Capability page's
                      elements when the plan-prefixed ones are missing. Removing
@@ -740,7 +792,7 @@
               <div class="c3-flow-kpi" id="ps-kpi-ticket-wrap" style="display:none">
                 <b id="ps-kpi-ticket">&mdash;</b><span>Ticket-calibrated t (&divide;1.055)</span></div>
             </div>
-            <div id="ps-warnings" style="margin-top:10px"></div>
+            <div id="ps-warnings" hidden></div>
           </div>
               </div>
         <div id="pa-sections-top" style="display:none">
@@ -763,25 +815,6 @@
               <select id="pa-road" onchange="paSetRoad(this.value)" style="margin-left:8px"></select></div>
             <div id="pa-speed-chart" style="height:250px;margin-top:8px"></div>
             <div id="pa-speed-note" class="lead muted" style="margin-top:10px;font-size:12px"></div>
-          </div>
-
-          <div class="card" style="margin-top:14px">
-            <h3 style="margin-bottom:3px">4 &middot; Congestion and shared points</h3>
-            <div class="sub">Two different things, kept apart on purpose: which points these plans <b>share</b> (modelled, as capacity) and how much slower busy road sections actually run (measured, and deliberately not modelled). Shared <b>road</b> risk below is advisory from historical analogues — it does not clip tonnes.</div>
-            <div class="rain-table" style="margin-top:8px"><table>
-              <thead><tr><th style="width:110px">Point type</th><th>Shared between plans</th></tr></thead>
-              <tbody id="pa-shared-rows"></tbody></table></div>
-            <div id="pa-shared-road" style="margin-top:10px"></div>
-            <div class="rain-table" style="margin-top:8px"><table>
-              <thead><tr><th>Date</th><th class="r">Section DT</th><th class="r">Trips/DT</th><th>Season</th><th>Sections</th></tr></thead>
-              <tbody id="pa-shared-road-rows"><tr><td colspan="5" class="muted">Run analogues (Plan tab or assessment refresh)…</td></tr></tbody>
-            </table></div>
-            <div id="pa-drop-chart" style="height:230px;margin-top:12px"></div>
-            <div class="rain-table" style="margin-top:8px"><table>
-              <thead><tr><th>Segment</th><th class="r">Free-flow km/h</th><th class="r">Mean km/h</th>
-                <th class="r">Below free-flow</th><th class="r">Peak trucks</th><th class="r">Obs</th></tr></thead>
-              <tbody id="pa-drop-rows"></tbody></table></div>
-            <div id="pa-cong-note" class="lead muted" style="margin-top:10px;font-size:12px"></div>
           </div>
 
           <div class="card" style="margin-top:14px">

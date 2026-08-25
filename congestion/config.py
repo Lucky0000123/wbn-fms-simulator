@@ -23,8 +23,9 @@ DEFAULTS = {
     # These are the pre-2026-08-22 headway-CLASS numbers (60 or 240 trucks/hr).
     # They are NOT the pricing basis any more and must not be read as one:
     # congestion.segments.route_road_capacity_hr() serves the OFFICIAL basis
-    # (owner speed-limit sheets: slowest posted bin / 50 m following distance,
-    # ONE loaded lane -> 400/hr on S4, 600/hr on S1-S3), and the predictor
+    # (owner speed-limit sheets: slowest posted bin / FOLLOWING_DISTANCE_M,
+    # ONE loaded lane — 50 m from 2026-08-25, so 600/hr S1–S3 and 400/hr
+    # S4), and the predictor
     # prefers it wherever the route's geometry is known. The class numbers sat
     # 2.5-10x low, which is how an "S1 bottleneck" at v/c 2.4 was manufactured
     # out of an assumption. What survives here is the last resort for a route

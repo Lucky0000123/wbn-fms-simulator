@@ -38,8 +38,8 @@ def main():
         pg.goto(BASE + "/simulator", wait_until="domcontentloaded", timeout=30000)
         pg.wait_for_timeout(2500)
 
-        # Build a two-plan scenario that
-        # SHARES a dumping point, so section 4 has something real to report.
+        # Build a two-plan scenario that SHARES a dumping point, so the
+        # queue-risk gauges have a genuinely shared tip to report.
         # The assessment lives INSIDE the Plan tab now (plansim page retired
         # 2026-08-07). Drive it the way the app does: build the holding plan
         # in _planDraft, then planOpenFullAssessment() -> psRun() renders
@@ -66,8 +66,8 @@ def main():
         opts = pg.evaluate("() => (typeof _psRoutes !== 'undefined' ? _psRoutes : []).map(r => r.route)")
         check("route options populated", len(opts) > 3, "%d options" % len(opts))
 
-        # TWO DIFFERENT origins into ONE destination, so section 4 has a genuinely
-        # shared dumping point to report. Same intent as the old plansim driver.
+        # TWO DIFFERENT origins into ONE destination, so gauges have a genuinely
+        # shared dumping point. Same intent as the old plansim driver.
         dests = pg.evaluate(
             """() => {const o=(typeof _psRoutes !== 'undefined' ? _psRoutes : []).map(r=>r.route);
                const by={}; o.forEach(r=>{const d=r.split('>')[1]; if(d)(by[d]=by[d]||[]).push(r);});
@@ -103,16 +103,14 @@ def main():
                 " return b && b.querySelectorAll('tr').length > 0;}", timeout=30000)
         except Exception:                                          # noqa: BLE001
             pass
-        # Sections 4 and 7 render only after /api/plan/analogues resolves —
-        # measured 18 s cold over the site VPN. Wait for the CONDITION (their
-        # tables having rows), not a fixed sleep (AGENTS: fixed sleeps under
+        # Section 7 renders only after /api/plan/analogues resolves —
+        # measured 18 s cold over the site VPN. Wait for the CONDITION (the
+        # table having rows), not a fixed sleep (AGENTS: fixed sleeps under
         # VPN latency are how this gate went flaky on 2026-08-11).
         try:
             pg.wait_for_function(
-                "() => {const s=document.getElementById('pa-shared-rows');"
-                " const h=document.getElementById('pa-analogues-rows');"
-                " return s && s.querySelectorAll('tr').length > 0"
-                "     && h && h.querySelectorAll('tr').length > 0;}", timeout=45000)
+                "() => {const h=document.getElementById('pa-analogues-rows');"
+                " return h && h.querySelectorAll('tr').length > 0;}", timeout=45000)
         except Exception:                                          # noqa: BLE001
             pass
         pg.wait_for_timeout(2500)
@@ -167,16 +165,6 @@ def main():
                   "window empty; asserting the honest-unavailable path instead" % n_seg)
             check("S3 explains the absence instead of drawing an empty axis",
                   "no segment speeds available" in note3, note3[:120])
-        check("S4 shared-point table populated", rows("#pa-shared-rows") >= 1)
-        check("S4 reports a REAL shared point, not the empty-state message",
-              "no loading or dumping point is shared" not in text("#pa-shared-rows").lower(),
-              text("#pa-shared-rows")[:90])
-        check("S4 cites the measured slope",
-              "-0.0233" in text("#pa-cong-note") or "−0.0233" in text("#pa-cong-note"),
-              text("#pa-cong-note")[:90])
-        check("S4 separates the bars from the congestion coefficient",
-              "two different things" in text("#pa-cong-note").lower(),
-              text("#pa-cong-note")[:90])
         # Count DRAWN CANVASES, not wrapper divs. The wrappers are recreated on
         # every render and so can never fail; the canvases are what blanked.
         # Wrappers whose point has NO measured ceiling render an explanatory

@@ -213,7 +213,10 @@ print()
 # not exist. Recognition must therefore work by NAME, not only by flag.
 import glob as _glob
 import json as _json
-from monthly_api import _is_tenant_row, _plans_from_alloc_rows
+from monthly_api import (
+    _ensure_tenant_rows, _is_tenant_row, _path_mat_label,
+    _plans_from_alloc_rows,
+)
 
 check(_is_tenant_row({"key": "KR>RSF", "contractor": "KR>RSF"}),
       "an unflagged RSF row is still recognised as a tenant")
@@ -227,12 +230,14 @@ check(not _is_tenant_row({"key": "TF>HUAFEI", "contractor": "RIM"}),
       "our own rows are NOT mistaken for tenants")
 check(not _is_tenant_row({"key": "POS 12>FENI KM0", "contractor": "IWIP"}),
       "IWIP road-only rows are NOT mistaken for tenants")
-# POSITION is TENANT-ONLY from 2026-08-24 (owner: "delete the old Position rows
-# ... so we will have just one Position row with that 500 trucks"). It used to
-# be one of ours as well, and being both is what let the same fleet onto the
-# road twice. IWIP is the only road-only contractor we still add ourselves.
 check(_is_tenant_row({"key": "TF>FENI KM15", "contractor": "POSITION"}),
       "POSITION is a tenant, not one of our own road-only rows")
+check(not T.is_tenant_plan({"key": "POS 12>FENI KM0", "contractor": "IWIP"}),
+      "is_tenant_plan agrees IWIP is ours")
+check(T.is_tenant_plan({"id": "TENANT|MHM|road", "source": "TF",
+                        "destination": "FENI KM15", "n_trucks": 100,
+                        "contractor": "MHM"}),
+      "is_tenant_plan catches a shared_flow-shaped tenant row")
 
 _mixed = [{"key": "TF>HUAFEI", "contractor": "RIM", "dt_after": 50},
           {"key": "TF>FENI KM15", "contractor": "MHM", "dt_after": 100},
@@ -245,18 +250,91 @@ check(sorted(p["contractor"] for p in _kept) == ["IWIP", "RIM"],
 check(not any("RSF" in (p["source"] + p["destination"]) for p in _kept),
       "no RSF route survives into the road model from a save")
 
-# No saved plan on disk may carry them. This is the state the owner's screenshot
-# came from, so it is asserted on the real files, not a fixture.
-_bad = []
+# Excel lists the same other-tenant fleets Plan shows. Saved allocation.rows
+# omit them (the Plan tab injects live); the sheet reader must merge the
+# register in. Corridor still drops them — that is the 2× occupancy guard.
+print()
+_prod = [
+    {"key": "TF>HUAFEI", "contractor": "RIM", "material": "LIM", "otype": "LD",
+     "dt_after": 244, "pred_after": 10000, "prio": 3},
+    {"key": "POS 12>FENI KM0", "contractor": "IWIP", "foreign": True,
+     "dt_after": 17, "pred_after": 0},
+]
+_sheet = _ensure_tenant_rows(_prod)
+_names = {str(r.get("contractor") or "").upper() for r in _sheet}
+check({"MHM", "POSITION", "PMA", "HSM", "KR>RSF", "HUAFEI>RSF"} <= _names,
+      "Excel merge adds every registered tenant",
+      "got %s" % sorted(_names))
+_pos = [r for r in _sheet if str(r.get("contractor") or "").upper() == "POSITION"]
+check(_pos and int(_pos[0]["dt_after"]) == 500,
+      "POSITION lands at the register's 500 DT")
+check(_path_mat_label(_pos[0]) == "other tenant",
+      "tenant material is 'other tenant', not a blank/road cell")
+_iwip = [r for r in _sheet if r.get("contractor") == "IWIP"][0]
+check(_path_mat_label(_iwip) == "road",
+      "IWIP POS-transit stays material 'road'")
+_again = _ensure_tenant_rows(_sheet)
+_ten_n = sum(1 for r in _again if _is_tenant_row(r))
+check(_ten_n == 6, "merge is idempotent (still 6 tenants)", "got %s" % _ten_n)
+_kept2 = _plans_from_alloc_rows(_sheet)
+check(sorted(p["contractor"] for p in _kept2) == ["IWIP", "RIM"],
+      "merged tenant rows still never reach the corridor",
+      [p["contractor"] for p in _kept2])
+check(sum(r.get("dt_after") or 0 for r in _sheet if _is_tenant_row(r)) == 1340,
+      "register total is 1,340 DT")
+
+from openpyxl import Workbook
+from monthly_api import _xlsx_path_alloc_table
+_wb = Workbook()
+_ws = _wb.active
+_xlsx_path_alloc_table(_ws, 1, _prod, "New Allocation Plan table", "")
+_cells = [[c.value for c in row] for row in _ws.iter_rows(min_col=1, max_col=8)]
+_ctr = [r[2] for r in _cells if r[2]]
+check("POSITION" in _ctr and "MHM" in _ctr and "HUAFEI>RSF" in _ctr,
+      "Excel table writes tenant contractor names",
+      "contractors=%s" % _ctr)
+check(any((r[3] or "") == "other tenant" for r in _cells),
+      "Excel table labels them 'other tenant'")
+check(any((r[3] or "") == "road" for r in _cells),
+      "IWIP still writes material 'road'")
+_tot = next((r for r in _cells if r[0] == "TOTAL"), None)
+# Policy change 2026-08-25 (QA BUG 1): TOTAL DT is OUR fleet ONLY (244).
+# IWIP POS-transit moved to its own line under TOTAL — summing it in put
+# Sep's TOTAL at 707 against the pool figure 581 on the same sheet and
+# deflated Trips/DT by dividing our trips by a fleet that included 0-trip
+# rows. Tenants (1,340) stay excluded as before.
+check(_tot and _tot[5] == 244,
+      "TOTAL DT is our fleet only (244); IWIP on its own line; no tenants",
+      "TOTAL DT=%s" % (_tot[5] if _tot else None))
+_iwip_line = next((r for r in _cells
+                   if isinstance(r[0], str) and "IWIP" in r[0].upper()
+                   and r[0] != "TOTAL"), None)
+check(_iwip_line is not None,
+      "IWIP POS-transit appears on its own labelled line",
+      "rows=%s" % [r[0] for r in _cells if r[0]][:12])
+
+# Allocation may LIST tenant fleets so the New Allocation table survives
+# Save→Load (owner, 2026-08-24). They must be flagged, and the corridor
+# reader must still drop them — an unflagged RSF row is the KR spur.
+_unflagged = []
+_into_model = []
 for _f in sorted(_glob.glob("data/saved_plans/*.json")):
     try:
         _d = _json.load(open(_f, encoding="utf-8"))
     except (OSError, ValueError):
         continue
     _rows = (_d.get("allocation") or {}).get("rows") or []
-    if any(_is_tenant_row(_r) for _r in _rows):
-        _bad.append(_f.rsplit("/", 1)[-1])
-check(not _bad, "no saved plan carries tenant rows", _bad)
+    for _r in _rows:
+        if not _is_tenant_row(_r):
+            continue
+        flagged = bool(_r.get("_tenant") or str(_r.get("id") or "").upper().startswith("TENANT|"))
+        if not flagged:
+            _unflagged.append(_f.rsplit("/", 1)[-1])
+    _kept_file = _plans_from_alloc_rows(_rows)
+    if any("RSF" in (p["source"] + p["destination"]) for p in _kept_file):
+        _into_model.append(_f.rsplit("/", 1)[-1])
+check(not _unflagged, "saved tenant rows carry _tenant or TENANT| id", _unflagged)
+check(not _into_model, "corridor reader still drops tenants from every save", _into_model)
 
 for s in SKIPS:
     print("  skip %s" % s)

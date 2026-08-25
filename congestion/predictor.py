@@ -62,8 +62,8 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
     tenants as trucks would understate exactly the traffic the owner is asking
     about, so they arrive already converted.
 
-    Road capacity is the OFFICIAL geometric one (speed-limit sheets / 50 m
-    following, one loaded lane; the BLB spur has no sheet and carries the
+    Road capacity is the OFFICIAL geometric one (speed-limit sheets /
+    FOLLOWING_DISTANCE_M, one loaded lane; the BLB spur has no sheet and carries the
     20 km/h floor). It is a ROAD number and only a road number: the loader
     and dump ceilings are priced by queueing.erlang_c and reported under
     their own keys, never folded into the BPR capacity.
@@ -143,7 +143,7 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
     headway_s = p.get("headway_s")
     c_road = p.get("c_road_trucks_hr")
     # OFFICIAL geometric road capacity first (owner documents, 2026-08-22):
-    # slowest posted speed-limit bin / 50 m following distance, ONE loaded
+    # slowest posted speed-limit bin / FOLLOWING_DISTANCE_M, ONE loaded
     # lane. The stored c_road_trucks_hr is the PRE-2026-08-22 headway-CLASS
     # assumption (60 or 240 trucks/hr) that congestion/segments.py records as
     # having sat "2.5-10x LOW ... an assumption artifact, owner-caught". Stick

@@ -27,9 +27,9 @@ utilised. Geometry and capacity now come from `congestion.segments` /
                    sheets, min bin speed / following distance, ONE loaded
                    lane (loaded and empty have separate lanes, so a
                    loaded-direction demand flow belongs over a
-                   loaded-lane capacity). The road-crowding card counts
-                   BOTH directions and therefore uses 2x the same number;
-                   the two v/c figures are the same physics;
+                   loaded-lane capacity). Plan road crowding occupancy is
+                   the same loaded lane (empty sits on occupancy_empty);
+                   it does NOT double this number.
   - free-time shape : speed_limits.span_times_min() per window, loaded and
                    empty separately (the documents are directional);
   - route free total : RESCALED so the round trip equals the calibrated
@@ -84,7 +84,7 @@ FALLBACK_SPEED_KMH = 25.0
 # 2026-08-22) and no official capacity. Its pseudo-window is priced at the
 # 20 km/h floor over the SAME official following distance, matching the
 # spur estimate plan_shared_flow already uses for the hourly crowding card
-# (that card counts both directions and so states 2x this per-lane figure).
+# (occupancy is the loaded lane only, same 600/hr as this per-lane figure).
 SPUR_SPEED_FLOOR_KMH = 20.0
 
 # ── Where the BLB spur meets the stick ────────────────────────────────────
@@ -432,8 +432,9 @@ def price_plan(rows, rain_mm=0.0):
                                    "one capacity per segment"),
                 "capacity_basis": ("official speed-limit sheets: min bin speed x 1000 / "
                                    "%g m following distance, ONE loaded lane per segment "
-                                   "(the road-crowding card states 2x the same number "
-                                   "because it counts both directions)"
+                                   "(same one-lane figure as the Congestion packing card; "
+                                   "empty trucks use the other carriageway and are not "
+                                   "in this cap)"
                                    % speed_limits.FOLLOWING_DISTANCE_M),
                 "source_document": speed_limits.SOURCE_DOC,
                 "flow_basis": ("steady-state DEMAND flow: dt x 60 / productive cycle, "

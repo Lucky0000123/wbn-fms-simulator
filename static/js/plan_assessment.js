@@ -182,7 +182,6 @@ function paRender(sim) {
     paFleet(sim, rows);
     paMap();
     return paEnsureAnalogues(rows).then(() => {
-      paCongestion(sim, rows);
       paHistory(rows);
     });
   });
@@ -227,39 +226,6 @@ function paEnsureAnalogues(rows) {
     _paAnalogues = null;
     return null;
   });
-}
-
-function paRenderSharedRoad(sr) {
-  const box = document.getElementById('pa-shared-road');
-  const rowsEl = document.getElementById('pa-shared-road-rows');
-  if (!box && !rowsEl) return;
-  sr = sr || {};
-  const risk = sr.risk || 'none';
-  if (box) {
-    box.innerHTML = '<p style="margin:0 0 4px"><span class="plan-risk-badge plan-risk-'
-      + paEsc(risk) + '">' + paEsc(sr.risk_label || risk) + '</span></p>'
-      + '<p class="muted" style="margin:0;font-size:12px">Shared road sections: <b>'
-      + paEsc((sr.shared_sections || []).join(', ') || '—')
-      + '</b> · planned ~ <b>' + paNum(sr.plan_dt_total) + ' DT</b>'
-      + (sr.max_hist_section_dt != null
-          ? ' · hist peak <b>' + paNum(sr.max_hist_section_dt) + ' DT</b>' : '')
-      + (sr.trips_per_dt_collapse_pct != null
-          ? ' · busy trips/DT <b>' + paNum(sr.trips_per_dt_collapse_pct, 1)
-            + '%</b> below quiet days' : '')
-      + '</p>';
-  }
-  const ev = sr.evidence || [];
-  if (rowsEl) {
-    rowsEl.innerHTML = ev.length ? ev.map(e => {
-      const secBits = Object.keys(e.sections || {}).map(k => k + ': ' + paNum(e.sections[k])).join(', ');
-      return '<tr><td><b>' + paEsc(e.date) + '</b></td>'
-        + '<td class="r">' + paNum(e.section_dt, 1) + '</td>'
-        + '<td class="r">' + paNum(e.trips_per_dt, 2) + '</td>'
-        + '<td>' + paEsc(e.season || '') + '</td>'
-        + '<td class="muted" style="font-size:10.5px">' + paEsc(secBits) + '</td></tr>';
-    }).join('') : '<tr><td colspan="5" class="muted">'
-      + paEsc(sr.note || 'No shared-road evidence.') + '</td></tr>';
-  }
 }
 
 /* ---------- Section 2 · trip time breakdown ---------- */
@@ -468,100 +434,6 @@ function paSpeed() {
         : 'Showing the pooled mean: this response carries no direction split.')
     + (unparsed.length ? ` ${unparsed.length} segment id(s) did not match the `
         + '"ROAD KMa-b" pattern and are excluded.' : '');
-}
-
-/* ---------- Section 4 · congestion impact ---------- */
-
-function paCongestion(sim, rows) {
-  const s = (sim || {}).summary || {};
-  const sharedLoad = s.shared_loading_points || [];
-  const sharedDump = s.shared_dumping_points || [];
-  const segs = ((_paCongestion || {}).segments) || [];
-  const fit = (_paCongestion || {}).densityFit || null;
-
-  // Shared-point table: which plans collide, and on how many trucks. This is the
-  // contention the engine actually models -- capacity at a point -- as distinct
-  // from the road-speed effect below, which it deliberately does not model.
-  const shareRows = [];
-  rows.forEach(r => {
-    (r.shared_with || []).forEach(o => shareRows.push({
-      point: r.source, route: r.route, other: o, trucks: r.n_trucks}));
-  });
-  const shareHtml = (sharedLoad.length || sharedDump.length)
-    ? [].concat(
-        sharedLoad.map(x => `<tr><td>Loading</td><td><b>${paEsc(x)}</b></td></tr>`),
-        sharedDump.map(x => `<tr><td>Dumping</td><td><b>${paEsc(x)}</b></td></tr>`)
-      ).join('')
-    : '<tr><td colspan="2" class="muted">No loading or dumping point is shared '
-      + 'between the plans in this assessment.</td></tr>';
-  document.getElementById('pa-shared-rows').innerHTML = shareHtml;
-
-  // Shared-road advisory from analogue engine (separate from loader shared_with).
-  paRenderSharedRoad((_paAnalogues && _paAnalogues.shared_road) || {
-    risk: 'none',
-    risk_label: 'Shared-road analogues not loaded',
-    shared_sections: [],
-    note: 'Open from Plan tab Run, or wait for /api/plan/analogues.',
-  });
-
-  // Segment speed-drop table + bar: measured free-flow vs measured mean, biggest
-  // drops first. Sorted by drop so the worst sections lead, but n is shown on
-  // every row because a large drop on 6 observations is not a finding.
-  const drops = segs.map(x => {
-    const ff = x.freeFlow || 0, av = x.avgSpeed || 0;
-    return {seg: x.seg, ff, av, n: x.n, peak: x.peakTrucks,
-            dropPct: ff > 0 ? 100 * (ff - av) / ff : 0};
-  }).filter(d => d.n >= 20).sort((a, b) => b.dropPct - a.dropPct);
-  const top = drops.slice(0, 12);
-
-  document.getElementById('pa-drop-rows').innerHTML = top.length
-    ? top.map(d => `<tr><td>${paEsc(d.seg)}</td>
-        <td class="r">${paNum(d.ff, 1)}</td>
-        <td class="r">${paNum(d.av, 1)}</td>
-        <td class="r">${paNum(d.dropPct, 1)}%</td>
-        <td class="r">${paNum(d.peak)}</td>
-        <td class="r">${paNum(d.n)}</td></tr>`).join('')
-    : '<tr><td colspan="6" class="muted">No segment has 20+ observations in the '
-      + 'retained window.</td></tr>';
-
-  paChart('pa-drop-chart', {
-    backgroundColor: 'transparent',
-    tooltip: {trigger: 'axis', axisPointer: {type: 'shadow'},
-              valueFormatter: v => paNum(v, 1) + '%'},
-    grid: {left: 8, right: 18, bottom: 4, top: 12, containLabel: true},
-    xAxis: {type: 'value', name: "% below that segment's own free-flow — NOT a congestion effect",
-            nameLocation: 'middle', nameGap: 26, nameTextStyle: {color: PA_C.axis, fontSize: 10.5},
-            axisLabel: {color: PA_C.axis}, splitLine: {lineStyle: {color: PA_C.grid}}},
-    yAxis: {type: 'category', data: top.map(d => d.seg).reverse(),
-            axisLabel: {color: PA_C.text, fontSize: 10}},
-    series: [{
-      type: 'bar', data: top.map(d => d.dropPct).reverse(),
-      itemStyle: {color: (p) => p.value > 20 ? PA_C.warn : PA_C.meas},
-    }],
-  });
-
-  document.getElementById('pa-cong-note').innerHTML = fit
-    ? '<b>Read the bars and the coefficient as two different things.</b> A bar shows '
-      + "how far a segment's <i>mean</i> speed sits below its <i>own</i> free-flow "
-      + 'across all conditions — gradient, bends, surface, loaded-vs-empty mix and '
-      + 'traffic combined. A 50% bar is a permanently slow segment, not a congested '
-      + 'one, and adding trucks would not change it much. The traffic-only part is '
-      + 'the coefficient below, and it is small.<br><br>'
-      + 'Site-wide, adding trucks to a segment <b>does</b> slow it, and the effect is '
-      + `<b>negligible</b>: within-segment slope <b>${fit.within_cell_slope_kmh_per_truck} `
-      + `km/h per extra truck</b> (t = ${fit.t_stat}, n = ${paNum(fit.rows_used)} of `
-      + `${paNum(fit.rows_total)} segment-hours, ${fit.segments} segments, `
-      + `${fit.window_days} days). Statistically significant, practically irrelevant: `
-      + `R&sup2; within cells is <b>${fit.within_r2}</b>, so density explains ~`
-      + `${paNum(100 * fit.within_r2, 1)}% of speed variation, and the full range from `
-      + 'the emptiest to the busiest density decile is about &minus;4.8%. '
-      + '<b>No congestion term is in the tonnage model</b>, and gate J53 keeps it out: '
-      + 'at trip level the correlation flips sign (more trucks, shorter cycles) because '
-      + 'dispatch sends trucks to routes that are running well. Contention is reported '
-      + 'as measured capacity headroom in the next section instead. The per-segment '
-      + 'drops above are observed differences, not a fitted congestion response.'
-    : '<span class="muted">Speed-density fit unavailable '
-      + '(reports/speed_density_fit.json not found), so no coefficient is claimed.</span>';
 }
 
 /* ---------- Section 5 · capacity at loading / dumping points ---------- */

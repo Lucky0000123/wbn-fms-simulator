@@ -208,7 +208,42 @@ if scens:
 if os.path.isfile(os.path.join(sa._SCEN_DIR, "S1.json")):
     check("no S1.json file may exist (S1 is always derived live)", False)
 
-print("\n=== the Excel export quotes the same numbers as the API ===")
+print("\n=== SAP to FeNi is 2 kt/day, rest to POS (owner 2026-08-25) ===")
+check("BLB FeNi cap is 2,000 t/day",
+      sa.SAP_ROUTING["BLB"]["fixed"][0][1] == 2000.0, sa.SAP_ROUTING["BLB"])
+check("TOFU FeNi cap is 2,000 t/day",
+      sa.SAP_ROUTING["TOFU"]["fixed"][0][1] == 2000.0, sa.SAP_ROUTING["TOFU"])
+check("BLB rest is POS 14", sa.SAP_ROUTING["BLB"]["rest"] == "POS 14")
+check("TOFU rest is POS 12", sa.SAP_ROUTING["TOFU"]["rest"] == "POS 12")
+check("KRENE rest is POS 12", sa.SAP_ROUTING["KRENE"]["rest"] == "POS 12")
+grp = [{"dest": "FENI KM 15", "wmt": {9: 1}},
+       {"dest": "POS 12", "wmt": {9: 1}}]
+pieces = sa._split_sap_conditions("TOFU", 10288.0, grp, 9)
+by = {r["dest"]: w for r, w in (pieces or [])}
+check("TOFU 10,288 SAP → 2,000 FeNi + 8,288 POS",
+      abs(by.get("FENI KM 15", 0) - 2000) < 0.01
+      and abs(by.get("POS 12", 0) - 8288) < 0.01, by)
+grp_blb = [{"dest": "FENI KM0", "wmt": {9: 1}},
+           {"dest": "POS 14", "wmt": {9: 1}}]
+pieces_b = sa._split_sap_conditions("BLB", 4147.0, grp_blb, 9)
+by_b = {sa._norm_sap_dest(r["dest"]): w for r, w in (pieces_b or [])}
+check("BLB 4,147 SAP → 2,000 FeNi + 2,147 POS",
+      abs(by_b.get("FENI KM0", 0) - 2000) < 0.01
+      and abs(by_b.get("POS 14", 0) - 2147) < 0.01, by_b)
+pieces_lo = sa._split_sap_conditions("BLB", 1500.0, grp_blb, 9)
+by_lo = {sa._norm_sap_dest(r["dest"]): w for r, w in (pieces_lo or [])}
+check("BLB 1,500 SAP (< 2,000 cap) all stays on FeNi KM0",
+      abs(by_lo.get("FENI KM0", 0) - 1500) < 0.01
+      and abs(by_lo.get("POS 14", 0)) < 0.01, by_lo)
+grp_bad = [{"dest": "FENI KM0", "wmt": {9: 1}},
+           {"dest": "FENI KM15", "wmt": {9: 1}}]
+pieces_miss = sa._split_sap_conditions("BLB", 5000.0, grp_bad, 9)
+by_m = {sa._norm_sap_dest(r["dest"]): w for r, w in (pieces_miss or [])}
+check("BLB leftover clones onto POS 14 when matrix has no POS SAP row",
+      abs(by_m.get("FENI KM0", 0) - 2000) < 0.01
+      and abs(by_m.get("POS 14", 0) - 3000) < 0.01, by_m)
+check("leftover SAP does not go to the other FeNi",
+      abs(by_m.get("FENI KM15", 0)) < 0.01, by_m)
 try:
     from flask import Flask
     from openpyxl import load_workbook
@@ -254,7 +289,27 @@ try:
     app.register_blueprint(ma.bp)
     c = app.test_client()
     yr = "2026"
-    want_s3 = ["Year", "Sep", "Oct", "Nov", "Dec"]
+    sep_plan = os.path.join("data", "saved_plans", "2026-09-03.json")
+    if os.path.isfile(sep_plan):
+        with open(sep_plan, encoding="utf-8") as f:
+            blob = json.load(f)
+        arows = (blob.get("allocation") or {}).get("rows") or []
+        flow = ma._dest_pit_flow(arows)
+        together = sum(flow.values())
+        raw = 0.0
+        for row in arows:
+            if row.get("foreign") or ma._is_tenant_row(row):
+                continue
+            t = ma._finite(row.get("pred_after"))
+            if t:
+                raw += t
+        check("Sep S3 dest×pit Together equals production predicted t/day",
+              abs(together - raw) < 1.0,
+              "together=%s raw=%s" % (round(together, 1), round(raw, 1)))
+        plants = {d for (_, d, _) in flow}
+        check("Sep S3 dest×pit has FENI KM0, FENI KM15, POS",
+              {"FENI KM0", "FENI KM15", "POS"}.issubset(plants), plants)
+    want_s3 = ["Year", "Road crowding", "Sep", "Oct", "Nov", "Dec"]
     rv = c.get("/api/scenarios/export-full?year=%s&id=S3" % yr)
     check("S3 monthly workbook returns xlsx", rv.status_code == 200 and rv.data[:2] == b"PK",
           rv.status_code)
@@ -263,17 +318,49 @@ try:
         # "Paths" (the all-months path list, added 2026-08-19) is optional;
         # the month sheets must be Year-then-months in order.
         got = [s for s in wb.sheetnames if s != "Paths"]
-        check("S3 sheets are Year + Sep–Dec (no August)",
+        check("S3 sheets are Year + Road crowding + Sep–Dec (no August)",
               got == want_s3, wb.sheetnames)
+        check("S3 workbook has Road crowding sheet",
+              "Road crowding" in wb.sheetnames, wb.sheetnames)
         check("S3 workbook has no August sheet",
               "Aug" not in wb.sheetnames, wb.sheetnames)
         sep = wb["Sep"]
         a1 = sep["A1"].value or ""
         check("S3 Sep title is 'Sep 2026 — old vs new'",
               a1.startswith("Sep 2026"), a1)
-        rows = list(sep.iter_rows(min_row=1, max_row=40, max_col=13, values_only=True))
+        rows = list(sep.iter_rows(min_row=1, max_row=120, max_col=13, values_only=True))
         heads = [r for r in rows if r and r[0] == "P"]
         check("S3 Sep has the path table header", bool(heads), heads[:1])
+        dest_title = [r for r in rows if r and isinstance(r[0], str)
+                      and r[0].startswith("Where material goes")]
+        check("S3 Sep has Where material goes · t/day at the top",
+              bool(dest_title), dest_title[:1])
+        dest_heads = [r for r in rows if r and r[0] == "Material" and r[1] == "To plant"]
+        check("S3 Sep dest×pit columns are pits (TF / BLB / KR)",
+              dest_heads and any(h in (dest_heads[0] or ()) for h in ("TF", "BLB", "KR")),
+              dest_heads[:1])
+        dest_plants = {r[1] for r in rows if r and r[1] in ("FENI KM0", "FENI KM15", "POS")}
+        check("S3 Sep dest rows are FENI KM0, FENI KM15, POS",
+              dest_plants == {"FENI KM0", "FENI KM15", "POS"}
+              or dest_plants.issuperset({"FENI KM0", "FENI KM15", "POS"}),
+              dest_plants)
+        dest_nums = [v for r in rows if r and r[1] in ("FENI KM0", "FENI KM15", "POS")
+                     for v in (r[2:] if r else ())
+                     if isinstance(v, (int, float)) and v > 0]
+        check("S3 Sep dest×pit table has real t/day numbers",
+              len(dest_nums) >= 3, "n=%s" % len(dest_nums))
+        sep_heads = heads[0] if heads else ()
+        check("S3 Sep path columns have no 'old' label",
+              sep_heads and all("old" not in str(h or "").lower() for h in sep_heads),
+              sep_heads)
+        check("S3 Sep path columns have no 'new' suffix",
+              sep_heads and all("new" not in str(h or "").lower() for h in sep_heads),
+              sep_heads)
+        check("S3 Sep path table is DT / Trips / WMT (not DT old / DT new)",
+              sep_heads and "DT" in sep_heads and "Trips" in sep_heads
+              and "WMT" in sep_heads
+              and "DT old" not in sep_heads and "DT new" not in sep_heads,
+              sep_heads)
         p3 = [r for r in rows if r and r[0] == "P3"]
         check("S3 Sep has P3 LIM-LD path rows (leftover DT)", bool(p3), p3[:1])
         if "Paths" in wb.sheetnames:
@@ -354,7 +441,7 @@ try:
         names_d = wbd.sheetnames
         check("%s year Excel has no August sheet" % label,
               "Aug" not in names_d, names_d)
-        months_d = [s for s in names_d if s not in ("Year", "Paths")]
+        months_d = [s for s in names_d if s not in ("Year", "Paths", "Road crowding")]
         check("%s year Excel months start at September" % label,
               months_d[:1] == ["Sep"], months_d)
         yr_ws = wbd["Year"]
@@ -366,9 +453,10 @@ try:
         # corridor × 07..06, mean concurrent trucks. Both directions: the
         # title is present AND a real occupancy number lands (a title-only
         # stub would pass the first and fail the second).
-        month_sheets = [s for s in names_d if s not in ("Year", "Paths")]
+        month_sheets = [s for s in names_d if s not in ("Year", "Paths", "Road crowding")]
         n_grid = 0
         n_occ = 0
+        n_dest = 0
         hour_ok = False
         for ms in month_sheets:
             ws = wbd[ms]
@@ -376,8 +464,15 @@ try:
                      for cell in row]
             if any(isinstance(v, str) and "Road crowding by hour" in v for v in col_a):
                 n_grid += 1
+            if any(isinstance(v, str) and v.startswith("Where material goes") for v in col_a):
+                n_dest += 1
             for row in ws.iter_rows(min_row=1, max_col=25):
-                vals = [c.value for c in row]
+                # NOT `c` — that is the Flask test client in this scope, and
+                # shadowing it here made the NEXT loop iteration call
+                # .get() on a ReadOnlyCell ("export-full smoke test —
+                # 'ReadOnlyCell' object has no attribute 'get'"), failing J72
+                # while every actual export was fine.
+                vals = [cl.value for cl in row]
                 if vals and vals[0] == "Corridor" and vals[1] == "07":
                     hours = vals[1:25]
                     if (hours[:2] == ["07", "08"] and hours[-1] == "06"
@@ -390,9 +485,40 @@ try:
         check("%s every month sheet has the hour-crowding table" % label,
               n_grid == len(month_sheets) and month_sheets,
               "%s/%s sheets" % (n_grid, len(month_sheets)))
+        check("%s every month sheet has dest×pit t/day" % label,
+              n_dest == len(month_sheets) and month_sheets,
+              "%s/%s sheets" % (n_dest, len(month_sheets)))
         check("%s hour axis is 07..06 (24 h)" % label, hour_ok)
         check("%s Sep-class sheet has TF–KR hourly occupancy" % label,
               n_occ >= 20, "n=%s" % n_occ)
+        packed = False
+        over_ok = True
+        over_seen = False
+        for ms in month_sheets:
+            ws = wbd[ms]
+            col_a = [cell.value for row in ws.iter_rows(min_row=1, max_col=1)
+                     for cell in row]
+            blob = " ".join(str(v) for v in col_a if v)
+            if "one loaded lane" in blob.lower():
+                packed = True
+            for row in ws.iter_rows(min_row=1, max_col=25):
+                lab = row[0].value if row else None
+                if not (isinstance(lab, str) and lab.startswith("TF") and "KR" in lab):
+                    continue
+                for cl in row[1:25]:  # not `c` — the Flask client lives in this scope
+                    if not isinstance(cl.value, (int, float)) or cl.value < 576:
+                        continue
+                    over_seen = True
+                    rgb = ""
+                    try:
+                        rgb = str(cl.fill.fgColor.rgb or "")
+                    except Exception:
+                        rgb = ""
+                    if not rgb.upper().endswith("FCA5A5"):
+                        over_ok = False
+        check("%s hour grid names one-lane packing (same as Plan)" % label, packed)
+        if over_seen:
+            check("%s TF–KR cells ≥576 are red (one-lane pack)" % label, over_ok)
         wbd.close()
 except ImportError as e:
     print("  SKIP export-full checks (%s)" % e)

@@ -63,8 +63,8 @@ The owner's own description of the RSF hauls is a direction statement:
     (but empty truck)". The outbound leg HUAFEI(5.5) -> RSF(26) climbs on the
     empty carriageway and takes none of the loaded lane. The return leg
     RSF(26) -> HUAFEI(5.5) runs coastward ON THE LOADED ROAD, empty. An empty
-    truck in the loaded lane occupies the same headway as a full one — 50 m
-    of following distance is 50 m — so it counts, on S3 and S4.
+    truck in the loaded lane occupies the same headway as a full one —
+    50 m of following distance is 50 m — so it counts, on S3 and S4.
     HUAFEI is 5.5 (its surveyed junction), not 0: these trucks turn off at
     the HFC junction and never run the last 5.5 km to the coast.
 
@@ -252,6 +252,37 @@ def _resolve_rate(tenant, rate_lookup=None):
         return owner_rate, None, ("owner-stated, but no calibrated proxy road "
                                   "for a cycle (tried %s)" % ", ".join(tried))
     return None, None, "no calibrated proxy road (tried %s)" % ", ".join(tried)
+
+
+def is_tenant_plan(p):
+    """True if this dict is one of the other tenants' fleets.
+
+    A tenant fleet has TWO representations: the visible Plan row, and the
+    constant background `shared_flow(tenants=True)` injects from this
+    register. Only the background may reach the road model — sending the
+    row as well puts the same 1,340 DT on the corridor twice (Plan tab
+    ~2× Excel, because Excel's saved-plan reader already drops them).
+
+    Recognition is by flag, id, RSF dest, and contractor name — the same
+    three signals `planIsTenantRow` uses in the browser. IWIP is never a
+    tenant: it moves our material off the POS stockpiles.
+    """
+    if not isinstance(p, dict):
+        return False
+    if p.get("_tenant"):
+        return True
+    if str(p.get("id") or "").upper().startswith("TENANT|"):
+        return True
+    key = str(p.get("key") or p.get("route") or "").strip().upper()
+    if key.endswith(">RSF"):
+        return True
+    dst = str(p.get("destination") or p.get("dest") or "").strip().upper()
+    if dst == "RSF":
+        return True
+    ctr = str(p.get("contractor") or "").strip().upper()
+    if not ctr or ctr == "IWIP":
+        return False
+    return ctr in {str(t["name"]).upper() for t in TENANTS}
 
 
 def tenant_rows(rate_lookup=None):

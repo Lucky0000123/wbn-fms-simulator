@@ -21,8 +21,10 @@ empty lanes, no overtaking. Capacity per direction is therefore
 speed / following-distance for a single lane; the chain's throughput is
 bounded by its SLOWEST bin (a 20 km/h stretch caps the whole segment —
 averaging would overstate capacity), so segment capacity uses min-bin
-speed. 50 m following distance is the mining-standard minimum
-(FOLLOWING_DISTANCE_M in congestion.config overrides).
+speed. Following distance is the gap between two DTs on one loaded
+lane (FOLLOWING_DISTANCE_M). Owner, 2026-08-25 latest: **50 m** between
+DTs on every section (60 m and 75 m packed too few). Posted speeds per
+section stay as on the sheets — only the gap moved.
 
 KM 0-5 (port area) has no sheet: extended at the adjacent 20/30 values
 and flagged in `assumptions`.
@@ -34,7 +36,7 @@ ROAD_WIDTH_M = 15
 ROAD_SURFACE = "mixed"          # gravel + sealed sections
 OVERTAKING = False
 SEPARATE_LANES = True           # loaded and empty each have their own lane
-FOLLOWING_DISTANCE_M = 50.0     # mining-standard minimum
+FOLLOWING_DISTANCE_M = 50.0     # owner 2026-08-25: 50 m between two DTs
 
 # (lo_km, hi_km, dt_kmh) — LOADED direction (ARAH MUATAN, down-chainage)
 LOADED_LIMITS = [

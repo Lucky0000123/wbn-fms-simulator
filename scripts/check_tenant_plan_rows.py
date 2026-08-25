@@ -92,6 +92,24 @@ def main():
         chk("tenant routes stay OUT of the engine payload",
             not any("RSF" in r for r in ps), ps)
 
+        # The Plan crowding card used to send TENANT| rows into
+        # /api/plan/shared-flow AND leave tenants=1 on, so the same 1,340 DT
+        # sat on TF–KR twice (~416 vs Excel ~263). The payload builder must
+        # drop them the same way Excel's saved-plan reader does.
+        crowd = pg.evaluate(
+            "()=>{const x=typeof planRoadCrowdingPlans==='function'"
+            "?planRoadCrowdingPlans():{plans:[],iwip:[]};"
+            "return {ids:(x.plans||[]).map(p=>String(p.id||'')),"
+            "ctr:(x.plans||[]).map(p=>String(p.contractor||'')),"
+            "rte:(x.plans||[]).map(p=>(p.source||'')+'>'+(p.destination||''))};}")
+        chk("road crowding payload has no TENANT| rows",
+            not any(i.upper().startswith("TENANT|") for i in crowd["ids"]),
+            crowd["ids"])
+        chk("road crowding payload has no RSF routes",
+            not any(r.endswith(">RSF") for r in crowd["rte"]), crowd["rte"])
+        chk("road crowding payload has no tenant contractors",
+            not any(c in EXPECTED for c in crowd["ctr"]), crowd["ctr"])
+
         # ...but the flow that replaces them IS asked for.
         urls = []
         pg.on("request", lambda r: urls.append(r.url) if "congestion_curve" in r.url else None)
@@ -109,6 +127,52 @@ def main():
             "other tenants" in txt, txt)
         chk("tenant DT is not counted as our allocatable DT",
             "1340 DT" not in txt.replace(",", ""), txt)
+
+        html = pg.evaluate(
+            "()=>{if(typeof computePlan==='function')try{computePlan();}catch(e){}"
+            "const el=document.getElementById('plan-rows');return el?el.innerText:'';}")
+        chk("Your plan table shows the RSF tenants",
+            "RSF" in html and "HUAFEI" in html, html[:240])
+
+        # Save used to DELETE tenant paths, then load rebuilt the register —
+        # so typed DT never came back (owner: "why is it not saving the plan
+        # again"). Snapshot must keep them, flagged, and out of allocation.
+        roundtrip = pg.evaluate(
+            """()=>{
+              const d=_planDraft||{};
+              const id=Object.keys(d).find(k=>d[k]&&d[k]._tenant&&d[k].contractor==='MHM');
+              if(id)d[id].dt=123;
+              const snap=planDraftSnapshot();
+              const paths=snap.paths||{};
+              const ten=Object.keys(paths).filter(k=>(paths[k]||{})._tenant);
+              const alloc=(snap.allocation&&snap.allocation.rows)||[];
+              const allocTen=alloc.filter(r=>r._tenant||String(r.id||'').indexOf('TENANT|')===0
+                || /RSF$/.test(String(r.key||'')));
+              return {
+                n:ten.length,
+                mhm:(paths['TENANT|MHM|road']||{}).dt,
+                flag:!!((paths['TENANT|MHM|road']||{})._tenant),
+                allocTen:allocTen.length,
+                allocFlagged:allocTen.every(r=>r._tenant||String(r.id||'').indexOf('TENANT|')===0)
+              };
+            }""")
+        chk("snapshot keeps every tenant path",
+            bool(roundtrip) and roundtrip["n"] == len(EXPECTED), roundtrip)
+        chk("snapshot keeps the typed DT",
+            bool(roundtrip) and roundtrip["mhm"] == 123, roundtrip)
+        chk("snapshot stamps _tenant so load cannot spawn a spur",
+            bool(roundtrip) and roundtrip["flag"], roundtrip)
+        chk("allocation tenant rows are flagged when present",
+            bool(roundtrip) and (roundtrip["allocTen"] == 0 or roundtrip["allocFlagged"]),
+            roundtrip)
+        kept = pg.evaluate(
+            """async()=>{
+              const snap=planDraftSnapshot();
+              planLoadDraft(snap.paths);
+              await planRulesTenants();
+              return (_planDraft['TENANT|MHM|road']||{}).dt;
+            }""")
+        chk("load keeps the typed tenant DT", kept == 123, kept)
 
         # This gate owns the TENANT wiring, so it fails on tenant/plan errors
         # and only REPORTS the rest. A pre-existing SVG NaN in charts.js (a

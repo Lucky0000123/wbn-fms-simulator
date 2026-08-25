@@ -16,7 +16,6 @@ requirement. `--label` tags the output so the two runs do not overwrite.
 import argparse
 import json
 import os
-import re
 import sys
 
 from playwright.sync_api import sync_playwright
@@ -27,7 +26,6 @@ BASE = "http://127.0.0.1:5055"
 SECTIONS = [
     ("2", "pa-breakdown-chart", "Trip time breakdown"),
     ("3", "pa-speed-chart", "Speed per section"),
-    ("4", "pa-drop-chart", "Congestion and shared points"),
     ("5", "pa-gauges", "Queue risk"),
     ("6", "ps-rows", "Production estimate"),
     ("7", "pa-history-chart", "Historical reference"),
@@ -157,15 +155,12 @@ def run(pg, out, tag):
     res["t1_notes"] = {
         "s2": txt(pg, "#pa-breakdown-note"),
         "s3": txt(pg, "#pa-speed-note"),
-        "s4": txt(pg, "#pa-cong-note"),
         "s5": txt(pg, "#pa-gauge-note"),
         "s7": txt(pg, "#pa-history-note"),
         "s9": txt(pg, "#pa-map-note"),
     }
     res["t1_counts"] = {
         "s2_rows": nrows(pg, "#pa-breakdown-rows"),
-        "s4_shared_rows": nrows(pg, "#pa-shared-rows"),
-        "s4_drop_rows": nrows(pg, "#pa-drop-rows"),
         "s5_gauges": pg.eval_on_selector_all("#pa-gauges > div", "e => e.length"),
         "s5_canvases": pg.eval_on_selector_all("#pa-gauges canvas", "e => e.length"),
         "s6_rows": nrows(pg, "#ps-rows"),
@@ -175,11 +170,6 @@ def run(pg, out, tag):
         "s9_polylines": pg.evaluate(
             "() => {try{let n=0;_paLayer.eachLayer(l=>{if(l.getLatLngs)n++});return n;}catch(e){return -1;}}"),
     }
-    # The congestion claim the brief asks about, verified as TEXT on screen.
-    s4 = res["t1_notes"]["s4"]
-    res["t1_s4_has_slope"] = ("-0.0233" in s4 or "−0.0233" in s4)
-    res["t1_s4_has_n"] = bool(re.search(r"36,046|35,006", s4))
-    res["t1_s4_has_pct"] = "4.8%" in s4
 
     # ---------- TEST 2: shared dumping point ----------
     print("  TEST 2  add 20 trucks POS 12>FENI KM0 (shares the FENI tip)")
@@ -191,15 +181,12 @@ def run(pg, out, tag):
     res["t2_api"] = api_sim(pg, [
         {"route": "BLB>FENI KM0", "source": "BLB", "destination": "FENI KM0", "n_trucks": 30},
         {"route": "POS 12>FENI KM0", "source": "POS 12", "destination": "FENI KM0", "n_trucks": 20}])
-    res["t2_shared_text"] = txt(pg, "#pa-shared-rows")[:300]
     res["t2_gauge_note"] = txt(pg, "#pa-gauge-note")[:300]
     res["t2_counts"] = {
         "s5_gauges": pg.eval_on_selector_all("#pa-gauges > div", "e => e.length"),
         "s5_canvases": pg.eval_on_selector_all("#pa-gauges canvas", "e => e.length"),
         "s6_rows": nrows(pg, "#ps-rows"),
     }
-    if "no loading or dumping point is shared" in res["t2_shared_text"].lower():
-        issue(tag, "two plans into FENI KM0 but section 4 reports nothing shared")
 
     # ---------- TEST 3: wet weather ----------
     print("  TEST 3  same two plans, weather = wet")
