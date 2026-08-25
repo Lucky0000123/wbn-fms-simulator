@@ -707,7 +707,24 @@ function evaluateFlowScenario(){
     return {...z,trips,wbnTrips,otherTrips,tenantHourly,hourly,ratio,status,colour,secCap};
   });
   // Peak corridor V/C = worst section against its OFFICIAL capacity.
-  const peakVc=s.hotspots.reduce((m,z)=>Math.max(m,z.ratio),0);
+  let peakVc=s.hotspots.reduce((m,z)=>Math.max(m,z.ratio),0);
+  // ONE OWNER on the Plan host (2026-08-25): quote the shared-flow engine's
+  // flow ratio, not this replay's own arithmetic. The two disagreed on the
+  // same plan (readout 424/hr vs engine 408/hr on KM15–coast) because the
+  // replay prices IWIP transit rows at a fallback ~1 trip/DT while the
+  // engine uses each leg's measured rate — the exact two-owners defect the
+  // capacity card (J71) and the 0.85 availability already paid for. The
+  // local hotspot model still colours the replay's own illustrations and is
+  // the only voice on the Capability host, where no plan payload exists.
+  let vcOwner=null;
+  if(_flowHost==='plan'&&typeof _planSharedFlow!=='undefined'&&_planSharedFlow&&_planSharedFlow.ok){
+    const secs=_planSharedFlow.sections||[];
+    const wz=secs.length?secs.reduce((a,b)=>((b.ratio||0)>(a.ratio||0)?b:a),secs[0]):null;
+    if(wz&&Number.isFinite(wz.ratio)){
+      peakVc=wz.ratio;
+      vcOwner={label:wz.section,hourly:wz.peak_flow_per_h,cap:wz.cap_flow_per_h,engine:true};
+    }
+  }
   s.vc=peakVc;setTxt('flow-vc',fmt(peakVc,2));
   {
     // Name the quantity. The crowding grid under this card ranks sections by
@@ -715,10 +732,11 @@ function evaluateFlowScenario(){
     // worst sections (measured 2026-08-25: flow peaks on KM15-coast, occupancy
     // on POS 12-KM15). Two real metrics, so each says which one it is.
     const vcHint=flowQ('flow-vc-hint');
-    const wz=s.hotspots.length?s.hotspots.reduce((a,b)=>b.ratio>a.ratio?b:a,s.hotspots[0]):null;
+    const wz=vcOwner||(s.hotspots.length?s.hotspots.reduce((a,b)=>b.ratio>a.ratio?b:a,s.hotspots[0]):null);
     if(vcHint)vcHint.textContent=wz
-      ?`flow v/c · ${wz.label} ${fmt(wz.hourly,0)}/hr ÷ ${fmt(wz.secCap,0)}/hr official cap `
+      ?`flow v/c · ${wz.label} ${fmt(wz.hourly,0)}/hr ÷ ${fmt(wz.secCap!=null?wz.secCap:wz.cap,0)}/hr official cap `
         +`(one loaded lane at ${fmt(cap.equivHeadway,0)} m)`
+        +(wz.engine?' · shared-flow engine (same number as the crowding grid)':'')
       :`flow v/c · official caps, one loaded lane at ${fmt(cap.equivHeadway,0)} m`;
   }
   // The replay's own hotspot colours no longer paint anywhere: the segment
