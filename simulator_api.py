@@ -1390,6 +1390,7 @@ def api_simulator_path_response():
         _day_stats[k] = {"dayRate": round(rate, 3), "dayB": round(db, 5),
                          "dayAvgDt": round(mx), "dayN": n,
                          "dayTripsCap": round(max(t for _dtv, t in pts))}
+    all_rows = rows
     if frm or to:
         rows = [r for r in rows
                 if (not frm or r["d"] >= frm) and (not to or r["d"] <= to)]
@@ -1498,6 +1499,52 @@ def api_simulator_path_response():
                     rec["mWet"] = round(sum(wv) / len(wv), 3)
                     rec["mN"] = len(wv)
         out["%s>%s" % (o, de)] = rec
+    # ── IDLE-ROUTE fallback (owner, 2026-08-25) ──────────────────────────────
+    # A route whose entire history predates the page's date window used to
+    # VANISH here: TF>POS 6 has 268 measured days at dayRate 2.53 ending
+    # 2025-11, the default window starts 2026-01, and the S4 split rows then
+    # priced at pred_after 0 — "there is no tonnage and it is reducing the
+    # tonnage in my total". The endpoint already computes the fleet envelope
+    # and day-level stats on the UNFILTERED snapshot for exactly this class of
+    # trap (the "67 DT ever observed" lesson above), so routes now degrade the
+    # same way: no in-window rows -> serve the whole-history figures, tagged
+    # `windowMiss` + `lastDay` so a UI can say "historical rate" instead of
+    # presenting it as current. Same maths as the main loop, same trimmed-mean
+    # rate concepts; only the row set differs.
+    if frm or to:
+        from collections import defaultdict as _dd2
+        byp_all = _dd2(list)
+        for r in all_rows:
+            k = "%s>%s" % (r["o"], r["dd"])
+            if k in out:
+                continue
+            byp_all[(r["o"], r["dd"])].append((r["dt"], r["trips"], r["t"]))
+        for (o, de), v in byp_all.items():
+            if len(v) < 25:
+                continue
+            dt = [x[0] for x in v]; eff = [x[1] / x[0] for x in v]
+            n = len(v); mx = sum(dt) / n; my = sum(eff) / n
+            avg_tr = _path_mid60_mean(eff)
+            if avg_tr is None:
+                avg_tr = my
+            den = sum((x - mx) ** 2 for x in dt)
+            b = (sum((x - mx) * (y - my) for x, y in zip(dt, eff)) / den) if den else 0.0
+            a = my - b * mx
+            srit = sum(x[1] for x in v)
+            tf = (sum(x[2] for x in v) / srit) if srit else 0.0
+            last_day = max(r["d"] for r in all_rows
+                           if r["o"] == o and r["dd"] == de)
+            out["%s>%s" % (o, de)] = {
+                "a": round(a, 4), "b": round(b, 5), "n": n,
+                "dtMin": round(min(dt)), "dtMax": round(max(dt)),
+                "avgDt": round(mx),
+                "dtMaxAll": round(_env_row.get((o, de), max(dt))),
+                "dtMaxDayAll": round(_env_daymax.get((o, de), max(dt))),
+                **(_day_stats.get((o, de)) or {}),
+                "avgTr": round(avg_tr, 3), "meanTr": round(my, 3),
+                "tf": round(tf, 2),
+                "windowMiss": True, "lastDay": last_day,
+            }
     payload = {
         "ok": True, "paths": out,
         "from": frm or None, "to": to or None,

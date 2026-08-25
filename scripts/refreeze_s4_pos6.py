@@ -41,16 +41,28 @@ def one(pg, date):
     pg.wait_for_function("()=>_planScenarioBusy===false", timeout=180000)
     pg.wait_for_function("()=>!!(_planLastSim&&_planLastSim.summary)", timeout=60000)
 
-    # Allocate DT.
+    # Allocate DT. POLL, not compound waits: the one-shot waits timed out on
+    # every date (2026-08-25) while a 10 s poll of the same conditions saw the
+    # allocation complete in ~15 s — wait_for_function can starve while the
+    # page re-renders; the poll cannot.
+    import time as _t
     pg.wait_for_function("()=>{const b=document.getElementById('plan-alloc-priority-btn');return b&&!b.disabled;}", timeout=30000)
     pg.click("#plan-alloc-priority-btn")
-    pg.wait_for_function(
-        "()=>{const o=document.getElementById('plan-alloc-frontload');const b=document.getElementById('plan-alloc-priority-btn');"
-        "return (!o||o.hidden===true)&&b&&b.getAttribute('aria-busy')!=='true';}", timeout=300000)
-    pg.wait_for_function("()=>typeof planAllocFrozen==='function'&&planAllocFrozen()", timeout=60000)
-    pg.wait_for_function(
-        "()=>{try{const s=planDraftSnapshot();return s.allocation&&s.allocation.calculation_status==='complete';}catch(e){return false;}}",
-        timeout=180000)
+    _done = False
+    _t0 = _t.time()
+    while _t.time() - _t0 < 280:
+        st = pg.evaluate(
+            "()=>{const o=document.getElementById('plan-alloc-frontload');"
+            "const b=document.getElementById('plan-alloc-priority-btn');"
+            "let calc=null;try{const s=planDraftSnapshot();calc=s.allocation&&s.allocation.calculation_status;}catch(e){}"
+            "return {ov:o?!o.hidden:null,busy:b?b.getAttribute('aria-busy'):null,"
+            "fr:typeof planAllocFrozen==='function'&&planAllocFrozen(),calc};}")
+        if (not st["ov"]) and st["busy"] != 'true' and st["fr"] and st["calc"] == 'complete':
+            _done = True
+            break
+        _t.sleep(10)
+    if not _done:
+        raise RuntimeError("allocation did not complete in 280s")
 
     # Inspect the split before saving.
     split = pg.evaluate("""()=>{

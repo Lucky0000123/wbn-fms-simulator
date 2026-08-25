@@ -2023,7 +2023,11 @@
   // ROAD-ONLY rows (foreign:true — the exact mechanism the app already uses
   // for IWIP/Position traffic): counted by road crowding and shared-section
   // spans, never in production WMT, never touched by the allocator.
-  function planRulesPosDumps(){return ['POS 12','POS 14','POS 15','POS 16'];}
+  // POS 6 included since 2026-08-25: the owner called it a dump AND a
+  // loading (transit-out) point, and the S4 split now tips its leftover LD
+  // there — without it here, hundreds of DT of inflow produced ZERO IWIP
+  // outflow and §5 rule 2 (POS output must equal input) silently broke.
+  function planRulesPosDumps(){return ['POS 6','POS 12','POS 14','POS 15','POS 16'];}
   // planning_rules.md §10.9 — loaders per row = round(DT / trucks-per-loader),
   // the route's measured calibration ratio (n_trucks_ref / n_loaders) served
   // by /api/congestion_model, 15 when unmeasured. "We have to imagine we are
