@@ -139,6 +139,8 @@ Pits (BLB, KR, TF) → POS dumps (12, 14, 15, 16) → FeNi plants (KM0, KM15)
 ### POS → FeNi routes to include:
 - POS 12 → FeNi KM0
 - POS 12 → FeNi KM15
+- POS 6 → FeNi KM0
+- POS 6 → FeNi KM15
 - POS 14 → FeNi KM0 (if POS 14 receives material)
 - POS 15 → FeNi KM0 (if POS 15 receives material)
 - POS 16 → FeNi KM0 (if POS 16 receives material)

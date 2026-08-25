@@ -55,7 +55,11 @@ window.PLANNING_RULES = {
     inputMustEqualOutput: true,
     routes: [
       'POS 12>FENI KM0', 'POS 12>FENI KM15',
-      'POS 14>FENI KM0', 'POS 15>FENI KM0', 'POS 16>FENI KM0'
+      'POS 14>FENI KM0', 'POS 15>FENI KM0', 'POS 16>FENI KM0',
+      // POS 6 transit-out (owner 2026-08-25: it is a loading point too).
+      // Real history backs both legs: POS 6>FENI(+A) 32.5k tickets,
+      // POS 6>FENI KM15 1.9k (HAULAGE_CLEAN, 2025).
+      'POS 6>FENI KM0', 'POS 6>FENI KM15'
     ]
   },
   validation: {
