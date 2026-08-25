@@ -444,6 +444,16 @@ chk $? "J76  frozen saturation curves match the current model" "stale: python sc
 $PY test_tenant_traffic.py >/dev/null 2>&1
 chk $? "J77  other tenants take road, never tonnage" "see: python test_tenant_traffic.py"
 
+# The workbook's road grid and the Plan tab's road grid must be the SAME
+# numbers. Owner, 2026-08-25: "my excel should show exactly what is written in
+# this table." They already share plan_shared_flow, but through two different
+# callers, and a caller can diverge six ways that all move the cells (plans,
+# shift_hours, rain_mm, start_hour, whole_day, tenants). This compares them
+# CELL BY CELL over every saved scenario, so moving one side without the other
+# fails here instead of in a screenshot. Needs the server on :5055.
+$PY test_corridor_parity.py >/dev/null 2>&1
+chk $? "J79  Excel road grid == app road grid" "see: python test_corridor_parity.py"
+
 # J78 — the tenants are VISIBLE in the plan (owner: "I didn't see all these new
 # DT in my plan"), drawn the same way the POS-transit IWIP rows are. A tenant
 # fleet has two representations and only ONE may reach pricing: the ROW the

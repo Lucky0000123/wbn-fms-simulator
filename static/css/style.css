@@ -941,7 +941,25 @@ tbody tr:hover{background:var(--panel-hover)}
 .plan-rc-iwip input{vertical-align:-2px;margin-right:4px}
 .plan-rc-grid{display:flex;flex-direction:column;gap:2px}
 .rc-row{display:flex;align-items:center;gap:8px}
-.rc-sec{flex:0 0 150px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* The label column holds "<section> <BADGE> · shared". At a fixed 150 px with
+   overflow:hidden the LONGEST label truncates first — and the longest label is
+   POS 12–KM15, which is also the section that goes ORANGE/RED first. So the one
+   row whose colour matters most was the one row rendering with no badge at all,
+   while every shorter row kept theirs (owner, 2026-08-25). The badge is the
+   whole point of the column, so widen it and let the ellipsis fall on the
+   trailing "· shared" note instead. The width stays FIXED, not auto: every
+   row's hour cells must start at the same x or the grid stops being a grid,
+   and `flex:0 0 auto` would give each row its own label width. 290 px fits
+   the longest real label ("POS 12–KM15 ORANGE · 14% LEFT") with room for a
+   RED "· over" variant. */
+.rc-sec{flex:0 0 290px;font-size:11px;
+  white-space:nowrap;overflow:hidden;
+  display:flex;align-items:center;gap:4px}
+.rc-sec>b{flex:0 0 auto}
+/* The badge must never be the thing that gets clipped. */
+.rc-sec .plan-cong-badge{flex:0 0 auto}
+/* The trailing "· shared" note is the only expendable part. */
+.rc-sec .muted{overflow:hidden;text-overflow:ellipsis;min-width:0}
 .rc-cells{display:flex;gap:2px;flex:1;min-width:0}
 .rc-cell{flex:1;min-width:0;height:22px;border-radius:4px;font-size:10px;font-weight:600;display:flex;align-items:center;justify-content:center;color:var(--txt)}
 .rc-idle{background:rgba(148,163,184,.06)}
