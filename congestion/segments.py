@@ -35,6 +35,8 @@ NODE_KM = {
     'POS 14': 26.1, 'POS14': 26.1, 'POS 15': 26.1, 'POS 16': 26.1,
     'POS 10': 17.0, 'POS10': 17.0,
     'FENI KM15': 15.0, 'FENI 15': 15.0,
+    # POS 6: surveyed km 12.0 (owner 2026-08-25) — see physics.NODE_KM note.
+    'POS 6': 12.0, 'POS6': 12.0,
     'CRUSHER': 3.0,
     # HUAFEI leaves the mainline at km 5.5 and finishes on its own 0.925 km
     # branch (physics.BRANCH_DEST). It is NOT at the coast: this table said 0.0

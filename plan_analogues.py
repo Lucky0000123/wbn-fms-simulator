@@ -25,6 +25,8 @@ NODE_KM = {
     "POS 12": 27.0, "POS12": 27.0,
     "POS 10": 17.0, "POS10": 17.0,
     "FENI KM15": 15.0, "FENI 15": 15.0,
+    # POS 6: surveyed km 12.0 (owner 2026-08-25) — see congestion/physics.py note.
+    "POS 6": 12.0, "POS6": 12.0,
     # HUAFEI = 5.5, its surveyed junction off the mainline, NOT the coast.
     # See congestion/segments.py NODE_KM for the three sources (survey HFC
     # road at CRD km 5.500, the dispatch road book's "HFC KM5,5 - KM6,4"

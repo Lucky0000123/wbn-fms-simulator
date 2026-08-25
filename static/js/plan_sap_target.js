@@ -1617,11 +1617,19 @@
       // and only untargeted P3 excess is eligible for this network split.
       (function splitLeftoverLd(){
         if(!planRulesS4Active())return;
-        const split=(((window.PLANNING_RULES||{}).limLd)||{}).split;
-        if(!split||!(split.pos12>0))return;
+        const limLd=((window.PLANNING_RULES||{}).limLd)||{};
+        const split=limLd.split;
+        // The split's other leg is DATA from planning_rules (§4). POS 6 since
+        // 2026-08-25 (owner; was POS 12) — the km 12.0 yard, a LONGER haul
+        // (55.8 km vs 40.8), so expect lower trips/DT on the split rows and
+        // more S2–S4 traffic. `pos12` is the pre-rename key, honoured so a
+        // stale cached rules blob cannot silently disable the split.
+        const share=split?(split.splitShare!=null?split.splitShare:split.pos12):null;
+        if(!split||!(share>0))return;
+        const SPLIT_DEST=String(limLd.splitDest||'POS 6').toUpperCase();
         const dd=draft();
         const destOf=x=>canonDest(String(x.r.key||'').split('>')[1]||'');
-        const isPos12=x=>destOf(x)==='POS 12';
+        const isPos12=x=>destOf(x)===SPLIT_DEST;
         const isHb=x=>destOf(x)==='HUAFEI'||destOf(x)==='BSE';
         // ALL TF LD trucks split — targeted rows included. Owner (twice,
         // 2026-08-21): "all same as S3, just the LIM-LD trucks divided 50-50
@@ -1632,7 +1640,7 @@
         const tfLd=p3.filter(x=>originOf(x)==='TF'&&(isPos12(x)||isHb(x)));
         const total=tfLd.reduce((a,x)=>a+x.r.dt,0);
         if(total<2)return;
-        const wantPos=Math.round(total*split.pos12);
+        const wantPos=Math.round(total*share);
         const posRows=tfLd.filter(isPos12);
         const hbRows=tfLd.filter(isHb);
         const havePos=()=>posRows.reduce((a,x)=>a+x.r.dt,0);
@@ -1651,7 +1659,7 @@
           }
           return {id:hid,r:dd[hid]};
         }
-        if(havePos()<wantPos&&!posRows.length)helper('TF>POS 12');
+        if(havePos()<wantPos&&!posRows.length)helper('TF>'+SPLIT_DEST);
         if(havePos()>wantPos&&!hbRows.length)helper('TF>HUAFEI');
         let guard=0;
         while(havePos()<wantPos&&guard++<500){
@@ -1659,14 +1667,14 @@
           const rec=posRows.slice().sort((a,b)=>a.r.dt-b.r.dt)[0];
           if(!don||!rec)break;
           if(transfer(don,rec,Math.min(wantPos-havePos(),don.r.dt),
-            'P3 50/50 split — leftovers → POS 12 (planning rules §4)',true)<=0)break;
+            'P3 50/50 split — leftovers → '+SPLIT_DEST+' (planning rules §4)',true)<=0)break;
         }
         while(havePos()>wantPos&&guard++<500){
           const don=posRows.filter(x=>x.r.dt>0).sort((a,b)=>b.r.dt-a.r.dt)[0];
           const rec=hbRows.slice().sort((a,b)=>a.r.dt-b.r.dt)[0];
           if(!don||!rec)break;
           if(transfer(don,rec,Math.min(havePos()-wantPos,don.r.dt),
-            'P3 50/50 rebalance — POS 12 → HUAFEI/BSE (planning rules §4)',true)<=0)break;
+            'P3 50/50 rebalance — '+SPLIT_DEST+' → HUAFEI/BSE (planning rules §4)',true)<=0)break;
         }
       })();
       const after=crows.reduce((a,x)=>a+x.r.dt,0);
@@ -1791,8 +1799,9 @@
               lds=ldRows();
             }
             if(planRulesS4Active()&&lds.length>1){
-              const pos=lds.filter(x=>destOf(x)==='POS 12');
-              const hb=lds.filter(x=>destOf(x)!=='POS 12');
+              const sd=String((((window.PLANNING_RULES||{}).limLd)||{}).splitDest||'POS 6').toUpperCase();
+              const pos=lds.filter(x=>destOf(x)===sd);
+              const hb=lds.filter(x=>destOf(x)!==sd);
               const sum=l=>l.reduce((a,x)=>a+x.r.dt,0);
               if(pos.length&&sum(pos)<sum(hb))return pos[0];
               if(hb.length)return hb[0];
@@ -2416,7 +2425,7 @@
       :'';
     const s4=planRulesS4Active()
       ?' <span class="plan-cong-badge saturated" title="Day-04 plan = Scenario 4: same as S3 '
-        +'but leftover LD trucks split 50/50 HUAFEI/BSE vs POS 12. Compare NEW PREDICTED '
+        +'but leftover LD trucks split 50/50 HUAFEI/BSE vs '+String((((window.PLANNING_RULES||{}).limLd)||{}).splitDest||'POS 6')+'. Compare NEW PREDICTED '
         +'against the day-03 save to see the tonnage effect.">S4 · LD split 50/50</span>'
       :'';
     host.innerHTML=

@@ -210,6 +210,16 @@ _SIM_CORRIDOR = {
         {"id": "pos12", "label": "POS 12", "km": 27.0, "aliases": ["POS 12", "POS12"]},
         {"id": "pos10", "label": "POS 10", "km": 17.0, "aliases": ["POS 10", "POS10"]},
         {"id": "feni15", "label": "FENI 15", "km": 15.0, "aliases": ["FENI KM15", "FENI 15"]},
+        # POS 6 (owner, 2026-08-25): dump AND kilnable-ore loading point on the
+        # lower mainline. SURVEYED at km 12.0, even though site language calls
+        # it "kilometer 10" — the owner accepted the survey. Three independent
+        # pins: the dispatch road book prices every X>POS 6 at KM DEST 12.0;
+        # TF>POS 6 hauls tick road-segment columns down to exactly "KR KM12 -
+        # KM15" and never KM7-12; and gross km reproduce |origin - 12.0|
+        # exactly (POS 12>POS 6 = 15.0, POS 10>POS 6 = 5.0). The WCO_POS6_001
+        # geofence sits 330 m from survey KR km 11.55, consistent with a yard
+        # whose gate is at the km 12 marker.
+        {"id": "pos6", "label": "POS 6", "km": 12.0, "aliases": ["POS 6", "POS6", "POS 06"]},
         {"id": "feni0", "label": "FENI 0", "km": 0.0, "aliases": ["FENI KM0", "FENI 0"]},
     ],
     "roadRanges": [
@@ -1814,7 +1824,7 @@ def api_simulator_shift_context():
         # Keys MUST match the SQL CASE labels above (FENI KM0, not FENI) or
         # other-paths that end at the smelter are dropped and otherFeniTrips=0.
         NODE_KM = {"TF": 67.8, "TOFU": 67.8, "BLB": 67.8, "KR": 39.0, "KRENE": 39.0,
-                   "POS 12": 27.0, "POS 10": 17.0,
+                   "POS 12": 27.0, "POS 10": 17.0, "POS 6": 12.0,
                    "FENI KM0": 0.0, "FENI KM15": 15.0, "CRUSHER": 3.0,
                    # HUAFEI = 5.5, its surveyed junction, not the coast — see
                    # congestion/segments.py NODE_KM for the three sources.

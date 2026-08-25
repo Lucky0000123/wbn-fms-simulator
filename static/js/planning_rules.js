@@ -40,8 +40,13 @@ window.PLANNING_RULES = {
   },
   limLd: {
     origin: 'TF',
-    split: { huafeiBse: 0.5, pos12: 0.5 },
-    destinations: ['HUAFEI', 'BSE', 'POS 12']
+    // splitDest is the OTHER leg of the S4 50/50 split. POS 6 since
+    // 2026-08-25 (owner; was POS 12) — the km 12.0 yard on the lower
+    // mainline. Key renamed `pos12` -> `splitShare` + `splitDest` so the
+    // destination is data, not a second hardcode the engine must agree with.
+    split: { huafeiBse: 0.5, splitShare: 0.5 },
+    splitDest: 'POS 6',
+    destinations: ['HUAFEI', 'BSE', 'POS 6']
   },
   posTransit: {
     enabled: true,
@@ -99,10 +104,16 @@ function planRulesParseMd(md){
       return _;
     });
   if(fixed.length){R.fixedRoutes=fixed;touched=true;}
-  // §4 P3 split: "50% of leftover DT → TF → HUAFEI / BSE" and "... POS 12"
-  const mSplit=md.match(/(\d+)%\s*of leftover DT[^\n]*HUAFEI[\s\S]{0,80}?(\d+)%\s*of leftover DT[^\n]*POS 12/);
+  // §4 P3 split: "50% of leftover DT → TF → HUAFEI / BSE" and "... POS <n>".
+  // The destination is CAPTURED from the document, so editing
+  // planning_rules.md is enough to retarget the split (owner moved it
+  // POS 12 → POS 6 on 2026-08-25).
+  const mSplit=md.match(/(\d+)%\s*of leftover DT[^\n]*HUAFEI[\s\S]{0,80}?(\d+)%\s*of leftover DT[^\n]*(POS\s*\d+)/);
   if(mSplit){
-    R.limLd.split={huafeiBse:parseInt(mSplit[1],10)/100, pos12:parseInt(mSplit[2],10)/100};
+    const dest=mSplit[3].replace(/POS\s*/i,'POS ').trim();
+    R.limLd.split={huafeiBse:parseInt(mSplit[1],10)/100, splitShare:parseInt(mSplit[2],10)/100};
+    R.limLd.splitDest=dest;
+    if(R.limLd.destinations&&R.limLd.destinations.indexOf(dest)<0)R.limLd.destinations.push(dest);
     touched=true;
   }
   // §7 BLB band: "should be 6-7" / "Below 5 is a red flag"

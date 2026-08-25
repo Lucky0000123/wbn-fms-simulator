@@ -23,6 +23,11 @@ NODE_KM = {
     "POS 14": 26.1, "POS 15": 26.1, "POS 16": 26.1,
     "POS 10": 17.0, "POS10": 17.0,
     "FENI KM15": 15.0, "FENI 15": 15.0,
+    # POS 6: surveyed km 12.0 (owner 2026-08-25; site language says "km 10" but
+    # the dispatch road book prices KM DEST 12.0 and TF>POS 6 hauls stop at the
+    # "KR KM12" segment column — see simulator_api._SIM_CORRIDOR for the pins).
+    # Dump AND kilnable-ore loading point on the lower mainline, inside S4.
+    "POS 6": 12.0, "POS6": 12.0,
     "FENI KM0": 0.0, "FENI 0": 0.0, "FENI": 0.0,
     # HUAFEI is NOT at the coast, and this table used to say 0.0 while the
     # MEASURED_HAUL_KM below said TF>HUAFEI = 63.7 km. Both cannot be true:

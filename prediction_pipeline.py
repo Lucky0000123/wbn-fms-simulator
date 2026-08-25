@@ -62,6 +62,8 @@ CORRIDOR_KM = {
     "KR": 39.0, "KRENE": 39.0,
     "POS 12": 27.0, "POS12": 27.0,
     "POS 10": 17.0, "POS10": 17.0,
+    # POS 6: surveyed km 12.0 (owner 2026-08-25) — see congestion/physics.py.
+    "POS 6": 12.0, "POS6": 12.0,
     "FENI KM15": 15.0, "FENI 15": 15.0,
     "FENI KM0": 0.0, "FENI 0": 0.0, "FENI": 0.0,
     "CRUSHER": 3.0,

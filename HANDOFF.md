@@ -52,7 +52,8 @@ is reported separately and is not credited as production.
   deleted from the app on 2026-08-21, owner request; a copy sits in
   `data/saved_plans/_deleted_s2_backup_2026-08-21/`). S4 (owner,
   2026-08-21) = S3 with the leftover LD trucks split 50/50 HUAFEI/BSE vs
-  POS 12 (`planning_rules.md` §4 P3); the allocator applies the split
+  POS 6 (owner 2026-08-25, was POS 12 — POS 6 is the km 12.0 yard;
+  `planning_rules.md` §4 P3); the allocator applies the split
   automatically on any day-04 plan date. Current inventory:
   Aug: 01 (S1 only, by owner request), plus legacy 04/05/07/13 — the
   Aug 04 file PREDATES the S4 convention and is a plain daily plan.

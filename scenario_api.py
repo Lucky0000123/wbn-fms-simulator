@@ -1130,7 +1130,7 @@ def _day_for_scenario_id(sid):
 
     S4 has no data/scenarios/S4.json and never will: it is not a mine-plan
     import, it is the day-04 Plan-tab saves (identical to S3 except the TF LD
-    trucks split 50/50 HUAFEI/BSE vs POS 12). Day 02 is reserved - S2 was
+    trucks split 50/50 HUAFEI/BSE vs POS 6 - owner 2026-08-25, was POS 12). Day 02 is reserved - S2 was
     deleted from the app on 2026-08-21 - so it maps to nothing.
     """
     m = re.fullmatch(r"S(\d{1,2})", str(sid or "").upper())

@@ -28,6 +28,7 @@
 | HUAFEI | Huafei stockpile area (TOS destination for LIM) |
 | BSE | BSE stockpile area |
 | POS 12 | POS dump number 12 (permanent ore storage) |
+| POS 6 | POS yard at mainline km 12.0 (surveyed; site language often says "km 10"). Dump AND kilnable-ore loading point on the lower mainline, inside section S4 |
 | IWIP | IWIP-owned dump trucks (not contractor trucks) |
 
 ---
@@ -102,7 +103,12 @@ P3 target is reported separately as excess capacity, not credited to target.
 
 The leftover DT are split:
 - 50% of leftover DT → TF → HUAFEI / BSE
-- 50% of leftover DT → TF → POS 12
+- 50% of leftover DT → TF → POS 6
+
+(Owner, 2026-08-25: the split leg moved from POS 12 to POS 6 — the km 12.0
+yard on the lower mainline. POS 6 is a longer haul than POS 12 (55.8 km vs
+40.8 from TF), so expect fewer trips/DT on the split rows and more traffic
+through sections S2–S4.)
 
 This half/half split is the S4 concept — a what-if to see how much tonnage increases when trucks are split across destinations instead of all going to one.
 
@@ -161,7 +167,7 @@ After running S3, the app must display these validation checks:
 - A drop below 6 is a warning. Below 5 is a red flag.
 - 6-7 trips/DT is the expected range for BLB's short haul (6.7 km to POS 14).
 
-### TF Long-Haul Routes (HUAFEI, BSE, POS 12)
+### TF Long-Haul Routes (HUAFEI, BSE, POS 12, POS 6)
 - TF trips/DT must not go below 1.5 per day.
 - Below 1.5 is not believable.
 - Below 1.0 is impossible.
@@ -219,7 +225,7 @@ These rules are not suggestions. The plan builder must:
 1. Enforce contractor assignments (RIM on BLB, SMA on KR).
 2. Fill P1 (SAP) before P2 (LIM-TOS).
 3. Fill P2 before P3 (LIM-LD).
-4. Split P3 leftover DT 50/50 between HUAFEI/BSE and POS 12.
+4. Split P3 leftover DT 50/50 between HUAFEI/BSE and POS 6 (owner, 2026-08-25; was POS 12).
 5. Calculate POS transit and add IWIP trucks to the plan.
 6. Run validation checks and display results.
 7. Flag any route that fails the trips/DT validation bands.
