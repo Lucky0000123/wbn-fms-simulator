@@ -60,11 +60,13 @@ The owner's own description of the RSF hauls is a direction statement:
   * KR -> RSF: KR (39.0) down to RSF (26.0), coastward. Counts on S2 and
     the top 1 km of S3.
   * HUAFEI -> RSF: "using empty road but also comes back on loaded road
-    (but empty truck)". The outbound leg HUAFEI(0) -> RSF(26) climbs on the
+    (but empty truck)". The outbound leg HUAFEI(5.5) -> RSF(26) climbs on the
     empty carriageway and takes none of the loaded lane. The return leg
-    RSF(26) -> HUAFEI(0) runs coastward ON THE LOADED ROAD, empty. An empty
+    RSF(26) -> HUAFEI(5.5) runs coastward ON THE LOADED ROAD, empty. An empty
     truck in the loaded lane occupies the same headway as a full one — 50 m
     of following distance is 50 m — so it counts, on S3 and S4.
+    HUAFEI is 5.5 (its surveyed junction), not 0: these trucks turn off at
+    the HFC junction and never run the last 5.5 km to the coast.
 
 An empty truck is faster, not smaller. Nothing here discounts it for being
 empty; if the owner wants a headway discount for empties it belongs in
@@ -78,6 +80,10 @@ targets, allocation or fleet pools. It can only make OUR trips/DT lower.
 from __future__ import annotations
 
 from .segments import SEGMENTS, NODE_KM
+
+# HUAFEI's junction chainage. Read from NODE_KM rather than retyped, so this
+# register cannot drift from the road model the way the hardcoded 0.0 did.
+HUAFEI_KM = NODE_KM.get("HUAFEI", 5.5)
 
 # RSF is not a node on our plan stick, but it is a real place on our road:
 # KM26, between POS 12 (27.0) and POS 10 (17.0), per the owner. It lives here
@@ -145,7 +151,7 @@ LOADED_SPAN = {
     ("KR", "RSF"): (39.0, RSF_KM),
     # Outbound HUAFEI->RSF is on the empty road; the RETURN is the loaded-lane
     # leg, so the span is written return-first.
-    ("HUAFEI", "RSF"): (RSF_KM, 0.0),
+    ("HUAFEI", "RSF"): (RSF_KM, HUAFEI_KM),
 }
 
 # The road whose measured rate stands in for a tenant with no history. The

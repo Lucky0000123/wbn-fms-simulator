@@ -18,9 +18,10 @@ tightest section, by ~28% on the real 2026-09-03 plan: the trucks were
 on the road, the road just could not see them.
 
 Per-segment capacity is OFFICIAL GEOMETRY, not observed peaks (the
-dayTripsCap lesson): slowest posted bin speed / 50 m following distance,
-ONE loaded lane, per speed_limits.py.  It gives 400 trucks/hr on S4 and
-600 on S1–S3.  It replaced the earlier 60/240 headway-CLASS assumption,
+dayTripsCap lesson): slowest posted bin speed / FOLLOWING_DISTANCE_M
+(50 m, owner 2026-08-25) per speed_limits.py, ONE loaded lane.  At 50 m
+that is 600 trucks/hr on S1–S3 (30 km/h min) and 400/hr on S4 (20 km/h
+min).  It replaced the earlier 60/240 headway-CLASS assumption,
 which sat 2.5–10x low and manufactured an "S1 bottleneck" at v/c 2.4.
 One road, one capacity — a segment's capacity is a property of the
 segment, never of whichever route happens to ask about it.
@@ -35,7 +36,24 @@ NODE_KM = {
     'POS 10': 17.0, 'POS10': 17.0,
     'FENI KM15': 15.0, 'FENI 15': 15.0,
     'CRUSHER': 3.0,
-    'FENI KM0': 0.0, 'FENI 0': 0.0, 'HUAFEI': 0.0, 'BSE': 0.0,
+    # HUAFEI leaves the mainline at km 5.5 and finishes on its own 0.925 km
+    # branch (physics.BRANCH_DEST). It is NOT at the coast: this table said 0.0
+    # while physics' own MEASURED_HAUL_KM said TF>HUAFEI = 63.7 km, and 67.8 -
+    # 63.7 = 4.1 cannot be reconciled with a coastal dump.
+    #
+    # Three independent sources agree it is a junction near km 5.5:
+    #   * survey — the HFC road's first point is 0.8 m from CRD km 5.500
+    #     (data/haul_road_chainage_public.csv), running 5.525..6.425;
+    #   * DISPATCH ROADS & CALENDAR SHIFT — carries a literal segment column
+    #     "HFC KM5,5 - KM6,4", flagged on every HUAFEI.C01 haul and on no
+    #     other HUAFEI dump;
+    #   * that table's own gross km — POS 12>HUAFEI 22.4 and TF>HUAFEI 63.4
+    #     reproduce as |origin - 5.5| + 0.925 to within 0.3 km.
+    #
+    # For OCCUPANCY this is the load-bearing part: a HUAFEI truck occupies S4
+    # only from km 15 down to 5.5, not to 0. Charging it the full 15 km put
+    # 5.5 km of phantom truck-presence on the tightest section of the road.
+    'FENI KM0': 0.0, 'FENI 0': 0.0, 'HUAFEI': 5.5, 'BSE': 0.0,
 }
 
 # Spur origins are NOT on the stick, but they JOIN it: a BLB truck runs the
@@ -67,13 +85,13 @@ from .speed_limits import (span_capacity_hr, span_speeds, span_times_min,
 # The BLB spur has NO speed-limit sheet (speed_limits.py says so on its face).
 # The estimate already established elsewhere in the repo — plan_shared_flow.py
 # SPUR_SPEED_FLOOR_KMH / SPUR_LANE_CAP_TPH, and the "spur estimate 20 km/h ÷
-# 50 m following, one lane per direction (no limit sheet)" basis string it
-# renders — is reused verbatim rather than a new number being invented. 20 km/h
+# following distance, one lane per direction (no limit sheet)" basis string
+# it renders — is reused rather than a new number being invented. 20 km/h
 # is the slowest bin posted anywhere on the mainline, so it is the conservative
-# floor, and the divisor is the same mining-standard following distance the
-# official sheets are read with.
+# floor, and the divisor is the same following distance the official sheets
+# are read with.
 SPUR_SPEED_FLOOR_KMH = 20.0
-SPUR_LANE_CAP_HR = SPUR_SPEED_FLOOR_KMH * 1000.0 / FOLLOWING_DISTANCE_M   # 400/hr
+SPUR_LANE_CAP_HR = SPUR_SPEED_FLOOR_KMH * 1000.0 / FOLLOWING_DISTANCE_M
 SPUR_CAP_BASIS = ("spur estimate %g km/h ÷ %g m following, ONE lane per "
                   "direction (no limit sheet)"
                   % (SPUR_SPEED_FLOOR_KMH, FOLLOWING_DISTANCE_M))

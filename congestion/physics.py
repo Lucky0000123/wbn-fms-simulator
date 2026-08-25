@@ -24,12 +24,41 @@ NODE_KM = {
     "POS 10": 17.0, "POS10": 17.0,
     "FENI KM15": 15.0, "FENI 15": 15.0,
     "FENI KM0": 0.0, "FENI 0": 0.0, "FENI": 0.0,
-    "HUAFEI": 0.0, "BSE": 0.0, "CRUSHER": 3.0, "POS CBB": 55.0,
+    # HUAFEI is NOT at the coast, and this table used to say 0.0 while the
+    # MEASURED_HAUL_KM below said TF>HUAFEI = 63.7 km. Both cannot be true:
+    # TF sits at 67.8, so a coastal HUAFEI would make that haul 67.8 km, the
+    # same as TF>FENI KM0. The two halves of this one file disagreed, and the
+    # distance half was the one used for pricing while the chainage half was
+    # used for placement — so HUAFEI priced correctly and DREW 5 km too far
+    # down the road (owner, 2026-08-25: "it's next to BLB, not at FENI km 0").
+    #
+    # The survey settles it. data/haul_road_chainage_public.csv carries an HFC
+    # (Huafei) road whose first point sits 0.8 m from CRD km 5.500 — that is a
+    # junction, not a coincidence — and runs 5.525..6.425, its own ~0.9 km
+    # branch. It is 1.6 km from the BLB road, so it is near BLB but NOT on the
+    # BLB spur; BLB joins at 2.45, HFC at 5.50, 3.05 km apart.
+    # Owner chose the survey over the distance-implied 4.10 km (67.8 - 63.7),
+    # which is the weaker of the two (a p50 over n=51 tickets, and a haul
+    # distance includes the branch itself, so it should read SHORT of the
+    # junction — which is exactly the 1.4 km gap seen).
+    "HUAFEI": 5.5,
+    "BSE": 0.0, "CRUSHER": 3.0, "POS CBB": 55.0,
 }
 # BLB is a spur that joins the main stick near the coast; its effective haul
 # to FENI KM0 is ~19 km (measured cycle 165 min supports ~19 km at ~14 km/h
 # effective + dwell), NOT 67.8. Spur joins at ~2.5 km + 17.4 km spur length.
 SPUR_KM = {"BLB": 19.9}
+
+# Destinations that sit on a short BRANCH off the mainline rather than on it.
+# {name: (junction_km, branch_km)} — the haul is (mainline run to the junction)
+# + the branch. HUAFEI is the only one, from the committed survey: its HFC road
+# starts 0.8 m from CRD km 5.500 and runs to 6.425 on the same datum.
+#
+# This reproduces the independently MEASURED haul to 0.7%:
+#   TF>HUAFEI = (67.8 - 5.5) + 0.925 = 63.2 km   vs   63.7 measured (n=51)
+# Treating HUAFEI as a plain node at 5.5 instead would drop the branch and
+# come up 0.9 km short on every HUAFEI haul.
+BRANCH_DEST = {"HUAFEI": (5.5, 0.925)}
 # Measured one-way haul km. GPS tracks cannot verify these routes:
 # FMS_GPS_Historical only covers 2026-07-15..08-07, while BLB>POS 14
 # tickets end 2026-07-06 and TF>HUAFEI tickets end 2026-03-06.
@@ -110,6 +139,17 @@ def route_distance_km(origin: str, dest: str) -> float | None:
     measured = MEASURED_HAUL_KM.get((o, d))
     if measured is not None:
         return measured
+    # Branch destination (HUAFEI): mainline run to the junction, then the
+    # branch. Checked before the spur/plain-node paths because NODE_KM carries
+    # the JUNCTION chainage for these — using it directly would silently drop
+    # the branch and shorten every haul to them.
+    br = BRANCH_DEST.get(d)
+    if br is not None and o not in SPUR_KM:
+        j, blen = br
+        ok = NODE_KM.get(o)
+        if ok is None:
+            return None
+        return round(abs(ok - j) + blen, 1)
     if o in SPUR_KM:
         if d in BLB_COASTAL_DEST:
             return SPUR_KM[o]

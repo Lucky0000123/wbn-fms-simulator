@@ -454,6 +454,17 @@ chk $? "J77  other tenants take road, never tonnage" "see: python test_tenant_tr
 $PY test_corridor_parity.py >/dev/null 2>&1
 chk $? "J79  Excel road grid == app road grid" "see: python test_corridor_parity.py"
 
+# HUAFEI is a junction at km 5.5 with a ~0.9 km branch, NOT a coastal dump at
+# km 0 (owner, 2026-08-25). physics.py had been carrying the contradiction in
+# ONE file — NODE_KM said 0.0 while MEASURED_HAUL_KM said TF>HUAFEI = 63.7 km,
+# which is impossible from TF at 67.8 — and the two halves fed pricing and
+# placement respectively, so it priced right and drew 5.5 km wrong. The gate
+# pins the constant in all three NODE_KM copies, the branch, the S4 occupancy
+# consequence, and re-derives the junction from the committed survey. Mutation
+# -tested three ways incl. a full revert to the original bug. No DB needed.
+$PY test_huafei_geometry.py >/dev/null 2>&1
+chk $? "J80  HUAFEI is a junction at km 5.5, not the coast" "see: python test_huafei_geometry.py"
+
 # J78 — the tenants are VISIBLE in the plan (owner: "I didn't see all these new
 # DT in my plan"), drawn the same way the POS-transit IWIP rows are. A tenant
 # fleet has two representations and only ONE may reach pricing: the ROW the

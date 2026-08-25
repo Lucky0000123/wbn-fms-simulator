@@ -1816,7 +1816,9 @@ def api_simulator_shift_context():
         NODE_KM = {"TF": 67.8, "TOFU": 67.8, "BLB": 67.8, "KR": 39.0, "KRENE": 39.0,
                    "POS 12": 27.0, "POS 10": 17.0,
                    "FENI KM0": 0.0, "FENI KM15": 15.0, "CRUSHER": 3.0,
-                   "HUAFEI": 0.0, "BSE": 0.0}
+                   # HUAFEI = 5.5, its surveyed junction, not the coast — see
+                   # congestion/segments.py NODE_KM for the three sources.
+                   "HUAFEI": 5.5, "BSE": 0.0}
         other_paths = []
         for og, dg, bucket, trips, trucks in grp_rows:
             # Keep unknown-chainage pairs (e.g. POS CBB / POS 11) for the road-only

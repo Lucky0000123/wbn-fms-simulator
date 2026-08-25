@@ -25,7 +25,12 @@ NODE_KM = {
     "POS 12": 27.0, "POS12": 27.0,
     "POS 10": 17.0, "POS10": 17.0,
     "FENI KM15": 15.0, "FENI 15": 15.0,
-    "FENI KM0": 0.0, "FENI 0": 0.0, "HUAFEI": 0.0, "BSE": 0.0,
+    # HUAFEI = 5.5, its surveyed junction off the mainline, NOT the coast.
+    # See congestion/segments.py NODE_KM for the three sources (survey HFC
+    # road at CRD km 5.500, the dispatch road book's "HFC KM5,5 - KM6,4"
+    # column, and that book's gross km). Kept in step with that table by hand,
+    # as the header above already requires.
+    "FENI KM0": 0.0, "FENI 0": 0.0, "HUAFEI": 5.5, "BSE": 0.0,
     "CRUSHER": 3.0,
 }
 
