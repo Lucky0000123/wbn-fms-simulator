@@ -263,10 +263,16 @@ function _paintPlanSat(d){
       .concat(fleetMark?[fleetMark]:[]),
   });
   const w=(base.window||[]).join(' → ');
+  const dropped=(base.unpriceable_dropped||[]);
+  const dropTxt=dropped.length?(' '+dropped.length+' small routes the model has no geometry for ('
+    +dropped.map(x=>x.route).join(', ')+', '+dropped.reduce((a,x)=>a+x.share_pct,0).toFixed(1)
+    +'% of the fleet) are excluded from both basis notes.'):'';
   _congNote('cong-wmtdt-note','Mainline corridor km 0–68 only — BLB spur excluded (owner). Fleet spread in the measured Jan–Jun corridor mix ('
     +d.mix_routes+' routes, shared-road pricing, loaders at calibrated faces). Dashed = the fleet\'s '
     +'measured average over '+w+' ('+histPerDt+' t/DT/day at ~'+Math.round(histDt)+' DT). '
-    +'The curve falls as added DT queue at the same loading faces and share the same road.');
+    +'The model starts ~4% below the measured line (it prices the short POS-yard '
+    +'hauls conservatively) and falls as added DT queue at the same loading faces '
+    +'and share the same road.'+dropTxt);
   _congNote('cong-wmtday-note','Corridor daily tonnage (km 0–68, BLB excluded) as the corridor fleet grows, same mix and pricing. '
     +'Dashed = measured Jan–Jun average ('+Math.round(histWmt/1000)+' kt/day). The flattening slope is the '
     +'marginal value of each added truck across the whole plan.');

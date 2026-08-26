@@ -3960,6 +3960,22 @@ def _plan_saturation_mix():
     mix = [(r["route"], r["dt_days"] / tot,
             r["wmt"] / max(1.0, r["trips"]))
            for r in recs if r["dt_days"] / tot >= 0.005]
+    # Drop routes the engine cannot price (POS 11 / CBB>CUU are not in
+    # NODE_KM). Left in, their trucks sit in the sweep's denominator and add
+    # ZERO tonnes — measured 2026-08-26: 5.6% of the corridor fleet priced as
+    # dead weight, depressing the whole curve ~9 t/DT below its true level.
+    # Renormalising over priceable routes prices the fleet the engine can
+    # see; the response discloses what was dropped.
+    from congestion.predictor import predict as _probe
+    dropped = []
+    priceable = []
+    for k, sh, pay in mix:
+        try:
+            _probe(k, 10, 1, mode="fast")
+            priceable.append((k, sh, pay))
+        except (ValueError, ArithmeticError):
+            dropped.append({"route": k, "share_pct": round(100 * sh, 2)})
+    mix = priceable
     s = sum(m[1] for m in mix) or 1.0
     # measured whole-fleet baseline over the SAME records (all routes, not
     # just the mix cut) — the threshold line the owner asked for.
@@ -3969,6 +3985,7 @@ def _plan_saturation_mix():
         "avg_fleet_dt": tot / max(1, max(r["days"] for r in recs)),
         "avg_wmt_day": sum(r["wmt"] for r in recs) / max(1, max(r["days"] for r in recs)),
         "window": d.get("window"),
+        "unpriceable_dropped": dropped,
     }
     return [(k, sh / s, pay) for k, sh, pay in mix], base
 
