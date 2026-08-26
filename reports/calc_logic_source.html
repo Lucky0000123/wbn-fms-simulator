@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: A4 landscape; margin: 0; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: 'Helvetica Neue', Arial, sans-serif; color:#1a2332; }
+  .page { width: 1122px; height: 793px; page-break-after: always; position: relative;
+          padding: 48px 56px; overflow: hidden; }
+  .page:last-child { page-break-after: auto; }
+  h1 { font-size: 40px; font-weight: 800; letter-spacing:-0.5px; }
+  h2 { font-size: 26px; font-weight: 700; margin-bottom: 6px; }
+  .sub { color:#5b6b7f; font-size:15px; margin-top:8px; }
+  .tag { display:inline-block; background:#0f4c81; color:#fff; font-size:12px;
+         font-weight:700; padding:4px 12px; border-radius:12px; margin-bottom:14px;
+         letter-spacing:1px; }
+  .flow { display:flex; align-items:center; gap:0; margin:26px 0; }
+  .box { background:#f2f6fb; border:2px solid #0f4c81; border-radius:12px;
+         padding:14px 18px; text-align:center; min-width:150px; }
+  .box b { display:block; font-size:16px; color:#0f4c81; }
+  .box span { font-size:12.5px; color:#44536a; }
+  .arrow { font-size:26px; color:#0f4c81; padding:0 10px; font-weight:700; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:22px; margin-top:18px; }
+  .card { background:#f8fafc; border:1px solid #dbe4ee; border-radius:12px; padding:18px 20px; }
+  .card h3 { font-size:16.5px; color:#0f4c81; margin-bottom:8px; }
+  .card p, .card li { font-size:13.5px; line-height:1.55; color:#2c3a4e; }
+  .card ul { padding-left:18px; margin-top:4px; }
+  .formula { background:#0f4c81; color:#fff; border-radius:10px; padding:14px 20px;
+             font-size:17px; font-family: Georgia, serif; text-align:center; margin:14px 0; }
+  .formula small { display:block; font-family:Arial; font-size:11.5px; opacity:.85; margin-top:6px; }
+  .ex { background:#eefbf3; border:1px solid #bfe8cd; border-radius:10px; padding:12px 16px;
+        font-size:13.5px; margin-top:10px; }
+  .ex b { color:#1b7a41; }
+  .footer { position:absolute; bottom:22px; left:56px; right:56px; display:flex;
+            justify-content:space-between; font-size:11px; color:#8494a8; }
+  .bignum { font-size:30px; font-weight:800; color:#0f4c81; }
+  table.t { border-collapse:collapse; width:100%; margin-top:8px; }
+  table.t th { background:#0f4c81; color:#fff; font-size:12.5px; padding:7px 10px; text-align:left; }
+  table.t td { border-bottom:1px solid #dbe4ee; font-size:13px; padding:7px 10px; }
+  .pill { display:inline-block; border-radius:9px; padding:2px 10px; font-size:11.5px; font-weight:700; }
+  .g { background:#d9f2e2; color:#1b7a41; } .y { background:#fdf3d5; color:#94700f; }
+  .r { background:#fbdcdc; color:#a52929; }
+  .hero { display:flex; height:100%; flex-direction:column; justify-content:center; }
+  .barrow { display:flex; align-items:flex-end; gap:5px; height:110px; margin-top:12px; }
+  .bar { width:26px; background:#7fb3dd; border-radius:4px 4px 0 0; }
+  .bar.hot { background:#0f4c81; }
+</style>
+</head>
+<body>
+
+<!-- PAGE 1 · title -->
+<div class="page hero" style="background:linear-gradient(135deg,#0f4c81 0%,#1a6db5 100%);color:#fff;">
+  <div style="font-size:14px;letter-spacing:3px;font-weight:700;opacity:.8">WBN HAULAGE SIMULATOR</div>
+  <h1 style="color:#fff;margin-top:12px;font-size:52px;">How the numbers are made</h1>
+  <div style="font-size:19px;margin-top:16px;opacity:.9;max-width:720px;line-height:1.5">
+    The logic behind every trip, penalty and plan figure —
+    in six simple pages, with real numbers from our own road.
+  </div>
+  <div style="margin-top:40px;display:flex;gap:14px;">
+    <div style="background:rgba(255,255,255,.14);border-radius:10px;padding:12px 20px;font-size:14px;">1 · The big picture</div>
+    <div style="background:rgba(255,255,255,.14);border-radius:10px;padding:12px 20px;font-size:14px;">2 · One trip</div>
+    <div style="background:rgba(255,255,255,.14);border-radius:10px;padding:12px 20px;font-size:14px;">3 · Queues</div>
+    <div style="background:rgba(255,255,255,.14);border-radius:10px;padding:12px 20px;font-size:14px;">4 · Road penalties</div>
+    <div style="background:rgba(255,255,255,.14);border-radius:10px;padding:12px 20px;font-size:14px;">5 · Building a plan</div>
+    <div style="background:rgba(255,255,255,.14);border-radius:10px;padding:12px 20px;font-size:14px;">6 · Is it right?</div>
+  </div>
+  <div style="position:absolute;bottom:36px;left:56px;font-size:12px;opacity:.7">2026-08-26 · prepared from the production model, all values live</div>
+</div>
+
+<!-- PAGE 2 · big picture -->
+<div class="page">
+  <div class="tag">1 · THE BIG PICTURE</div>
+  <h2>From a plan to tonnes: four steps, one clock</h2>
+  <div class="sub">Everything the app reports comes from this one pipeline. Every step is calibrated against our own dispatch and GPS history (Jan–Jun 2026).</div>
+  <div class="flow">
+    <div class="box"><b>PLAN</b><span>routes, trucks,<br>loaders</span></div>
+    <div class="arrow">→</div>
+    <div class="box"><b>TRIP TIME</b><span>drive + load +<br>dump (physics)</span></div>
+    <div class="arrow">→</div>
+    <div class="box"><b>+ QUEUES</b><span>waiting at<br>the loader</span></div>
+    <div class="arrow">→</div>
+    <div class="box"><b>+ ROAD</b><span>congestion when<br>the road fills</span></div>
+    <div class="arrow">→</div>
+    <div class="box" style="background:#0f4c81;"><b style="color:#fff">TONNES / DAY</b><span style="color:#cfe0f2">trips × payload</span></div>
+  </div>
+  <div class="grid2">
+    <div class="card">
+      <h3>The one rule behind everything</h3>
+      <p>A truck can only be in one place at a time. Its day is 24 hours; every
+      minute spent driving, queuing or being loaded comes out of that budget.
+      The model counts those minutes honestly, then:</p>
+      <div class="formula" style="margin-bottom:0;margin-top:12px">trips per truck per day = day minutes ÷ minutes per trip</div>
+    </div>
+    <div class="card">
+      <h3>Where the numbers come from</h3>
+      <ul>
+        <li><b>Distances</b> — surveyed chainage (same table as the map)</li>
+        <li><b>Speeds</b> — official speed-limit sheets + GPS measurements</li>
+        <li><b>Load / dump times</b> — calibrated per route from dispatch data</li>
+        <li><b>Payloads</b> — measured tonnes per trip per route</li>
+        <li><b>Traffic shape</b> — 34 days of GPS, hour by hour, per road</li>
+      </ul>
+    </div>
+  </div>
+  <div class="footer"><span>WBN Haulage Simulator — calculation logic</span><span>page 2 / 7</span></div>
+</div>
+
+<!-- PAGE 3 · one trip -->
+<div class="page">
+  <div class="tag">2 · ONE TRIP</div>
+  <h2>A trip is minutes, and we count every one</h2>
+  <div class="sub">Real example: TF → HUAFEI (long haul), 100 trucks, 6 loaders — the model's actual numbers.</div>
+  <div style="display:flex;gap:8px;margin:24px 0;align-items:stretch;">
+    <div style="flex:37.8;background:#7fb3dd;border-radius:8px;padding:10px;text-align:center;color:#0d3050"><b>Drive loaded + empty</b><br>378 min</div>
+    <div style="flex:6;background:#f2c94c;border-radius:8px;padding:10px;text-align:center;"><b>Load</b><br>5 + 1 min</div>
+    <div style="flex:2;background:#e8875b;border-radius:8px;padding:10px;text-align:center;color:#fff"><b>Dump</b><br>2 min</div>
+    <div style="flex:21.8;background:#b9c6d6;border-radius:8px;padding:10px;text-align:center;"><b>Breaks, fuel, dispatch</b><br>218 min</div>
+    <div style="flex:3.1;background:#c94f4f;border-radius:8px;padding:10px;text-align:center;color:#fff"><b>+</b></div>
+  </div>
+  <div class="grid2">
+    <div class="card">
+      <h3>Drive time = distance ÷ speed</h3>
+      <p>Surveyed kilometres over each section, at the official limit for that
+      section (or the GPS-measured speed where we have it). Loaded and empty
+      directions are priced separately — empty runs faster.</p>
+      <div class="ex"><b>TF→HUAFEI:</b> ~68 km each way → 378 min of driving per round trip.</div>
+    </div>
+    <div class="card">
+      <h3>Overheads are measured, not guessed</h3>
+      <p>The 218 min covers shift breaks, fuelling, dispatch gaps and the shift
+      changeover — calibrated so the model's trips/day matches what each route
+      historically achieves. The red sliver is bunching behind slower trucks (+3 min).</p>
+      <div class="ex"><b>Total ≈ 607 min per trip → 2.4 trips per truck per day.</b><br>
+      × 48 t payload × 100 trucks ≈ 11,300 t/day on this route.</div>
+    </div>
+  </div>
+  <div class="footer"><span>WBN Haulage Simulator — calculation logic</span><span>page 3 / 7</span></div>
+</div>
+
+<!-- PAGE 4 · queues -->
+<div class="page">
+  <div class="tag">3 · QUEUES AT THE LOADER</div>
+  <h2>More trucks ≠ more tonnes, once the loader is busy</h2>
+  <div class="sub">The fleet is a closed loop: N trucks circulate between the road and a few loading faces. We use the standard closed-fleet queue model (machine-repair / M/M/c//N) — the same one used across the mining literature.</div>
+  <div class="grid2" style="margin-top:22px">
+    <div class="card">
+      <h3>How it works</h3>
+      <ul>
+        <li>Each loader serves one truck every ~5 minutes.</li>
+        <li>If trucks return faster than the loaders can serve, a queue forms —
+            and queue minutes are added to every trip.</li>
+        <li>With too many trucks, output <b>flattens</b> at the loaders' maximum:
+            adding trucks then adds only waiting, never tonnes.</li>
+      </ul>
+      <div class="ex"><b>Match check:</b> every plan row also respects
+      trips/hr ≤ loaders × (60 ÷ load minutes) — output can never exceed what the
+      loading faces can physically serve.</div>
+    </div>
+    <div class="card">
+      <h3>Trips per truck vs fleet size (one route)</h3>
+      <div class="barrow">
+        <div class="bar" style="height:100%"></div><div class="bar" style="height:100%"></div>
+        <div class="bar" style="height:99%"></div><div class="bar" style="height:98%"></div>
+        <div class="bar" style="height:96%"></div><div class="bar" style="height:93%"></div>
+        <div class="bar hot" style="height:88%"></div><div class="bar hot" style="height:82%"></div>
+        <div class="bar hot" style="height:75%"></div><div class="bar hot" style="height:68%"></div>
+        <div class="bar hot" style="height:61%"></div><div class="bar hot" style="height:55%"></div>
+      </div>
+      <p style="margin-top:8px">Left: few trucks — everyone loads immediately.
+      Dark bars: the queue grows; each truck completes fewer trips.
+      The <b>knee</b> is where adding a truck stops paying for itself, and the
+      app marks it on every saturation chart.</p>
+    </div>
+  </div>
+  <div class="footer"><span>WBN Haulage Simulator — calculation logic</span><span>page 4 / 7</span></div>
+</div>
+
+<!-- PAGE 5 · road -->
+<div class="page">
+  <div class="tag">4 · ROAD PENALTIES</div>
+  <h2>The road has a capacity, and traffic comes in waves</h2>
+  <div class="sub">One loaded lane per direction, 50 m following distance. Capacity = the slowest section speed ÷ 50 m — about 400–600 trucks/hour depending on the section.</div>
+  <div class="grid2" style="margin-top:20px">
+    <div class="card">
+      <h3>Below capacity → small penalty, above → queue</h3>
+      <p>Up to capacity we use the standard road-engineering curve (BPR): delay grows
+      gently, then sharply as v/c approaches 1. <b>Past capacity we switch to a queue
+      formula</b> (Akçelik): delay then grows with <i>how long</i> the overload lasts —
+      a polynomial can't say that honestly.</p>
+      <table class="t">
+        <tr><th>Road load (v/c)</th><th>Status</th><th>Effect on trip</th></tr>
+        <tr><td>under 0.7</td><td><span class="pill g">GREEN</span></td><td>nearly none</td></tr>
+        <tr><td>0.7 – 1.0</td><td><span class="pill y">YELLOW</span></td><td>minutes added</td></tr>
+        <tr><td>over 1.0</td><td><span class="pill r">RED</span></td><td>queue grows all shift</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Traffic is waves, not a flat line</h3>
+      <p>From 34 days of GPS: each road has its own rhythm — KR peaks at the 07:00/19:00
+      shift changes, the coast road in the evening. Hours range from 0.13× to 2.45× the
+      daily average. Since congestion cost rises steeply with load, pricing at the flat
+      average <b>understates</b> the real day. We price each hour at its measured level.</p>
+      <div class="barrow" style="height:90px">
+        <div class="bar" style="height:30%"></div><div class="bar" style="height:22%"></div>
+        <div class="bar" style="height:35%"></div><div class="bar hot" style="height:95%"></div>
+        <div class="bar" style="height:70%"></div><div class="bar" style="height:62%"></div>
+        <div class="bar" style="height:55%"></div><div class="bar" style="height:60%"></div>
+        <div class="bar" style="height:52%"></div><div class="bar" style="height:48%"></div>
+        <div class="bar" style="height:58%"></div><div class="bar" style="height:66%"></div>
+        <div class="bar hot" style="height:100%"></div><div class="bar" style="height:80%"></div>
+        <div class="bar" style="height:45%"></div><div class="bar" style="height:28%"></div>
+      </div>
+      <p style="font-size:11.5px;color:#5b6b7f;margin-top:4px">measured trucks on road by hour — dark = shift-change peaks</p>
+    </div>
+  </div>
+  <div class="footer"><span>WBN Haulage Simulator — calculation logic</span><span>page 5 / 7</span></div>
+</div>
+
+<!-- PAGE 6 · plan -->
+<div class="page">
+  <div class="tag">5 · BUILDING A PLAN</div>
+  <h2>Priorities first, then the leftovers — under the site rules</h2>
+  <div class="flow" style="margin:20px 0">
+    <div class="box"><b>P1 · SAP</b><span>must-move<br>saprolite</span></div>
+    <div class="arrow">→</div>
+    <div class="box"><b>P2 · LIM-TOS</b><span>limonite to<br>HUAFEI / BSE</span></div>
+    <div class="arrow">→</div>
+    <div class="box"><b>P3 · LIM-LD</b><span>every truck<br>still free</span></div>
+  </div>
+  <div class="grid2">
+    <div class="card">
+      <h3>The standing rules (always enforced)</h3>
+      <ul>
+        <li><b>SAP routing:</b> each pit sends ~2,000 t/day to its POS buffer;
+            the <b>rest goes direct to FeNi</b> per the mine plan.</li>
+        <li><b>BLB accepts RIM trucks only.</b></li>
+        <li><b>POS is transit:</b> whatever enters must leave on IWIP reclaim
+            trucks (input = output), sized by the same trip model.</li>
+        <li><b>Targets = the sales table</b> (SAP 5.72 Mt · LIM-TOS 4.64 Mt ·
+            LIM-LD 6.64 Mt for Sep–Dec).</li>
+        <li><b>Other tenants</b> (MHM, POSITION, PMA…) take road space, never
+            our tonnage — they make our trips slower, not fewer.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Every row also gets…</h3>
+      <ul>
+        <li><b>Weighbridges:</b> trips split across the eligible bridges
+            (owner matrix), balancing load — the sheet shows each bridge's
+            share, its utilisation %, and its expected waiting time.</li>
+        <li><b>Loaders:</b> from the measured trucks-per-loader ratio.</li>
+        <li><b>Road check:</b> the whole plan's trucks (plus tenants) are put on
+            the corridor hour by hour, and every section gets a GREEN / YELLOW /
+            RED verdict per hour.</li>
+      </ul>
+      <div class="ex"><b>Result:</b> tonnes per route per month, fleet, trips,
+      congestion — all from one pipeline, so Excel, the app and the API can never
+      disagree.</div>
+    </div>
+  </div>
+  <div class="footer"><span>WBN Haulage Simulator — calculation logic</span><span>page 6 / 7</span></div>
+</div>
+
+<!-- PAGE 7 · validation -->
+<div class="page">
+  <div class="tag">6 · IS IT RIGHT?</div>
+  <h2>Checked against history, every day, automatically</h2>
+  <div class="grid2" style="margin-top:20px">
+    <div class="card">
+      <h3>Backtest against real dispatch data</h3>
+      <p>The model is replayed over <b>2,124 measured route-days</b> (Jan–Jun):
+      for each day we predict trips per truck and compare to what actually happened.</p>
+      <div style="display:flex;gap:26px;margin-top:14px;">
+        <div><div class="bignum">~15%</div><div style="font-size:12.5px;color:#5b6b7f">typical error<br>(best routes 12–13%)</div></div>
+        <div><div class="bignum">R² &gt; 0.7</div><div style="font-size:12.5px;color:#5b6b7f">variance explained<br>on the backtest</div></div>
+        <div><div class="bignum">=</div><div style="font-size:12.5px;color:#5b6b7f">on par with published<br>state of the art</div></div>
+      </div>
+      <div class="ex" style="margin-top:14px">A 2026 literature review (115 papers) confirmed:
+      our architecture (physics + closed-fleet queue + road pricing) is the approach the
+      mining research itself recommends for planning tools.</div>
+    </div>
+    <div class="card">
+      <h3>80+ automated gates on every change</h3>
+      <ul>
+        <li>Fleet is conserved — the plan can never invent or lose trucks</li>
+        <li>Excel = app, cell by cell, for all saved scenarios</li>
+        <li>Congestion advisory never changes tonnage figures</li>
+        <li>Contractor walls (BLB=RIM), POS input=output, sales targets</li>
+        <li>Model curves frozen and diffed — silent drift is impossible</li>
+      </ul>
+      <div class="ex"><b>Principle:</b> every number the app shows states its own
+      basis — measured, calibrated, or rule — so a wrong assumption can be found
+      and corrected, not hidden.</div>
+    </div>
+  </div>
+  <div class="footer"><span>WBN Haulage Simulator — calculation logic</span><span>page 7 / 7</span></div>
+</div>
+
+</body>
+</html>
