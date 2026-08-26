@@ -1108,12 +1108,15 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
         wb_by_id = {}
     heads = [
         "P", "Path", "Contractor", "Material", "Target WMT/day",
-        "DT", "Trips", "WMT", "WMT/DT", "Trips/DT", "Weighbridge",
+        "DT", "Trips", "WMT", "WMT/DT", "Trips/DT",
     ]
     if achv:
         heads.append("Achievable")
     if ten:
         heads.append("Trips/DT w/ other tenants")
+    # Weighbridge is the LAST column (owner, 2026-08-26: numbers first,
+    # then the wide text).
+    heads.append("Weighbridge")
     _xlsx_headers(ws, r, heads, center=True)
     tot = {
         "tgt": 0, "dt_b": 0, "dt_a": 0, "tr_b": 0, "tr_a": 0,
@@ -1130,15 +1133,16 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
             _path_mat_label(row), row.get("target"),
             row.get("dt_after"), rates["trips_after"], row.get("pred_after"),
             rates["wmt_per_trip_after"], rates["trips_per_dt_after"],
-            ("—" if _is_tenant_row(row)
-             else wb_by_id.get(row.get("id") or row.get("key")) or ""),
         ]
         if achv:
             vals.append(av_new)
         ten_col = len(vals) + 1 if ten else None
         if ten:
             vals.append(ten.get(_ten_key(row)))
-        rate_cols = {9, 10}  # WMT/DT, Trips/DT (col 11 = Weighbridge text)
+        wb_col = len(vals) + 1
+        vals.append("—" if _is_tenant_row(row)
+                    else wb_by_id.get(row.get("id") or row.get("key")) or "")
+        rate_cols = {9, 10}  # WMT/DT, Trips/DT
         for col, val in enumerate(vals, start=1):
             cell = ws.cell(row=r, column=col, value=val)
             cell.border = box
@@ -1156,7 +1160,10 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
                 cell.number_format = "0.00"
             elif col >= 5 and isinstance(val, (int, float)):
                 cell.number_format = "#,##0"
-            if col in (6, 7, 8) or (achv and col == 12):
+            if col == wb_col:
+                cell.font = _xlsx_font(False, 8, _XLSX_MUTED)
+                continue
+            if col in (6, 7, 8) or (achv and col == 11):
                 cell.font = _xlsx_font(True, 9, _XLSX_INK)
         if _is_tenant_row(row):
             continue
@@ -1878,8 +1885,8 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None, achv=False):
         + (" · achievable from /api/simulate." if achv else ". Same day every day."),
         points, start=1, chart_col="A", achv=achv)
 
-    # Column 11 (K) carries the weighbridge text: name + share + util + wait.
-    _xlsx_widths(ws, [16, 22, 14, 14, 14, 11, 11, 11, 11, 12, 58, 12, 12, 12, 12, 12, 12])
+    # Weighbridge text is the LAST column; give the tail columns room.
+    _xlsx_widths(ws, [16, 22, 14, 14, 14, 11, 11, 11, 11, 12, 14, 58, 58])
     ws.freeze_panes = "A4"
     ws.row_dimensions[1].height = 24
     return alloc.get("new_pred_month"), alloc.get("target_month")
