@@ -13,7 +13,7 @@
       "pit": "BLB",
       "mat": "SAP",
       "month": 9,
-      "wmt_day": 4147.2
+      "wmt_day": 4121.1
     },
     {
       "pit": "KRENE",
@@ -25,7 +25,7 @@
       "pit": "KRENE",
       "mat": "SAP",
       "month": 9,
-      "wmt_day": 8246.4
+      "wmt_day": 8194.5
     },
     {
       "pit": "TOFU",
@@ -37,19 +37,19 @@
       "pit": "TOFU",
       "mat": "SAP",
       "month": 9,
-      "wmt_day": 10288.1
+      "wmt_day": 10223.4
     },
     {
       "pit": "BLB",
       "mat": "LIM",
       "month": 10,
-      "wmt_day": 36737.2
+      "wmt_day": 36737.1613
     },
     {
       "pit": "BLB",
       "mat": "SAP",
       "month": 10,
-      "wmt_day": 16773.0
+      "wmt_day": 16667.5
     },
     {
       "pit": "KRENE",
@@ -61,7 +61,7 @@
       "pit": "KRENE",
       "mat": "SAP",
       "month": 10,
-      "wmt_day": 9478.6
+      "wmt_day": 9419.0
     },
     {
       "pit": "TOFU",
@@ -73,19 +73,19 @@
       "pit": "TOFU",
       "mat": "SAP",
       "month": 10,
-      "wmt_day": 11515.6
+      "wmt_day": 11443.2
     },
     {
       "pit": "BLB",
       "mat": "LIM",
       "month": 11,
-      "wmt_day": 47122.6
+      "wmt_day": 47122.7967
     },
     {
       "pit": "BLB",
       "mat": "SAP",
       "month": 11,
-      "wmt_day": 36238.4
+      "wmt_day": 36010.5
     },
     {
       "pit": "KRENE",
@@ -97,7 +97,7 @@
       "pit": "KRENE",
       "mat": "SAP",
       "month": 11,
-      "wmt_day": 6189.9
+      "wmt_day": 6151.0
     },
     {
       "pit": "TOFU",
@@ -109,19 +109,19 @@
       "pit": "TOFU",
       "mat": "SAP",
       "month": 11,
-      "wmt_day": 10165.5
+      "wmt_day": 10101.6
     },
     {
       "pit": "BLB",
       "mat": "LIM",
       "month": 12,
-      "wmt_day": 44437.3
+      "wmt_day": 44437.2613
     },
     {
       "pit": "BLB",
       "mat": "SAP",
       "month": 12,
-      "wmt_day": 48229.5
+      "wmt_day": 47926.3129
     },
     {
       "pit": "KRENE",
@@ -133,7 +133,7 @@
       "pit": "KRENE",
       "mat": "SAP",
       "month": 12,
-      "wmt_day": 9920.1
+      "wmt_day": 9857.7
     },
     {
       "pit": "TOFU",
@@ -145,10 +145,11 @@
       "pit": "TOFU",
       "mat": "SAP",
       "month": 12,
-      "wmt_day": 16877.0
+      "wmt_day": 16770.9
     }
   ],
-  "loaded_at": "2026-08-26T03:50:00Z",
+  "loaded_at": "2026-08-18T08:06:47Z",
   "note_blb_limtos": "owner 2026-08-21: +250,000 t/month BLB->HUAFEI LIM-TOS on top of the imported scenario base (1 Mt over Sep-Dec, lifting total LIM-TOS ~3.6 -> ~4.6 Mt)",
-  "note_31": "planning team 2026-08-26: scenario 3.1 = 3.0 mining plan + \"1 Mt\" additional LIM from BLB at 330,000 t/month October-December (NOT September; moved from Sep-Dec by owner 2026-08-26). Applied as +330000/days on BLB LIM wmt_day for months 10, 11, 12. NOTE: 330k x 3 = 990,000 t, not literally 1,000,000 - the monthly figure is the instruction, discrepancy recorded not corrected."
+  "note_sales_table": "planning team sales table 2026-08-26: Saprolite TOS 5,718,686 / Limonite TOS 4,640,201 wmt declared over Sep-Dec. Targets scaled pro-rata (SAP x0.99371 from the imported mineplan 5,754,873) so scenario totals equal the table exactly; rounding residual absorbed in the largest row. LGS POS 3 Mt out of scope per owner. LIM-LD 6,644,306 is the target constant, not a targets row.",
+  "note_31": "planning team 2026-08-26: scenario 3.1 = 3.0 mining plan + \"1 Mt\" additional LIM from BLB at 330,000 t/month October-December (NOT September). Applied as +330000/days on BLB LIM wmt_day for months 10, 11, 12. NOTE: 330k x 3 = 990,000 t, not literally 1,000,000 - the monthly figure is the instruction, discrepancy recorded not corrected."
 }

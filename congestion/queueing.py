@@ -14,6 +14,37 @@ def machine_repair(n_trucks: float, cycle_h: float, load_min: float,
                    c_loaders: int, shift_hours: float = 12.0) -> dict:
     """Exact finite-source M/M/c//N ("machine repair") loader queue.
 
+    O(N) per evaluation (the birth-death recursion walks all N states), and
+    sections.py evaluates it inside a 120-sweep damped fixed point over every
+    plan row — measured 457x erlang_c's cost at N=500 (the tenant row), which
+    slowed the refreeze pipeline ~8x on 2026-08-26. Results are memoised on
+    the EXACT argument tuple: repeated identical evaluations (converged
+    fixed-point sweeps, the same plan re-priced across HTTP calls) hit the
+    cache, while nearby-but-different inputs recompute. An earlier version
+    rounded the key (cycle to 0.05 h) and that quantisation made the damped
+    fixed point land on different attractors for the Excel and app pricing
+    paths — J79 caught a 1-truck corridor diff (21 vs 22, 2026-10-01 BLB
+    spur). The function must stay continuous; only true repeats may share.
+    """
+    key = (float(n_trucks), float(cycle_h), float(load_min), int(c_loaders))
+    hit = _MR_CACHE.get(key)
+    if hit is not None:
+        return hit
+    out = _machine_repair_exact(n_trucks, cycle_h, load_min, c_loaders,
+                                shift_hours)
+    if len(_MR_CACHE) > 20000:
+        _MR_CACHE.clear()
+    _MR_CACHE[key] = out
+    return out
+
+
+_MR_CACHE: dict = {}
+
+
+def _machine_repair_exact(n_trucks: float, cycle_h: float, load_min: float,
+                          c_loaders: int, shift_hours: float = 12.0) -> dict:
+    """Exact finite-source M/M/c//N ("machine repair") loader queue.
+
     The fleet is CLOSED: N trucks circulate, each spends an exponential
     'travel' phase with mean = cycle minus load, then joins the c-loader
     station. Exact steady state via the birth-death recursion

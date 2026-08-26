@@ -102,9 +102,12 @@ buffer per pit flows through POS, so reclaim fleets are small.
 
 **Reject rates (planning team, 2026-08-26):** DT dimensioning stays on ROM
 material. Saleable SAP = ROM minus contractual reject: 0% for Tofu, 7% for
-BLB and KR. Saleable LIM has no reject. The sales table (Saprolite TOS
-5,718,686 wmt declared) is a saleable number; the plan's targets are ROM.
-Report the reconciliation, do not resize the fleet to it.
+BLB and KR. Saleable LIM has no reject. Owner ruling (2026-08-26, after
+lunch-time instruction): scenario targets are set EQUAL to the sales table
+(Saprolite TOS 5,718,686 / Limonite TOS 4,640,201 wmt declared) — the
+imported mineplan's 5,754,873 SAP was scaled ×0.99371 to match. The
+saleable-after-reject line in the validation summary remains an estimate of
+what those hauled tonnes sell as.
 
 ### P2 — LIM-TOS (Limonite to TOS stockpile, second priority)
 
