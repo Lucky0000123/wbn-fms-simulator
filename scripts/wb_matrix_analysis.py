@@ -164,7 +164,159 @@ def main():
     print("\nraw WB_ID formats in tickets (top 20):")
     for wb, n in sorted(raw_ids.items(), key=lambda kv: -kv[1])[:20]:
         print("   %-20s %8d" % (wb, n))
+
+    if "--register" in sys.argv:
+        write_register(elig, names, hist, hourly, p99)
     return 0
+
+
+# ── --register: regenerate data/wb_register.json + the committed fixture ─────
+# One generator, run against the live DB, so the register cannot drift from
+# the analysis that justified it. Positions come from FMS_GEOFENCES snapped to
+# the committed road survey (km only is persisted — coordinates never reach a
+# committed file). history_pairs are recomputed under the CURRENT
+# canonical_area, so the FENI KM15 line mapping (2026-08-26) flows through
+# automatically instead of being hand-derived.
+
+# Matrix bridge names that share a ticket number: geofence name -> matrix name.
+_GEOFENCE_TO_MATRIX = {"WB_IWIP_T7A": "WB_IWIP_T7"}
+# The day-count convention scenario routes need history under PLAN keys; keep
+# every canonical pair with at least this many lifetime tickets.
+_HIST_MIN_TICKETS = 20
+
+
+def _bridge_positions():
+    """{matrix_name: (road, km, off_m)} from FMS_GEOFENCES x the road survey."""
+    import csv
+    import math
+    survey = []
+    with open(os.path.join(ROOT, "data", "haul_road_chainage_public.csv")) as f:
+        for r in csv.DictReader(f):
+            survey.append((r["road"], float(r["km"]), float(r["lat"]), float(r["lng"])))
+    conn = _conn("FMS_DB")
+    cur = conn.cursor()
+    cur.execute("SELECT NAME, CENTER_LAT, CENTER_LNG FROM FMS_GEOFENCES "
+                "WHERE UPPER(NAME) LIKE 'WB%'")
+    out = {}
+    for name, lat, lng in cur.fetchall():
+        if lat is None or lng is None:
+            continue
+        best = None
+        for road, km, slat, slng in survey:
+            d = math.hypot((lat - slat) * 111320,
+                           (lng - slng) * 111320 * math.cos(math.radians(lat)))
+            if best is None or d < best[2]:
+                best = (road, km, d)
+        out[_GEOFENCE_TO_MATRIX.get(str(name).strip(), str(name).strip())] = \
+            (best[0], round(best[1], 1), round(best[2]))
+    conn.close()
+    return out
+
+
+def write_register(elig, names, hist, hourly, p99):
+    import datetime
+    pos = _bridge_positions()
+    excluded, in_matrix_nums = [], set()
+    for nset in elig.values():
+        in_matrix_nums |= nset
+    for num in sorted(set(hist)):
+        if num not in in_matrix_nums:
+            excluded.append(num)
+
+    # Build from the MATRIX COLUMN names, not the num->name dict: that dict
+    # collapses the shared ticket number 7 to one name, which silently dropped
+    # WB_RIM_T7 from the register on the first live regeneration (12 bridges,
+    # and gate J87's "13 bridges" check is what would have caught it).
+    hdr = io.open(os.path.join(ROOT, "data", MATRIX_TSV), encoding="utf-8") \
+        .read().splitlines()[0].split("\t")[2:]
+    bridges = {}
+    for mat_name in hdr:
+        num = wb_num(mat_name)
+        flows = hist.get(num, {})
+        tot = sum(c[0] for c in flows.values()) or None
+        last = max((c[3] for c in flows.values() if c[3]), default=None)
+        road_km = pos.get(mat_name)
+        cap = p99(hourly.get(num))
+        # A p99 from a handful of tickets is not a measurement — T2's single
+        # lifetime ticket produced "p99 1/hr", which would price the bridge
+        # at 1/30th of the fallback and silently defeat its matrix grant.
+        if (tot or 0) < 500:
+            cap = None
+        b = {"num": num,
+             "road": road_km[0] if road_km else None,
+             "km": road_km[1] if road_km else None,
+             "p99_hr": cap,
+             "tickets": tot,
+             "last_seen": str(last) if last else None}
+        if mat_name == "WB_RIM_T7":
+            # Ticket number 7 is dominated by WB_IWIP_T7A; RIM_T7's own
+            # throughput is unmeasurable from tickets. Do not credit it the
+            # IWIP bridge's history.
+            b.update({"p99_hr": None, "tickets": None, "last_seen": None,
+                      "note": "shares ticket number 7 with WB_IWIP_T7A; "
+                              "own throughput unmeasurable from tickets"})
+        if mat_name == "WB_IWIP_T2":
+            b["unverified"] = True
+            b["note"] = ("1 lifetime ticket, no geofence - used as the matrix "
+                         "writes it, flagged (owner ruling 2026-08-26)")
+        if mat_name == "WB_IWIP_T7":
+            b["note"] = "geofence name WB_IWIP_T7A; shares ticket number 7 with WB_RIM_T7"
+        bridges[mat_name] = b
+
+    # Matrix per canonical route. names is {num: name}; RIM_T7/IWIP_T7 share
+    # num 7 — resolve per pair: BLB rows take the RIM name (the matrix grants
+    # RIM_T7 only on BLB rows), everything else the IWIP name.
+    elig_names = {}
+    for (pit, plant), nums in elig.items():
+        route = "%s>%s" % (pit, plant)
+        row_names = []
+        for num in sorted(nums):
+            if num == 7:
+                row_names.append("WB_RIM_T7" if pit.startswith("BLB") else "WB_IWIP_T7")
+            else:
+                row_names.append(names.get(num, "WB_%d" % num))
+        elig_names[route] = row_names
+
+    hist_pairs = {"_basis": ("measured >=%d lifetime tickets, canonical areas "
+                             "(FENI KM15 lines resolved by canonical_area)"
+                             % _HIST_MIN_TICKETS)}
+    agg = defaultdict(set)
+    for num, flows in hist.items():
+        for (o, d), (n, _t, _f, _l) in flows.items():
+            if n >= _HIST_MIN_TICKETS:
+                agg["%s>%s" % (o, d)].add(num)
+    for route, nums in sorted(agg.items()):
+        hist_pairs[route] = sorted(nums)
+
+    register = {
+        "generated_at": datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "basis": ("owner eligibility matrix (%s) + HAULAGE_IWIP_CLEAN whole "
+                  "ticket history + FMS_GEOFENCES positions snapped to the "
+                  "committed road survey. Generated by "
+                  "scripts/wb_matrix_analysis.py --register" % MATRIX_TSV),
+        "policy": {
+            "objective": "min-max bridge utilisation over the eligible set",
+            "capacity": "measured p99 tickets/hour per bridge; fallback_cap_hr when unmeasured",
+            "fallback_cap_hr": 30,
+            "pit_rows": "owner matrix eligibility, keyed origin>destination (canonical)",
+            "iwip_rows": ("measured historical bridges minus excluded; when that is empty "
+                          "(new route, e.g. POS 6 transit) fall back to the destination "
+                          "plant's matrix bridges (union over pits)"),
+            "tenant_rows": "never allocated - not our fleet (owner ruling 2026-08-26)",
+            "excluded_rule": "bridges with ticket history but granted NOWHERE in the matrix are never assigned",
+        },
+        "bridges": bridges,
+        "matrix": elig_names,
+        "history_pairs": hist_pairs,
+        "excluded_nums": excluded,
+        "excluded_note": ("bridges with ticket history but granted nowhere in the owner "
+                          "matrix; T11's exclusion is DELIBERATE (owner ruling 2026-08-26)"),
+    }
+    for path in (os.path.join(ROOT, "data", "wb_register.json"),
+                 os.path.join(ROOT, "fixtures", "wb-allocation-basis.json")):
+        io.open(path, "w", encoding="utf-8").write(
+            json.dumps(register, indent=1, ensure_ascii=False))
+        print("wrote", path)
 
 
 if __name__ == "__main__":
