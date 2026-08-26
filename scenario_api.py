@@ -1061,7 +1061,11 @@ def _scenario_year_book(sc, year, achv=False):
         return None, err
     if not cards:
         return None, "no months to export for %s" % sc.get("id")
-    return ma._xlsx_year_book(year, cards, achv=achv), None
+    lab = sc.get("id") or ""
+    disp = SCENARIO_DISPLAY.get(lab)
+    if disp:
+        lab = "%s (%s)" % (lab, disp)
+    return ma._xlsx_year_book(year, cards, achv=achv, scenario_label=lab), None
 
 
 def _export_filename(year, sid):
@@ -1146,7 +1150,11 @@ def _year_book_for_scenario(sid, year, achv=False):
         return None, ("no day-%02d plans stored for %s — %s is the day-%02d "
                       "saved-plan convention, so it needs saves on that day"
                       % (day, year, sid, day))
-    return ma._xlsx_year_book(year, cards, achv=achv), None
+    lab = sid
+    disp = SCENARIO_DISPLAY.get(sid)
+    if disp:
+        lab = "%s (%s)" % (sid, disp)
+    return ma._xlsx_year_book(year, cards, achv=achv, scenario_label=lab), None
 
 
 def _xlsx_all_scenarios_zip(year, achv=False, ids=None):
