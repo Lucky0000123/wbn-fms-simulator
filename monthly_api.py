@@ -357,6 +357,10 @@ def api_monthly_clear():
 # Line colours for charts: gold target, slate old plan, navy optimized.
 # Table numbers are always ink (black) — never red.
 _XLSX_PRED, _XLSX_TGT = "1F2937", "EAB308"
+# Last workbook sheet — same two Congestion-tab corridor curves, with the
+# sweep table so a reader can see how tonnes are priced. J72 treats this as
+# a non-month sheet (with Year / Paths / Road crowding).
+_XLSX_SAT_SHEET = "Saturation"
 _XLSX_NAVY, _XLSX_MUTED, _XLSX_INK = "1F4E79", "64748B", "1F2937"
 _XLSX_ACHV = "1F2937"
 # Target, predicted — (hex, dotted). No red.
@@ -2760,6 +2764,163 @@ def _xlsx_append_crowding_sheet(wb, cards, used, prefix="", after_sheet=None):
     ws.freeze_panes = "B4"
     return name
 
+
+def _xlsx_plan_sat_payload():
+    """Same payload as Congestion → Mainline corridor saturation charts."""
+    try:
+        from simulator_api import plan_saturation_payload
+        d = plan_saturation_payload(max_dt=6000)
+    except Exception:  # noqa: BLE001 — export must not die on a missing model
+        return None
+    if not d or not d.get("ok") or not (d.get("curve") or []):
+        return None
+    return d
+
+
+def _xlsx_sat_line_chart(ws, title, y_title, min_col, max_col, header_row,
+                         last_row, anchor, cat_col, colors, y_min=None,
+                         y_fmt="#,##0", height=8.5, width=14):
+    """Line chart for the corridor saturation sweep. No markers — 60 points."""
+    from openpyxl.chart import LineChart, Reference
+    from openpyxl.chart.marker import Marker
+    lc = LineChart()
+    lc.title = title
+    lc.y_axis.title = y_title
+    lc.y_axis.numFmt = y_fmt
+    if y_min is not None:
+        lc.y_axis.scaling.min = y_min
+    lc.height, lc.width = height, width
+    lc.legend.position = "t"
+    lc.style = None
+    lc.x_axis.title = "corridor fleet DT (BLB excluded)"
+    data = Reference(ws, min_col=min_col, max_col=max_col,
+                     min_row=header_row, max_row=last_row)
+    cats = Reference(ws, min_col=cat_col, min_row=header_row + 1, max_row=last_row)
+    lc.add_data(data, titles_from_data=True)
+    lc.set_categories(cats)
+    _xlsx_paint_lines(lc, colors)
+    for s in lc.series:
+        s.marker = Marker(symbol="none")
+        s.smooth = False
+    ws.add_chart(lc, anchor)
+    return lc
+
+
+def _xlsx_write_sat_sweep(ws, row, col, payload, with_origin=True):
+    """Write DT / t/DT / 168-held / t/day / 168×fleet. Returns (header, last)."""
+    base = payload.get("baseline") or {}
+    hist_tpd = base.get("wmt_per_dt_day")
+    curve = list(payload.get("curve") or [])
+    if with_origin and curve and curve[0].get("total_dt"):
+        curve = [{"total_dt": 0, "wmt_day": 0,
+                  "wmt_per_dt_day": curve[0].get("wmt_per_dt_day")} ] + curve
+    heads = ["Corridor fleet DT", "Model t/DT", "Jan–Jun measured t/DT",
+             "Model t/day", "168 t/DT × fleet"]
+    _xlsx_headers(ws, row, heads, start=col, center=True)
+    header = row
+    rr = row
+    for p in curve:
+        rr += 1
+        dt = p.get("total_dt")
+        tpd = p.get("wmt_per_dt_day")
+        wmt = p.get("wmt_day")
+        _xlsx_num(ws.cell(row=rr, column=col), dt, center=True)
+        cell_tpd = ws.cell(row=rr, column=col + 1)
+        _xlsx_rate(cell_tpd, tpd, center=True)
+        held = hist_tpd
+        cell_h = ws.cell(row=rr, column=col + 2)
+        _xlsx_rate(cell_h, held, center=True)
+        _xlsx_num(ws.cell(row=rr, column=col + 3), wmt, center=True)
+        held_t = (round(hist_tpd * dt) if hist_tpd is not None and dt is not None
+                  else None)
+        _xlsx_num(ws.cell(row=rr, column=col + 4), held_t, center=True)
+    return header, rr
+
+
+def _xlsx_fill_saturation_block(ws, r, payload, table_col=1, chart_col=7,
+                                point_to_last_sheet=False):
+    """Both Congestion-tab corridor curves + the numbers they are drawn from.
+
+    Year: table_col=16 (P) so the dashboard stays A–N; charts at A.
+    Last sheet: table_col=1 (visible), charts at G beside the table.
+    """
+    if not payload:
+        r = _xlsx_section(
+            ws, r, "Corridor saturation — how tonnes are priced",
+            "Sweep unavailable (no Jan–Jun mix or congestion model). "
+            "The Congestion tab shows the same two charts when the model is live.")
+        return r + 1
+    from openpyxl.utils import get_column_letter
+    base = payload.get("baseline") or {}
+    hist_tpd = base.get("wmt_per_dt_day")
+    hist_wmt = base.get("avg_wmt_day")
+    hist_dt = base.get("avg_fleet_dt")
+    n_mix = payload.get("mix_routes")
+    w = base.get("window") or []
+    win = " → ".join(str(x) for x in w) if isinstance(w, (list, tuple)) else str(w or "")
+    last = (payload.get("curve") or [None])[-1] or {}
+    held_last = (hist_tpd * last["total_dt"]) if hist_tpd and last.get("total_dt") else None
+    r = _xlsx_section(
+        ws, r, "Corridor saturation — how tonnes are priced",
+        "Same two curves as Congestion → Mainline corridor (km 0–68). "
+        "Jan–Jun mix of %s routes, shared-road pricing, loaders at calibrated faces. "
+        "Dashed 168 t/DT is the measured average over %s at ~%s DT (109 kt/day). "
+        "The model meets that point, then t/DT falls as extra trucks queue at the "
+        "same faces and share the same road — so total tonnes bend below 168 × fleet."
+        % (n_mix, win or "Jan–Jun",
+           int(round(hist_dt)) if hist_dt else "650"))
+    header, last_row = _xlsx_write_sat_sweep(ws, r, table_col, payload)
+    stacked = chart_col == 1
+    a1 = get_column_letter(chart_col) + str(r)
+    a2 = get_column_letter(chart_col) + str(r + 18) if stacked \
+        else get_column_letter(chart_col + 8) + str(r)
+    _xlsx_sat_line_chart(
+        ws, "WMT/day per DT vs corridor fleet", "WMT/day per DT",
+        table_col + 1, table_col + 2, header, last_row, a1,
+        cat_col=table_col, colors=("059669", (_XLSX_TGT, True)),
+        y_min=None, y_fmt="0.0")
+    _xlsx_sat_line_chart(
+        ws, "Total WMT/day vs corridor fleet", "WMT/day, t",
+        table_col + 3, table_col + 4, header, last_row, a2,
+        cat_col=table_col, colors=("6366F1", (_XLSX_TGT, True)),
+        y_min=0, y_fmt="#,##0")
+    note_bits = []
+    if hist_tpd and hist_dt and hist_wmt:
+        note_bits.append(
+            "At ~%s DT the model sits on the measured %s t/DT / %s kt/day."
+            % (int(round(hist_dt)), hist_tpd, int(round(hist_wmt / 1000))))
+    if last.get("total_dt") and last.get("wmt_day") and held_last:
+        note_bits.append(
+            "At %s DT the model is %s kt/day vs %s kt if %s t/DT had held."
+            % (int(last["total_dt"]), int(round(last["wmt_day"] / 1000)),
+               int(round(held_last / 1000)), hist_tpd))
+    if point_to_last_sheet:
+        note_bits.append(
+            "The sweep numbers are on the Saturation sheet at the end of this workbook.")
+    cap_row = r + 38 if stacked else last_row + 2
+    ws.cell(row=cap_row, column=1, value=" ".join(note_bits)).font = _xlsx_font(
+        False, 9, _XLSX_MUTED)
+    ws.merge_cells(start_row=cap_row, start_column=1, end_row=cap_row, end_column=8)
+    return max(cap_row, last_row) + 2
+
+
+def _xlsx_append_saturation_sheet(wb, used, prefix=""):
+    """Last sheet: both corridor saturation curves + the sweep they are drawn from."""
+    name = _xlsx_unique_sheet_name((prefix or "") + _XLSX_SAT_SHEET, used)
+    ws = wb.create_sheet(name)  # append = last
+    _xlsx_sheet_setup(ws)
+    payload = _xlsx_plan_sat_payload()
+    r = _xlsx_board_header(
+        ws, "Corridor saturation — WMT/day per DT and total WMT/day",
+        "Same model as Congestion → Mainline corridor (km 0–68). "
+        "This sheet is the numbers; the Year page shows the same two charts.",
+        start=1)
+    _xlsx_fill_saturation_block(ws, r, payload, table_col=1, chart_col=7)
+    _xlsx_widths(ws, [18, 14, 22, 14, 18])
+    ws.freeze_panes = "A4"
+    return name
+
+
 def _xlsx_scenario_constraints_block(ws, start_col, scenario_label=""):
     """Right-side panel on the Year sheet (owner, 2026-08-26): every rule the
     scenario runs under, written where the reader of the workbook can see it
@@ -2781,8 +2942,6 @@ def _xlsx_scenario_constraints_block(ws, start_col, scenario_label=""):
         fx = ", ".join("%s @ %s t/day" % (d, format(int(v), ",")) for d, v in rule["fixed"])
         rows.append(("T", "  %s: buffer %s -> rest DIRECT %s" % (pit, fx, rule["rest"])))
     rows += [
-        ("T", "Buffer rows may land anywhere in 0-4,000 t/day (trucks are integers; 2,000 +/- 2,000)."),
-        ("T", "A pit whose plan ships to BOTH FeNi plants splits its rest pro-rata."),
         ("S", "P2 — LIM-TOS"),
         ("T", "All LIM-TOS to HUAFEI/BSE. BLB adds 250,000 t/month. Fills only after P1 is met."),
         ("S", "P3 — LIM-LD"),
@@ -2811,8 +2970,24 @@ def _xlsx_scenario_constraints_block(ws, start_col, scenario_label=""):
         ("T", "BLB pit accepts RIM trucks only. POS is transit: inbound tonnes leave on IWIP"),
         ("T", "reclaim sized so input = output. IWIP trucks are not contractor fleet."),
         ("T", "Targets equal the sales table: SAP 5,718,686 / LIM-TOS 4,640,201 wmt declared."),
-        ("T", "DT dimensioning is ROM; saleable SAP = ROM minus reject (0%% TF, 7%% BLB/KR)."),
+        ("T", "DT dimensioning is ROM; saleable SAP = ROM minus reject (0% TF, 7% BLB/KR)."),
     ]
+    # Section titles merge A:H for chrome, which puts every row's merge
+    # across column G. The titles' text lives in column A, so shrinking
+    # those merges to end at F costs nothing visually and frees the panel's
+    # room (owner: "right side started from column G").
+    from openpyxl.worksheet.cell_range import CellRange
+    shrink = []
+    for m in list(ws.merged_cells.ranges):
+        if m.max_col >= col and m.min_col < col:
+            shrink.append((m.min_row, m.min_col, m.max_row))
+            ws.unmerge_cells(str(m))
+        elif m.min_col >= col:
+            ws.unmerge_cells(str(m))
+    for min_row, min_col, max_row in shrink:
+        if col - 1 > min_col:
+            ws.merge_cells(start_row=min_row, start_column=min_col,
+                           end_row=max_row, end_column=col - 1)
     r = 4
     width_cols = 5
     ws.column_dimensions[get_column_letter(col)].width = 4
@@ -3034,12 +3209,18 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
             start=1, chart_col="I", achv=achv)
 
     r = _xlsx_road_corridor_block(ws, r + 2, cards)
+    r = _xlsx_fill_saturation_block(
+        ws, r + 1, _xlsx_plan_sat_payload(),
+        table_col=16, chart_col=1, point_to_last_sheet=True)
 
-    # Right-side constraints panel (owner, 2026-08-26): the rules this
-    # scenario ran under, next to the numbers they produced.
-    _xlsx_scenario_constraints_block(ws, 16, scenario_label=title_prefix)
+    # Right-side constraints panel (owner, 2026-08-26: "started from
+    # column G"). The dashboard's tables live in A-F above the coverage
+    # block; the panel occupies G4 downward, clear of the coverage table's
+    # G/H tail which begins ~100 rows lower.
+    _xlsx_scenario_constraints_block(ws, 7, scenario_label=title_prefix)
 
     _xlsx_widths(ws, [16, 14, 14, 14, 12, 14, 14, 12, 14, 12, 10, 12, 12, 12])
+    _xlsx_widths(ws, [18, 14, 22, 14, 18], start=16)
     ws.freeze_panes = "A4"
 
 
@@ -3085,6 +3266,7 @@ def append_year_book_sheets(wb, year, cards, used=None, prefix="", achv=False):
     _xlsx_append_paths_sheet(wb, year, cards, used, prefix=prefix, achv=achv,
                              after_sheet=crowd or yr)
     _xlsx_append_month_sheets(wb, year, cards, used, prefix=prefix, achv=achv)
+    _xlsx_append_saturation_sheet(wb, used, prefix=prefix)
     return used
 
 
@@ -3101,6 +3283,7 @@ def _xlsx_year_book(year, cards, achv=False, scenario_label=""):
     _xlsx_append_paths_sheet(wb, year, cards, used, prefix="", achv=achv,
                              after_sheet=crowd or "Year")
     _xlsx_append_month_sheets(wb, year, cards, used, prefix="", achv=achv)
+    _xlsx_append_saturation_sheet(wb, used, prefix="")
     return wb
 
 

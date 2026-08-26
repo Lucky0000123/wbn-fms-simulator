@@ -235,8 +235,13 @@ check("profile conserves executed trips PER ROW", worst_row < 1e-9,
 flat_s, prof_s = by_sec(flat), by_sec(fwd)
 worst_cv_flat = max(_cv(flat_s[k]["occupancy_mean"]) for k in flat_s)
 best_cv_prof = min(_cv(prof_s[k]["occupancy_mean"]) for k in prof_s)
-check("uniform releases really were flat (CV < 0.05)", worst_cv_flat < 0.05,
-      "worst CV = %.4f" % worst_cv_flat)
+# 2026-08-26: uniform RELEASES no longer imply a flat GRID — the measured
+# section-hour profile (data/section_hourly_profile.json, owner request)
+# shapes occupancy even when the release warp is disabled. The old
+# "CV < 0.05" premise is retired; the discriminating pair is now that the
+# release warp ADDS structure on top of the section shaping.
+check("uniform+profile grid carries the section shape (CV > 0.05)",
+      worst_cv_flat > 0.05, "worst CV = %.4f" % worst_cv_flat)
 check("profiled releases carry real hourly structure (CV > 0.10)",
       best_cv_prof > 0.10, "weakest CV = %.4f" % best_cv_prof)
 

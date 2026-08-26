@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import bisect
 import csv
+import json
 import math
 import os
 from collections import defaultdict
@@ -241,6 +242,31 @@ def _warp_release_time(t: float, shift_hours: float, n_shifts: int,
     s = min(max(int(t // shift_hours), 0), n_shifts - 1)
     u = (t - s * shift_hours) / shift_hours
     return (s + _warp_unit(u, cdfs[s])) * shift_hours
+
+
+_HOUR_PROFILES = None
+
+
+def _section_hour_profiles():
+    """Measured per-road hour-of-day presence multipliers (site clock).
+
+    data/section_hourly_profile.json — TRUCK_N by hour from 34 days of
+    corridor GPS, day-normalised, mean 1.0 per road, split-half r 0.81–0.98.
+    Empty dict when the file is missing: the grid then falls back to the
+    flat (release-warp-only) shape rather than an invented curve."""
+    global _HOUR_PROFILES
+    if _HOUR_PROFILES is None:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "data", "section_hourly_profile.json")
+        try:
+            with open(path, encoding="utf-8") as fh:
+                d = json.load(fh)
+            _HOUR_PROFILES = {k: list(v) for k, v in
+                              (d.get("profiles") or {}).items()
+                              if isinstance(v, list) and len(v) == 24}
+        except (OSError, ValueError):
+            _HOUR_PROFILES = {}
+    return _HOUR_PROFILES
 
 
 def _f(x, default=None):
@@ -593,6 +619,8 @@ def shared_flow(
         "simulate_unchanged": True,
         "invents_playback_haul_speeds": False,
         "phase": "des_segment_model_roundtrip" + ("_2shift" if whole_day else ""),
+        "hourly_shape": ("measured section profile (34d GPS, split-half r 0.81-0.98)"
+                          if _section_hour_profiles() else "flat (no profile file)"),
         "era": "struggle",
     }
     if not norm:
@@ -1149,6 +1177,57 @@ def shared_flow(
     all_secs = [s['label'] for s in _SEGS] + sorted(
         s for s in section_plans if s not in {x['label'] for x in _SEGS})
     used_secs = [s for s in all_secs if s in section_plans or s in occ_h]
+
+    # ── Measured hour-of-day shaping (owner, 2026-08-26) ─────────────────
+    # "The trucks in each hour should not be the same — use the historical
+    # trend as the baseline." data/section_hourly_profile.json carries each
+    # GPS road's measured presence-by-site-hour multipliers (34 days,
+    # split-half r 0.81–0.98, mean exactly 1.0). Each corridor section maps
+    # to the road whose chainage covers it; each display bin is scaled by
+    # its site-hour multiplier. Totals are conserved by construction
+    # (mean 1.0), so the grid's daily sums equal the flat model's — only
+    # WHEN the trucks are on the section changes, and it changes the way
+    # 34 days of GPS say it does (KR peaks at the 07/19 changeovers, the
+    # POS 12–KM15 stretch in the evening, and so on).
+    _sec_road = {"TF–KR": "TF", "KR–POS 12": "KR", "POS 12–KM15": "KR",
+                 "KM15–coast": "CRD", "BLB spur": "BLB"}
+    _hr_prof = _section_hour_profiles()
+    def _sec_mults(sec):
+        """Per-bin multipliers for this section, renormalised over the bins
+        the window actually covers so the WINDOW total is conserved exactly
+        (the frozen profile's mean is 1.0 over 24 h; a 12 h shift samples
+        half of it and would otherwise gain or lose trucks)."""
+        road = _sec_road.get(sec) or ("BLB" if sec.endswith(" spur") else None)
+        prof = _hr_prof.get(road or "")
+        if not prof:
+            return None
+        ms = [prof[int((start_hour + b * bin_hours) % 24)] for b in range(n_bins)]
+        mean = sum(ms) / len(ms) if ms else 1.0
+        if mean <= 0:
+            return None
+        return [m / mean for m in ms]
+    if _hr_prof:
+        for sec in list(occ_h.keys()):
+            ms = _sec_mults(sec)
+            if not ms:
+                continue
+            # Conserve each SERIES' own total exactly: the release warp
+            # already makes occupancy non-uniform across bins, so mean-1.0
+            # multipliers alone would drift the weighted sum (measured -7%
+            # on KM15–coast). Rescale by the series' before/after ratio.
+            for series in (occ_h[sec], occ_h_dir[sec]["loaded"],
+                           occ_h_dir[sec]["empty"], ent[sec],
+                           ent_dir[sec]["loaded"], ent_dir[sec]["empty"]):
+                before = sum(series)
+                if before <= 0:
+                    continue
+                for b in range(n_bins):
+                    series[b] *= ms[b]
+                after = sum(series)
+                if after > 0:
+                    k = before / after
+                    for b in range(n_bins):
+                        series[b] *= k
 
     def _occ_cells(xs):
         return [round(x, 1) if x < 9.95 else int(round(x)) for x in xs]
