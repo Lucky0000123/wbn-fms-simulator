@@ -167,7 +167,7 @@ function planRulesParseMd(md){
   if(mTf){R.validation.TF.minTrips=R.validation.TF.warnBelow=parseFloat(mTf[1]);touched=true;}
   const mTfFail=md.match(/Below\s+(\d+(?:\.\d+)?)\s+is impossible/);
   if(mTfFail){R.validation.TF.failBelow=parseFloat(mTfFail[1]);touched=true;}
-  // §6 targets: "| Total LIM-LD | 8 Mt |" / "| Total LIM-TOS (all pits) | 4.6 Mt |"
+  // §6 targets: "| Total LIM-LD | 6.644306 Mt |" / "| Total LIM-TOS (all pits) | 4.6 Mt |"
   const mLd=md.match(/Total LIM-LD\s*\|\s*([\d.]+)\s*Mt/);
   if(mLd){R.targets.limLdTotal=Math.round(parseFloat(mLd[1])*1e6);touched=true;}
   const mTos=md.match(/Total LIM-TOS[^|]*\|\s*([\d.]+)\s*Mt/);

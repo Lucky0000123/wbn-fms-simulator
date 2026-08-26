@@ -3,7 +3,7 @@
 The scenario feature (2026-08-18) lets the owner load alternative mine plans
 (S3, ...; S2 was deleted from the app 2026-08-21) and re-allocate the SAME
 fleet by priority:
-P1 SAP -> P2 LIM-TOS -> P3 LIM-LD (Tofu dump -> Huafei), 8 Mt cap.
+P1 SAP -> P2 LIM-TOS -> P3 LIM-LD (Tofu dump -> Huafei), sales-target cap (LIM_LD_TARGET_T).
 
 What must always hold, per scenario and per month:
   1. DT conservation: P1 + P2 + P3(free) == the yearly matrix's pool,
@@ -95,7 +95,7 @@ for sid, res in results.items():
 check("lending never targets a RIM-only pit (code path)",
       "RIM_ONLY_PITS" in open(sa.__file__.replace(".pyc", ".py")).read())
 
-print("\n=== the 8 Mt LIM-LD target is filled after P1/P2; excess is capacity ===")
+print("\n=== the LIM-LD sales target is filled after P1/P2; excess is capacity ===")
 for sid, res in results.items():
     t = res["total"]
     expect = min(t["ld_t_capacity"], sa.LIM_LD_TARGET_T)

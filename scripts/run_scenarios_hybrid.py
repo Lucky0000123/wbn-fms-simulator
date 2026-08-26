@@ -20,6 +20,11 @@ from statistics import median
 
 BASE = 'http://127.0.0.1:5055'
 DAYS = {9: 30, 10: 31, 11: 30, 12: 31}
+# LD sales target in Mt — from the ONE owner constant (planning team
+# 2026-08-26: 6,644,306 wmt declared; was 8 Mt). Never hardcode 8 again.
+import scenario_api as _sa
+LD_TARGET_MT = _sa.LIM_LD_TARGET_T / 1e6
+
 MON = {9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
 SCEN_DAY = {1: 'S1', 3: 'S3'}
 DEFAULT_TPL = 15.0   # Burt & Caccetta 2007 balanced match factor when unmeasured
@@ -182,7 +187,7 @@ def report(results, uncal):
                             'n_overloaded': over, 'n_road': road, 'n_loader': ldr})
     w()
     w('=' * 104)
-    w('C . LIM-LD (HUAFEI LD routes) vs the 8 Mt TARGET')
+    w('C . LIM-LD (HUAFEI LD routes) vs the %.2f Mt TARGET' % LD_TARGET_MT)
     w('%-5s %-4s %7s %10s %12s %10s %9s' % (
         'Mon', 'Scen', 'LD DT', 'Trips/d', 'Tonnes/d', 'Mt/month', 'cum Mt'))
     ld_tot = {}
@@ -203,7 +208,7 @@ def report(results, uncal):
         ld_tot[scen] = cum
     w()
     w('D . SCENARIO COMPARISON (Sep-Dec)')
-    w('%-4s %14s %8s %10s %10s' % ('Scen', 'LD Mt Sep-Dec', 'pct8Mt', 'AvgT/DT', 'WorstOver'))
+    w('%-4s %14s %8s %10s %10s' % ('Scen', 'LD Mt Sep-Dec', 'pctTgt', 'AvgT/DT', 'WorstOver'))
     for scen in ('S1', 'S3'):
         months = results.get(scen, {})
         tr = d = 0
@@ -214,7 +219,7 @@ def report(results, uncal):
             d += sum(r['dt'] for r in rows)
             wover = max(wover, sum(1 for r in rows if r['status'] == 'overloaded'))
         w('%-4s %14.2f %7.1f%% %10.2f %10d' % (
-            scen, ld_tot.get(scen, 0), 100 * ld_tot.get(scen, 0) / 8, tr / max(1, d), wover))
+            scen, ld_tot.get(scen, 0), 100 * ld_tot.get(scen, 0) / LD_TARGET_MT, tr / max(1, d), wover))
     w()
     w('E . BOTTLENECK STORY - TF>HUAFEI LD (Nov, proportional loaders)')
     for scen in ('S1', 'S3'):
@@ -254,8 +259,8 @@ def report(results, uncal):
         tot2 += m2
         w('%-5s %8d | %12.0f %10.3f | %12.0f %10.3f %8.0f%%' % (
             MON[m], dt, t1, m1, t2, m2, 100 * (t2 - t1) / t1 if t1 else 0))
-    w('TOTAL Sep-Dec: 1 road %.2f Mt (%.0f%% of 8Mt) -> 2 roads %.2f Mt (%.0f%% of 8Mt)' % (
-        tot1, 100 * tot1 / 8, tot2, 100 * tot2 / 8))
+    w('TOTAL Sep-Dec: 1 road %.2f Mt (%.0f%% of target) -> 2 roads %.2f Mt (%.0f%% of target)' % (
+        tot1, 100 * tot1 / LD_TARGET_MT, tot2, 100 * tot2 / LD_TARGET_MT))
     if uncal:
         w('')
         w('Uncalibrated routes (defaults): ' + ', '.join(sorted(uncal)))

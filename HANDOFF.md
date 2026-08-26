@@ -158,8 +158,10 @@ Congestion/corridor outputs are advisory and never clip tonnes (J53/J57).
 - Chainage stick: full card width, 560–640 px tall (#plan-c3-flow-svg).
 
 ## 9. Key measured findings (for management context)
-- S1 misses the 8 Mt LIM-LD target in the historical-rate waterfall (~5.45 Mt).
-  S3 has enough waterfall capacity to fill exactly 8 Mt, with excess shown as
+- S1 misses the LIM-LD sales target in the historical-rate waterfall (~5.45 Mt
+  vs 6.644 Mt — the target was 8 Mt until the planning team's 2026-08-26 sales
+  table). S3 has enough waterfall capacity to fill the target exactly, with
+  excess shown as
   unused capacity. The current saved-plan hybrid run predicts ~6.18 Mt because
   TF→HUAFEI remains the binding corridor. That is why the
   S2 achievable total (~11.5 Mt Sep–Dec) is below S1's (~15.5 Mt): trucks
@@ -246,7 +248,8 @@ Sequence of fixes after the first S3 run, each owner-driven:
    timestamp trap and the flow-basis warning.
 
 Current S3 picture (regenerated hybrid artifact, proportional loaders): LD
-Sep-Dec **6.18 Mt** of the 8 Mt target; TF>HUAFEI is the binding corridor
+Sep-Dec **6.18 Mt** of the 6.644 Mt target (93%; target was 8 Mt before
+2026-08-26); TF>HUAFEI is the binding corridor
 (v/c ~ 1.3-1.8 at planned fleets). A second independent HUAFEI corridor raises
 the modeled result to **7.72 Mt** (+25%, 97% of target). BLB routes run
 near-free at planned fleets.

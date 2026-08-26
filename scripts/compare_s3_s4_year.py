@@ -193,7 +193,7 @@ def build(s3_path, s4_path, out_path):
         "The only material that moves between S3 and S4. S4 leftover TF LD trucks "
         "split 50/50 HUAFEI vs POS 12. Line + columns under the table.",
         ld, chart=True,
-        extra_note="8 Mt sales line is the LIM-LD target total (%.0f t)." % ld_t)
+        extra_note="Sales line is the LIM-LD target total (%.0f t — planning team 2026-08-26)." % ld_t)
 
     r = _xlsx_section(
         ws, r, "Coverage table",

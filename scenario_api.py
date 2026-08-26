@@ -10,12 +10,14 @@ The waterfall, in the owner's words (2026-08-18):
   2. then until every LIM-TOS target is met,
   3. every truck still free hauls LIM-LD (Tofu limonite dump -> Huafei).
 
-THE 8 Mt LIM-LD RULE, as two labelled numbers (owner ruling, 2026-08-23).
+THE LIM-LD SALES-TARGET RULE, as two labelled numbers (owner ruling,
+2026-08-23; target value 6,644,306 t since the planning team's 2026-08-26
+sales table — it was 8 Mt before that).
 Both owner statements are true at once and the repo's standing pattern is
 two clocks, never merged:
 
   * CAPACITY IS NEVER CLIPPED. What the free fleet could physically move on
-    LD is computed and reported in full, above 8 Mt when the trucks are
+    LD is computed and reported in full, above the target when the trucks are
     there (`ld_t_day_capacity`, `ld_t_month_capacity`, `ld_t_capacity`,
     `dt_p3_capacity`, `free`). Destroying that information is what the
     2026-08-19 rule forbids: "LIM-LD is the only place extra trucks go - it
@@ -27,9 +29,9 @@ two clocks, never merged:
     production.
 
 So: no clip on capacity, no credit beyond target, both present in the
-payload and in the workbook with names that say which is which. 8 Mt is the
-sales target line the plan is judged against, not a limit on what the fleet
-can do.
+payload and in the workbook with names that say which is which. The target
+(LIM_LD_TARGET_T below) is the sales line the plan is judged against, not a
+limit on what the fleet can do.
 
 Hard rules:
   * BLB pit accepts RIM trucks only - never SMA or another contractor.
@@ -489,7 +491,7 @@ def waterfall(sc, yearly=None, ld_cap=LIM_LD_TARGET_T):
         ld_month_capacity = ld_day_capacity * _DAYS[m]
         ld_capacity_total += ld_month_capacity
         # CREDITED (bounded by the supplied target): a month-specific imported
-        # LD target wins; otherwise the horizon target (8 Mt by default) is
+        # LD target wins; otherwise the horizon target (LIM_LD_TARGET_T) is
         # filled in chronological order. Capacity above it is reported as
         # unused/excess, never folded into headline production.
         explicit_month_target = ld_targets.get(m)
