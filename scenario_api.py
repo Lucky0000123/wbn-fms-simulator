@@ -80,16 +80,21 @@ LIM_LD_CAP_T = LIM_LD_TARGET_T  # back-compat alias (old name, same number)
 LD_ROUTE_KEY = "TF>HUAFEI"
 RIM_ONLY_PITS = ("BLB",)
 
-# SAP routing for imported scenarios (owner, 2026-08-25):
-#   2 kt/day TOFU -> FENI KM15,  2 kt/day BLB -> FENI KM0 (±2 kt landing band),
-#   TOFU's remaining SAP -> POS 12,  BLB's remaining SAP -> POS 14,
-#   KRENE SAP -> POS 12 (its only SAP route). Leftover does NOT go to the
-#   other FeNi plant. S1 keeps the matrix's own split. Fixed amounts are
-#   t/day ceilings; everything above them goes to the pit's POS buffer.
+# SAP routing for imported scenarios (owner, 2026-08-26 — INVERTING the
+# 2026-08-25 rule, which the owner called a blunder the next morning):
+#   ~2 kt/day of each pit's SAP goes to POS as the BUFFER (±2 kt landing
+#   band); the REST goes DIRECT to FeNi, to the destination the pit's own
+#   matrix rows name. _split_sap_conditions distributes the rest PRO-RATA
+#   over the matching matrix rows, so a pit whose plan ships to BOTH FeNi
+#   plants splits between them automatically ("if from one pit it's going to
+#   two FeNis, add the two FeNis accordingly, as per our plans").
+#   KRENE's matrix carries no FeNi SAP row; its rest goes to its corridor's
+#   most-used direct haul, FENI KM15 (dispatch history: 375 direct rows to
+#   KM15 vs 214 to KM0). S1 keeps the matrix's own split untouched.
 SAP_ROUTING = {
-    "BLB":  {"fixed": [("FENI KM0", 2000.0)], "rest": "POS 14"},
-    "TOFU": {"fixed": [("FENI KM15", 2000.0)], "rest": "POS 12"},
-    "KRENE": {"fixed": [], "rest": "POS 12"},
+    "BLB":  {"fixed": [("POS 14", 2000.0)], "rest": "FENI KM0"},
+    "TOFU": {"fixed": [("POS 12", 2000.0)], "rest": "FENI KM15"},
+    "KRENE": {"fixed": [("POS 12", 2000.0)], "rest": "FENI KM15"},
 }
 
 
@@ -115,11 +120,12 @@ def _split_sap_conditions(pit, T, grp, m):
     rest_want = _norm_sap_dest(rule["rest"])
     rest_rows = [r for r in grp if _norm_sap_dest(r["dest"]) == rest_want]
     if left > 0 and not rest_rows:
-        rest_rows = [r for r in grp if "POS" in _norm_sap_dest(r["dest"])]
+        # Any FeNi row the pit's matrix carries: a pit shipping to BOTH FeNi
+        # plants splits its rest pro-rata across them (owner, 2026-08-26).
+        rest_rows = [r for r in grp if "FENI" in _norm_sap_dest(r["dest"])]
     if left > 0 and not rest_rows:
-        # Matrix never had a POS SAP haul for this pit (the old 10 kt FeNi
-        # cap absorbed BLB's whole SAP). Clone onto the buffer dest so the
-        # leftover is not silently dumped back on FeNi.
+        # Matrix has no FeNi SAP haul for this pit (KRENE today). Clone onto
+        # the named rest dest so the leftover is not silently dumped on POS.
         probe = dict(grp[0])
         probe["dest"] = rule["rest"]
         rest_rows = [probe]

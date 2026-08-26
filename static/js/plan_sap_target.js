@@ -505,11 +505,13 @@
     if(typeof planMigrateLimIds==='function')planMigrateLimIds();
   }
 
-  // planning_rules.md §4 (owner 2026-08-25): each designated FeNi SAP haul
-  // is 2,000 t/day (±2,000 landing band). The rest of that pit's SAP goes
-  // to POS as a buffer — not to the other FeNi plant. Remainder is assigned
-  // to the SAME contractor that currently holds the FeNi overflow, so
-  // Allocate (per-contractor) can move the trucks onto POS instead of LD.
+  // planning_rules.md §4 (owner 2026-08-26, INVERTING the 08-25 rule the
+  // owner called a blunder): each pit sends ~2,000 t/day of SAP to its POS
+  // BUFFER (±2,000 landing band); the REST goes DIRECT to FeNi, to the
+  // destination the pit's own plan rows name. The engine below is generic —
+  // fixedRoutes carry the 2,000 (now the POS rows) and overflowRoutes carry
+  // the remainder (now the FeNi rows) — so the inversion is pure data from
+  // PLANNING_RULES. Remainder stays with the SAME contractor.
   function sapPathParts(path){
     const k=String(path||'');
     const i=k.indexOf('>');
@@ -2703,7 +2705,7 @@
         +(s.pos.rows.length?'  (input: '+fmt(Math.round(s.pos.input))
           +' t, output: '+fmt(Math.round(s.pos.output))+' t)':'')
       +((s.feniSap||[]).length
-        ?'\nSAP to FeNi (2,000 ±2,000): '+s.feniSap.map(x=>
+        ?'\nSAP to POS buffer (2,000 ±2,000): '+s.feniSap.map(x=>
           x.path.replace('>',' → ')+' '+fmt(Math.round(x.pred))+' t/day ['
           +(x.ok?'PASS':'FAIL')+']').join(' · ')
         :'');

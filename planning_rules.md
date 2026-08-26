@@ -67,19 +67,38 @@ visible as excess LD capacity; it must not be counted as target production.
 
 ### P1 — SAP (Saprolite, must-move, highest priority)
 
-**Fixed routes (always running):**
+**Buffer routes (SAP → POS, capped at 2,000 t/day each):**
 | Route | Material | Target | Type |
 |-------|----------|--------|------|
-| BLB → FeNi KM0 | SAP | 10,000 t/day | FIXED |
-| TF → FeNi KM15 | SAP | 10,000 t/day | FIXED |
+| BLB → POS 14 | SAP | 2,000 t/day | BUFFER |
+| TF → POS 12 | SAP | 2,000 t/day | BUFFER |
+| KR → POS 12 | SAP | 2,000 t/day | BUFFER |
 
-**Overflow routes (fill the remaining SAP target):**
-| Route | Material | Rule |
-|-------|----------|------|
-| BLB → FeNi KM15 | SAP | After the 10,000 t/day to FeNi KM0 is filled, remaining SAP trucks from BLB go to FeNi KM15 to fulfill the total SAP target |
-| TF → FeNi KM0 | SAP | After the 10,000 t/day to FeNi KM15 is filled, remaining SAP trucks from TF go to FeNi KM0 to fulfill the total SAP target |
+(Owner, 2026-08-26, correcting the inverted 2026-08-25 rule: "around 2,000 wmt
+goes to POS, the REST goes direct to FeNi as per plans — same for all pits."
+The previous day had it backwards: 2,000 to FeNi, rest to POS.)
 
-The total SAP target per day is set by the monthly plan. The fixed 10,000 t/day routes fill first, then remaining SAP target is split across the overflow routes.
+Landing on a BUFFER row anywhere in **0–4,000 t/day** is acceptable
+(2,000 ± 2,000) because trucks are integers. Do not chase an exact 2,000.
+
+**Direct routes (remaining SAP → FeNi, per the mine plan's own destinations):**
+| Route | Material | Target | Type |
+|-------|----------|--------|------|
+| BLB → FeNi KM0 | SAP | remaining | DIRECT |
+| TF → FeNi KM15 | SAP | remaining | DIRECT |
+| KR → FeNi KM15 | SAP | remaining | DIRECT |
+
+The pit's SAP target for the day is set by the monthly plan. The 2,000 t/day
+POS buffer fills first; everything left from that pit goes DIRECT to FeNi.
+The FeNi destination follows the mine-plan matrix: each pit ships to the FeNi
+plant its own plan rows name (today BLB → KM0, TF → KM15). If a pit's plan
+carries rows to BOTH FeNi plants, split the rest pro-rata to those rows. KR's
+matrix has no FeNi SAP row, so its rest follows its corridor's most-used
+direct haul, FeNi KM15 (dispatch history: 375 KR→KM15 direct rows vs 214 KM0).
+
+POS is transit, not a sink: tonnes into POS must leave POS on IWIP reclaim
+(POS → FeNi), sized so input = output (§5). Under this rule only the ~2,000
+buffer per pit flows through POS, so reclaim fleets are small.
 
 ### P2 — LIM-TOS (Limonite to TOS stockpile, second priority)
 

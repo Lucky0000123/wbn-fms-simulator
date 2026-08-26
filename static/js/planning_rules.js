@@ -24,17 +24,23 @@ window.PLANNING_RULES = {
     P2: { material: 'LIM-TOS', fillsBefore: 'P1' },
     P3: { material: 'LIM-LD', fillsBefore: 'P2' }
   },
+  // Owner 2026-08-26 (inverting the 2026-08-25 rule, which was a blunder):
+  // ~2,000 t/day of each pit's SAP goes to POS as the BUFFER; the REST goes
+  // DIRECT to FeNi, to the destination the mine-plan matrix itself names for
+  // that pit (BLB→KM0, TF→KM15; KR's matrix has no FeNi SAP row, so its rest
+  // follows its most-used direct haul, KM15 — 375 dispatch rows vs 214).
   fixedRoutes: [
-    { path: 'BLB>FENI KM0', material: 'SAP', targetWmt: 2000, priority: 'P1', type: 'fixed' },
-    { path: 'TF>FENI KM15', material: 'SAP', targetWmt: 2000, priority: 'P1', type: 'fixed' }
+    { path: 'BLB>POS 14', material: 'SAP', targetWmt: 2000, priority: 'P1', type: 'fixed' },
+    { path: 'TF>POS 12', material: 'SAP', targetWmt: 2000, priority: 'P1', type: 'fixed' },
+    { path: 'KR>POS 12', material: 'SAP', targetWmt: 2000, priority: 'P1', type: 'fixed' }
   ],
-  // Remaining SAP → POS buffer (not the other FeNi plant).
+  // Remaining SAP → DIRECT FeNi per the plan's own destinations.
   overflowRoutes: [
-    { path: 'BLB>POS 14', material: 'SAP', priority: 'P1', type: 'buffer', fillsRemaining: true },
-    { path: 'TF>POS 12', material: 'SAP', priority: 'P1', type: 'buffer', fillsRemaining: true },
-    { path: 'KR>POS 12', material: 'SAP', priority: 'P1', type: 'buffer', fillsRemaining: true }
+    { path: 'BLB>FENI KM0', material: 'SAP', priority: 'P1', type: 'buffer', fillsRemaining: true },
+    { path: 'TF>FENI KM15', material: 'SAP', priority: 'P1', type: 'buffer', fillsRemaining: true },
+    { path: 'KR>FENI KM15', material: 'SAP', priority: 'P1', type: 'buffer', fillsRemaining: true }
   ],
-  // FIXED FeNi SAP row may land in [0, target+band] because trucks are integers.
+  // FIXED buffer SAP row may land in [0, target+band] because trucks are integers.
   sapFeniBand: 2000,
   limTos: {
     primaryDestination: 'HUAFEI',
@@ -104,18 +110,20 @@ function planRulesParseMd(md){
     touched=true;
     return _;
   });
-  // §4 fixed routes: | BLB → FeNi KM0 | SAP | 2,000 t/day | FIXED |
+  // §4 fixed routes: | BLB → POS 14 | SAP | 2,000 t/day | BUFFER |
+  // (accepts FIXED too — the type word names the ROLE, the shape is the rule)
   const fixed=[];
-  md.replace(/\|\s*([^|]+?)\s*\|\s*SAP\s*\|\s*([\d,]+)\s*t\/day\s*\|\s*FIXED\s*\|/g,
+  md.replace(/\|\s*([^|]+?)\s*\|\s*SAP\s*\|\s*([\d,]+)\s*t\/day\s*\|\s*(?:FIXED|BUFFER)\s*\|/g,
     function(_,route,t){
       fixed.push({path:planRulesRouteKey(route), material:'SAP',
         targetWmt:parseInt(t.replace(/,/g,''),10), priority:'P1', type:'fixed'});
       return _;
     });
   if(fixed.length){R.fixedRoutes=fixed;touched=true;}
-  // §4 POS buffer: | BLB → POS 14 | SAP | remaining | BUFFER |
+  // §4 remaining → DIRECT FeNi: | BLB → FeNi KM0 | SAP | remaining | DIRECT |
+  // (accepts the legacy BUFFER word too, so an old doc still parses)
   const overflow=[];
-  md.replace(/\|\s*([^|]+?)\s*\|\s*SAP\s*\|\s*remaining\s*\|\s*BUFFER\s*\|/g,
+  md.replace(/\|\s*([^|]+?)\s*\|\s*SAP\s*\|\s*remaining\s*\|\s*(?:DIRECT|BUFFER)\s*\|/g,
     function(_,route){
       overflow.push({path:planRulesRouteKey(route), material:'SAP',
         priority:'P1', type:'buffer', fillsRemaining:true});
