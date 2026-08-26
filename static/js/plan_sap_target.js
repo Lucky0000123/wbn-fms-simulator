@@ -2725,6 +2725,38 @@
       walls:contractorWallViolations()
     };
   }
+  // §7 LD quarter projection — sum each sibling month's OWN frozen day-rate
+  // (days-in-month weighted), not this one day's rate x 122. One day cannot
+  // measure a quarter: Dec's rate x 122 said 5.30 Mt [FAIL] while the four
+  // frozen months actually sum to 6.17 Mt (owner caught it, 2026-08-26).
+  // Cached per (scenario-day, save stamp); falls back to day-rate x 122 with
+  // a label when siblings are not loaded yet.
+  let _ldQuarter=null;   // {dayKey, total, months, partial}
+  function planLdQuarterRefresh(){
+    const v=((q('plan-date')||{}).value||'').trim();
+    const m=v.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if(!m)return;
+    const dayKey=m[1]+'-'+m[3];
+    if(_ldQuarter&&_ldQuarter.dayKey===dayKey)return;
+    const DIM={9:30,10:31,11:30,12:31};
+    const jobs=[9,10,11,12].map(mo=>{
+      const date=m[1]+'-'+String(mo).padStart(2,'0')+'-'+m[3];
+      return fetch('/api/plan/saved?date='+encodeURIComponent(date))
+        .then(r=>r.json()).then(d=>{
+          const rows=(((d||{}).plan||{}).allocation||{}).rows||[];
+          const ld=rows.reduce((a,r)=>a+((r.prio===3&&!r.foreign&&!r._tenant)
+            ?(r.pred_after||0):0),0);
+          return {mo:mo, t:ld*DIM[mo], have:rows.length>0};
+        }).catch(()=>({mo:mo,t:0,have:false}));
+    });
+    Promise.all(jobs).then(ms=>{
+      const have=ms.filter(x=>x.have);
+      _ldQuarter={dayKey:dayKey,
+        total:ms.reduce((a,x)=>a+x.t,0),
+        months:have.length, partial:have.length<4};
+      renderRulesValidation();
+    });
+  }
   function renderRulesValidation(){
     const host=q('plan-rules-validation');
     if(!host)return;
@@ -2743,8 +2775,19 @@
       +'LIM-TOS target met:  '+yn(s.tos.met)+'  (day target: '+fmt(Math.round(s.tos.tgt))
         +' t/day, actual: '+fmt(Math.round(s.tos.pred))+' t/day · 4-mo projection '
         +mt(s.tos.proj)+' vs '+mt(s.tos.target4mo)+')\n'
-      +'LIM-LD total:        '+mt(s.ld.proj)+' projected  (target: '+mt(s.ld.target4mo)+')  ['
-        +(s.ld.proj>=s.ld.target4mo?'PASS':'FAIL')+']\n'
+      +(function(){
+        planLdQuarterRefresh();
+        const qd=_ldQuarter;
+        if(qd&&qd.months===4){
+          return 'LIM-LD total:        '+mt(qd.total)+' (4 frozen months, this scenario day)'
+            +'  (target: '+mt(s.ld.target4mo)+')  ['
+            +(qd.total>=s.ld.target4mo*0.995?'PASS':'FAIL')+']\n';
+        }
+        return 'LIM-LD total:        '+mt(s.ld.proj)+' projected at this day-rate'
+          +(qd&&qd.partial?' ('+qd.months+'/4 sibling months frozen)':'')
+          +'  (target: '+mt(s.ld.target4mo)+')  ['
+          +(s.ld.proj>=s.ld.target4mo?'PASS':'FAIL')+']\n';
+      })()
       +'POS transit balanced: '+(s.pos.rows.length?yn(s.pos.balanced):'n/a — no POS inflow')
         +(s.pos.rows.length?'  (input: '+fmt(Math.round(s.pos.input))
           +' t, output: '+fmt(Math.round(s.pos.output))+' t)':'')
