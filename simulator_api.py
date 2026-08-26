@@ -3976,7 +3976,7 @@ def api_plan_saturation():
     from congestion.config import route_params
     a = request.args
     try:
-        max_dt = min(4000, max(400, int(a.get('max_dt') or 2600)))
+        max_dt = min(9000, max(400, int(a.get('max_dt') or 6000)))
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "max_dt must be integer"}), 400
     proportional = str(a.get("proportional") or "").strip().lower() in (

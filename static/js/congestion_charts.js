@@ -206,7 +206,7 @@ function renderCongWmtCurves(){
   if(_planSatCache){_paintPlanSat(_planSatCache);return;}
   _congChartEl('cong-wmtdt-chart','Computing whole-plan sweep…');
   _congChartEl('cong-wmtday-chart','Computing whole-plan sweep…');
-  fetch('/api/plan_saturation?max_dt=2600').then(r=>r.json()).then(d=>{
+  fetch('/api/plan_saturation?max_dt=6000').then(r=>r.json()).then(d=>{
     if(!d||d.ok===false||!(d.curve||[]).length){
       const why=(d&&d.error)||'Backend not ready (/api/plan_saturation).';
       _congChartEl('cong-wmtdt-chart',why);
