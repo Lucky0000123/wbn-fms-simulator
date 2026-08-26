@@ -3017,7 +3017,6 @@ def _xlsx_scenario_constraints_block(ws, start_col, scenario_label=""):
         ("T", "BLB pit accepts RIM trucks only. POS is transit: inbound tonnes leave on IWIP"),
         ("T", "reclaim sized so input = output. IWIP trucks are not contractor fleet."),
         ("T", "Targets equal the sales table: SAP 5,718,686 / LIM-TOS 4,640,201 wmt declared."),
-        ("T", "DT dimensioning is ROM; saleable SAP = ROM minus reject (0% TF, 7% BLB/KR)."),
     ]
     # Section titles merge A:H for chrome, which puts every row's merge
     # across column G. The titles' text lives in column A, so shrinking
