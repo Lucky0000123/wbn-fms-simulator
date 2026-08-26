@@ -2221,3 +2221,40 @@ the original server and reported 0/6 caught — kill by PORT. And two mutants
 exposed gate weaknesses (a defence-in-depth layer that made one mutant
 unreachable; a check reading the basis where the allocator's own response
 was the thing to assert). A mutation harness is itself code that can lie.
+
+## 2026-08-26 — road crowding: two clocks on one lane, and the constant that hid every plan
+
+Owner: the crowding table "looks the same numbers" across plans when real
+plans should differ. Two distinct causes, both measured before touching code:
+
+**1. Tenant presence rode the RAW LIMIT clock while our trucks rode the
+measured one.** plan_shared_flow converted tenant flow to trucks-present with
+`span_times_min` (official limit transit) while our own trucks sit on each
+section for the CALIBRATED congested road time split by corrected limit
+shares — implied per-pass transit ours 1.71 h vs tenants 0.86 h on the SAME
+S1 lane (the "two 240s" family, again). The tenant floor was under-counted
+~2x on S1–S3. Fixed with the run's OWN clock: stretch = our loaded
+truck-hours ÷ (our weighted loaded passes × limit time) per section — no new
+constant, tenants slow down exactly when the plan's traffic does, and
+sections our fleet does not cross keep the limit clock, disclosed per tenant
+row. entry_times carries (t, weight) — SUM THE WEIGHTS, len() undercounts
+representative-truck runs. Gate: test_plan_shared_flow "one clock" checks,
+BOTH directions (transits agree ours-vs-tenants; and ≥1 section deviates
+>20% from the raw limit — the revert mutant fails exactly there,
+mutation-tested in an isolated worktree).
+
+**2. The tenant background is a CONSTANT ~50–80% of every mainline cell**, so
+plan changes moved the display by only ~10–25% even when the fleet doubled
+(608 → 1274 DT moved TF–KR only 218→275 pre-fix). Cells stay TOTALS —
+capacity is consumed by totals — but every surface now names the split: the
+Plan grid row reads "301 tenant const + 141 ours", the verdict says "273 of
+the peak 337 trucks are OTHER TENANTS — only [yours] moves when the plan
+does", and the Excel grid carries the same line. J79 parity re-verified
+(22 scenarios, cell-by-cell) — the DES change moves BOTH surfaces equally.
+
+**Owner-visible consequence, honestly labelled:** at the register's stated
+tenant volumes on the measured clock, POS 12–KM15 reads OVER one-lane
+packing (ratio 1.27–1.41, ~80% tenants) on every current plan. Either the
+register overstates the RSF/KM15 tenant fleets or that section genuinely
+runs beyond 50 m packing — a question for the owner, not for the model to
+quietly resolve either way.

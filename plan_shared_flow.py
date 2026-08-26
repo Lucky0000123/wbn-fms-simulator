@@ -1088,6 +1088,31 @@ def shared_flow(
                 _loaded_min, _ = _stm(_s["bottom_km"], _s["top_km"])
                 _cross_h[_s["id"]] = float(_loaded_min) / 60.0
             _id2label = {s["id"]: s["label"] for s in _SEGS}
+            # ONE CLOCK PER LANE. Our trucks sit on each section for the
+            # CALIBRATED congested road time (split by corrected limit shares,
+            # ~1.6-1.9x the official limit — trucks free-flow at ~20 km/h
+            # loaded against 30-50 posted, site-wide). Tenant presence used to
+            # be flow x the RAW LIMIT time, so the same lane carried two speed
+            # bases and the tenant floor was under-counted by that whole
+            # factor (measured 2026-08-26: S1 tenants 141 shown where the
+            # measured clock gives ~230). The stretch is derived from THIS
+            # run's own trucks — actual loaded truck-hours over what the limit
+            # time says those same passes should have taken — so no new
+            # constant, and the tenants slow down exactly when the plan's own
+            # traffic does. Sections our fleet does not cross keep the limit
+            # clock, disclosed per tenant row.
+            _stretch = {}
+            for _s in _SEGS:
+                _lab = _s["label"]
+                # entry_times carries (t_in, weight) — representative-truck
+                # weights, not one row per truck. Sum the weights or a
+                # weighted run reads far too few passes and the stretch blows up.
+                _n_pass = sum(_w for _t, _w in
+                              (entry_times.get(_lab) or {}).get("loaded") or [])
+                _hrs = sum((occ_h_dir.get(_lab) or {}).get("loaded") or [])
+                _lim_h = _cross_h.get(_s["id"], 0.0)
+                if _n_pass > 0 and _lim_h > 0 and _hrs > 0:
+                    _stretch[_s["id"]] = _hrs / (_n_pass * _lim_h)
             # Per TENANT per section, not just a total. A section reading
             # "+130 trucks" with no names cannot be acted on: two of these
             # fleets run to RSF (km 26) and only cross PART of the stick, so
@@ -1101,7 +1126,8 @@ def shared_flow(
                     _lab = _id2label.get(_sid)
                     if not _lab:
                         continue
-                    _pres = _f_hr * _cross_h.get(_sid, 0.0)
+                    _st = _stretch.get(_sid)
+                    _pres = _f_hr * _cross_h.get(_sid, 0.0) * (_st or 1.0)
                     _ten_flow_hr[_lab] = _ten_flow_hr.get(_lab, 0.0) + _f_hr
                     _ten_present[_lab] = _ten_present.get(_lab, 0.0) + _pres
                     _ten_by_sec.setdefault(_lab, []).append({
@@ -1109,6 +1135,9 @@ def shared_flow(
                         "dt": _r.get("dt"),
                         "flow_per_h": round(_f_hr, 1),
                         "trucks_present": round(_pres, 1),
+                        "time_basis": ("measured x%.2f of limit (this run's own "
+                                       "trucks)" % _st) if _st else
+                                      "official limit time (our fleet does not cross here)",
                     })
             for _lab in _ten_by_sec:
                 _ten_by_sec[_lab].sort(key=lambda x: -x["trucks_present"])

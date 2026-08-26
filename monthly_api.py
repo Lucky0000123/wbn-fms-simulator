@@ -2638,6 +2638,31 @@ def _xlsx_road_corridor_hourly(ws, r, res, dt, source=None):
                 cell.font = Font(name="Calibri", bold=True, size=9, color="7F1D1D")
         r += 1
 
+    # Name the CONSTANT in the cells, or every plan looks the same. The other
+    # tenants (owner register) are ~50-80% of each mainline cell and identical
+    # across every plan and scenario — the owner read two different plans'
+    # grids as "the same numbers" because the only part a plan can move (our
+    # own trucks) is the minority share. Cells stay TOTALS (capacity is
+    # consumed by totals); this line says which part is yours to move.
+    ten_bits, our_bits = [], []
+    for s in secs:
+        tp = float(s.get("tenant_trucks_present") or 0)
+        op = float(s.get("our_peak_concurrent") or 0)
+        if tp > 0.5:
+            ten_bits.append("%s +%d" % (s.get("section"), round(tp)))
+        if op > 0.5:
+            our_bits.append("%s %d" % (s.get("section"), round(op)))
+    if ten_bits:
+        note = ws.cell(row=r, column=1, value=(
+            "Other tenants are a CONSTANT background across every plan and "
+            "scenario (owner register, measured road clock): %s trucks. Your "
+            "own trucks peak at: %s — plan changes move only these."
+            % (" · ".join(ten_bits), " · ".join(our_bits))))
+        note.font = _xlsx_font(False, 8, _XLSX_MUTED)
+        ws.merge_cells(start_row=r, start_column=1, end_row=r,
+                       end_column=1 + n_bins)
+        r += 1
+
     _xlsx_widths(ws, [28] + [5.5] * n_bins, start=1)
     return r + 1
 

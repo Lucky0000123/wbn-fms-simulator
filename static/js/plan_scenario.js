@@ -1051,8 +1051,17 @@ function planRenderRoadCrowding(data,meta){
     const badgeLab=rowVc>=1?`${tag.lab} · over`:tag.lab?`${tag.lab} · ${leftPct}% left`:'';
     const badge=badgeLab?` <span class="plan-cong-badge ${tag.badge}">${badgeLab}</span>`:'';
     const shared=s.shared?` <span class="muted">· shared${who.includes('IWIP')?' incl. IWIP':''}</span>`:'';
+    // The constant is NAMED on the row, or every plan reads as "the same
+    // numbers": other tenants are ~50-80% of each mainline cell and identical
+    // across every plan/scenario. The cells stay totals (capacity is consumed
+    // by totals); this chip says which share is yours to move.
+    const tenP=Math.round(s.tenant_trucks_present||0);
+    const ourP=Math.round(s.our_peak_concurrent||0);
+    const tenChip=tenP>0
+      ?` <span class="muted" title="Other tenants (owner register) on this lane — CONSTANT across every plan and scenario, priced on the same measured road clock as your trucks. Your own trucks peak at ${ourP} here: that is the only share a plan change can move.">· ${tenP} tenant const + ${ourP} ours</span>`
+      :'';
     return `<div class="rc-row" title="${escH(s.section)} — used by: ${escH(who||'—')}">
-      <div class="rc-sec"><b>${escH(s.section)}</b>${badge}${shared}</div>
+      <div class="rc-sec"><b>${escH(s.section)}</b>${badge}${shared}${tenChip}</div>
       <div class="rc-cells">${cells}</div>
     </div>`;
   }).join('');
@@ -1082,11 +1091,19 @@ function planRenderRoadCrowding(data,meta){
       +`(${Math.round(flowWorst.peak_flow_per_h||0)}/hr against a ${Math.round(flowWorst.cap_flow_per_h||0)}/hr cap) `
       +`\u2014 that is what the chainage strip tints.`
     : '';
+  // Answer "why do all plans look the same here" on the card's face: the
+  // busiest section's cells are mostly the tenant constant.
+  const occWorst=(data.sections||[]).reduce((a,b)=>(((b.ratio_presence_lane||0)>((a&&a.ratio_presence_lane)||0))?b:a),null);
+  const tenNote=(occWorst&&(occWorst.tenant_trucks_present||0)>0.5)
+    ? ` On ${escH(occWorst.section)}, ${Math.round(occWorst.tenant_trucks_present)} of the peak `
+      +`${Math.round(occWorst.peak_concurrent||0)} trucks are OTHER TENANTS \u2014 a constant every plan `
+      +`shares \u2014 and ${Math.round(occWorst.our_peak_concurrent||0)} are yours: only that share moves when the plan does.`
+    : '';
   box.innerHTML=`
     <div class="plan-rc-head">
       <span class="plan-rc-verdict">${verdict}</span>
     </div>
-    <p class="muted" style="margin:4px 0 8px;font-size:11px;line-height:1.4">Loaded-lane trucks <b>sitting</b> each hour (empty is the other carriageway). Colour = occupancy \u00f7 the trucks that <b>fit</b> on one loaded lane at ${Math.round(followM)}&nbsp;m packing \u2014 a different quantity from the <b>flow</b> cap in trucks/hr on the Congestion packing card. ${flowNote}</p>
+    <p class="muted" style="margin:4px 0 8px;font-size:11px;line-height:1.4">Loaded-lane trucks <b>sitting</b> each hour (empty is the other carriageway). Colour = occupancy \u00f7 the trucks that <b>fit</b> on one loaded lane at ${Math.round(followM)}&nbsp;m packing \u2014 a different quantity from the <b>flow</b> cap in trucks/hr on the Congestion packing card. ${flowNote}${tenNote}</p>
     <div class="plan-rc-grid">${axis}${rows}</div>`;
 }
 

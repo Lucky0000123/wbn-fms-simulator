@@ -553,5 +553,44 @@ if _on_max >= 0.7:
           len(_on.get("congestion_hours") or []) > 0,
           (_on_max, _on.get("congestion_hours")))
 
+# ── ONE CLOCK PER LANE (2026-08-26) ─────────────────────────────────────────
+# Tenant presence used to be flow x the RAW LIMIT transit time while our own
+# trucks sat at the calibrated measured road time (~2x the limit on S1-S3) —
+# the same lane on two speed bases, and the tenant floor under-counted by that
+# whole factor. Now both fleets ride the run's own measured clock. Asserted in
+# BOTH directions (the J71 lesson):
+#   1. POSITIVE — where our fleet crosses, the implied per-pass transit
+#      (concurrent / flow) agrees between our trucks and the tenants;
+#   2. NEGATIVE — the tenants are NOT back on the raw limit clock: at least
+#      one section's tenant implied transit deviates >20% from the pure limit
+#      time (reverting the stretch makes every section equal the limit and
+#      this fails — mutation-tested).
+from congestion.speed_limits import span_times_min as _sptm
+_SEG_SPANS = {"TF–KR": (39.0, 67.8), "KR–POS 12": (27.0, 39.0),
+              "POS 12–KM15": (15.0, 27.0), "KM15–coast": (0.0, 15.0)}
+_dev_from_limit = []
+for _lab, (_lo, _hi) in _SEG_SPANS.items():
+    _sec = next((x for x in _on["sections"] if x["section"] == _lab), None)
+    if not _sec:
+        continue
+    _of = float(_sec.get("our_peak_flow_per_h") or 0)
+    _oc = float(_sec.get("our_peak_concurrent") or 0)
+    _tf = float(_sec.get("tenant_flow_per_h") or 0)
+    _tp = float(_sec.get("tenant_trucks_present") or 0)
+    if _of > 1 and _tf > 1 and _oc > 0:
+        _ours_h = _oc / _of
+        _ten_h = _tp / _tf
+        check("one clock on %s: tenant transit == our transit" % _lab,
+              abs(_ours_h - _ten_h) / _ours_h < 0.15,
+              "ours %.2f h vs tenants %.2f h per pass" % (_ours_h, _ten_h))
+        _lim_h = (_sptm(_lo, _hi)[0] or 0) / 60.0
+        if _lim_h > 0:
+            _dev_from_limit.append(abs(_ten_h - _lim_h) / _lim_h)
+check("tenants are NOT on the raw limit clock (measured stretch visible)",
+      _dev_from_limit and max(_dev_from_limit) > 0.20,
+      "max deviation from limit %.0f%% — the old defect priced tenants at "
+      "exactly the limit time on every section"
+      % (100 * max(_dev_from_limit or [0])))
+
 print("\n%s" % ("ALL PASS" if not fails else "FAILED: " + ", ".join(fails)))
 sys.exit(1 if fails else 0)
