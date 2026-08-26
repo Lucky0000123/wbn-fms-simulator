@@ -853,8 +853,41 @@ async function moPaste(){
   st.className='status ok';st.textContent=r.parsedDays+' days ✓';
   await loadState();refreshMonths();loadBoard();
 }
-function moExportYear(){
-  window.location='/api/monthly/export-year?year='+year()+boardDay();
+let _moExportBusy=false;
+async function moExportYear(){
+  // The workbook re-simulates the year and takes 13-26 s to build. The old
+  // window.location= navigation left the PAGE in a pending-navigation state
+  // for that whole time: no feedback, no download visible yet, and switching
+  // scenario + clicking again ABORTED the in-flight one — measured 2026-08-26,
+  // this is exactly "the other scenarios never download". Repeated clicks
+  // also stacked concurrent exports on the server, making every one slower.
+  // fetch -> blob keeps the page alive, shows progress on the button, and is
+  // single-flight: a click during a build is ignored, not queued.
+  if(_moExportBusy)return;
+  const btn=[...document.querySelectorAll('button.primary')]
+    .find(b=>b.textContent.trim().indexOf('Download')===0);
+  const orig=btn?btn.textContent:'';
+  _moExportBusy=true;
+  if(btn){btn.disabled=true;btn.textContent='Building workbook… (~20 s)';}
+  try{
+    const r=await fetch('/api/monthly/export-year?year='+year()+boardDay());
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const blob=await r.blob();
+    const cd=r.headers.get('Content-Disposition')||'';
+    const m=cd.match(/filename=([^;]+)/);
+    const name=(m?m[1].trim().replace(/"/g,''):'monthly_plan_'+year()+'.xlsx');
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);a.download=name;
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href),10_000);
+    if(btn)btn.textContent='Downloaded ✓';
+  }catch(e){
+    if(btn)btn.textContent='Export failed — retry';
+    alert('Excel export failed: '+e);
+  }finally{
+    _moExportBusy=false;
+    if(btn){btn.disabled=false;setTimeout(()=>{btn.textContent=orig;},2500);}
+  }
 }
 
 async function moYearlyRefresh(){
