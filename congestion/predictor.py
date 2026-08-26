@@ -86,6 +86,16 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
         n_loaders = int(p["n_loaders"])
         warnings.append("n_loaders not specified - using default %d; supply the real "
                         "loader count for a trustworthy prediction" % n_loaders)
+        # R2 (2026-08-26 audit, reports/congestion_analysis_report.md): with a
+        # big fleet a defaulted loader count is not a soft caveat, it is the
+        # dominant error term — measured -23%..-39% trips/DT on real rows
+        # (TF>HUAFEI 410 DT, BLB>FENI KM0 203 DT) because c≈2 pins the queue
+        # at its plateau. Escalate so callers cannot miss it.
+        if n_trucks >= 50:
+            warnings.append("LOADER DEFAULT ON A LARGE FLEET (N=%d): prediction "
+                            "can be tens of percent low; measured -23%%..-39%% "
+                            "on production rows. Pass the plan row's loader "
+                            "count." % int(n_trucks))
     n_loaders = int(n_loaders)
     if n_loaders < 0:
         raise ValueError("n_loaders must be >= 0")
@@ -278,8 +288,8 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
             if b["t_road_min"] > max_road:
                 b = {**b, "t_road_min": max_road,
                      "penalty_min": max_road - t_free_road, "regime": "capped"}
-        q = queueing.erlang_c(n_trucks, cyc_try / 60.0, float(p["load_min"]),
-                              n_loaders, sh)
+        q = queueing.machine_repair(n_trucks, cyc_try / 60.0, float(p["load_min"]),
+                                    n_loaders, sh)
         extra = 0.0 if road_only else q["wq_min"]
         return b["t_road_min"] + t_fixed + extra, b, q
 
@@ -339,8 +349,9 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
     status = "overloaded" if qq.get("overloaded") else (
         "congested" if (qq["rho"] >= 0.7 or bp["vc"] >= 0.7) else "open")
     if qq.get("overloaded"):
-        warnings.append("loader system overloaded (rho=%.2f) - queue wait capped at "
-                        "half a shift; add loaders or remove trucks" % qq["rho"])
+        warnings.append("loaders are the binding resource (rho=%.2f, throughput "
+                        "at the c*mu plateau) - add loaders or remove trucks"
+                        % qq["rho"])
 
     # ── uncertainty band ─────────────────────────────────────────────────
     lo_dt, hi_dt = p.get("obs_dt_min") or 0, p.get("obs_dt_max") or 0

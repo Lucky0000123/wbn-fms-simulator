@@ -351,7 +351,7 @@ def price_plan(rows, rain_mm=0.0):
                 st["vc"] = round(vc, 2)
                 if _finite(obs) and obs > 0:
                     st["vc_vs_observed_peak"] = round(flows.get(label, 0.0) / obs, 2)
-            q = queueing.erlang_c(r["dt"], r["cyc"] / 60.0, r["load_min"], r["loaders"], r["sh"])
+            q = queueing.machine_repair(r["dt"], r["cyc"] / 60.0, r["load_min"], r["loaders"], r["sh"])
             bunch = 0.0
             if _finite(r["sd"]) and r["sd"] and r["n_ref"]:
                 bunch = min(3.0 * r["k_bunch"] * float(r["sd"]),
