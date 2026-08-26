@@ -2320,25 +2320,23 @@ def _wb_eligible(basis, route, foreign):
     return [], "no eligible bridges — matrix, history and destination fallback all empty"
 
 
-def api_plan_wb_allocate():
-    """Assign weighbridges to plan rows: min-max utilisation over eligible sets.
+def wb_assign_rows(basis, rows, hours=20.0):
+    """Deterministic weighbridge assignment for plan rows (importable core).
 
-    POST {rows:[{id, route, trips, foreign?, tenant?}], hours?}
-    `trips` and `hours` share one basis (per shift OR per day — the caller
-    picks, demand is trips/hours either way); `trips_day` accepted as an alias.
-    Deterministic greedy water-fill in 0.25-trip/hr quanta: rows most
-    constrained first, each quantum lands on the eligible bridge with the
-    lowest resulting utilisation (ties: lower current util, then the order the
-    eligibility list gives — matrix order, which is the owner's sheet order).
-    """
-    basis = _wb_basis()
-    if not basis:
-        return jsonify({"ok": False, "error": "no weighbridge register on disk"}), 503
-    body = request.get_json(silent=True) or {}
-    rows = body.get("rows") or []
-    hours = float(body.get("hours") or 20)
-    if not (0 < hours <= 24):
-        return jsonify({"ok": False, "error": "hours must be in (0, 24]"}), 400
+    Same algorithm the endpoint documents: greedy min-max water-fill in
+    0.25-trip/hr quanta over each row's eligible bridge set. Split out on
+    2026-08-26 so the Excel path tables can print each row's bridges from
+    the SAME code the Plan tab calls, instead of duplicating the water-fill
+    or making an HTTP call from inside the workbook builder.
+
+    Each bridge in `per_bridge` (and each row's `assigned` entries) carries
+    `util` (share of that bridge's measured p99 capacity in use, 0..1) and
+    `wait_min` (M/M/1 mean queue wait at that utilisation: service time =
+    60/cap_hr minutes, W_q = rho/(mu-lambda); capped at 60 min and flagged
+    `saturated` when rho >= 1, where no steady state exists) — owner
+    2026-08-26: "how much percent of the weighbridge you are using and what
+    will be the waiting time."
+    Returns (out_rows, per_bridge, flags, unverified_used)."""
     fallback_cap = float((basis.get("policy") or {}).get("fallback_cap_hr") or 30)
     bridges = basis.get("bridges") or {}
     cap = {name: (b.get("p99_hr") or fallback_cap) for name, b in bridges.items()}
@@ -2379,6 +2377,15 @@ def api_plan_wb_allocate():
             row["alloc"][best] += q
             remaining -= q
 
+    def _wait_min(name):
+        """M/M/1 mean queue wait at this bridge's final load. lam, mu in
+        trucks/hr; W_q = lam / (mu * (mu - lam)) hours."""
+        lam, mu = load[name], max(cap[name], 1e-9)
+        if lam >= mu:
+            return 60.0, True
+        wq_h = lam / (mu * (mu - lam))
+        return min(60.0, wq_h * 60.0), False
+
     unverified_used = set()
     for row in prepared:
         assigned = []
@@ -2388,22 +2395,57 @@ def api_plan_wb_allocate():
                 continue
             if (bridges.get(name) or {}).get("unverified"):
                 unverified_used.add(name)
+            w_min, sat = _wait_min(name)
             assigned.append({
                 "bridge": name, "num": (bridges.get(name) or {}).get("num"),
                 "trips_day": round(hr * hours, 1),
                 "share": round(hr / row["demand_hr"], 3) if row["demand_hr"] else 0,
+                "util": round(load[name] / max(cap[name], 1e-9), 3),
+                "wait_min": round(w_min, 1),
+                "saturated": sat,
             })
         assigned.sort(key=lambda a: -a["trips_day"])
         out_rows.append({"id": row["id"], "route": row["route"],
                          "assigned": assigned, "why": row["why"]})
-    per_bridge = {name: {
-        "num": (bridges.get(name) or {}).get("num"),
-        "load_hr": round(load[name], 2),
-        "cap_hr": cap[name],
-        "cap_basis": "measured p99/hr" if (bridges.get(name) or {}).get("p99_hr") else
-                     "fallback %g/hr (unmeasured)" % fallback_cap,
-        "util": round(load[name] / max(cap[name], 1e-9), 3),
-    } for name in bridges if load[name] > 1e-9}
+    per_bridge = {}
+    for name in bridges:
+        if load[name] <= 1e-9:
+            continue
+        w_min, sat = _wait_min(name)
+        per_bridge[name] = {
+            "num": (bridges.get(name) or {}).get("num"),
+            "load_hr": round(load[name], 2),
+            "cap_hr": cap[name],
+            "cap_basis": ("measured p99/hr" if (bridges.get(name) or {}).get("p99_hr")
+                          else "fallback %g/hr (unmeasured)" % fallback_cap),
+            "util": round(load[name] / max(cap[name], 1e-9), 3),
+            "wait_min": round(w_min, 1),
+            "saturated": sat,
+        }
+    return out_rows, per_bridge, flags, unverified_used
+
+
+def api_plan_wb_allocate():
+    """Assign weighbridges to plan rows: min-max utilisation over eligible sets.
+
+    POST {rows:[{id, route, trips, foreign?, tenant?}], hours?}
+    `trips` and `hours` share one basis (per shift OR per day — the caller
+    picks, demand is trips/hours either way); `trips_day` accepted as an alias.
+    Deterministic greedy water-fill in 0.25-trip/hr quanta: rows most
+    constrained first, each quantum lands on the eligible bridge with the
+    lowest resulting utilisation (ties: lower current util, then the order the
+    eligibility list gives — matrix order, which is the owner's sheet order).
+    """
+    basis = _wb_basis()
+    if not basis:
+        return jsonify({"ok": False, "error": "no weighbridge register on disk"}), 503
+    body = request.get_json(silent=True) or {}
+    rows = body.get("rows") or []
+    hours = float(body.get("hours") or 20)
+    if not (0 < hours <= 24):
+        return jsonify({"ok": False, "error": "hours must be in (0, 24]"}), 400
+    out_rows, per_bridge, flags, unverified_used = wb_assign_rows(
+        basis, rows, hours=hours)
     return jsonify({
         "ok": True,
         "rows": out_rows,
@@ -3957,76 +3999,85 @@ def _plan_saturation_mix():
     recs = [r for r in d.get("records") or [] if r.get("contractor") == "ALL"
             and not str(r.get("route", "")).strip().upper().startswith("BLB")]
     tot = sum(r["dt_days"] for r in recs) or 1.0
-    mix = [(r["route"], r["dt_days"] / tot,
-            r["wmt"] / max(1.0, r["trips"]))
+    raw = [(r["route"], r["dt_days"] / tot,
+            r["wmt"] / max(1.0, r["trips"]),
+            r["wmt"] / max(1.0, r["dt_days"]))
            for r in recs if r["dt_days"] / tot >= 0.005]
-    # Drop routes the engine cannot price (POS 11 / CBB>CUU are not in
-    # NODE_KM). Left in, their trucks sit in the sweep's denominator and add
-    # ZERO tonnes — measured 2026-08-26: 5.6% of the corridor fleet priced as
-    # dead weight, depressing the whole curve ~9 t/DT below its true level.
-    # Renormalising over priceable routes prices the fleet the engine can
-    # see; the response discloses what was dropped.
+    # Routes with no geometry (POS 11, CBB>CUU KM10) are short POS-yard
+    # hauls: 5.6% of corridor DT at 327 t/DT vs 168 corridor-wide. Dropping
+    # them and renormalising onto the long TF/KR hauls was the 4% gap the
+    # owner saw — the dashed 168 line still counted those tonnes, the curve
+    # did not. Keep them at their MEASURED t/DT (no invented NODE_KM). The
+    # physics engine prices everything else.
     from congestion.predictor import predict as _probe
-    dropped = []
-    priceable = []
-    for k, sh, pay in mix:
+    mix = []
+    measured_short = []
+    for k, sh, pay, tpd in raw:
         try:
             _probe(k, 10, 1, mode="fast")
-            priceable.append((k, sh, pay))
+            mix.append({"route": k, "share": sh, "payload": pay,
+                        "measured_t_per_dt": tpd, "priceable": True})
         except (ValueError, ArithmeticError):
-            dropped.append({"route": k, "share_pct": round(100 * sh, 2)})
-    mix = priceable
-    s = sum(m[1] for m in mix) or 1.0
-    # measured whole-fleet baseline over the SAME records (all routes, not
-    # just the mix cut) — the threshold line the owner asked for.
+            mix.append({"route": k, "share": sh, "payload": pay,
+                        "measured_t_per_dt": tpd, "priceable": False})
+            measured_short.append({
+                "route": k, "share_pct": round(100 * sh, 2),
+                "measured_t_per_dt": round(tpd, 1)})
+    s = sum(m["share"] for m in mix) or 1.0
+    for m in mix:
+        m["share"] = m["share"] / s
+    # Dashed threshold = measured whole-corridor average (all non-BLB
+    # records, including the short hauls). Same road the owner asked for.
     base = {
         "wmt_per_dt_day": sum(r["wmt"] for r in recs) / tot,
         "trips_per_dt_day": sum(r["trips"] for r in recs) / tot,
         "avg_fleet_dt": tot / max(1, max(r["days"] for r in recs)),
         "avg_wmt_day": sum(r["wmt"] for r in recs) / max(1, max(r["days"] for r in recs)),
         "window": d.get("window"),
-        "unpriceable_dropped": dropped,
+        "unpriceable_measured": measured_short,
     }
-    return [(k, sh / s, pay) for k, sh, pay in mix], base
+    return mix, base
 
 
-@bp.route('/api/plan_saturation', methods=['GET'])
-def api_plan_saturation():
-    """Whole-plan saturation sweep: total fleet DT on the x-axis, the
-    Jan–Jun route mix spread across it, every route priced under the shared
-    segment fleet. Returns wmt/day and wmt/day/DT curves plus the measured
-    Jan–Jun baseline as the threshold."""
+def plan_saturation_payload(max_dt=6000, proportional=False):
+    """Whole-plan saturation sweep used by /api/plan_saturation AND the
+    Excel Year / Saturation sheets. Same numbers as Congestion → Mainline
+    corridor saturation: Jan–Jun mix, shared-road pricing, 168 t/DT baseline.
+    Returns the payload dict, or {"ok": False, "error": ...}."""
     from congestion.predictor import predict
     from congestion.segments import segment_trucks
     from congestion.config import route_params
-    a = request.args
     try:
-        max_dt = min(9000, max(400, int(a.get('max_dt') or 6000)))
+        max_dt = min(9000, max(400, int(max_dt)))
     except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "max_dt must be integer"}), 400
-    proportional = str(a.get("proportional") or "").strip().lower() in (
-        "1", "true", "yes")
-    key = (max_dt, proportional)
+        return {"ok": False, "error": "max_dt must be integer"}
+    proportional = bool(proportional)
+    key = (max_dt, proportional, "v3-measured-short-hauls")
     hit = _PLAN_SAT_CACHE.get(key)
     if hit is not None:
-        return jsonify(hit)
+        return hit
     try:
         mix, base = _plan_saturation_mix()
     except (OSError, ValueError, KeyError) as exc:
-        return jsonify({"ok": False, "error": "no Jan–Jun research file "
-                        "(reports/trips_per_dt_jan_jun.json): %s" % exc}), 503
+        return {"ok": False, "error": "no Jan–Jun research file "
+                "(reports/trips_per_dt_jan_jun.json): %s" % exc}
     step = max(20, max_dt // 60)
     curve = []
     for total_dt in range(step, max_dt + 1, step):
-        fleet = {k: total_dt * sh for k, sh, _ in mix}
-        segf = segment_trucks(fleet)
+        fleet = {m["route"]: total_dt * m["share"] for m in mix}
+        segf = segment_trucks({m["route"]: fleet[m["route"]]
+                               for m in mix if m["priceable"]})
         tot_t = 0.0
         priced = 0
-        for k, sh, pay in mix:
-            n = fleet[k]
-            if n < 0.5:
+        for m in mix:
+            n = fleet[m["route"]]
+            if n <= 0:
                 continue
-            rp = route_params(k)
+            if not m["priceable"]:
+                tot_t += n * m["measured_t_per_dt"]
+                priced += 1
+                continue
+            rp = route_params(m["route"])
             if proportional:
                 tpl = (rp.get("n_trucks_ref") or 30) / (rp.get("n_loaders") or 2)
                 nl = max(1, int(round(n / tpl)))
@@ -4035,10 +4086,13 @@ def api_plan_saturation():
                 # that is the "what if we just add trucks" question.
                 nl = int(rp.get("n_loaders") or 2)
             try:
-                p = predict(k, float(n), nl, segment_fleet=segf, mode="full")
+                p = predict(m["route"], float(n), nl, segment_fleet=segf,
+                            mode="full")
             except (ValueError, ArithmeticError):
+                tot_t += n * m["measured_t_per_dt"]
+                priced += 1
                 continue
-            tot_t += p["total_trips_day"] * pay
+            tot_t += p["total_trips_day"] * m["payload"]
             priced += 1
         if priced:
             curve.append({"total_dt": total_dt,
@@ -4051,13 +4105,34 @@ def api_plan_saturation():
                              else "calibrated_faces_fixed"),
            "baseline": {k: (round(v, 1) if isinstance(v, float) else v)
                         for k, v in base.items()},
-           "basis": ("Jan–Jun dispatch mix (share of DT-days per route), every "
-                     "route priced with the shared segment fleet; payload = "
-                     "each route's measured t/trip. Baseline = measured "
-                     "whole-fleet averages over the same window.")}
+           "basis": ("Jan–Jun dispatch mix (share of DT-days per route). "
+                     "Physics routes priced with the shared segment fleet; "
+                     "short POS-yard hauls with no geometry kept at their "
+                     "measured t/DT. Payload = each route's measured t/trip. "
+                     "Baseline = measured whole-corridor average over the "
+                     "same window (the dashed line).")}
     if len(_PLAN_SAT_CACHE) > 8:
         _PLAN_SAT_CACHE.clear()
     _PLAN_SAT_CACHE[key] = out
+    return out
+
+
+@bp.route('/api/plan_saturation', methods=['GET'])
+def api_plan_saturation():
+    """Whole-plan saturation sweep: total fleet DT on the x-axis, the
+    Jan–Jun route mix spread across it, every route priced under the shared
+    segment fleet. Returns wmt/day and wmt/day/DT curves plus the measured
+    Jan–Jun baseline as the threshold."""
+    a = request.args
+    try:
+        max_dt = min(9000, max(400, int(a.get('max_dt') or 6000)))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "max_dt must be integer"}), 400
+    proportional = str(a.get("proportional") or "").strip().lower() in (
+        "1", "true", "yes")
+    out = plan_saturation_payload(max_dt=max_dt, proportional=proportional)
+    if not out.get("ok"):
+        return jsonify(out), 503
     return jsonify(out)
 
 

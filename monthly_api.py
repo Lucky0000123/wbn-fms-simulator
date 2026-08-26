@@ -1062,9 +1062,53 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
     r = _xlsx_section(ws, r, title, sub)
     # Optimized plan only. Year-board Path sheet already uses these names
     # (no "new" prefix); month sheets now match.
+    # Weighbridge column (owner, 2026-08-26): each plan row names the
+    # bridge(s) its trips weigh over, from the SAME deterministic allocator
+    # the Plan tab uses (simulator_api min-max water-fill over the owner
+    # matrix). Dominant bridge first with its share; tenant rows are never
+    # allocated a bridge (they are not ours to weigh).
+    wb_by_id = {}
+    try:
+        import simulator_api as _sim
+        _basis = _sim._wb_basis()
+        if _basis:
+            _req = []
+            for x in rows:
+                if _is_tenant_row(x):
+                    continue
+                _rates = _path_rates(x)
+                _tr = _rates.get("trips_after") or 0
+                if _tr and x.get("key"):
+                    _req.append({"id": x.get("id") or x.get("key"),
+                                 "route": x.get("key"), "trips": _tr,
+                                 "foreign": bool(x.get("foreign"))})
+            if _req:
+                out_rows, _pb, _fl, _uv = _sim.wb_assign_rows(_basis, _req,
+                                                              hours=20.0)
+                for a in out_rows:
+                    names = a.get("assigned") or []
+                    if names:
+                        # "T15 34% ~2 min" per bridge: the bridge, this
+                        # row's share of its own trips over it, the
+                        # bridge's utilisation of its measured capacity,
+                        # and the M/M/1 queue wait (owner, 2026-08-26).
+                        parts = []
+                        for b in names[:3]:
+                            parts.append("%s %d%% (util %d%%, wait %.0f min%s)" % (
+                                b["bridge"].replace("WB_IWIP_", "").replace("WB_RIM_", "RIM "),
+                                round(100 * (b.get("share") or 0)),
+                                round(100 * (b.get("util") or 0)),
+                                b.get("wait_min") or 0,
+                                ", SATURATED" if b.get("saturated") else ""))
+                        txt = " + ".join(parts)
+                        if len(names) > 3:
+                            txt += " +%d more" % (len(names) - 3)
+                        wb_by_id[a["id"]] = txt
+    except Exception:
+        wb_by_id = {}
     heads = [
         "P", "Path", "Contractor", "Material", "Target WMT/day",
-        "DT", "Trips", "WMT", "WMT/DT", "Trips/DT",
+        "DT", "Trips", "WMT", "WMT/DT", "Trips/DT", "Weighbridge",
     ]
     if achv:
         heads.append("Achievable")
@@ -1086,13 +1130,15 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
             _path_mat_label(row), row.get("target"),
             row.get("dt_after"), rates["trips_after"], row.get("pred_after"),
             rates["wmt_per_trip_after"], rates["trips_per_dt_after"],
+            ("—" if _is_tenant_row(row)
+             else wb_by_id.get(row.get("id") or row.get("key")) or ""),
         ]
         if achv:
             vals.append(av_new)
         ten_col = len(vals) + 1 if ten else None
         if ten:
             vals.append(ten.get(_ten_key(row)))
-        rate_cols = {9, 10}  # WMT/DT, Trips/DT
+        rate_cols = {9, 10}  # WMT/DT, Trips/DT (col 11 = Weighbridge text)
         for col, val in enumerate(vals, start=1):
             cell = ws.cell(row=r, column=col, value=val)
             cell.border = box
@@ -1110,7 +1156,7 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
                 cell.number_format = "0.00"
             elif col >= 5 and isinstance(val, (int, float)):
                 cell.number_format = "#,##0"
-            if col in (6, 7, 8) or (achv and col == 11):
+            if col in (6, 7, 8) or (achv and col == 12):
                 cell.font = _xlsx_font(True, 9, _XLSX_INK)
         if _is_tenant_row(row):
             continue
@@ -1832,7 +1878,8 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None, achv=False):
         + (" · achievable from /api/simulate." if achv else ". Same day every day."),
         points, start=1, chart_col="A", achv=achv)
 
-    _xlsx_widths(ws, [16, 22, 14, 14, 14, 11, 11, 11, 11, 12, 12, 12, 12, 12, 12, 12, 12])
+    # Column 11 (K) carries the weighbridge text: name + share + util + wait.
+    _xlsx_widths(ws, [16, 22, 14, 14, 14, 11, 11, 11, 11, 12, 58, 12, 12, 12, 12, 12, 12])
     ws.freeze_panes = "A4"
     ws.row_dimensions[1].height = 24
     return alloc.get("new_pred_month"), alloc.get("target_month")
