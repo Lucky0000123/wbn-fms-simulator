@@ -1,0 +1,18 @@
+{
+ "basis": "hour flow / same-day mean, congestion_seg_hourly.csv (109,089 segment-hours, all roads/directions, days with >=12 observed hours)",
+ "generated": "2026-08-26",
+ "n_obs": 109089,
+ "decile_multipliers": [
+  0.1313,
+  0.2812,
+  0.4446,
+  0.6031,
+  0.7753,
+  0.9604,
+  1.1701,
+  1.4223,
+  1.7648,
+  2.4468
+ ],
+ "note": "equal-mass multipliers; mean normalised to 1.0 so total daily flow is conserved. Used to price road congestion as the arrival-weighted expectation E[f(v*m)] instead of f(v_mean) \u2014 Jensen correction for peaked within-day traffic."
+}

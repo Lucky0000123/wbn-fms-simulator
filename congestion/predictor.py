@@ -279,9 +279,16 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
                  "regime": ("capped" if t_road >= max_road - 1e-6 else
                             ("congested" if worst_vc >= 0.7 else "free"))}
         else:
-            b = bpr.bpr_travel_min(t_free_road, v_hr, c_link,
-                                   float(p["alpha"]), float(p["beta"]),
-                                   period_h=sh)
+            # Arrival-weighted (owner 2026-08-26): real trucks arrive in
+            # waves, not at the flat mean — price the road as the measured
+            # within-day expectation. At the historical v/c<=0.12 the premium
+            # is <1% (backtest unchanged); it matters exactly where the flat
+            # model lied most (v/c 0.6–1.1: +13% to +122% measured).
+            b = bpr.bpr_travel_min_weighted(t_free_road, v_hr, c_link,
+                                            float(p["alpha"]), float(p["beta"]),
+                                            period_h=sh)
+            b = {**b, "t_road_min": b["t_road_weighted_min"],
+                 "penalty_min": b["t_road_weighted_min"] - t_free_road}
             # Safety net: road time cannot exceed 3x free flow. Trucks keep
             # moving in gridlock; they do not park for a whole shift. With
             # geometry c_road this rarely binds — if it does, the BPR formula

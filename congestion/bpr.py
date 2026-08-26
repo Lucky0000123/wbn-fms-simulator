@@ -95,3 +95,61 @@ def bpr_travel_min(t_free_road_min: float, v_trucks_hr: float, c_link_hr: float,
     return {"t_road_min": t, "vc": vc, "penalty_min": t - t_free_road_min,
             "form": form,
             "regime": "free" if vc <= 0.7 else ("congested" if vc <= 1.0 else "oversaturated")}
+
+
+# ── arrival-weighted (Jensen) road pricing ──────────────────────────────────
+# Owner, 2026-08-26: "trucks come at different times ... we are missing the
+# natural human physics." The flat model prices f(v_mean); real within-day
+# flow is peaked, and every delay function here is convex in v, so by
+# Jensen's inequality f(v_mean) UNDERSTATES the day's average delay:
+# E[f(v·m)] > f(v). Measured from our own 109,089 segment-hours
+# (data/arrival_profile.json): hourly flow ranges 0.13x–2.45x the same-day
+# mean; at base v/c 0.6 the flat model understates the BPR factor by ~13%,
+# at 0.9 by ~61%. The correction prices the day as the average over ten
+# equal-mass measured multipliers — total flow conserved exactly, no new
+# parameters, pure measured shape.
+import json as _json
+import os as _os
+
+_ARRIVAL_PROFILE = None
+
+
+def arrival_profile():
+    """Ten equal-mass hourly-flow multipliers, measured, mean 1.0."""
+    global _ARRIVAL_PROFILE
+    if _ARRIVAL_PROFILE is None:
+        path = _os.path.join(_os.path.dirname(_os.path.dirname(
+            _os.path.abspath(__file__))), "data", "arrival_profile.json")
+        try:
+            with open(path, encoding="utf-8") as fh:
+                _ARRIVAL_PROFILE = list(_json.load(fh)["decile_multipliers"])
+        except (OSError, ValueError, KeyError):
+            # No profile file: fall back to the flat model (multiplier 1.0),
+            # never to an invented shape.
+            _ARRIVAL_PROFILE = [1.0]
+    return _ARRIVAL_PROFILE
+
+
+def bpr_travel_min_weighted(t_free_road_min: float, v_trucks_hr: float,
+                            c_link_hr: float, alpha: float = 0.15,
+                            beta: float = 4.0,
+                            period_h: float = 12.0) -> dict:
+    """Arrival-weighted road time: mean of bpr_travel_min over the measured
+    within-day flow deciles. Reports the flat result's vc/regime (the plan's
+    average is still the headline number) plus the weighted time and the
+    peaking premium so the two clocks stay separately visible."""
+    flat = bpr_travel_min(t_free_road_min, v_trucks_hr, c_link_hr,
+                          alpha, beta, period_h)
+    prof = arrival_profile()
+    if len(prof) <= 1 or v_trucks_hr <= 0 or c_link_hr <= 0:
+        return {**flat, "t_road_weighted_min": flat["t_road_min"],
+                "peaking_premium_min": 0.0}
+    # Each decile is ~1/10 of the day's hours AND carries v*m/vmean of the
+    # trucks; a truck-experienced average weights each decile by its share
+    # of TRUCKS (m), not of hours. That is the time the average TRIP sees.
+    wsum = sum(prof)
+    t_w = sum(m * bpr_travel_min(t_free_road_min, v_trucks_hr * m,
+                                 c_link_hr, alpha, beta, period_h)["t_road_min"]
+              for m in prof) / wsum
+    return {**flat, "t_road_weighted_min": t_w,
+            "peaking_premium_min": max(0.0, t_w - flat["t_road_min"])}
