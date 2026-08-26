@@ -108,6 +108,8 @@ function renderCongCurve(){
   const inp=_congInputs();
   if(!inp.route){
     _congChartEl('cong-curve-chart','Load Capability first so route history is available.');
+    _congChartEl('cong-wmtdt-chart','Load Capability first so route history is available.');
+    _congChartEl('cong-wmtday-chart','Load Capability first so route history is available.');
     _congChartEl('cong-breakdown-chart','Load Capability first so route history is available.');
     _congChartEl('cong-loader-chart','Load Capability first so route history is available.');
     return;
@@ -142,6 +144,8 @@ function renderCongCurve(){
     if(seq!==_congCurveSeq)return;
     if(_congUnavailable(d)){
       _congNote('cong-curve-note','Backend not ready (/api/congestion_curve). Showing the local ceiling-scale estimate — trips/DT stays flat until the demonstrated day cap, then extra trucks share that cap. Loader count scales the cap.');
+      _congChartEl('cong-wmtdt-chart','Backend not ready (/api/congestion_curve) — tonnage curves need the hybrid sweep.');
+      _congChartEl('cong-wmtday-chart','Backend not ready (/api/congestion_curve) — tonnage curves need the hybrid sweep.');
       return;
     }
     const pts=d.points||d.curve||d.hybrid||[];
@@ -179,10 +183,70 @@ function renderCongCurve(){
     });
     _congNote('cong-curve-note',d.note||'Solid = hybrid physics + queueing + BPR. Dashed = previous divide-at-ceiling model. Shaded = P10–P90 when the API sends it.');
     if(kneeEl&&kneeX)kneeEl.textContent='Knee at '+Math.round(kneeX)+' DT';
+    renderCongWmtCurves(inp.route,pts,kneeX,inp.nTrucks);
   }).catch(()=>{
     if(seq!==_congCurveSeq)return;
     _congNote('cong-curve-note','Backend not ready. Showing the local ceiling-scale estimate.');
   });
+}
+
+// ── WMT saturation curves (owner, 2026-08-26): two line charts under the
+// trips/DT curve — (1) WMT/day per DT and (2) total WMT/day, both vs fleet
+// size. Same /api/congestion_curve sweep (each point carries total_tonnes =
+// trips × payload), so the tonnage story and the trips story can never
+// disagree. The ● marks the Fleet slider's position on each curve.
+function renderCongWmtCurves(route, pts, kneeX, nTrucks){
+  const perDt=[], perDay=[];
+  (pts||[]).forEach(p=>{
+    const n=p.n_trucks||p.dt;
+    const tot=p.total_tonnes;
+    if(!(n>0)||!Number.isFinite(tot))return;
+    perDay.push([n,+tot.toFixed(0)]);
+    perDt.push([n,+(tot/n).toFixed(1)]);
+  });
+  if(!perDay.length){
+    _congChartEl('cong-wmtdt-chart','No tonnage in this curve payload (older reference file — regenerate scripts/export_saturation_curves.py).');
+    _congChartEl('cong-wmtday-chart','No tonnage in this curve payload.');
+    return;
+  }
+  const axis=_congAxis();
+  const near=arr=>{let b=null,d=1e18;arr.forEach(q=>{const dd=Math.abs(q[0]-nTrucks);if(dd<d){d=dd;b=q;}});return b;};
+  const kneeLine=kneeX?[{type:'line',markLine:{silent:true,symbol:'none',
+    lineStyle:{type:'dashed',color:'#f59e0b'},
+    label:{formatter:'knee',color:'#f59e0b',fontSize:10},
+    data:[{xAxis:kneeX}]}}]:[];
+  const mark=(arr,color)=>{
+    const p=near(arr);
+    return p?[{name:'Planned fleet',type:'scatter',data:[p],symbolSize:11,
+      itemStyle:{color:color,borderColor:'#fff',borderWidth:1.5},z:5}]:[];
+  };
+  _congPaint('cong-wmtdt-chart',{
+    backgroundColor:'transparent',
+    tooltip:{trigger:'axis'},
+    grid:{left:56,right:16,top:14,bottom:36},
+    xAxis:Object.assign({type:'value',name:'DT',nameLocation:'middle',nameGap:22},axis),
+    yAxis:Object.assign({type:'value',name:'WMT/day per DT',nameLocation:'middle',nameGap:44},axis),
+    series:[{name:'WMT/day per DT',type:'line',showSymbol:false,data:perDt,
+      lineStyle:{width:2.4,color:'#34d399'},
+      areaStyle:{color:'rgba(52,211,153,.08)'}}]
+      .concat(mark(perDt,'#34d399')).concat(kneeLine),
+  });
+  _congPaint('cong-wmtday-chart',{
+    backgroundColor:'transparent',
+    tooltip:{trigger:'axis'},
+    grid:{left:64,right:16,top:14,bottom:36},
+    xAxis:Object.assign({type:'value',name:'DT',nameLocation:'middle',nameGap:22},axis),
+    yAxis:Object.assign({type:'value',name:'WMT/day (route total)',nameLocation:'middle',nameGap:52},axis),
+    series:[{name:'WMT/day',type:'line',showSymbol:false,data:perDay,
+      lineStyle:{width:2.4,color:'#818cf8'},
+      areaStyle:{color:'rgba(129,140,248,.08)'}}]
+      .concat(mark(perDay,'#818cf8')).concat(kneeLine),
+  });
+  const pd=near(perDt), py=near(perDay);
+  _congNote('cong-wmtdt-note',(pd?('At '+pd[0]+' DT each truck moves ~'+pd[1]+' t/day. '):'')
+    +'Tonnes each truck moves per day (trips/DT × payload) as the fleet grows — falls as queueing and congestion eat cycle time.');
+  _congNote('cong-wmtday-note',(py?('At '+py[0]+' DT the route moves ~'+Math.round(py[1]).toLocaleString()+' t/day. '):'')
+    +'Route output per day as the fleet grows — each truck past the knee adds less; the plateau is the practical daily ceiling.');
 }
 
 function renderCongBreakdown(route, nTrucks, nLoaders){
