@@ -1,6 +1,6 @@
 # Reference saturation curves — trips/DT/day vs fleet
 
-> Generated 2026-08-26T06:52:47Z by scripts/export_saturation_curves.py — regenerate after any
+> Generated 2026-08-26T07:19:28Z by scripts/export_saturation_curves.py — regenerate after any
 > recalibration. Formula: `trips = 1440/(road_congested + ops + queue +
 > bunching + overhead_per_trip)`; BPR on road time only, capped at 3x.
 > `calibrated faces` is what the Congestion-tab chart shows;

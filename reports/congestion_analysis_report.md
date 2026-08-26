@@ -69,3 +69,26 @@ Note: I tested the closed-fleet swap against 2,124 measured route-days — at ou
 | R3 | Akçelik tail above v/c=1 | small | honest oversaturation what-ifs |
 | R5 | Moving-bottleneck bunching | medium | the real mechanism per field studies |
 | R6 | GBM residual layer | medium | 20 %→~15 % MAPE per published deltas |
+
+---
+
+## Post-audit implementation log (2026-08-26, same day)
+
+**R1+R2 shipped** (`18e8347`): machine-repair M/M/c//N queue + loader-default guard. Production rows within 0.2%, cliff removed, MAPE flat-to-better on 2,124 measured days. A follow-up (`e521aa7`) memoises the O(N) recursion on exact argument keys after the 500-DT tenant row proved 457× slower inside the 120-sweep pricing fixed point (and a first, rounded-key cache broke J79 parity by one truck — exact keys fixed it).
+
+**R3 shipped** (this commit): `bpr_travel_min` is now piecewise — BPR below v/c=1, Akçelik time-dependent above, `period_h` = the plan's shift. Verified continuous and monotone across the seam (sweep x=0.5…5.0); at x=3 the honest answer is 881 min vs the polynomial's 1,841. J = 2α so per-route BPR calibration carries over.
+
+**R4 answered with data** (this commit): observed max sustained flow per road, from 109k segment-hour GPS records (`congestion_seg_hourly.csv`, TRUCK_N per segment-hour-direction):
+
+| Road | hours | p95 | p99 | max obs trucks/hr | rule capacity |
+|---|---|---|---|---|---|
+| KR | 20,185 | 46 | 60 | **83** | 400–600 |
+| TF | 16,002 | 35 | 45 | 67 | 400–600 |
+| CBB | 6,296 | 30–34 | 41–49 | 70 | 400–600 |
+| BLB | 5,962 | 20 | 27 | 49 | 400–600 |
+
+**Conclusion: the corridor has never been loaded past ~14% of the rule capacity.** Two consequences: (1) the 50 m headway capacity is *unvalidatable* from history — no observed hour comes close, so neither confirmation nor refutation is possible; (2) every v/c the app prints is demand against a never-tested ceiling, which is fine for ranking plans but means the oversaturation regime (where R3 matters) is purely hypothetical today. The engine's existing `vc_vs_observed_peak` metric is the honest companion number. If capacity validation ever matters, it needs a deliberately dense operating period, not more history.
+
+**Still open (need owner sign-off, larger design):**
+- **R5** moving-bottleneck bunching — the literature's dominant mechanism; medium effort; our per-contractor speed distributions make it feasible.
+- **R6** GBM residual layer — published deltas suggest 20%→~15% MAPE; scaffolding exists in `data/residual_diagnostics.json`.

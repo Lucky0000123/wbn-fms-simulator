@@ -280,7 +280,8 @@ def predict(route: str, n_trucks: float, n_loaders: int | None = None,
                             ("congested" if worst_vc >= 0.7 else "free"))}
         else:
             b = bpr.bpr_travel_min(t_free_road, v_hr, c_link,
-                                   float(p["alpha"]), float(p["beta"]))
+                                   float(p["alpha"]), float(p["beta"]),
+                                   period_h=sh)
             # Safety net: road time cannot exceed 3x free flow. Trucks keep
             # moving in gridlock; they do not park for a whole shift. With
             # geometry c_road this rarely binds — if it does, the BPR formula
