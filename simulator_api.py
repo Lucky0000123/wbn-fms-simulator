@@ -3929,6 +3929,113 @@ def api_congestion_curve():
                     "curve": curve, "knee_dt": knee})
 
 
+# ── whole-plan saturation sweep (owner, 2026-08-26) ─────────────────────────
+# "Not per route — take the average of the history Jan–Jun as the threshold,
+# and show how OUR MODEL's whole-plan curve moves as DT are added." The fleet
+# mix is the measured Jan–Jun deployment (share of DT-days per route from
+# reports/trips_per_dt_jan_jun.json); at every total-DT point the sweep
+# spreads the fleet in those proportions, prices EVERY route with the shared
+# segment fleet (so corridors interact exactly as in a plan), and sums
+# tonnes. Payloads are each route's own measured t/trip from the same window.
+_PLAN_SAT_CACHE = {}
+
+
+def _plan_saturation_mix():
+    """(route, share, payload_t) from the Jan–Jun research file. Shares are
+    DT-day weighted and renormalised over routes >= 0.5% of the fleet."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "reports", "trips_per_dt_jan_jun.json")
+    with open(path, encoding="utf-8") as fh:
+        d = json.load(fh)
+    recs = [r for r in d.get("records") or [] if r.get("contractor") == "ALL"]
+    tot = sum(r["dt_days"] for r in recs) or 1.0
+    mix = [(r["route"], r["dt_days"] / tot,
+            r["wmt"] / max(1.0, r["trips"]))
+           for r in recs if r["dt_days"] / tot >= 0.005]
+    s = sum(m[1] for m in mix) or 1.0
+    # measured whole-fleet baseline over the SAME records (all routes, not
+    # just the mix cut) — the threshold line the owner asked for.
+    base = {
+        "wmt_per_dt_day": sum(r["wmt"] for r in recs) / tot,
+        "trips_per_dt_day": sum(r["trips"] for r in recs) / tot,
+        "avg_fleet_dt": tot / max(1, max(r["days"] for r in recs)),
+        "avg_wmt_day": sum(r["wmt"] for r in recs) / max(1, max(r["days"] for r in recs)),
+        "window": d.get("window"),
+    }
+    return [(k, sh / s, pay) for k, sh, pay in mix], base
+
+
+@bp.route('/api/plan_saturation', methods=['GET'])
+def api_plan_saturation():
+    """Whole-plan saturation sweep: total fleet DT on the x-axis, the
+    Jan–Jun route mix spread across it, every route priced under the shared
+    segment fleet. Returns wmt/day and wmt/day/DT curves plus the measured
+    Jan–Jun baseline as the threshold."""
+    from congestion.predictor import predict
+    from congestion.segments import segment_trucks
+    from congestion.config import route_params
+    a = request.args
+    try:
+        max_dt = min(4000, max(400, int(a.get('max_dt') or 2600)))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "max_dt must be integer"}), 400
+    proportional = str(a.get("proportional") or "").strip().lower() in (
+        "1", "true", "yes")
+    key = (max_dt, proportional)
+    hit = _PLAN_SAT_CACHE.get(key)
+    if hit is not None:
+        return jsonify(hit)
+    try:
+        mix, base = _plan_saturation_mix()
+    except (OSError, ValueError, KeyError) as exc:
+        return jsonify({"ok": False, "error": "no Jan–Jun research file "
+                        "(reports/trips_per_dt_jan_jun.json): %s" % exc}), 503
+    step = max(20, max_dt // 60)
+    curve = []
+    for total_dt in range(step, max_dt + 1, step):
+        fleet = {k: total_dt * sh for k, sh, _ in mix}
+        segf = segment_trucks(fleet)
+        tot_t = 0.0
+        priced = 0
+        for k, sh, pay in mix:
+            n = fleet[k]
+            if n < 0.5:
+                continue
+            rp = route_params(k)
+            if proportional:
+                tpl = (rp.get("n_trucks_ref") or 30) / (rp.get("n_loaders") or 2)
+                nl = max(1, int(round(n / tpl)))
+            else:
+                # historical loader faces stay FIXED as the fleet grows —
+                # that is the "what if we just add trucks" question.
+                nl = int(rp.get("n_loaders") or 2)
+            try:
+                p = predict(k, float(n), nl, segment_fleet=segf, mode="full")
+            except (ValueError, ArithmeticError):
+                continue
+            tot_t += p["total_trips_day"] * pay
+            priced += 1
+        if priced:
+            curve.append({"total_dt": total_dt,
+                          "wmt_day": round(tot_t),
+                          "wmt_per_dt_day": round(tot_t / total_dt, 1),
+                          "routes_priced": priced})
+    out = {"ok": True, "curve": curve,
+           "mix_routes": len(mix),
+           "loaders_basis": ("proportional" if proportional
+                             else "calibrated_faces_fixed"),
+           "baseline": {k: (round(v, 1) if isinstance(v, float) else v)
+                        for k, v in base.items()},
+           "basis": ("Jan–Jun dispatch mix (share of DT-days per route), every "
+                     "route priced with the shared segment fleet; payload = "
+                     "each route's measured t/trip. Baseline = measured "
+                     "whole-fleet averages over the same window.")}
+    if len(_PLAN_SAT_CACHE) > 8:
+        _PLAN_SAT_CACHE.clear()
+    _PLAN_SAT_CACHE[key] = out
+    return jsonify(out)
+
+
 @bp.route('/api/road_segments', methods=['GET'])
 def api_road_segments():
     """The stick segments with OFFICIAL speed limits, capacity basis and
