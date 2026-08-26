@@ -4013,6 +4013,21 @@ def _year_alloc_totals(cards):
         b["cov_achv"] = _cov_pct(b["achv_after"], b["target"])
         b["left"] = max(0, b["target"] - b["pred_after"])
         b["over"] = max(0, b["pred_after"] - b["target"])
+    # The LD year card's headline judgement is against the SALES target
+    # (planning team 2026-08-26: 6,644,306 t), not the sum of the saves'
+    # internal monthly LD targets. Those monthly targets are the waterfall's
+    # fleet-credited amounts — 5,290,224 across the day-03 saves — and the
+    # owner read that as "the monthly page shows a different LD target"
+    # (2026-08-26, sales-table check). Both clocks stay visible: `target`
+    # keeps the monthly sum (labelled by the UI), `sales_target` carries the
+    # quarter's sales line and the coverage the owner judges by.
+    if "ld" in mats:
+        import scenario_api as _sa
+        b = mats["ld"]
+        b["sales_target"] = _sa.LIM_LD_TARGET_T
+        b["cov_sales"] = _cov_pct(b["pred_after"], b["sales_target"])
+        b["left_sales"] = max(0, b["sales_target"] - b["pred_after"])
+        b["over_sales"] = max(0, b["pred_after"] - b["sales_target"])
     tot["materials"] = mats
     return tot
 

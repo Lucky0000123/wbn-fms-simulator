@@ -310,16 +310,22 @@ function kpi(v, cls, k){
 }
 function matCard(m, extraK){
   if(!m)return '';
-  const cov=m.cov_pred;
-  const left=m.left!=null?m.left:m.left_pred_month;
-  const over=m.over!=null?m.over:m.over_pred_month;
+  // LIM-LD year card: the headline is coverage vs the SALES target
+  // (6,644,306 t, planning team 2026-08-26) when the API supplies it.
+  // The saves' internal monthly-target sum stays visible under its own
+  // label — two clocks, never merged.
+  const sales=m.sales_target!=null;
+  const cov=sales?m.cov_sales:m.cov_pred;
+  const left=sales?m.left_sales:(m.left!=null?m.left:m.left_pred_month);
+  const over=sales?m.over_sales:(m.over!=null?m.over:m.over_pred_month);
   const pred=m.pred_after!=null?m.pred_after:m.pred_after_month;
-  const tgt=m.target!=null?m.target:m.target_month;
+  const tgt=sales?m.sales_target:(m.target!=null?m.target:m.target_month);
   const oldP=m.pred_before!=null?m.pred_before:m.pred_before_month;
   return '<div class="mat-card">'
     +'<h3>'+m.label+'</h3>'
     +'<div class="cov '+covClass(cov)+'">'+pct(cov)+'</div>'
-    +'<div class="pair"><span>Target</span><b>'+fmt(tgt)+'</b></div>'
+    +'<div class="pair"><span>'+(sales?'Sales target':'Target')+'</span><b>'+fmt(tgt)+'</b></div>'
+    +(sales?'<div class="pair"><span>Monthly plan targets (sum)</span><b>'+fmt(m.target)+'</b></div>':'')
     +'<div class="pair"><span>Old predicted plan</span><b>'+fmt(oldP)+'</b></div>'
     +'<div class="pair"><span>Optimized predicted plan</span><b>'+fmt(pred)+'</b></div>'
     +(cov!=null&&cov<100?'<div class="pair"><span>Leaving</span><b style="color:var(--er)">'+fmt(left)+'</b></div>':'')
