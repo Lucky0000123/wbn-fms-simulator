@@ -71,8 +71,9 @@ _MN = {"aug": 8, "august": 8, "sept": 9, "sep": 9, "september": 9,
 # H2 LIM-LD sales TARGET: the line credited production is measured against,
 # never a limit on the fleet. Capacity above it is computed and reported in
 # full (see the two-labelled-numbers rule in the module docstring); only the
-# CREDITED tonnage stops here.
-LIM_LD_TARGET_T = 8_000_000
+# CREDITED tonnage stops here. Planning team sales table 2026-08-26:
+# Limonite LD 6,644,306 wmt declared (was 8 Mt).
+LIM_LD_TARGET_T = 6_644_306
 LIM_LD_CAP_T = LIM_LD_TARGET_T  # back-compat alias (old name, same number)
 # P3 LIM-LD always runs Tofu limonite dump -> Huafei. Named once so the
 # draft-plan sizing and the LD rows cannot disagree about which road the
@@ -112,17 +113,25 @@ def _split_sap_conditions(pit, T, grp, m):
     for dest, amt in rule["fixed"]:
         want = _norm_sap_dest(dest)
         rows = [r for r in grp if _norm_sap_dest(r["dest"]) == want]
-        if not rows or left <= 0:
+        if left <= 0:
             continue
+        if not rows:
+            # The 2,000 t/day POS buffer is the owner's standing instruction
+            # (2026-08-26); the matrix rows predate it. A matrix without the
+            # POS SAP row still buffers — clone one, as the rest leg does.
+            probe = dict(grp[0])
+            probe["dest"] = dest
+            rows = [probe]
         w = min(left, amt)
         out.append((rows[0], w))
         left -= w
     rest_want = _norm_sap_dest(rule["rest"])
-    rest_rows = [r for r in grp if _norm_sap_dest(r["dest"]) == rest_want]
-    if left > 0 and not rest_rows:
-        # Any FeNi row the pit's matrix carries: a pit shipping to BOTH FeNi
-        # plants splits its rest pro-rata across them (owner, 2026-08-26).
-        rest_rows = [r for r in grp if "FENI" in _norm_sap_dest(r["dest"])]
+    # The plan's own destinations are the authority (owner, 2026-08-26): the
+    # rest spreads pro-rata over EVERY FeNi SAP row the pit's matrix carries,
+    # so a pit shipping to both plants splits between them. The named rest is
+    # only the answer when the matrix itself is silent — it must not override
+    # a two-FeNi plan down to one plant.
+    rest_rows = [r for r in grp if "FENI" in _norm_sap_dest(r["dest"])]
     if left > 0 and not rest_rows:
         # Matrix has no FeNi SAP haul for this pit (KRENE today). Clone onto
         # the named rest dest so the leftover is not silently dumped on POS.
@@ -1008,7 +1017,7 @@ def _write_compare_sheet(ws, results):
                        ("LIM-LD credited (t)", "ld_t_planned"),
                        ("LIM-LD capacity, never clipped (t)", "ld_t_capacity"),
                        ("LIM-LD excess capacity above target (t)", "ld_t_excess_capacity"),
-                       ("8 Mt target met", "ld_cap_reached"),
+                       ("LD sales target met", "ld_cap_reached"),
                        ("Short of target by (t)", "ld_shortfall_t"),
                        ("Targets fit the fleet", "feasible")):
         row = [label, ""]
@@ -1082,13 +1091,18 @@ def _exportable_scenario_ids():
 
 
 # The day-of-month scenario convention, spelled out. ONE owner for it.
-#   01 = S1   03 = S3   04 = S4      (02 is reserved: S2 deleted 2026-08-21)
+#   01 = S1   03 = S3 (3.0.1)   04 = 3.0.2   05 = S5 (3.1.1)   06 = 3.1.2
+#   (02 is reserved: S2 deleted 2026-08-21)
 # It is a CLOSED list on purpose. Deriving it from whatever days happen to have
 # saves turns the legacy August dailies (2026-08-05 / -07 / -13, which predate
 # the convention and are plain daily plans) into phantom scenarios S5/S7/S13 —
 # measured, all three appeared. Adding a scenario day must be a deliberate edit
 # here, not an accident of someone saving a plan on the 9th.
-_DAY_SCENARIOS = {1: "S1", 3: "S3", 4: "S4"}
+_DAY_SCENARIOS = {1: "S1", 3: "S3", 4: "S4", 5: "S5", 6: "S6"}
+# Planning-team names (2026-08-26): mining plan 3.0 = as-is, 3.1 = +1 Mt BLB
+# LIM Oct-Dec; hauling .1 = all leftovers HUAFEI/BSE, .2 = half to POS 6 from
+# October. The day convention stays the machine key; these are the labels.
+SCENARIO_DISPLAY = {"S3": "3.0.1", "S4": "3.0.2", "S5": "3.1.1", "S6": "3.1.2"}
 
 
 def _saved_day_scenario_ids():
@@ -1245,11 +1259,13 @@ def api_scenario_allocate(sid):
 
 
 def _day_for_scenario_id(sid):
-    """S1 -> day 01, S3 -> day 03, S4 -> day 04 (the saved-plan convention).
+    """S1 -> day 01, S3 -> 03, S4 -> 04, S5 -> 05, S6 -> 06 (saved-plan
+    convention). Planning-team names: S3=3.0.1, S4=3.0.2, S5=3.1.1, S6=3.1.2.
 
-    S4 has no data/scenarios/S4.json and never will: it is not a mine-plan
-    import, it is the day-04 Plan-tab saves (identical to S3 except the TF LD
-    trucks split 50/50 HUAFEI/BSE vs POS 6 - owner 2026-08-25, was POS 12). Day 02 is reserved - S2 was
+    S4/S6 have no data/scenarios/*.json and never will: they are not mine-plan
+    imports, they are the day-04/06 Plan-tab saves (identical to S3/S5 except
+    the TF LD trucks split 50/50 HUAFEI/BSE vs POS 6 from October - owner
+    2026-08-25, planning team 2026-08-26). Day 02 is reserved - S2 was
     deleted from the app on 2026-08-21 - so it maps to nothing.
     """
     m = re.fullmatch(r"S(\d{1,2})", str(sid or "").upper())

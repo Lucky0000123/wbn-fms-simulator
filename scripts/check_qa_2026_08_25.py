@@ -297,7 +297,10 @@ def j86_every_scenario_exportable():
     ok("J86 S4 is offered", "S4" in ids, "exportable ids = %s" % ids)
     # ... NEGATIVE: and legacy August dailies are NOT invented as scenarios.
     ok("J86 no phantom scenarios",
-       not ({"S5", "S7", "S13"} & set(ids)),
+       # S5/S6 became deliberate scenarios on 2026-08-26 (3.1.1 / 3.1.2 —
+       # planning team's +1 Mt BLB LIM family). The phantom sentinels are
+       # the legacy August daily saves that must NEVER surface: 07 and 13.
+       not ({"S7", "S13"} & set(ids)),
        "legacy August daily saves surfaced as scenarios: %s" % ids)
 
     st, body, hdrs = _get(

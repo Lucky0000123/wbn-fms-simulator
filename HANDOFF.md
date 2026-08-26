@@ -108,11 +108,18 @@ Congestion/corridor outputs are advisory and never clip tonnes (J53/J57).
   `/api/scenarios/import`. S1 is always derived live from the yearly matrix
   (no S1 file may exist).
 - Waterfall `/api/scenarios/<id>/allocate`: target-driven P1→P2→P3 per
-  contractor pools, BLB=RIM lock, 8 Mt default LIM-LD target. Imported
+  contractor pools, BLB=RIM lock, 6.644 Mt default LIM-LD sales target. Imported
   `Type Ore = LD` rows become explicit monthly P3 targets.
-- **SAP routing conditions (S2/S3 only)**: 10 kt/d TOFU→FENI KM15,
-  10 kt/d BLB→FENI KM0, TOFU rest→POS 12, KR→POS 12, BLB rest→POS 14
-  (`SAP_ROUTING` in scenario_api.py).
+- **SAP routing conditions (S3/S4/S5/S6)**: ~2 kt/d POS buffer per pit
+  (BLB→POS 14, TOFU→POS 12, KR→POS 12; 0–4,000 landing band), REST direct
+  to FeNi pro-rata over the pit's own matrix FeNi rows (today BLB→KM0,
+  TF→KM15; KR has no FeNi SAP row → KM15 by dispatch history).
+  IWIP POS→FeNi reclaim WMT equals inbound POS WMT (`SAP_ROUTING` in scenario_api.py).
+- **Scenario family (planning team 2026-08-26)**: mining 3.0 = as-is,
+  3.1 = +330 kt/mo BLB LIM Oct–Dec (S5.json); hauling .1 = all leftover LD
+  → HUAFEI/BSE, .2 = half to POS 6 **from October** (Sep = no split).
+  Day slots: 03=3.0.1, 04=3.0.2, 05=3.1.1, 06=3.1.2. LIM-LD sales target
+  6,644,306 t (was 8 Mt).
 - Draft plans: POST `/api/scenarios/<id>/draft-plans` {year, day, months,
   overwrite} writes Plan-tab saves sized by the real path model
   (`_required_dt_day` → Predicted ≈ 100% of target).

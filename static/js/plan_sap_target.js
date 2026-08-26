@@ -28,12 +28,24 @@
   function draft(){return (typeof _planDraft!=='undefined')?_planDraft:{};}
   function hz(){return typeof planHorizonFactor==='function'?planHorizonFactor():1;}
   function rainMm(){return Math.max(0,parseFloat((q('plan-rain')||{}).value)||0);}
-  // Day-04 plan dates are Scenario 4 (S4): S3 plus the 50/50 LD split of
-  // planning_rules.md §4 P3. NOTE 2026-08-04 predates the convention — it is
-  // a legacy August daily plan, not S4; re-allocating it would apply the
-  // split, so leave the August legacy dates alone.
+  // Day-04 plan dates are Scenario 3.0.2 (formerly S4): S3 plus the 50/50 LD
+  // split of planning_rules.md §4 P3. Day-06 = Scenario 3.1.2: the same split
+  // on the 3.1 mining plan (S5 targets + 1 Mt BLB LIM Oct–Dec). NOTE
+  // 2026-08-04 predates the convention — it is a legacy August daily plan,
+  // not S4; re-allocating it would apply the split, so leave the August
+  // legacy dates alone.
   function planRulesS4Active(){
-    return /^\d{4}-\d{2}-04$/.test(((q('plan-date')||{}).value||'').trim());
+    return /^\d{4}-\d{2}-(04|06)$/.test(((q('plan-date')||{}).value||'').trim());
+  }
+  // The half-split itself starts in splitStartMonth (planning team
+  // 2026-08-26: October). A September day-04/06 plan is a split-day save
+  // whose split is dormant — it must allocate exactly like day 03/05.
+  function planRulesSplitActive(){
+    if(!planRulesS4Active())return false;
+    const v=((q('plan-date')||{}).value||'').trim();
+    const mo=parseInt(v.split('-')[1],10);
+    const start=Number((((window.PLANNING_RULES||{}).limLd)||{}).splitStartMonth);
+    return !(start&&mo&&mo<start);
   }
 
   let _allocFrozen=false;
@@ -1885,7 +1897,7 @@
         // row's trucks to the other destination on purpose — its own-row
         // shortfall is the what-if working, not a warning. LD attainment is
         // judged at the bucket level in the validation summary.
-        if(planRulesS4Active())return;
+        if(planRulesSplitActive())return;
         const pred=predOf(rec);
         if(pred==null||pred>=rec.r.targetWmt*0.995)return;
         movesTxt.push('⚠ '+cont+' LIM-LD short '+fmt(rec.r.targetWmt-pred)+' t/day on '+rec.r.key
@@ -1901,7 +1913,7 @@
       // P1/P2 are settled so it only moves genuine leftovers; same owner,
       // and only untargeted P3 excess is eligible for this network split.
       (function splitLeftoverLd(){
-        if(!planRulesS4Active())return;
+        if(!planRulesSplitActive())return;
         const limLd=((window.PLANNING_RULES||{}).limLd)||{};
         const split=limLd.split;
         // The split's other leg is DATA from planning_rules (§4). POS 6 since
@@ -2083,7 +2095,7 @@
               }
               lds=ldRows();
             }
-            if(planRulesS4Active()&&lds.length>1){
+            if(planRulesSplitActive()&&lds.length>1){
               const sd=String((((window.PLANNING_RULES||{}).limLd)||{}).splitDest||'POS 6').toUpperCase();
               const pos=lds.filter(x=>destOf(x)===sd);
               const hb=lds.filter(x=>destOf(x)!==sd);
@@ -2178,7 +2190,7 @@
               .sort((a,b)=>b.r.dt-a.r.dt)[0];
             if(unt)return unt;
             let lds=ldRows().filter(not);
-            if(planRulesS4Active()){
+            if(planRulesSplitActive()){
               const tf=lds.filter(x=>pitOf(x)==='TF');
               if(tf.length>1)return tf.sort((a,b)=>b.r.dt-a.r.dt)[0];
             }
@@ -2511,7 +2523,17 @@
     const R=window.PLANNING_RULES||{};
     if(!((R.posTransit||{}).enabled))return;
     const d=draft();
-    Object.keys(d).forEach(id=>{if(d[id]&&d[id]._posTransit)delete d[id];});
+    // Rebuild from zero: every IWIP POS→FeNi row goes, not only the ones
+    // still carrying the _posTransit flag. A 2026-08-25-era save/load
+    // round-trip dropped the flag, and the Sep day-04 refreeze then kept
+    // two stale POS 6>FENI rows (30+26 DT) with ZERO inflow behind them —
+    // input=output broken by a marker, so match the row's shape instead.
+    Object.keys(d).forEach(id=>{
+      const r=d[id];
+      if(!r)return;
+      if(r._posTransit||(String(r.contractor||'').toUpperCase()==='IWIP'
+        &&/^POS \d+>FENI/.test(String(r.key||'').toUpperCase())))delete d[id];
+    });
     // §10.9 first: loaders on every row follow the historical ratio, and the
     // POS inflow below must be priced with those loaders on WARM hybrid
     // curves — the legacy fallback path is what inflated the Dec saves
@@ -2658,12 +2680,18 @@
     const T=R.targets||{};
     const rows=Object.keys(draft()).map(id=>({id,r:draft()[id]}))
       .filter(x=>x.r&&!x.r.foreign&&workingDt(x.r)>0);
-    let sapTgt=0,sapPred=0,tosTgt=0,tosPred=0,ldPred=0;
+    let sapTgt=0,sapPred=0,tosTgt=0,tosPred=0,ldPred=0,sapSaleable=0;
+    // §4 reject rates (planning team 2026-08-26): saleable SAP = ROM minus
+    // contractual reject — 0% Tofu, 7% BLB/KR. Reporting only; DT
+    // dimensioning stays on ROM.
+    const REJECT={BLB:0.07,KR:0.07,KRENE:0.07,TF:0,TOFU:0};
     rows.forEach(({id,r})=>{
       const dt=workingDt(r);
       const pred=predDayAt(id,r,dt)||0;
       const p=prioOf(r);
-      if(p===1){sapTgt+=r.targetWmt||0;sapPred+=pred;}
+      if(p===1){sapTgt+=r.targetWmt||0;sapPred+=pred;
+        const pit=String(r.key||'').split('>')[0].trim().toUpperCase();
+        sapSaleable+=pred*(1-(REJECT[pit]||0));}
       else if(p===2){tosTgt+=r.targetWmt||0;tosPred+=pred;}
       else if(p===3){ldPred+=pred;}
     });
@@ -2686,11 +2714,12 @@
         ok:pred>=lo&&pred<=hi};
     });
     return {
-      sap:{tgt:sapTgt,pred:sapPred,met:sapTgt>0?sapPred>=sapTgt*0.995:null},
+      sap:{tgt:sapTgt,pred:sapPred,met:sapTgt>0?sapPred>=sapTgt*0.995:null,
+        saleable:sapSaleable,saleableProj:sapSaleable*DAYS},
       feniSap:feniSap,
       tos:{tgt:tosTgt,pred:tosPred,met:tosTgt>0?tosPred>=tosTgt*0.995:null,
         proj:tosPred*DAYS,target4mo:T.limTosTotal||4600000},
-      ld:{pred:ldPred,proj:ldPred*DAYS,target4mo:T.limLdTotal||8000000},
+      ld:{pred:ldPred,proj:ldPred*DAYS,target4mo:T.limLdTotal||6644306},
       pos:{input:pt.input,output:pt.output,rows:pt.rows,
         balanced:Math.abs(pt.input-pt.output)<1},
       walls:contractorWallViolations()
@@ -2708,6 +2737,9 @@
       +'==================\n'
       +'SAP target met:      '+yn(s.sap.met)+'  (target: '+fmt(Math.round(s.sap.tgt))
         +' t/day, actual: '+fmt(Math.round(s.sap.pred))+' t/day)\n'
+      +'SAP saleable:        '+fmt(Math.round(s.sap.saleable))+' t/day after reject '
+        +'(0% TF, 7% BLB/KR) · 4-mo projection '+mt(s.sap.saleableProj)
+        +' vs sales table 5.72 Mt\n'
       +'LIM-TOS target met:  '+yn(s.tos.met)+'  (day target: '+fmt(Math.round(s.tos.tgt))
         +' t/day, actual: '+fmt(Math.round(s.tos.pred))+' t/day · 4-mo projection '
         +mt(s.tos.proj)+' vs '+mt(s.tos.target4mo)+')\n'
@@ -2779,10 +2811,10 @@
         +'RED = over capacity. Speed is '
         +'the limit-implied free speed. A demonstrated peak is not a capacity and prices nothing.</div>'
       :'';
-    const s4=planRulesS4Active()
-      ?' <span class="plan-cong-badge saturated" title="Day-04 plan = Scenario 4: same as S3 '
-        +'but leftover LD trucks split 50/50 HUAFEI/BSE vs '+String((((window.PLANNING_RULES||{}).limLd)||{}).splitDest||'POS 6')+'. Compare NEW PREDICTED '
-        +'against the day-03 save to see the tonnage effect.">S4 · LD split 50/50</span>'
+    const s4=planRulesSplitActive()
+      ?' <span class="plan-cong-badge saturated" title="Day-04/06 plan = the .2 hauling scenario: same mining plan '
+        +'but leftover LD trucks split 50/50 HUAFEI/BSE vs '+String((((window.PLANNING_RULES||{}).limLd)||{}).splitDest||'POS 6')+' (from October). Compare NEW PREDICTED '
+        +'against the .1 save to see the tonnage effect.">.2 · LD split 50/50</span>'
       :'';
     host.innerHTML=
       '<div class="plan-s2-label" style="margin-top:14px">Planning rules validation'+s4+' '

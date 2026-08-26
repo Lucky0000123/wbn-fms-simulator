@@ -100,6 +100,12 @@ POS is transit, not a sink: tonnes into POS must leave POS on IWIP reclaim
 (POS → FeNi), sized so input = output (§5). Under this rule only the ~2,000
 buffer per pit flows through POS, so reclaim fleets are small.
 
+**Reject rates (planning team, 2026-08-26):** DT dimensioning stays on ROM
+material. Saleable SAP = ROM minus contractual reject: 0% for Tofu, 7% for
+BLB and KR. Saleable LIM has no reject. The sales table (Saprolite TOS
+5,718,686 wmt declared) is a saleable number; the plan's targets are ROM.
+Report the reconciliation, do not resize the fleet to it.
+
 ### P2 — LIM-TOS (Limonite to TOS stockpile, second priority)
 
 **Rule:** LIM-TOS always goes to HUAFEI.
@@ -123,13 +129,17 @@ P3 target is reported separately as excess capacity, not credited to target.
 The leftover DT are split:
 - 50% of leftover DT → TF → HUAFEI / BSE
 - 50% of leftover DT → TF → POS 6
+- Split starts October (from month 10). September leftovers all go HUAFEI/BSE.
 
 (Owner, 2026-08-25: the split leg moved from POS 12 to POS 6 — the km 12.0
 yard on the lower mainline. POS 6 is a longer haul than POS 12 (55.8 km vs
 40.8 from TF), so expect fewer trips/DT on the split rows and more traffic
-through sections S2–S4.)
+through sections S2–S4. Planning team, 2026-08-26: the split begins in
+October — September behaves like the no-split scenario.)
 
-This half/half split is the S4 concept — a what-if to see how much tonnage increases when trucks are split across destinations instead of all going to one.
+This half/half split is the x.x.2 hauling concept (scenarios 3.0.2 / 3.1.2;
+formerly called S4) — a what-if to see how much tonnage increases when trucks
+are split across destinations instead of all going to one.
 
 If there are not enough trucks to fill P1 and P2, P3 may receive zero trucks.
 P3 is the first donor if P1 or P2 needs more trucks. Once P1 and P2 are met,
@@ -147,8 +157,8 @@ Pits (BLB, KR, TF) → POS dumps (12, 14, 15, 16) → FeNi plants (KM0, KM15)
 ```
 
 ### Rules:
-1. Calculate the total material going INTO POS from all pits (based on the plan).
-2. The total material going OUT of POS to FeNi plants must equal the input.
+1. Calculate the total material going INTO POS from all pits (based on the plan), including SAP sent to POS as the §4 buffer.
+2. The total material going OUT of POS to FeNi plants must equal the input. IWIP reclaim WMT = inbound POS WMT.
 3. Allocate IWIP dump trucks to move material from POS to FeNi.
 4. The number of IWIP trucks is calculated from the required daily tonnage and the model's trips/DT prediction for each POS → FeNi route.
 5. These IWIP trucks must be added to the plan as additional rows so they are counted in the road congestion calculation.
@@ -172,7 +182,7 @@ Only add a POS → FeNi route if that POS dump actually receives material in the
 
 | Target | Value | Period | Material |
 |--------|-------|--------|----------|
-| Total LIM-LD | 8 Mt | Sep-Dec 2026 (4 months) | Limonite, long-distance |
+| Total LIM-LD | 6.644306 Mt | Sep-Dec 2026 (4 months) | Limonite, long-distance |
 | Total LIM-TOS (all pits) | 4.6 Mt | Sep-Dec 2026 | Limonite to TOS |
 | BLB LIM-TOS contribution | 1 Mt (250 kt/month) | Sep-Dec 2026 | Limonite from BLB to HUAFEI |
 | SAP daily target | Per monthly plan | Daily | Saprolite to FeNi plants |
@@ -202,7 +212,7 @@ VALIDATION SUMMARY
 ==================
 SAP target met:      [YES/NO]  (target: X t/day, actual: Y t/day)
 LIM-TOS target met:  [YES/NO]  (target: 4.6 Mt, actual: X Mt)
-LIM-LD total:        X Mt  (target: 8 Mt)  [PASS/FAIL]
+LIM-LD total:        X Mt  (target: 6.64 Mt)  [PASS/FAIL]
 POS transit balanced: [YES/NO]  (input: X t, output: Y t)
 ```
 

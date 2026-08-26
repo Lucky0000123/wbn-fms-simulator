@@ -113,6 +113,17 @@ def main():
                 " return h && h.querySelectorAll('tr').length > 0;}", timeout=45000)
         except Exception:                                          # noqa: BLE001
             pass
+        # ... and the S7 verdict table renders AFTER the analogues table, in
+        # paHistory() at the end of the same promise chain. Waiting only on
+        # pa-analogues-rows and asserting pa-history-rows is a race — it
+        # failed exactly that way on 2026-08-26 (12 s analogue fetch; the
+        # assert ran between the two renders). Wait on what is asserted.
+        try:
+            pg.wait_for_function(
+                "() => {const h=document.getElementById('pa-history-rows');"
+                " return h && h.querySelectorAll('tr').length > 0;}", timeout=45000)
+        except Exception:                                          # noqa: BLE001
+            pass
         pg.wait_for_timeout(2500)
 
         # --- section presence and, more importantly, population ---

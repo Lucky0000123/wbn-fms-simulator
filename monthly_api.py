@@ -1961,6 +1961,10 @@ def _xlsx_fill_month(ws, st, title, achv=False):
         ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=10)
     for sap in sap_rows:
         r += 1
+        # c840db8 removed the status colour coding but deleted the `status`
+        # binding with it, leaving `status` in vals — every workbook export
+        # (year books, scenario zip, J72) died with NameError.
+        status = sap.get("status") or ""
         vals = ["P%s" % sap.get("prio", 1), sap["path"],
                 "%s · %s" % (sap.get("mat") or "", sap.get("otype") or "—"),
                 sap["contractor"], sap["target"], sap["pred"],

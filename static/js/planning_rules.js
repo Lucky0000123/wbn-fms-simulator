@@ -57,6 +57,9 @@ window.PLANNING_RULES = {
     // second hardcode the engine has to agree with.
     split: { huafeiBse: 0.5, splitShare: 0.5 },
     splitDest: 'POS 6',
+    // Planning team 2026-08-26: the x.x.2 half-split begins in October.
+    // September day-04 plans behave like x.x.1 (all leftovers HUAFEI/BSE).
+    splitStartMonth: 10,
     destinations: ['HUAFEI', 'BSE', 'POS 6']
   },
   posTransit: {
@@ -78,7 +81,9 @@ window.PLANNING_RULES = {
     TF: { minTrips: 1.5, warnBelow: 1.5, failBelow: 1.0, routes: ['HUAFEI', 'BSE', 'POS 12'] }
   },
   targets: {
-    limLdTotal: 8000000, // 8 Mt
+    // Planning team sales table 2026-08-26: Limonite LD 6,644,306 wmt
+    // declared (was 8 Mt). Parsed from planning_rules.md §6.
+    limLdTotal: 6644306,
     limTosTotal: 4600000, // 4.6 Mt
     period: 'Sep-Dec 2026'
   },
@@ -141,6 +146,10 @@ function planRulesParseMd(md){
     const dest=mSplit[3].replace(/POS\s*/i,'POS ').trim();
     R.limLd.split={huafeiBse:parseInt(mSplit[1],10)/100, splitShare:parseInt(mSplit[2],10)/100};
     R.limLd.splitDest=dest;
+    // "Split starts October (from month 10)" — captured as data so the
+    // month is editable in the doc, like the destination.
+    const mStart=md.match(/Split starts \w+\s*\(from month\s*(\d{1,2})\)/i);
+    R.limLd.splitStartMonth=mStart?parseInt(mStart[1],10):null;
     if(R.limLd.destinations&&R.limLd.destinations.indexOf(dest)<0)R.limLd.destinations.push(dest);
     touched=true;
   }

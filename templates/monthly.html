@@ -132,8 +132,13 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
                labelled S1). The default is now an explicit scenario. -->
           <option value="">S1 (default)</option>
           <option value="1">S1</option>
-          <option value="3">S3</option>
-          <option value="4">S4</option>
+          <!-- Planning-team names 2026-08-26: 3.0=as-is mining, 3.1=+1 Mt BLB
+               LIM Oct-Dec; .1=all leftovers HUAFEI/BSE, .2=half to POS 6 from
+               October. Days 03/04/05/06 are the machine keys. -->
+          <option value="3">3.0.1 (S3)</option>
+          <option value="4">3.0.2 (S4)</option>
+          <option value="5">3.1.1 (S5)</option>
+          <option value="6">3.1.2 (S6)</option>
         </select>
       </label>
       <button class="primary" onclick="moExportYear()">Download Excel</button>
@@ -1025,17 +1030,20 @@ async function scenRefresh(){
   const card=$('mo-scen-card');
   if(!r||!r.ok||!r.scenarios||!r.scenarios.length){$('mo-scen-summary').innerHTML='';return;}
   const scs=r.scenarios, cap=r.ld_cap;
+  // Label the target from the API's own number (planning team 2026-08-26:
+  // 6,644,306 t; was 8 Mt) so the text can never disagree with the line.
+  const capMt=cap?(cap/1e6).toFixed(2).replace(/\.00$/,'')+' Mt':'target';
   // summary cards: one per scenario, LD attainment front and centre
   $('mo-scen-summary').innerHTML=scs.map(s=>{
     const t=s.total, pct=cap?Math.round(100*t.ld_t_planned/cap):null;
     const cls=t.ld_cap_reached?'ok':(pct>=85?'warn':'er');
     return `<div class="mat-card"><h3>${s.label}</h3>
       <div class="cov ${cls}">${pct==null?'—':pct+'%'}</div>
-      <div class="pair"><span>LIM-LD vs 8 Mt target</span><b>${MFMT(t.ld_t_planned)} t</b></div>
+      <div class="pair"><span>LIM-LD vs ${capMt} target</span><b>${MFMT(t.ld_t_planned)} t</b></div>
       <div class="pair"><span>uncapped capacity</span><b>${MFMT(t.ld_t_capacity)} t</b></div>
       <div class="pair"><span>SAP moved</span><b>${MFMT(t.sap_t)} t</b></div>
       <div class="pair"><span>LIM-TOS moved</span><b>${MFMT(t.limtos_t)} t</b></div>
-      ${t.ld_cap_reached?`<div class="pair"><span style="color:var(--ok)">8 Mt target met — ${MFMT(t.ld_over_target_t||0)} t over</span></div>`:
+      ${t.ld_cap_reached?`<div class="pair"><span style="color:var(--ok)">${capMt} target met — ${MFMT(t.ld_over_target_t||0)} t over</span></div>`:
         `<div class="pair"><span style="color:var(--er)">short of the target by</span><b>${MFMT(t.ld_shortfall_t)} t</b></div>`}
       ${s.violations&&s.violations.length?`<div class="pair"><span style="color:var(--er)">BLB≠RIM: ${s.violations.length}</span></div>`:''}
     </div>`;}).join('');
@@ -1062,7 +1070,7 @@ async function scenRefresh(){
       yAxis:[{type:'value',name:'t / month'},{type:'value',name:'cumulative t',max:Math.max(cap*1.05,...cums.flat())}],
       series:[...scs.map((s,i)=>({name:s.label,type:'bar',data:s.months.map(m=>m.ld_t_month_planned)})),
               ...scs.map((s,i)=>({name:s.label+' cumulative',type:'line',yAxisIndex:1,data:cums[i],symbolSize:5})),
-              {name:'8 Mt target',type:'line',yAxisIndex:1,data:months.map(()=>cap),lineStyle:{type:'dashed',color:'#ef4444'},symbol:'none'}]});
+              {name:capMt+' target',type:'line',yAxisIndex:1,data:months.map(()=>cap),lineStyle:{type:'dashed',color:'#ef4444'},symbol:'none'}]});
   }
   // per-scenario allocation detail (collapsible)
   $('mo-scen-detail').innerHTML=scs.map(s=>{

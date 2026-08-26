@@ -1,0 +1,154 @@
+{
+  "id": "S5",
+  "label": "Scenario 3.1.1",
+  "source": "S3 + planning team 2026-08-26",
+  "targets": [
+    {
+      "pit": "BLB",
+      "mat": "LIM",
+      "month": 9,
+      "wmt_day": 20287.2
+    },
+    {
+      "pit": "BLB",
+      "mat": "SAP",
+      "month": 9,
+      "wmt_day": 4147.2
+    },
+    {
+      "pit": "KRENE",
+      "mat": "LIM",
+      "month": 9,
+      "wmt_day": 1204.8
+    },
+    {
+      "pit": "KRENE",
+      "mat": "SAP",
+      "month": 9,
+      "wmt_day": 8246.4
+    },
+    {
+      "pit": "TOFU",
+      "mat": "LIM",
+      "month": 9,
+      "wmt_day": 6420.9
+    },
+    {
+      "pit": "TOFU",
+      "mat": "SAP",
+      "month": 9,
+      "wmt_day": 10288.1
+    },
+    {
+      "pit": "BLB",
+      "mat": "LIM",
+      "month": 10,
+      "wmt_day": 36737.2
+    },
+    {
+      "pit": "BLB",
+      "mat": "SAP",
+      "month": 10,
+      "wmt_day": 16773.0
+    },
+    {
+      "pit": "KRENE",
+      "mat": "LIM",
+      "month": 10,
+      "wmt_day": 1688.8
+    },
+    {
+      "pit": "KRENE",
+      "mat": "SAP",
+      "month": 10,
+      "wmt_day": 9478.6
+    },
+    {
+      "pit": "TOFU",
+      "mat": "LIM",
+      "month": 10,
+      "wmt_day": 6481.2
+    },
+    {
+      "pit": "TOFU",
+      "mat": "SAP",
+      "month": 10,
+      "wmt_day": 11515.6
+    },
+    {
+      "pit": "BLB",
+      "mat": "LIM",
+      "month": 11,
+      "wmt_day": 47122.6
+    },
+    {
+      "pit": "BLB",
+      "mat": "SAP",
+      "month": 11,
+      "wmt_day": 36238.4
+    },
+    {
+      "pit": "KRENE",
+      "mat": "LIM",
+      "month": 11,
+      "wmt_day": 4093.0
+    },
+    {
+      "pit": "KRENE",
+      "mat": "SAP",
+      "month": 11,
+      "wmt_day": 6189.9
+    },
+    {
+      "pit": "TOFU",
+      "mat": "LIM",
+      "month": 11,
+      "wmt_day": 6937.6
+    },
+    {
+      "pit": "TOFU",
+      "mat": "SAP",
+      "month": 11,
+      "wmt_day": 10165.5
+    },
+    {
+      "pit": "BLB",
+      "mat": "LIM",
+      "month": 12,
+      "wmt_day": 44437.3
+    },
+    {
+      "pit": "BLB",
+      "mat": "SAP",
+      "month": 12,
+      "wmt_day": 48229.5
+    },
+    {
+      "pit": "KRENE",
+      "mat": "LIM",
+      "month": 12,
+      "wmt_day": 2490.0
+    },
+    {
+      "pit": "KRENE",
+      "mat": "SAP",
+      "month": 12,
+      "wmt_day": 9920.1
+    },
+    {
+      "pit": "TOFU",
+      "mat": "LIM",
+      "month": 12,
+      "wmt_day": 6495.0
+    },
+    {
+      "pit": "TOFU",
+      "mat": "SAP",
+      "month": 12,
+      "wmt_day": 16877.0
+    }
+  ],
+  "loaded_at": "2026-08-26T03:50:00Z",
+  "note_blb_limtos": "owner 2026-08-21: +250,000 t/month BLB->HUAFEI LIM-TOS on top of the imported scenario base (1 Mt over Sep-Dec, lifting total LIM-TOS ~3.6 -> ~4.6 Mt)",
+  "note_31": "planning team 2026-08-26: scenario 3.1 = 3.0 mining plan + \"1 Mt\" additional LIM from BLB at 330,000 t/month October-December (NOT September; moved from Sep-Dec by owner 2026-08-26). Applied as +330000/days on BLB LIM wmt_day for months 10, 11, 12. NOTE: 330k x 3 = 990,000 t, not literally 1,000,000 - the monthly figure is the instruction, discrepancy recorded not corrected."
+}

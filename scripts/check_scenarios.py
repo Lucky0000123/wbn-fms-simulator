@@ -208,42 +208,43 @@ if scens:
 if os.path.isfile(os.path.join(sa._SCEN_DIR, "S1.json")):
     check("no S1.json file may exist (S1 is always derived live)", False)
 
-print("\n=== SAP to FeNi is 2 kt/day, rest to POS (owner 2026-08-25) ===")
-check("BLB FeNi cap is 2,000 t/day",
-      sa.SAP_ROUTING["BLB"]["fixed"][0][1] == 2000.0, sa.SAP_ROUTING["BLB"])
-check("TOFU FeNi cap is 2,000 t/day",
-      sa.SAP_ROUTING["TOFU"]["fixed"][0][1] == 2000.0, sa.SAP_ROUTING["TOFU"])
-check("BLB rest is POS 14", sa.SAP_ROUTING["BLB"]["rest"] == "POS 14")
-check("TOFU rest is POS 12", sa.SAP_ROUTING["TOFU"]["rest"] == "POS 12")
-check("KRENE rest is POS 12", sa.SAP_ROUTING["KRENE"]["rest"] == "POS 12")
+print("\n=== SAP: 2 kt/day POS buffer, REST direct to FeNi (owner 2026-08-26) ===")
+check("BLB POS buffer is 2,000 t/day",
+      sa.SAP_ROUTING["BLB"]["fixed"][0] == ("POS 14", 2000.0), sa.SAP_ROUTING["BLB"])
+check("TOFU POS buffer is 2,000 t/day",
+      sa.SAP_ROUTING["TOFU"]["fixed"][0] == ("POS 12", 2000.0), sa.SAP_ROUTING["TOFU"])
+check("BLB rest is FENI KM0", sa.SAP_ROUTING["BLB"]["rest"] == "FENI KM0")
+check("TOFU rest is FENI KM15", sa.SAP_ROUTING["TOFU"]["rest"] == "FENI KM15")
+check("KRENE rest is FENI KM15", sa.SAP_ROUTING["KRENE"]["rest"] == "FENI KM15")
 grp = [{"dest": "FENI KM 15", "wmt": {9: 1}},
        {"dest": "POS 12", "wmt": {9: 1}}]
 pieces = sa._split_sap_conditions("TOFU", 10288.0, grp, 9)
 by = {r["dest"]: w for r, w in (pieces or [])}
-check("TOFU 10,288 SAP → 2,000 FeNi + 8,288 POS",
-      abs(by.get("FENI KM 15", 0) - 2000) < 0.01
-      and abs(by.get("POS 12", 0) - 8288) < 0.01, by)
+check("TOFU 10,288 SAP → 2,000 POS buffer + 8,288 FeNi",
+      abs(by.get("POS 12", 0) - 2000) < 0.01
+      and abs(by.get("FENI KM 15", 0) - 8288) < 0.01, by)
 grp_blb = [{"dest": "FENI KM0", "wmt": {9: 1}},
            {"dest": "POS 14", "wmt": {9: 1}}]
 pieces_b = sa._split_sap_conditions("BLB", 4147.0, grp_blb, 9)
 by_b = {sa._norm_sap_dest(r["dest"]): w for r, w in (pieces_b or [])}
-check("BLB 4,147 SAP → 2,000 FeNi + 2,147 POS",
-      abs(by_b.get("FENI KM0", 0) - 2000) < 0.01
-      and abs(by_b.get("POS 14", 0) - 2147) < 0.01, by_b)
+check("BLB 4,147 SAP → 2,000 POS buffer + 2,147 FeNi",
+      abs(by_b.get("POS 14", 0) - 2000) < 0.01
+      and abs(by_b.get("FENI KM0", 0) - 2147) < 0.01, by_b)
 pieces_lo = sa._split_sap_conditions("BLB", 1500.0, grp_blb, 9)
 by_lo = {sa._norm_sap_dest(r["dest"]): w for r, w in (pieces_lo or [])}
-check("BLB 1,500 SAP (< 2,000 cap) all stays on FeNi KM0",
-      abs(by_lo.get("FENI KM0", 0) - 1500) < 0.01
-      and abs(by_lo.get("POS 14", 0)) < 0.01, by_lo)
+check("BLB 1,500 SAP (< 2,000 buffer) all stays on POS 14",
+      abs(by_lo.get("POS 14", 0) - 1500) < 0.01
+      and abs(by_lo.get("FENI KM0", 0)) < 0.01, by_lo)
 grp_bad = [{"dest": "FENI KM0", "wmt": {9: 1}},
            {"dest": "FENI KM15", "wmt": {9: 1}}]
 pieces_miss = sa._split_sap_conditions("BLB", 5000.0, grp_bad, 9)
 by_m = {sa._norm_sap_dest(r["dest"]): w for r, w in (pieces_miss or [])}
-check("BLB leftover clones onto POS 14 when matrix has no POS SAP row",
-      abs(by_m.get("FENI KM0", 0) - 2000) < 0.01
-      and abs(by_m.get("POS 14", 0) - 3000) < 0.01, by_m)
-check("leftover SAP does not go to the other FeNi",
-      abs(by_m.get("FENI KM15", 0)) < 0.01, by_m)
+check("BLB rest splits pro-rata over the pit's own FeNi matrix rows",
+      abs(by_m.get("FENI KM0", 0) + by_m.get("FENI KM15", 0)
+          + by_m.get("POS 14", 0) - 5000.0) < 0.01
+      and by_m.get("POS 14", 0) <= 2000.01, by_m)
+check("leftover SAP lands on FeNi, not an invented POS row",
+      abs(by_m.get("FENI KM0", 0) + by_m.get("FENI KM15", 0) - 3000) < 0.01, by_m)
 try:
     from flask import Flask
     from openpyxl import load_workbook
