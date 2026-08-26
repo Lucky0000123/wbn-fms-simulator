@@ -240,7 +240,7 @@ function _paintPlanSat(d){
     backgroundColor:'transparent',
     tooltip:{trigger:'axis'},
     grid:{left:56,right:16,top:14,bottom:36},
-    xAxis:Object.assign({type:'value',name:'total fleet DT',nameLocation:'middle',nameGap:22},axis),
+    xAxis:Object.assign({type:'value',name:'corridor fleet DT (BLB excluded)',nameLocation:'middle',nameGap:22},axis),
     yAxis:Object.assign({type:'value',name:'WMT/day per DT',nameLocation:'middle',nameGap:44,
       min:v=>Math.floor(Math.min(v.min,histPerDt?histPerDt-10:v.min)),
       max:v=>Math.ceil(Math.max(v.max,histPerDt?histPerDt+5:v.max))},axis),
@@ -254,7 +254,7 @@ function _paintPlanSat(d){
     backgroundColor:'transparent',
     tooltip:{trigger:'axis'},
     grid:{left:72,right:16,top:14,bottom:36},
-    xAxis:Object.assign({type:'value',name:'total fleet DT',nameLocation:'middle',nameGap:22},axis),
+    xAxis:Object.assign({type:'value',name:'corridor fleet DT (BLB excluded)',nameLocation:'middle',nameGap:22},axis),
     yAxis:Object.assign({type:'value',name:'WMT/day (all routes)',nameLocation:'middle',nameGap:56},axis),
     series:[{name:'Model (whole plan)',type:'line',showSymbol:false,data:perDay,
       lineStyle:{width:2.4,color:'#818cf8'},
@@ -263,11 +263,11 @@ function _paintPlanSat(d){
       .concat(fleetMark?[fleetMark]:[]),
   });
   const w=(base.window||[]).join(' → ');
-  _congNote('cong-wmtdt-note','Model: total fleet spread in the measured Jan–Jun route mix ('
+  _congNote('cong-wmtdt-note','Mainline corridor km 0–68 only — BLB spur excluded (owner). Fleet spread in the measured Jan–Jun corridor mix ('
     +d.mix_routes+' routes, shared-road pricing, loaders at calibrated faces). Dashed = the fleet\'s '
     +'measured average over '+w+' ('+histPerDt+' t/DT/day at ~'+Math.round(histDt)+' DT). '
     +'The curve falls as added DT queue at the same loading faces and share the same road.');
-  _congNote('cong-wmtday-note','Total daily tonnage as the whole fleet grows, same mix and pricing. '
+  _congNote('cong-wmtday-note','Corridor daily tonnage (km 0–68, BLB excluded) as the corridor fleet grows, same mix and pricing. '
     +'Dashed = measured Jan–Jun average ('+Math.round(histWmt/1000)+' kt/day). The flattening slope is the '
     +'marginal value of each added truck across the whole plan.');
 }

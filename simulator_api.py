@@ -3942,12 +3942,20 @@ _PLAN_SAT_CACHE = {}
 
 def _plan_saturation_mix():
     """(route, share, payload_t) from the Jan–Jun research file. Shares are
-    DT-day weighted and renormalised over routes >= 0.5% of the fleet."""
+    DT-day weighted and renormalised over routes >= 0.5% of the fleet.
+
+    MAINLINE CORRIDOR ONLY (owner, 2026-08-26): "make it the full line from
+    km zero to km ~68 — whatever plan runs on it — you can leave BLB for
+    now." Every route whose ORIGIN is on the Tofu–FeNi mainline (TF, KR,
+    POS yards, HUAFEI transfers) is in; the BLB spur is excluded. The
+    baseline threshold is recomputed over the same corridor cut so the
+    dashed line and the model curve describe the same road."""
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         "reports", "trips_per_dt_jan_jun.json")
     with open(path, encoding="utf-8") as fh:
         d = json.load(fh)
-    recs = [r for r in d.get("records") or [] if r.get("contractor") == "ALL"]
+    recs = [r for r in d.get("records") or [] if r.get("contractor") == "ALL"
+            and not str(r.get("route", "")).strip().upper().startswith("BLB")]
     tot = sum(r["dt_days"] for r in recs) or 1.0
     mix = [(r["route"], r["dt_days"] / tot,
             r["wmt"] / max(1.0, r["trips"]))
