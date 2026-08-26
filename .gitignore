@@ -104,3 +104,5 @@ reports/trips_per_dt_vs_engine.json
 # change that created it, per the 2026-08-07 audit rule. Both remotes are
 # public; weighbridge-positions already withholds coordinates on purpose.
 data/weighbridge_matrix_*.tsv
+# WB allocation analysis: DB-derived bridge names/coordinates/flows (2026-08-25)
+reports/WB_ALLOCATION_ANALYSIS.md
