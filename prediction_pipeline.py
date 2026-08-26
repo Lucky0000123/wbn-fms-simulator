@@ -206,9 +206,22 @@ def canonical_area(name: str) -> str:
         return ""
     head = s.split()[0] if s else ""
     if head == "FENI":
-        # FENI KM15 is a distinct point 15 km up the corridor; every other FENI
-        # tip (A/W/Q/U1/U2/M/S/K/L1...) is a bay inside the plant at KM0.
-        return "FENI KM15" if s in ("FENI KM15", "FENI 15") else "FENI KM0"
+        # The FENI letters are furnace-line names split across TWO plants, and
+        # the comment above ("every other FENI tip is a bay inside the plant at
+        # KM0") was WRONG for six of them. Proved from bridge geography, not
+        # assumed (2026-08-25, reports/WB_ALLOCATION_ANALYSIS.md): lines
+        # T/U/U1/U2/W/X (~98k tickets) are weighed overwhelmingly at
+        # WB_IWIP_T12/T17 — the two bridges that sit at chainage km 15 — while
+        # A..S are weighed at the km 0-10 bridges. Before this mapping,
+        # weighbridge-by-path returned EMPTY for every KM15 route and ~98k
+        # tickets of KM15-bound tonnage counted as FENI KM0 in everything
+        # derived from canonicalised ticket destinations. Owner-confirmed
+        # 2026-08-26.
+        _KM15_LINES = ("FENI T", "FENI U", "FENI U1", "FENI U2",
+                       "FENI W", "FENI X")
+        if s in ("FENI KM15", "FENI 15") or s in _KM15_LINES:
+            return "FENI KM15"
+        return "FENI KM0"
     if head in ("HUAFEI", "HUAFEI.B01", "HUAFEI.C01") or s.startswith("HUAFEI."):
         return "HUAFEI"
     if s in CORRIDOR_KM:

@@ -419,6 +419,11 @@
         if(r.targetWmt>0)snap.paths[id].targetWmt=r.targetWmt;
         if(r.otype)snap.paths[id].otype=r.otype;
         if(r._targetManual)snap.paths[id]._targetManual=true;
+        // Same round-trip rule as _tenantRate above: the POS-transit sizing
+        // rate must survive Save→Load or a LOADED plan's IWIP rows price at
+        // zero bridge demand until the next Allocate rebuilds them.
+        if(Number.isFinite(r._transitTripsPerDt))snap.paths[id]._transitTripsPerDt=r._transitTripsPerDt;
+        if(r._posTransit)snap.paths[id]._posTransit=true;
         if(r._preAlloc)snap.paths[id]._preAlloc={dt:r._preAlloc.dt,pred:r._preAlloc.pred,achv:r._preAlloc.achv,achv_sim:r._preAlloc.achv_sim};
         if(r._allocDt!=null)snap.paths[id]._allocDt=r._allocDt;
       });
@@ -2544,6 +2549,13 @@
         d[id]={key:key,dt:est.dt,loaders:est.loaders,contractor:'IWIP',
           source:key.split('>')[0],dest:key.split('>')[1],
           foreign:true,_posTransit:true,_allocDt:est.dt,
+          // The sizing rate stays ON the row: consumers that need this row's
+          // trips (weighbridge auto-assign) cannot re-derive it — the route
+          // is outside the path model, so planTripsPerDT prices it at ZERO
+          // and the row silently vanished from bridge demand (measured
+          // 2026-08-26: 4 of 5 IWIP rows posted "no trips"). Daily basis,
+          // same as est.tripsPerDt (/api/congestion_model day rate).
+          _transitTripsPerDt:est.tripsPerDt,
           _preAlloc:{dt:est.dt,pred:0,achv:0,achv_sim:0}};
       }
     }

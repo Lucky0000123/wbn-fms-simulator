@@ -2209,6 +2209,218 @@ def api_simulator_trucks():
     })
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Weighbridge auto-allocation (owner request 2026-08-25).
+#
+# ONE owner for bridge assignment: the Plan panel and any Excel consumer call
+# THIS endpoint (the J79 lesson — both sides of a number call one function).
+# Eligibility is the owner's matrix; base points and capacities are the
+# measured record (reports/WB_ALLOCATION_ANALYSIS.md). Four owner rulings,
+# 2026-08-26: T11 is never assigned (deliberate exclusion of the busiest
+# bridge); WB_IWIP_T2 is used as the matrix writes it but flagged unverified;
+# IWIP POS-transit rows use measured history minus exclusions (destination's
+# matrix bridges when a new route has no history yet); tenant rows are never
+# allocated. Registered directly (not via _register): it reads the disk
+# register / committed fixture and has no DB path to fall back FROM.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_WB_BASIS_CACHE = None
+
+
+def _wb_basis():
+    """The allocation basis: data/wb_register.json, else the committed fixture."""
+    global _WB_BASIS_CACHE
+    import time as _time
+    if _WB_BASIS_CACHE and (_time.time() - _WB_BASIS_CACHE[0] < 60):
+        return _WB_BASIS_CACHE[1]
+    base = os.path.dirname(os.path.abspath(__file__))
+    for path, src in ((os.path.join(base, "data", "wb_register.json"), "register"),
+                      (os.path.join(base, "fixtures", "wb-allocation-basis.json"), "fixture")):
+        try:
+            with open(path, encoding="utf-8") as f:
+                basis = json.load(f)
+            basis["servedFrom"] = src
+            _WB_BASIS_CACHE = (_time.time(), basis)
+            return basis
+        except Exception:
+            continue
+    return None
+
+
+@bp.route('/api/plan/wb-allocation-basis', methods=['GET'])
+def api_plan_wb_basis():
+    basis = _wb_basis()
+    if not basis:
+        return jsonify({"ok": False, "error": "no weighbridge register or fixture on disk"}), 503
+    return jsonify({"ok": True, **basis})
+
+
+def _wb_eligible(basis, route, foreign):
+    """Bridge NAMES a row may use, per the owner rulings. ([], reason) when none."""
+    excluded = set(basis.get("excluded_nums") or [])
+    bridges = basis.get("bridges") or {}
+    by_num = {}
+    for name, b in bridges.items():
+        # Ticket number 7 is shared by WB_IWIP_T7 and WB_RIM_T7 (two physical
+        # bridges 12 km apart). History speaks in numbers, and its number-7
+        # record is dominated by the IWIP bridge, so the IWIP name wins the
+        # number lookup; WB_RIM_T7 is reachable only by NAME via the matrix.
+        if b.get("num") in by_num and name.startswith("WB_RIM"):
+            continue
+        by_num[b["num"]] = name
+    if not foreign:
+        names = (basis.get("matrix") or {}).get(route)
+        if names:
+            return list(names), "owner matrix"
+        # A pit row off the matrix (e.g. an ad-hoc destination): measured
+        # history is the honest fallback, with exclusions applied.
+        foreign = True
+    hist = (basis.get("history_pairs") or {}).get(route)
+    if hist:
+        names = [by_num[n] for n in hist if n not in excluded and n in by_num]
+        if names:
+            return names, "measured history minus excluded"
+    # New route with no usable history (e.g. POS 6 transit): the destination
+    # plant's matrix bridges, union over pits — FILTERED by geography. Without
+    # the filter, the first live run assigned POS 6>FENI KM0 trucks to
+    # WB_IWIP_T13 on the BLB spur (km 5.9), a road those trucks never drive:
+    # the union inherits BLB-row bridges whenever BLB shares the destination.
+    # A bridge on the BLB spur can only weigh BLB-origin hauls.
+    dest = route.split(">")[-1].strip()
+    origin = route.split(">")[0].strip().upper()
+    union = []
+    for pair, names in (basis.get("matrix") or {}).items():
+        if pair.split(">")[-1].strip() == dest:
+            for n in names:
+                if n in union:
+                    continue
+                road = (bridges.get(n) or {}).get("road")
+                if road == "BLB" and not origin.startswith("BLB"):
+                    continue
+                union.append(n)
+    # A truck can only be weighed by a bridge it PASSES. Keep union bridges
+    # whose chainage lies on the drive span (route endpoints from the shared
+    # NODE_KM, 2 km margin for gate/apron offsets); if the span filter empties
+    # the set, keep the unfiltered union rather than starving the row.
+    try:
+        from prediction_pipeline import CORRIDOR_KM
+        o_km = CORRIDOR_KM.get(route.split(">")[0].strip())
+        d_km = CORRIDOR_KM.get(dest)
+        if o_km is not None and d_km is not None:
+            lo, hi = min(o_km, d_km) - 2.0, max(o_km, d_km) + 2.0
+            on_drive = [n for n in union
+                        if (bridges.get(n) or {}).get("km") is None
+                        or lo <= bridges[n]["km"] <= hi]
+            if on_drive:
+                union = on_drive
+    except Exception:
+        pass
+    if union:
+        return union, "destination's matrix bridges (no usable history; off-drive bridges dropped)"
+    return [], "no eligible bridges — matrix, history and destination fallback all empty"
+
+
+def api_plan_wb_allocate():
+    """Assign weighbridges to plan rows: min-max utilisation over eligible sets.
+
+    POST {rows:[{id, route, trips, foreign?, tenant?}], hours?}
+    `trips` and `hours` share one basis (per shift OR per day — the caller
+    picks, demand is trips/hours either way); `trips_day` accepted as an alias.
+    Deterministic greedy water-fill in 0.25-trip/hr quanta: rows most
+    constrained first, each quantum lands on the eligible bridge with the
+    lowest resulting utilisation (ties: lower current util, then the order the
+    eligibility list gives — matrix order, which is the owner's sheet order).
+    """
+    basis = _wb_basis()
+    if not basis:
+        return jsonify({"ok": False, "error": "no weighbridge register on disk"}), 503
+    body = request.get_json(silent=True) or {}
+    rows = body.get("rows") or []
+    hours = float(body.get("hours") or 20)
+    if not (0 < hours <= 24):
+        return jsonify({"ok": False, "error": "hours must be in (0, 24]"}), 400
+    fallback_cap = float((basis.get("policy") or {}).get("fallback_cap_hr") or 30)
+    bridges = basis.get("bridges") or {}
+    cap = {name: (b.get("p99_hr") or fallback_cap) for name, b in bridges.items()}
+    load = {name: 0.0 for name in bridges}
+
+    prepared, out_rows, flags = [], [], []
+    for r in rows:
+        route = str(r.get("route") or "").strip()
+        rid = r.get("id") or route
+        if r.get("tenant"):
+            out_rows.append({"id": rid, "route": route, "assigned": [],
+                             "why": "tenant fleet — never allocated"})
+            continue
+        trips = float(r.get("trips") or r.get("trips_day") or 0)
+        if not (trips > 0) or not route:
+            out_rows.append({"id": rid, "route": route, "assigned": [],
+                             "why": "no trips"})
+            continue
+        elig, why = _wb_eligible(basis, route, bool(r.get("foreign")))
+        if not elig:
+            flags.append("%s: %s" % (rid, why))
+            out_rows.append({"id": rid, "route": route, "assigned": [], "why": why})
+            continue
+        prepared.append({"id": rid, "route": route, "demand_hr": trips / hours,
+                         "trips_day": trips, "elig": elig, "why": why,
+                         "alloc": {name: 0.0 for name in elig}})
+
+    QUANTUM = 0.25
+    for row in sorted(prepared, key=lambda x: (len(x["elig"]), -x["demand_hr"])):
+        remaining = row["demand_hr"]
+        while remaining > 1e-9:
+            q = min(QUANTUM, remaining)
+            best = min(row["elig"],
+                       key=lambda n: ((load[n] + q) / max(cap[n], 1e-9),
+                                      load[n] / max(cap[n], 1e-9),
+                                      row["elig"].index(n)))
+            load[best] += q
+            row["alloc"][best] += q
+            remaining -= q
+
+    unverified_used = set()
+    for row in prepared:
+        assigned = []
+        for name in row["elig"]:
+            hr = row["alloc"][name]
+            if hr <= 1e-9:
+                continue
+            if (bridges.get(name) or {}).get("unverified"):
+                unverified_used.add(name)
+            assigned.append({
+                "bridge": name, "num": (bridges.get(name) or {}).get("num"),
+                "trips_day": round(hr * hours, 1),
+                "share": round(hr / row["demand_hr"], 3) if row["demand_hr"] else 0,
+            })
+        assigned.sort(key=lambda a: -a["trips_day"])
+        out_rows.append({"id": row["id"], "route": row["route"],
+                         "assigned": assigned, "why": row["why"]})
+    per_bridge = {name: {
+        "num": (bridges.get(name) or {}).get("num"),
+        "load_hr": round(load[name], 2),
+        "cap_hr": cap[name],
+        "cap_basis": "measured p99/hr" if (bridges.get(name) or {}).get("p99_hr") else
+                     "fallback %g/hr (unmeasured)" % fallback_cap,
+        "util": round(load[name] / max(cap[name], 1e-9), 3),
+    } for name in bridges if load[name] > 1e-9}
+    return jsonify({
+        "ok": True,
+        "rows": out_rows,
+        "bridges": per_bridge,
+        "hours": hours,
+        "flags": flags,
+        "unverified_bridges_used": sorted(unverified_used),
+        "basis": {"servedFrom": basis.get("servedFrom"),
+                  "generated_at": basis.get("generated_at"),
+                  "objective": (basis.get("policy") or {}).get("objective")},
+    })
+
+
+bp.add_url_rule('/api/plan/wb-allocate', 'api_plan_wb_allocate',
+                api_plan_wb_allocate, methods=['POST'])
+
+
 # ROUTES
 # Capability: real query with all six filters; fixture when there is no DB.
 _register('/api/simulator/capability', api_simulator_capability, 'capability', methods=['GET'])

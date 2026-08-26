@@ -106,3 +106,6 @@ reports/trips_per_dt_vs_engine.json
 data/weighbridge_matrix_*.tsv
 # WB allocation analysis: DB-derived bridge names/coordinates/flows (2026-08-25)
 reports/WB_ALLOCATION_ANALYSIS.md
+# Weighbridge allocation register: DB-derived (bridge throughputs, positions,
+# history). The committed offline copy is fixtures/wb-allocation-basis.json.
+data/wb_register.json

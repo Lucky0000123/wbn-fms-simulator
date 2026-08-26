@@ -68,7 +68,13 @@ CASES = [
     ("POS16-WBN矿业部", "POS 16"),
     ("POS16-LVMI镍铁事业部", "POS 16"), ("POS15-WBN矿业部", "POS 15"),
     ("POSCBB-WBN矿业部", "POS CBB"), ("POS CBB", "POS CBB"),
-    ("FENI A", "FENI KM0"), ("FENI U2", "FENI KM0"), ("FENI W", "FENI KM0"),
+    # FENI letters are furnace lines split across TWO plants — proved from
+    # bridge geography 2026-08-25 (T/U/U1/U2/W/X weighed at the km-15 bridges
+    # WB12/WB17; A..S at the km 0-10 bridges), owner-confirmed 2026-08-26.
+    # U2/W used to be asserted as KM0 here, which was the belief, not a fact.
+    ("FENI A", "FENI KM0"), ("FENI M", "FENI KM0"), ("FENI S", "FENI KM0"),
+    ("FENI U2", "FENI KM15"), ("FENI W", "FENI KM15"), ("FENI T", "FENI KM15"),
+    ("FENI U1", "FENI KM15"), ("FENI X", "FENI KM15"),
     ("FENI KM15", "FENI KM15"), ("FENI KM0", "FENI KM0"),
     ("BSE-1-BSE湿法冶金部", "BSE"), ("BSE1-BSE湿法冶金部", "BSE"),
     ("BSE2-BSE湿法冶金部", "BSE"), ("BSE5-BSE湿法冶金部", "BSE"),

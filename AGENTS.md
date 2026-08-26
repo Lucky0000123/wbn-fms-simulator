@@ -2164,3 +2164,60 @@ TF>POS 6 (splitDest, planning_rules §4). Backups of the older POS 12-split
 files from earlier that day are NOT the newer truth. If the numbers need
 re-deriving, re-run that agent's refreeze on a quiet tree — do not copy old
 JSON over new.
+
+## 2026-08-26 — weighbridge auto-allocation: base points measured, matrix enforced
+
+Owner supplied a 13-bridge x 18-pair eligibility matrix and asked for
+automatic bridge allocation grounded in the whole ticket history. Analysis
+first (reports/WB_ALLOCATION_ANALYSIS.md, gitignored — DB-derived), then four
+owner rulings, then the build. Gate J87, mutation-tested 6/6 in an ISOLATED
+WORKTREE on :5056 — the shared checkout and :5055 were never touched.
+
+**Identity is the matrix NAME, never the ticket number.** Ticket WB_IDs are
+bare numbers and `WB_RIM_T7` / `WB_IWIP_T7A` both stamp "7" — two physical
+bridges 12 km apart (BLB spur km 7.9 vs mainline km 10.0), disambiguated by
+geofence position + the matrix's rows. Anything keying bridges on the number
+alone will merge them.
+
+**The FENI letters are furnace lines split across TWO plants — the
+canonicaliser was wrong for six of them.** Bridge geography proved it: lines
+T/U/U1/U2/W/X (~98k tickets) are weighed at WB12/WB17, the bridges AT km 15,
+while A..S are weighed at the km 0–10 bridges. `canonical_area` used to map
+every FENI letter to FENI KM0, so weighbridge-by-path returned EMPTY for all
+KM15 routes. Owner-confirmed; the mapping now lives in the ONE normaliser and
+check_vocab's self-test pins it (its old expectations asserted the belief,
+not a fact). NOT yet re-checked: whether HAULAGE_CLEAN (the dispatch table
+the trips model trains on) ever uses FENI-letter names — run that when the
+VPN returns before assuming the model is unaffected.
+
+**The allocator** (`/api/plan/wb-allocate` + basis endpoint; register
+data/wb_register.json gitignored, fixture wb-allocation-basis.json
+committed): min-max utilisation water-fill over each row's eligible set at
+measured p99/hr capacities (26–91/hr — the flat 30/hr overstated small
+bridges and understated big ones up to ~3x). Owner rulings enforced and
+gated: pit rows = matrix only; **T11 never** (the busiest bridge in history,
+84k tickets, deliberately excluded — its absence from the register is the
+load-bearing wall, `excluded_nums` is the second layer); tenants never; IWIP
+POS-transit rows = measured history minus exclusions, with a
+geography-guarded destination fallback (a non-BLB row never lands on a
+BLB-spur bridge, and fallback bridges must sit on the route's chainage span —
+the first live run put POS 6 trucks over a spur they never drive);
+WB_IWIP_T2 used as the matrix writes it but flagged unverified (1 lifetime
+ticket, no geofence — possibly WB_RIM_T2).
+
+**Client**: the existing plan_weighbridges.js panel stays the ONE display
+pipeline — auto-assign sets its chip selections and per-path shares from the
+server response, and bridgeUtil now prices each bridge at its own measured
+cap. Two traps found live: (1) pathTrips prices through planTripsPerDT whose
+curves are async — auto-assign fired straight after a load posted "no trips"
+for every pit row; it now awaits planRulesPrepare when a trucked row prices
+to zero. (2) IWIP POS-transit rows had NO rate on the row (their routes are
+outside the path model), so their bridge demand silently vanished —
+`_transitTripsPerDt` now rides on the row and round-trips through saves.
+
+**Mutation lessons, again:** the worktree runner's pkill pattern matched
+nothing (cwd is not in argv), so the first pass "tested" six mutants against
+the original server and reported 0/6 caught — kill by PORT. And two mutants
+exposed gate weaknesses (a defence-in-depth layer that made one mutant
+unreachable; a check reading the basis where the allocator's own response
+was the thing to assert). A mutation harness is itself code that can lie.

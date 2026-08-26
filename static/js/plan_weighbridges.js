@@ -239,6 +239,14 @@
         const rate = r.measTrucks ? r.measTrips / r.measTrucks : 0;
         return dtw * rate;
       }
+      // IWIP POS-transit rows are synthesised by planRulesPosTransit, whose
+      // routes are OUTSIDE the path model — planTripsPerDT prices them at
+      // zero and their bridge demand silently vanished. The sizing rate rides
+      // on the row (daily basis); convert to this function's per-shift basis.
+      if (r.foreign && Number.isFinite(r._transitTripsPerDt)){
+        const sf = (typeof planShiftFactor === 'function') ? planShiftFactor() : 0.5;
+        return dtw * r._transitTripsPerDt * sf;
+      }
       if (typeof planTripsPerDT === 'function'){
         const rain = Math.max(0, parseFloat((el('plan-rain') || {}).value) || 0);
         const c = typeof planContractor === 'function' ? planContractor(r.contractor) : null;
@@ -283,10 +291,33 @@
     return out;
   }
 
+  // Measured per-bridge capacities + the owner eligibility matrix, from
+  // /api/plan/wb-allocation-basis (register on disk, fixture offline). Before
+  // this, every bridge was scored against a flat 30/h — WB 15's measured p99
+  // is 86/h and WB 17's is 26/h, so the flat figure overstated the small
+  // bridges and understated the big ones by up to ~3x.
+  let _wbBasis = null;
+  fetch('/api/plan/wb-allocation-basis').then(r => r.json()).then(d => {
+    if (d && d.ok){ _wbBasis = d; try { injectPathWb(); } catch (e) {} }
+  }).catch(() => {});
+  function wbCapHr(wb){
+    const perH = (typeof PLAN_WB_TRIPS_PER_HOUR !== 'undefined') ? PLAN_WB_TRIPS_PER_HOUR : 30;
+    if (!_wbBasis || !_wbBasis.bridges) return perH;
+    let best = null;
+    Object.keys(_wbBasis.bridges).forEach(name => {
+      const b = _wbBasis.bridges[name];
+      // Number keys: on the shared number 7 the IWIP bridge's measured figure
+      // wins (its record dominates the ticket history for that number).
+      if (String(b.num) === String(wb) && b.p99_hr != null
+          && (best == null || !name.startsWith('WB_RIM'))) best = b.p99_hr;
+    });
+    return best != null ? best : perH;
+  }
+
   function bridgeUtil(){
     const hours = Math.max(1, parseFloat((el('plan-hours') || {}).value) || 12);
     const perH = (typeof PLAN_WB_TRIPS_PER_HOUR !== 'undefined') ? PLAN_WB_TRIPS_PER_HOUR : 30;
-    const cap = perH * hours;
+    const cap = perH * hours;             // legacy flat figure (fallback + old consumers)
     const byWb = {};
     Object.keys(_pathWb).forEach(id => {
       const pw = _pathWb[id];
@@ -294,16 +325,24 @@
       const total = pathTrips(id);
       if (!(total > 0)) return;
       const label = id.split('|').slice(1).join('|').replace('>', ' → ');
-      // History-weighted split over the selected bridges.
+      // Split basis, ONE owner each way: when the server's auto-assignment
+      // produced shares for this path (allocShares, from /api/plan/wb-allocate)
+      // those ARE the division; otherwise the route's historical share as
+      // before. Never both.
       const shares = {};
-      let histSum = 0;
+      let shareSum = 0;
+      const auto = pw.allocShares || null;
       pw.sel.forEach(wb => {
-        const b = pw.bridges.find(x => x.wb === wb);
-        const sh = b && b.sharePct != null ? Math.max(0, b.sharePct) : 0;
-        shares[wb] = sh; histSum += sh;
+        let sh;
+        if (auto && auto[wb] != null) sh = Math.max(0, auto[wb]);
+        else {
+          const b = pw.bridges.find(x => x.wb === wb);
+          sh = b && b.sharePct != null ? Math.max(0, b.sharePct) : 0;
+        }
+        shares[wb] = sh; shareSum += sh;
       });
       pw.sel.forEach(wb => {
-        const frac = histSum > 0 ? (shares[wb] / histSum) : (1 / pw.sel.size);
+        const frac = shareSum > 0 ? (shares[wb] / shareSum) : (1 / pw.sel.size);
         const t = total * frac;
         const rec = byWb[wb] || (byWb[wb] = { trips: 0, paths: [] });
         rec.trips += t;
@@ -318,13 +357,20 @@
       rec.otherTrips = (rec.otherTrips || 0) + other[wb].trips;
       rec.paths.push(other[wb].label);
     });
-    // Queue-wait per bridge from the M/M/1 curve.
-    const svc = 60 / perH;   // service minutes per weigh
+    // Queue-wait per bridge from the M/M/1 curve, each bridge at ITS OWN
+    // measured service rate (fallback: the flat figure).
+    const svc = 60 / perH;   // legacy service minutes (fallback display)
     Object.keys(byWb).forEach(wb => {
       const rec = byWb[wb];
-      const rho = cap ? rec.trips / cap : 0;
+      const capHrWb = wbCapHr(wb);
+      const capWb = capHrWb * hours;
+      const svcWb = 60 / capHrWb;
+      const rho = capWb ? rec.trips / capWb : 0;
       rec.rho = rho;
-      rec.waitMin = rho >= 1 ? Infinity : svc * rho / (1 - rho);
+      rec.capWb = capWb;
+      rec.capHrWb = capHrWb;
+      rec.capMeasured = !!(_wbBasis && capHrWb !== perH);
+      rec.waitMin = rho >= 1 ? Infinity : svcWb * rho / (1 - rho);
     });
     return { byWb, cap, svc };
   }
@@ -460,6 +506,70 @@
   // One glance: every bridge in use, its assigned trips, utilisation and
   // estimated queue — live DURING planning (re-renders on every plan edit),
   // and unchanged after Run scenario since it reads the same holding plan.
+  // ── Auto-assign (owner request 2026-08-25) ────────────────────────────────
+  // ONE owner for the assignment: /api/plan/wb-allocate (min-max utilisation
+  // over the owner matrix; measured p99 capacities; T11 never; tenants never;
+  // IWIP rows history-minus-excluded). The panel SETS its chip selection and
+  // per-path shares from the response and keeps displaying through its one
+  // existing pipeline — no second bridge-load model on the client.
+  let _wbAutoNote = '';
+  function _wbCollectRows(){
+    const rows = [];
+    Object.keys(typeof _planDraft !== 'undefined' ? _planDraft : {}).forEach(id => {
+      const r = _planDraft[id];
+      if (!r || !r.key) return;
+      const tenant = (typeof planIsTenantRow === 'function') ? planIsTenantRow(r, id) : !!r._tenant;
+      const trips = tenant ? 0 : pathTrips(id);
+      rows.push({ id: id, route: r.key, trips: trips,
+                  foreign: !!r.foreign, tenant: tenant,
+                  _dt: (typeof planAllocFrozen === 'function' && planAllocFrozen() && r._allocDt != null) ? r._allocDt : r.dt });
+    });
+    return rows;
+  }
+  async function planWbAutoAssign(){
+    const hours = Math.max(1, parseFloat((el('plan-hours') || {}).value) || 12);
+    let rows = _wbCollectRows();
+    // pathTrips prices through planTripsPerDT, whose segment curves are an
+    // async fetch that returns undefined while pending — so a row with real
+    // trucks can price as ZERO trips right after a page/plan load. Measured:
+    // auto-assign fired straight after Load posted "no trips" for every pit
+    // row while the same call seconds later assigned all of them. If any
+    // trucked row priced to zero, run the same preparation the allocator
+    // itself awaits, then collect once more.
+    const coldRow = r => !r.tenant && r._dt > 0 && !(r.trips > 0);
+    if (rows.some(coldRow) && typeof window.planRulesPrepare === 'function'){
+      _wbAutoNote = 'warming pricing…'; renderStressBoard();
+      try { await window.planRulesPrepare(); } catch (e) {}
+      rows = _wbCollectRows();
+    }
+    if (!rows.some(r => r.trips > 0)){ _wbAutoNote = 'no plan trips to assign'; renderStressBoard(); return false; }
+    _wbAutoNote = 'assigning…'; renderStressBoard();
+    return fetch('/api/plan/wb-allocate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows: rows, hours: hours }),
+    }).then(r => r.json()).then(res => {
+      if (!res || !res.ok){ _wbAutoNote = 'assignment failed: ' + ((res || {}).error || '?'); renderStressBoard(); return false; }
+      (res.rows || []).forEach(rr => {
+        if (!rr.assigned || !rr.assigned.length) return;
+        const pw = _pathWb[rr.id] || (_pathWb[rr.id] = {
+          bridges: ALL_WBS.map(wb => ({ wb, sharePct: null })), sel: new Set(), open: false });
+        pw.sel = new Set(rr.assigned.map(a => String(a.num)));
+        pw.allocShares = {};
+        rr.assigned.forEach(a => { pw.allocShares[String(a.num)] = a.share; });
+        pw.allocWhy = rr.why || '';
+      });
+      const unv = (res.unverified_bridges_used || []);
+      const fl = (res.flags || []);
+      _wbAutoNote = 'auto-assigned · ' + ((res.basis || {}).objective || 'owner matrix')
+        + (unv.length ? ' · ⚠ unverified bridge in use: ' + unv.join(', ') : '')
+        + (fl.length ? ' · ⚠ ' + fl.join('; ') : '');
+      try { injectPathWb(); } catch (e) {}
+      renderStressBoard();
+      return true;
+    }).catch(e => { _wbAutoNote = 'assignment failed: ' + e; renderStressBoard(); return false; });
+  }
+  window.planWbAutoAssign = planWbAutoAssign;
+
   function renderStressBoard(){
     const host = document.getElementById('plan-wb-stress');
     if (!host) return;
@@ -481,10 +591,13 @@
       const paths = r.paths.join(', ');
       const oth = Math.round(r.otherTrips || 0);
       const mine = Math.max(0, Math.round(r.trips) - oth);
+      const capTxt = r.capWb != null
+        ? `${Math.round(r.capWb)} (${r.capMeasured ? 'p99 ' + Math.round(r.capHrWb) + '/h measured' : '~' + Math.round(r.capHrWb) + '/h assumed'})`
+        : `~${Math.round(cap)}`;
       const tripsTxt = oth > 0
         ? `<b>${mine}</b><span class="u">plan</span> <b>${oth}</b><span class="u">other</span>`
         : `<b>${Math.round(r.trips)}</b><span class="u">plan</span>`;
-      return `<div class="wbs-row wbs-${tone}" title="WB ${escH(wb)} · ${Math.round(r.trips)} trips total${oth > 0 ? ` = ${mine} plan + ${oth} non-plan` : ''} (${pctN}% of ~${Math.round(cap)} capacity) · wait ${r.waitMin === Infinity ? 'grows all shift' : Math.round(r.waitMin || 0) + ' min'} · paths: ${escH(paths || '—')}">`
+      return `<div class="wbs-row wbs-${tone}" title="WB ${escH(wb)} · ${Math.round(r.trips)} trips total${oth > 0 ? ` = ${mine} plan + ${oth} non-plan` : ''} (${pctN}% of ${escH(capTxt)}) · wait ${r.waitMin === Infinity ? 'grows all shift' : Math.round(r.waitMin || 0) + ' min'} · paths: ${escH(paths || '—')}">`
         + `<span class="wbs-name">WB ${escH(wb)}</span>`
         + `<span class="wbs-bar"><i style="width:${Math.min(100, pctN)}%"></i></span>`
         + `<span class="wbs-pct">${pctN}%</span>`
@@ -497,10 +610,14 @@
       : worst.rho >= 0.7
         ? `<span class="wbs-status warn">WB ${escH(used[0])} busy · ~${Math.round(worst.waitMin)} min wait</span>`
         : `<span class="wbs-status ok">All bridges OK</span>`;
-    const tip = `Per-bridge load: trips ÷ (~${Math.round(60 / svc)} weighs/h × shift). Wait ≈ service × ρ/(1−ρ). Non-plan trips stacked on the bridges they used historically.`;
+    const tip = `Per-bridge load: trips ÷ capacity, each bridge at its own measured p99 weighs/h (fallback ~${Math.round(60 / svc)}/h). Wait ≈ service × ρ/(1−ρ). Non-plan trips stacked on the bridges they used historically.`;
     host.innerHTML =
       `<div class="wbs-board">`
-      + `<div class="wbs-head"><span class="wbs-title" title="${escH(tip)}">Bridge load</span>${worstNote}</div>`
+      + `<div class="wbs-head"><span class="wbs-title" title="${escH(tip)}">Bridge load</span>${worstNote}`
+      + `<button type="button" class="ms-btn wbs-auto" onclick="planWbAutoAssign()" `
+      + `title="Assign bridges to every plan row: min-max utilisation over the owner eligibility matrix (2026-08-25), measured p99 capacities. Tenants never; T11 never; IWIP rows on measured history minus exclusions.">⚖ Auto-assign bridges</button>`
+      + `</div>`
+      + (_wbAutoNote ? `<div class="muted" style="font-size:10.5px;margin:2px 0 4px">${escH(_wbAutoNote)}</div>` : '')
       + `<div class="wbs-cols" aria-hidden="true"><span>Bridge</span><span>Load</span><span>%</span><span>Wait</span><span>Trips</span></div>`
       + rows
       + `</div>`;

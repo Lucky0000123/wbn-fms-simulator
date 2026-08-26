@@ -484,6 +484,18 @@ chk $? "J80  HUAFEI is a junction at km 5.5, not the coast" "see: python test_hu
 $PY scripts/check_qa_2026_08_25.py >/tmp/check_qa_2026_08_25_last.log 2>&1
 chk $? "J81-J86  2026-08-25 QA audit fixes hold (6 gates in one script)" "log: /tmp/check_qa_2026_08_25_last.log"
 
+# J87 — weighbridge auto-allocation honours the owner's four rulings
+# (2026-08-26): matrix eligibility only, T11 never (deliberate exclusion of
+# the busiest bridge), tenants never, IWIP rows on measured history minus
+# exclusions with a geography-guarded fallback, T2 flagged unverified, and
+# measured p99 capacities priced by the ALLOCATOR itself (not just served by
+# the basis). Mutation-tested 6/6 in an isolated worktree on :5056 — two of
+# the six exposed gate weaknesses that were fixed first (a defence-in-depth
+# layer that made one mutant unreachable, and a check that read the basis
+# where the allocator's own response was the thing to assert).
+$PY scripts/check_wb_allocation.py >/tmp/check_wb_allocation_last.log 2>&1
+chk $? "J87  weighbridge auto-allocation honours the owner rulings" "log: /tmp/check_wb_allocation_last.log"
+
 # J78 — the tenants are VISIBLE in the plan (owner: "I didn't see all these new
 # DT in my plan"), drawn the same way the POS-transit IWIP rows are. A tenant
 # fleet has two representations and only ONE may reach pricing: the ROW the
