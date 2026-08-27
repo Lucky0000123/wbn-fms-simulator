@@ -130,15 +130,19 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
           <!-- "Latest" used to mean latest saved FILE per month, which silently
                mixed scenarios (Sep-Dec resolved to day-04 = S4 inside a workbook
                labelled S1). The default is now an explicit scenario. -->
-          <option value="">S1 (default)</option>
-          <option value="1">S1</option>
           <!-- Planning-team names 2026-08-26: 3.0=as-is mining, 3.1=+1 Mt BLB
                LIM Oct-Dec; .1=all leftovers HUAFEI/BSE, .2=half to POS 6 from
                October. Days 03/04/05/06 are the machine keys. -->
-          <option value="3">3.0.1 (S3)</option>
+          <!-- The board opens on 3.0.1, the live planning family (owner,
+               2026-08-27). S1 is the old day-01 baseline: its December
+               plans predate the 1,281-DT refreeze and read SAP ~200% of
+               the sales line, which looked like a dashboard fault. It is
+               still selectable, just no longer the thing you land on. -->
+          <option value="3" selected>3.0.1 (S3)</option>
           <option value="4">3.0.2 (S4)</option>
           <option value="5">3.1.1 (S5)</option>
           <option value="6">3.1.2 (S6)</option>
+          <option value="1">S1 (old baseline)</option>
         </select>
       </label>
       <button type="button" class="primary" id="mo-export-year" onclick="moExportYear()">Download Excel</button>
