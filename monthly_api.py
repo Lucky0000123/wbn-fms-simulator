@@ -549,7 +549,8 @@ def _xlsx_line_chart(ws, title, y_title, min_col, max_col, header_row, last_row,
     return lc
 
 
-def _xlsx_five_clock_block(ws, row, title, sub, points, start=1, chart_col="I", achv=False):
+def _xlsx_five_clock_block(ws, row, title, sub, points, start=1, chart_col="I", achv=False,
+                           total_target=None):
     """Month (or day) × clocks + % of target. Chart sits UNDER the table.
     achv=True adds old / optimized achievable (simulate), same as Plan Allocate."""
     from openpyxl.utils import get_column_letter
@@ -601,6 +602,14 @@ def _xlsx_five_clock_block(ws, row, title, sub, points, start=1, chart_col="I", 
         lab.font = _xlsx_font(True, 11, _XLSX_NAVY)
         lab.alignment = _xlsx_mid()
         _xlsx_total_border(lab)
+        # Owner 2026-08-27: the TOTAL row's target is the SALES line, not
+        # the sum of the internal monthly plan amounts (which no longer
+        # exists as a requirement). Callers pass total_target; the monthly
+        # rows above keep their own per-month figures.
+        if total_target is not None:
+            tot = dict(tot)
+            tot["target"] = total_target
+            n_have["target"] = 1
         for i, k in enumerate(keys):
             cell = ws.cell(row=rr, column=start + 1 + i, value=tot[k] if n_have[k] else None)
             cell.font = _xlsx_font(True, 11, _XLSX_INK)
@@ -3233,9 +3242,11 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
                 out.append({"name": c.get("name"), **getter(a, c)})
             return out
 
+        _mats_sales = Y.get("materials") or {}
         r = _xlsx_five_clock_block(
             ws, r, "Together · year",
-            "Month on X · tonnes on Y. Target vs predicted plan"
+            "Month on X · tonnes on Y. Target vs predicted plan. TOTAL target "
+            "is the sales line"
             + (" · old / optimized achievable." if achv else "."),
             pts(lambda a, c: {
                 "target": a.get("target_month") if a else c.get("target_month"),
@@ -3244,12 +3255,14 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
                 "old_achv": _pick_achv(a, True, "month") if a else None,
                 "new_achv": _pick_achv(a, False, "month") if a else None,
             }),
-            start=1, chart_col="I", achv=achv)
+            start=1, chart_col="I", achv=achv,
+            total_target=Y.get("sales_target"))
         for key_m, title in (("sap", "SAP · year"), ("tos", "LIM-TOS · year"),
                              ("ld", "LIM-LD · year")):
             r = _xlsx_five_clock_block(
                 ws, r, title,
-                "Same clocks for this material only"
+                "Same clocks for this material only. TOTAL target is the "
+                "sales line"
                 + (" — predicted and achievable." if achv else "."),
                 pts(lambda a, c, k=key_m: {
                     "target": ((a.get("materials") or {}).get(k) or {}).get("target_month"),
@@ -3258,7 +3271,8 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
                     "old_achv": _pick_mat_achv((a.get("materials") or {}).get(k) or {}, True, "month"),
                     "new_achv": _pick_mat_achv((a.get("materials") or {}).get(k) or {}, False, "month"),
                 }),
-                start=1, chart_col="I", achv=achv)
+                start=1, chart_col="I", achv=achv,
+                total_target=(_mats_sales.get(key_m) or {}).get("sales_target"))
         if achv:
             cov_heads = ["Month", "Target", "Predicted plan",
                          "Achievable"]
