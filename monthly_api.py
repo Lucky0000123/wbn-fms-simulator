@@ -570,6 +570,24 @@ def _xlsx_five_clock_block(ws, row, title, sub, points, start=1, chart_col="I", 
         heads.append("Achievable %")
     if points and points[0].get("label") == "Date":
         heads[0] = "Date"
+    # Owner 2026-08-27: ONE clock. When the caller supplies the sales-line
+    # total, the month rows' targets are the sales target DISTRIBUTED over
+    # the months in the plan's own shape (scaled so they sum exactly), so
+    # a row can never show green while the TOTAL shows short. The plan's
+    # internal monthly amounts are the shape, not the judgement.
+    if total_target:
+        _plan_sum = sum((p.get("target") or 0) for p in points)
+        if _plan_sum > 0:
+            _f = float(total_target) / _plan_sum
+            points = [dict(p) for p in points]
+            _run = 0
+            for _i, p in enumerate(points):
+                if p.get("target") is not None:
+                    if _i == len(points) - 1:
+                        p["target"] = int(round(total_target - _run))
+                    else:
+                        p["target"] = int(round(p["target"] * _f))
+                        _run += p["target"]
     _xlsx_headers(ws, r, heads, start=start, center=True)
     header_row = r
     rr = r
@@ -1573,12 +1591,79 @@ def _collect_year_path_rows(cards):
     return out
 
 
+def _wb_assignments_for_month(rows_month):
+    """Weighbridge assignment for one month's path rows via the SAME
+    deterministic allocator the Plan tab and month sheets use
+    (simulator_api.wb_assign_rows: owner-matrix eligibility, min-max
+    water-fill). Returns {(key, contractor): text} where text lists EVERY
+    bridge with its share of the row's trips, the bridge's utilisation of
+    its measured capacity, and its M/M/1 wait — no "+N more" truncation
+    (owner, 2026-08-27: "nothing like before plus two more; define clear
+    WB number, percentage, waiting time")."""
+    try:
+        import simulator_api as _sim
+        basis = _sim._wb_basis()
+    except Exception:
+        return {}
+    if not basis:
+        return {}
+    req = []
+    for x in rows_month:
+        if x.get("_tenant"):
+            continue
+        tr = x.get("trips") or 0
+        if tr and x.get("key"):
+            req.append({"id": "%s|%s" % (x.get("key"), x.get("contractor")),
+                        "route": x.get("key"), "trips": tr,
+                        "foreign": bool(x.get("foreign"))})
+    if not req:
+        return {}
+    try:
+        out_rows, _pb, _fl, _uv = _sim.wb_assign_rows(basis, req, hours=20.0)
+    except Exception:
+        return {}
+    matrix = basis.get("matrix") or {}
+    res = {}
+    for a in out_rows:
+        names = a.get("assigned") or []
+        if not names:
+            continue
+        route = a.get("route")
+        allowed = set(matrix.get(route) or [])
+        parts = []
+        off_matrix = []
+        for b in names:
+            nm = b["bridge"]
+            label = nm.replace("WB_IWIP_", "").replace("WB_RIM_", "RIM ")
+            parts.append("%s: %d%% of row · bridge util %d%% · wait %.1f min%s" % (
+                label, round(100 * (b.get("share") or 0)),
+                round(100 * (b.get("util") or 0)),
+                b.get("wait_min") or 0,
+                " SATURATED" if b.get("saturated") else ""))
+            if allowed and nm not in allowed:
+                off_matrix.append(label)
+        txt = "  |  ".join(parts)
+        if off_matrix:
+            txt += "  ⚠ off-matrix: " + ", ".join(off_matrix)
+        elif allowed:
+            txt += "  ✓ matrix"
+        res[a.get("id")] = txt
+    return res
+
+
 def _xlsx_all_paths_table(ws, r, cards, achv=False):
     """All months × allocated paths. NB Days then Predicted / month = WMT × days."""
     from openpyxl.styles import Alignment, PatternFill
     rows = _collect_year_path_rows(cards)
     if not rows:
         return r
+    # weighbridge text per row, computed month by month (the water-fill
+    # balances within a month's plan, so each month is its own allocation).
+    wb_txt = {}
+    for mk in sorted({x["month_key"] for x in rows}):
+        month_rows = [x for x in rows if x["month_key"] == mk]
+        for rid, txt in _wb_assignments_for_month(month_rows).items():
+            wb_txt[(mk, rid)] = txt
     r = _xlsx_section(
         ws, r, "Paths — all months",
         "Optimized plan only. WMT is t/day. Predicted / month = WMT × NB Days. "
@@ -1594,7 +1679,7 @@ def _xlsx_all_paths_table(ws, r, cards, achv=False):
     ]
     if achv:
         heads.append("Achievable")
-    heads += ["NB Days", "Predicted / month"]
+    heads += ["NB Days", "Predicted / month", "Weighbridge (share · util · wait)"]
     _xlsx_headers(ws, r, heads, center=True)
     navy = PatternFill("solid", fgColor=_XLSX_NAVY)
     for col in range(1, len(heads) + 1):
@@ -1619,13 +1704,18 @@ def _xlsx_all_paths_table(ws, r, cards, achv=False):
         ]
         if achv:
             vals.append(row["achv"])
-        vals += [row["n_days"], row["pred_month"]]
+        vals += [row["n_days"], row["pred_month"],
+                 ("—" if row.get("_tenant")
+                  else wb_txt.get((row["month_key"],
+                                   "%s|%s" % (row.get("key"), row.get("contractor")))) or "")]
         for col, val in enumerate(vals, start=1):
             cell = ws.cell(row=r, column=col, value=val)
             cell.border = box
-            cell.alignment = mid if col != 5 else Alignment(
-                horizontal="left", vertical="center")
-            cell.font = _xlsx_font(col == 5, 9)
+            wb_col = len(heads)
+            cell.alignment = (mid if col not in (5, wb_col) else Alignment(
+                horizontal="left", vertical="center"))
+            cell.font = (_xlsx_font(False, 8, _XLSX_MUTED) if col == wb_col
+                         else _xlsx_font(col == 5, 9))
             if col in (12, 13) and isinstance(val, (int, float)):
                 cell.number_format = "0.00"
             elif col >= 8 and isinstance(val, (int, float)):
@@ -1722,6 +1812,9 @@ def _xlsx_append_paths_sheet(wb, year, cards, used, prefix="", achv=False,
     ws["A2"].font = _xlsx_font(False, 10, _XLSX_MUTED)
     ws.merge_cells("A2:P2")
     _xlsx_all_paths_table(ws, 4, cards, achv=achv)
+    from openpyxl.utils import get_column_letter
+    # Weighbridge text is the last column — give it room.
+    ws.column_dimensions[get_column_letter(17 if achv else 16)].width = 90
     ws.row_dimensions[1].height = 24
 
 
@@ -3453,6 +3546,10 @@ def append_year_book_sheets(wb, year, cards, used=None, prefix="", achv=False):
 def _xlsx_year_book(year, cards, achv=False, scenario_label=""):
     """Key = year dashboard, all-months path table, then one sheet per month."""
     from openpyxl import Workbook
+    # One clock in the workbook too: month targets are the sales line
+    # distributed in the plan's shape (idempotent — the five-clock block's
+    # own distribution then scales by 1.0).
+    _rescale_cards_to_sales(cards, _year_alloc_totals(cards))
     wb = Workbook()
     key = wb.active
     key.title = "Year"
@@ -4713,6 +4810,52 @@ def _year_cards(year, day=None):
     return yearly, cards
 
 
+def _rescale_cards_to_sales(cards, Y):
+    """One clock on every surface (owner 2026-08-27): each month's TARGET is
+    its share of the SALES total (plan shape × sales/plan-sum), per material
+    and together, with coverages recomputed. A month can then never show
+    green while the year shows short — the same months, the same predicted,
+    one judgement line. Mutates the cards in place; the original plan
+    amounts stay in *_plan keys."""
+    if not Y or not Y.get("sales_target"):
+        return cards
+    mats_y = Y.get("materials") or {}
+    plan_sum = Y.get("plan_target") or 0
+    fam = {"all": (plan_sum, Y["sales_target"])}
+    for k in ("sap", "tos", "ld"):
+        m = mats_y.get(k) or {}
+        if m.get("sales_target") and m.get("plan_target"):
+            fam[k] = (m["plan_target"], m["sales_target"])
+    for c in cards:
+        a = c.get("alloc")
+        if not a:
+            continue
+        ps, ss = fam["all"]
+        if ps and a.get("target_month") is not None:
+            a["target_plan_month"] = a["target_month"]
+            a["target_month"] = int(round(a["target_month"] * ss / ps))
+            a["cov_new_pred"] = _cov_pct(a.get("new_pred_month"), a["target_month"])
+            a["left_new_pred_month"] = max(0, a["target_month"] - (a.get("new_pred_month") or 0))
+            a["over_new_pred_month"] = max(0, (a.get("new_pred_month") or 0) - a["target_month"])
+            if a.get("target_day") is not None:
+                a["target_day"] = int(round(a["target_day"] * ss / ps))
+        for k in ("sap", "tos", "ld"):
+            m = (a.get("materials") or {}).get(k)
+            if not m or k not in fam:
+                continue
+            ps, ss = fam[k]
+            if ps and m.get("target_month") is not None:
+                m["target_plan_month"] = m["target_month"]
+                m["target_month"] = int(round(m["target_month"] * ss / ps))
+                m["cov_pred"] = _cov_pct(m.get("pred_after_month"), m["target_month"])
+                if m.get("target_day") is not None:
+                    m["target_day"] = int(round(m["target_day"] * ss / ps))
+        if c.get("target_month") is not None and fam["all"][0]:
+            c["target_plan_month"] = c["target_month"]
+            c["target_month"] = int(round(c["target_month"] * fam["all"][1] / fam["all"][0]))
+    return cards
+
+
 @bp.route("/api/monthly/year-board")
 def api_monthly_year_board():
     """Cards + year totals for the loaded matrix (and any stored months)."""
@@ -4723,6 +4866,8 @@ def api_monthly_year_board():
     day = int(day) if re.fullmatch(r"[0-9]{1,2}", day) and 1 <= int(day) <= 28 else None
     yearly, cards = _year_cards(year, day=day)
     resolved_day = DEFAULT_SCENARIO_DAY if day is None else day
+    _Y = _year_alloc_totals(cards)
+    _rescale_cards_to_sales(cards, _Y)
     return jsonify({
         "ok": True, "year": year, "day": day,
         # Which plan this board is actually showing. `day` echoes what was
@@ -4738,7 +4883,7 @@ def api_monthly_year_board():
         "routes": len((yearly or {}).get("entries") or []),
         "matrix_months": (yearly or {}).get("months") or [],
         "cards": cards,
-        "alloc_year": _year_alloc_totals(cards),
+        "alloc_year": _Y,
     })
 
 
