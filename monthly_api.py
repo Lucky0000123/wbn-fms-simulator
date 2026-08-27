@@ -3088,8 +3088,10 @@ def _xlsx_scenario_constraints_block(ws, start_col, scenario_label=""):
                % ("4,640,201 t (the sales table — includes the ~1 Mt addition)"
                   if is_31 else "3,650,201 t (without the 3.1 addition)"))),
         ("S", "P3 — LIM-LD"),
-        ("T", "Leftover trucks haul LD (Tofu dump -> HUAFEI). Sales target %s t Sep-Dec;"
-              % format(_sa.LIM_LD_TARGET_T, ",")),
+        ("T", "Leftover trucks haul LD (Tofu dump -> HUAFEI). Sales target %s t Sep-Dec"
+              % format(_sa.LIM_LD_TARGET_T if is_31 else _sa.LIM_LD_TARGET_30_T, ",")),
+        ("T", ("(3.1: the ~1 Mt addition sits in LIM-TOS)" if is_31 else
+               "(3.0: includes the ~1 Mt transferred from LIM-TOS — total stays 17.0 Mt);")),
         ("T", "capacity above target stays visible as excess, never folded into the credited number."),
     ]
     if is_split:
@@ -4501,10 +4503,29 @@ def _year_alloc_totals(cards):
     if "ld" in mats:
         import scenario_api as _sa
         b = mats["ld"]
-        b["sales_target"] = _sa.LIM_LD_TARGET_T
+        # Scenario-aware LD line (owner 2026-08-27): the total haulage
+        # target is constant at 17.0 Mt, so 3.0 (days 03/04) carries the
+        # ~1 Mt its LIM-TOS did not take. The day is read from the cards'
+        # source dates.
+        _day = None
+        for c in cards:
+            src = c.get("alloc_source_date") or (c.get("alloc") or {}).get("source_date")
+            if src and len(str(src)) == 10:
+                _day = int(str(src)[8:10])
+                break
+        _sid = {3: "S3", 4: "S4", 5: "S5", 6: "S6"}.get(_day, "")
+        b["sales_target"] = _sa.ld_target_for_scenario(_sid)
         b["cov_sales"] = _cov_pct(b["pred_after"], b["sales_target"])
         b["left_sales"] = max(0, b["sales_target"] - b["pred_after"])
         b["over_sales"] = max(0, b["pred_after"] - b["sales_target"])
+        # The TOGETHER line gets the same treatment (owner 2026-08-27: "our
+        # total should remain 17 million"): SAP + LIM-TOS + LIM-LD sales
+        # lines sum to the SAME constant in both scenario families, because
+        # 3.0's smaller TOS is exactly offset by its larger LD.
+        tot["sales_target"] = _sa.HAULAGE_TOTAL_T
+        tot["cov_sales"] = _cov_pct(tot.get("new_pred"), tot["sales_target"])
+        tot["left_sales"] = max(0, tot["sales_target"] - (tot.get("new_pred") or 0))
+        tot["over_sales"] = max(0, (tot.get("new_pred") or 0) - tot["sales_target"])
     tot["materials"] = mats
     return tot
 

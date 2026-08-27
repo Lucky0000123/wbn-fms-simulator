@@ -76,6 +76,20 @@ _MN = {"aug": 8, "august": 8, "sept": 9, "sep": 9, "september": 9,
 # CREDITED tonnage stops here. Planning team sales table 2026-08-26:
 # Limonite LD 6,644,306 wmt declared (was 8 Mt).
 LIM_LD_TARGET_T = 6_644_306
+# Owner 2026-08-27: the TOTAL haulage target is constant at 17,003,193
+# (sales table 20,003,193 minus the out-of-scope LGS POS 3 Mt). Scenario
+# 3.0 does not add the ~1 Mt to LIM-TOS, so that tonnage TRANSFERS to
+# LIM-LD: 3.0's LD line is 6,644,306 + 990,000. One total, two splits.
+LIM_LD_TARGET_30_T = LIM_LD_TARGET_T + 990_000   # 7,634,306
+HAULAGE_TOTAL_T = 17_003_193
+
+
+def ld_target_for_scenario(sid):
+    """LD sales line by scenario family: 3.0 carries the transferred ~1 Mt."""
+    s = str(sid or "").upper()
+    if s in ("S3", "S4") or "3.0" in s:
+        return LIM_LD_TARGET_30_T
+    return LIM_LD_TARGET_T
 LIM_LD_CAP_T = LIM_LD_TARGET_T  # back-compat alias (old name, same number)
 # P3 LIM-LD always runs Tofu limonite dump -> Huafei. Named once so the
 # draft-plan sizing and the LD rows cannot disagree about which road the
@@ -891,7 +905,7 @@ def _scenario_year_cards(sc, year):
     yearly = _load_yearly()
     if not yearly:
         return None, "no yearly matrix loaded yet"
-    res, err = waterfall(sc, yearly)
+    res, err = waterfall(sc, yearly, ld_cap=ld_target_for_scenario(sc.get("id")))
     if err:
         return None, err
     mo_by = {mo["month"]: mo for mo in res.get("months") or []}
@@ -953,7 +967,7 @@ def _scenario_results_for_export(ids=None):
                 "block of /api/scenarios/compare?ids=%s" % (day, sid, day, sid))
                 if day else "no such scenario"))
             continue
-        res, err = waterfall(sc)
+        res, err = waterfall(sc, ld_cap=ld_target_for_scenario(sc.get("id")))
         if err:
             skipped.append((sid, err))
             continue
@@ -1262,7 +1276,7 @@ def api_scenario_allocate(sid):
     sc = _load_scenario(_safe_id(sid))
     if not sc:
         return jsonify({"ok": False, "error": "no such scenario"}), 404
-    res, err = waterfall(sc)
+    res, err = waterfall(sc, ld_cap=ld_target_for_scenario(sc.get("id")))
     if err:
         return jsonify({"ok": False, "error": err}), 400
     return jsonify({"ok": True, "allocation": res})
@@ -1360,7 +1374,7 @@ def api_scenarios_compare():
         sc = _load_scenario(sid)
         day = _day_for_scenario_id(sid)
         if sc:
-            res, err = waterfall(sc)
+            res, err = waterfall(sc, ld_cap=ld_target_for_scenario(sc.get("id")))
             if err:
                 errors.append({"id": sid, "error": err})
             else:
@@ -1567,7 +1581,7 @@ def _scenario_draft_paths(sc, mnum, yearly):
     stays visible without being credited as production. BLB stays RIM-only
     because targets only land on matrix routes, which are RIM there."""
     import monthly_api as ma
-    res, err = waterfall(sc, yearly)
+    res, err = waterfall(sc, yearly, ld_cap=ld_target_for_scenario(sc.get("id")))
     if err:
         return None, err
     mo = next((m for m in res["months"] if m["month"] == int(mnum)), None)

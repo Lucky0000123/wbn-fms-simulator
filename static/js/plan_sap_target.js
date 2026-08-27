@@ -40,6 +40,17 @@
   // LIM-TOS 4-mo target by scenario day (owner 2026-08-27): days 05/06
   // run the 3.1 plan (4,640,201 — the sales-table number, which already
   // contains the ~1 Mt addition); days 03/04 run 3.0 (3,650,201).
+  // LIM-LD 4-mo sales line by scenario day (owner 2026-08-27): total
+  // haulage is constant at 17.0 Mt, so 3.0 (days 03/04) carries the ~1 Mt
+  // its LIM-TOS did not take: 7,634,306. 3.1 (days 05/06): 6,644,306.
+  function planRulesLimLdTarget(){
+    const T=((window.PLANNING_RULES||{}).targets)||{};
+    const base=T.limLdTotal||6644306;
+    const v=((q('plan-date')||{}).value||'').trim();
+    const day=parseInt(v.split('-')[2],10);
+    if(day===3||day===4)return base+990000;
+    return base;
+  }
   function planRulesLimTosTarget(){
     const R=(window.PLANNING_RULES||{});
     const lt=R.limTos||{};
@@ -2731,7 +2742,7 @@
       feniSap:feniSap,
       tos:{tgt:tosTgt,pred:tosPred,met:tosTgt>0?tosPred>=tosTgt*0.995:null,
         proj:tosPred*DAYS,target4mo:planRulesLimTosTarget()},
-      ld:{pred:ldPred,proj:ldPred*DAYS,target4mo:T.limLdTotal||6644306},
+      ld:{pred:ldPred,proj:ldPred*DAYS,target4mo:planRulesLimLdTarget()},
       pos:{input:pt.input,output:pt.output,rows:pt.rows,
         balanced:Math.abs(pt.input-pt.output)<1},
       walls:contractorWallViolations()

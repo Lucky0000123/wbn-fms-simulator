@@ -141,7 +141,7 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
           <option value="6">3.1.2 (S6)</option>
         </select>
       </label>
-      <button class="primary" onclick="moExportYear()">Download Excel</button>
+      <button type="button" class="primary" id="mo-export-year" onclick="moExportYear()">Download Excel</button>
     </div>
   </div>
   <p class="muted" id="mo-board-note" style="margin:0 0 8px"></p>
@@ -431,6 +431,12 @@ function renderBoard(){
     label:'Together',
     cov_pred:Y.cov_new_pred,
     target:Y.target,
+    // Owner 2026-08-27: the constant 17.0 Mt haulage sales total — the
+    // number the board is judged against, same in both scenario families.
+    sales_target:Y.sales_target,
+    cov_sales:Y.cov_sales,
+    left_sales:Y.left_sales,
+    over_sales:Y.over_sales,
     pred_before:Y.old_pred,
     pred_after:Y.new_pred,
     left:Y.left_new_pred,
@@ -861,27 +867,37 @@ async function moPaste(){
 }
 let _moExportBusy=false;
 async function moExportYear(){
-  // The workbook re-simulates the year and takes 13-26 s to build. The old
-  // window.location= navigation left the PAGE in a pending-navigation state
-  // for that whole time: no feedback, no download visible yet, and switching
-  // scenario + clicking again ABORTED the in-flight one — measured 2026-08-26,
-  // this is exactly "the other scenarios never download". Repeated clicks
-  // also stacked concurrent exports on the server, making every one slower.
-  // fetch -> blob keeps the page alive, shows progress on the button, and is
-  // single-flight: a click during a build is ignored, not queued.
+  // fetch -> blob keeps the page alive and is single-flight. The old
+  // window.location= left the PAGE pending for the whole build, so a second
+  // click aborted the first — "the other scenarios never download".
+  // A timeout/proxy HTML page used to be saved as .xlsx; Excel then said
+  // "file format is not valid". Refuse anything that is not a zip (PK).
   if(_moExportBusy)return;
-  const btn=[...document.querySelectorAll('button.primary')]
-    .find(b=>b.textContent.trim().indexOf('Download')===0);
-  const orig=btn?btn.textContent:'';
+  const btn=$('mo-export-year');
+  const orig=btn?btn.textContent:'Download Excel';
   _moExportBusy=true;
-  if(btn){btn.disabled=true;btn.textContent='Building workbook… (~20 s)';}
+  if(btn){btn.disabled=true;btn.textContent='Building Excel…';}
   try{
     const r=await fetch('/api/monthly/export-year?year='+year()+boardDay());
-    if(!r.ok)throw new Error('HTTP '+r.status);
-    const blob=await r.blob();
+    const buf=await r.arrayBuffer();
+    const u8=new Uint8Array(buf);
+    const isXlsx=u8.length>4 && u8[0]===0x50 && u8[1]===0x4B; // PK
+    if(!r.ok || !isXlsx){
+      let msg='HTTP '+r.status;
+      try{
+        const t=new TextDecoder().decode(u8.slice(0,800)).replace(/\s+/g,' ').trim();
+        if(t) msg=t.slice(0,280);
+      }catch(_){}
+      throw new Error(msg);
+    }
+    const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    let name='monthly_plan_'+year()+'.xlsx';
     const cd=r.headers.get('Content-Disposition')||'';
-    const m=cd.match(/filename=([^;]+)/);
-    const name=(m?m[1].trim().replace(/"/g,''):'monthly_plan_'+year()+'.xlsx');
+    const m=cd.match(/filename\*?=(?:UTF-8''|"?)([^";]+)/i);
+    if(m){
+      try{name=decodeURIComponent(m[1].replace(/"/g,'').trim());}catch(_){name=m[1].trim();}
+    }
+    if(!/\.xlsx$/i.test(name)) name+='.xlsx';
     const a=document.createElement('a');
     a.href=URL.createObjectURL(blob);a.download=name;
     document.body.appendChild(a);a.click();a.remove();
@@ -889,10 +905,10 @@ async function moExportYear(){
     if(btn)btn.textContent='Downloaded ✓';
   }catch(e){
     if(btn)btn.textContent='Export failed — retry';
-    alert('Excel export failed: '+e);
+    alert('Excel export failed: '+(e&&e.message?e.message:e));
   }finally{
     _moExportBusy=false;
-    if(btn){btn.disabled=false;setTimeout(()=>{btn.textContent=orig;},2500);}
+    if(btn){btn.disabled=false;setTimeout(()=>{if(btn.textContent!=='Download Excel')btn.textContent=orig;},2500);}
   }
 }
 
@@ -1069,20 +1085,25 @@ async function scenRefresh(){
   const card=$('mo-scen-card');
   if(!r||!r.ok||!r.scenarios||!r.scenarios.length){$('mo-scen-summary').innerHTML='';return;}
   const scs=r.scenarios, cap=r.ld_cap;
-  // Label the target from the API's own number (planning team 2026-08-26:
-  // 6,644,306 t; was 8 Mt) so the text can never disagree with the line.
+  // Per-scenario LD target (owner 2026-08-27): the total haulage line is
+  // constant at 17.0 Mt, so 3.0 carries the ~1 Mt the LIM-TOS did not take
+  // (LD 7,634,306) while 3.1 carries 6,644,306. Each scenario's own ld_cap
+  // labels its card; the chart line uses the fleet-wide r.ld_cap only as a
+  // fallback.
   const capMt=cap?(cap/1e6).toFixed(2).replace(/\.00$/,'')+' Mt':'target';
   // summary cards: one per scenario, LD attainment front and centre
   $('mo-scen-summary').innerHTML=scs.map(s=>{
-    const t=s.total, pct=cap?Math.round(100*t.ld_t_planned/cap):null;
+    const t=s.total, scap=t.ld_cap||cap;
+    const scapMt=scap?(scap/1e6).toFixed(2).replace(/\.00$/,'')+' Mt':'target';
+    const pct=scap?Math.round(100*t.ld_t_planned/scap):null;
     const cls=t.ld_cap_reached?'ok':(pct>=85?'warn':'er');
     return `<div class="mat-card"><h3>${s.label}</h3>
       <div class="cov ${cls}">${pct==null?'—':pct+'%'}</div>
-      <div class="pair"><span>LIM-LD vs ${capMt} target</span><b>${MFMT(t.ld_t_planned)} t</b></div>
+      <div class="pair"><span>LIM-LD vs ${scapMt} target</span><b>${MFMT(t.ld_t_planned)} t</b></div>
       <div class="pair"><span>uncapped capacity</span><b>${MFMT(t.ld_t_capacity)} t</b></div>
       <div class="pair"><span>SAP moved</span><b>${MFMT(t.sap_t)} t</b></div>
       <div class="pair"><span>LIM-TOS moved</span><b>${MFMT(t.limtos_t)} t</b></div>
-      ${t.ld_cap_reached?`<div class="pair"><span style="color:var(--ok)">${capMt} target met — ${MFMT(t.ld_over_target_t||0)} t over</span></div>`:
+      ${t.ld_cap_reached?`<div class="pair"><span style="color:var(--ok)">${scapMt} target met — ${MFMT(t.ld_over_target_t||0)} t over</span></div>`:
         `<div class="pair"><span style="color:var(--er)">short of the target by</span><b>${MFMT(t.ld_shortfall_t)} t</b></div>`}
       ${s.violations&&s.violations.length?`<div class="pair"><span style="color:var(--er)">BLB≠RIM: ${s.violations.length}</span></div>`:''}
     </div>`;}).join('');
