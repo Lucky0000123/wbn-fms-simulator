@@ -352,7 +352,36 @@ function updateFlowSimulator(){
     return {id:p.id,km:p.km,road:p.road,roadKm:p.roadKm,lat:p.lat,lng:p.lng,loaded:Math.abs(p.y-180)<.8,col:(c&&c.getAttribute('fill'))||'#38bdf8'};
   }));
 }
-function flowFrame(ts){const s=_flowSim;if(!s||!s.running)return;if(!s.last)s.last=ts;const dt=Math.min(.1,(ts-s.last)/1000);s.last=ts;s.hour=Math.min(FLOW_SHIFT_HOURS,s.hour+dt*FLOW_SHIFT_HOURS/24);updateFlowSimulator();if(s.hour>=FLOW_SHIFT_HOURS){stopFlowSimulator();
+// Skip the PAINT when nobody can see it. The per-frame work moves every
+// particle (~1 per DT — a December plan is ~1,270 of them), re-sorts both
+// lanes and syncs Leaflet markers, and it kept doing all of that at full
+// requestAnimationFrame rate while the card was scrolled away or the window
+// sat behind another app — measured 2026-08-27 as a browser renderer pinned
+// at ~50-60% CPU for the whole replay. The CLOCK still advances and the
+// replay still completes (planOnIllustrationFinished must fire — the Plan
+// flow stages off it); only the visual work is skipped, and the first
+// visible frame repaints the current state in full.
+let _flowStageOnScreen=true,_flowStageObserved=null;
+const _flowStageIO=(typeof IntersectionObserver!=='undefined')
+  ?new IntersectionObserver(es=>{es.forEach(e=>{_flowStageOnScreen=e.isIntersecting;});})
+  :null;
+function flowObserveStage(){
+  if(!_flowStageIO)return;
+  const el=flowQ('c3-flow-svg');
+  if(!el||el===_flowStageObserved)return;
+  if(_flowStageObserved)_flowStageIO.unobserve(_flowStageObserved);
+  _flowStageIO.observe(el);
+  _flowStageObserved=el;
+  _flowStageOnScreen=true;   // assume visible until the observer reports
+}
+function flowFrame(ts){const s=_flowSim;if(!s||!s.running)return;if(!s.last)s.last=ts;const dt=Math.min(.1,(ts-s.last)/1000);s.last=ts;s.hour=Math.min(FLOW_SHIFT_HOURS,s.hour+dt*FLOW_SHIFT_HOURS/24);
+  if(!document.hidden&&_flowStageOnScreen)updateFlowSimulator();
+  if(s.hour>=FLOW_SHIFT_HOURS){
+  // One final full paint regardless of visibility, so the completed state is
+  // what the user finds when they scroll back — a replay that "finished
+  // blank" reads as a crash.
+  updateFlowSimulator();
+  stopFlowSimulator();
   // Plan host: the illustration finished its full clock — run the full
   // assessment (prediction) underneath. Staged: illustration → predict → results.
   if(_flowHost==='plan'&&typeof planOnIllustrationFinished==='function'){
@@ -361,7 +390,7 @@ function flowFrame(ts){const s=_flowSim;if(!s||!s.running)return;if(!s.last)s.la
   return;}s.raf=requestAnimationFrame(flowFrame);}
 function flowToggle(){const s=_flowSim;if(!s)return;if(s.running){stopFlowSimulator();return;}if(s.hour>=FLOW_SHIFT_HOURS){s.hour=0;s.liveCongestion=0;s.liveDensity=0;s.vehicleStates={};s.laneOrders={loaded:[],empty:[]};}if(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches){s.hour=FLOW_SHIFT_HOURS;updateFlowSimulator();
   if(_flowHost==='plan'&&typeof planOnIllustrationFinished==='function'){try{planOnIllustrationFinished();}catch(_){}}
-  return;}s.running=true;s.last=0;const play=flowQ('c3-flow-play');if(play)play.textContent='Ⅱ Pause';s.raf=requestAnimationFrame(flowFrame);}
+  return;}s.running=true;s.last=0;flowObserveStage();const play=flowQ('c3-flow-play');if(play)play.textContent='Ⅱ Pause';s.raf=requestAnimationFrame(flowFrame);}
 function flowReset(){stopFlowSimulator();if(_flowSim){_flowSim.hour=0;_flowSim.liveCongestion=0;_flowSim.liveDensity=0;_flowSim.vehicleStates={};_flowSim.laneOrders={loaded:[],empty:[]};updateFlowSimulator();}}
 // When false (default), motion uses corridor.measuredSpeeds (GPS). Advanced km/h
 // inputs are display/override only — touching them sets _flowSpeedOverride.
@@ -969,6 +998,7 @@ function flowRunOrPause(){
   runFlowPlan();
 }
 function renderFlowSimulator(P,colours){
+  flowObserveStage();
   const selectedDate=(_flowPointScenario&&_flowPointScenario.date)||'';
   // Plan illustration: still snap weighbridges onto the stick (fixture/live positions).
   if(selectedDate==='plan'){if(!_wbPos)loadWbPositions(0,'');}
