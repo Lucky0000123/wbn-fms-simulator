@@ -3192,27 +3192,22 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
         # the two books are comparable on one line. The fleet-credited sum
         # stays as "Monthly plan targets" beside it. Audit V2 (2026-08-27):
         # this number was previously nowhere in the workbook.
-        _sales_tot = Y.get("sales_target")
-        _sales_cov = Y.get("cov_sales")
+        # Owner 2026-08-27 final: 17,003,193 everywhere. The internal
+        # monthly-sum clock is no longer a requirement and is not shown.
+        _sales_tot = Y.get("sales_target") or Y.get("target")
+        _sales_cov = (Y.get("cov_sales") if Y.get("sales_target")
+                      else Y.get("cov_new_pred"))
+        year_kpis = [
+            ("Sales target", _sales_tot, _XLSX_TGT, "Year tonnes"),
+            ("Predicted plan", Y.get("new_pred"), _XLSX_PRED, "Year tonnes"),
+        ]
         if achv:
-            year_kpis = [
-                ("Sales target", _sales_tot, _XLSX_TGT, "Year tonnes"),
-                ("Monthly plan targets", Y.get("target"), _XLSX_MUTED, "Year tonnes"),
-                ("Predicted plan", Y.get("new_pred"), _XLSX_PRED, "Year tonnes"),
-                ("Achievable", Y.get("new_achv_raw") or Y.get("new_achv"),
-                 _XLSX_ACHV, "Year tonnes"),
-            ]
-        else:
-            year_kpis = [
-                ("Sales target", _sales_tot, _XLSX_TGT, "Year tonnes"),
-                ("Monthly plan targets", Y.get("target"), _XLSX_MUTED, "Year tonnes"),
-                ("Predicted plan", Y.get("new_pred"), _XLSX_PRED, "Year tonnes"),
-            ]
+            year_kpis.append(("Achievable",
+                              Y.get("new_achv_raw") or Y.get("new_achv"),
+                              _XLSX_ACHV, "Year tonnes"))
         if _sales_cov is not None:
             year_kpis.append(("Sales target coverage", _sales_cov,
                               "059669" if _sales_cov >= 100 else "D97706", "pct"))
-        if not _sales_tot:
-            year_kpis = year_kpis[1:]
         r = _xlsx_kpi_strip(ws, r, year_kpis, start=1)
         pct_kpis = [
             ("Together · % of target", Y.get("cov_new_pred"),
@@ -4530,6 +4525,7 @@ def _year_alloc_totals(cards):
     if "ld" in mats:
         import scenario_api as _sa
         b = mats["ld"]
+        _b_keep = b
         # Scenario-aware LD line (owner 2026-08-27): the total haulage
         # target is constant at 17.0 Mt, so 3.0 (days 03/04) carries the
         # ~1 Mt its LIM-TOS did not take. The day is read from the cards'
@@ -4553,6 +4549,37 @@ def _year_alloc_totals(cards):
         tot["cov_sales"] = _cov_pct(tot.get("new_pred"), tot["sales_target"])
         tot["left_sales"] = max(0, tot["sales_target"] - (tot.get("new_pred") or 0))
         tot["over_sales"] = max(0, (tot.get("new_pred") or 0) - tot["sales_target"])
+        # Owner 2026-08-27 (final ruling): "17 million everywhere — the
+        # monthly plan target no longer exists as a requirement." EVERY
+        # material's headline number and coverage is its SALES line now:
+        # SAP 5,718,686 · LIM-TOS by scenario · LIM-LD by scenario · the
+        # internal fleet-credited sums stay in the payload as *_plan keys
+        # for anyone who needs the old clock, but nothing headlines them.
+        if "sap" in mats:
+            bs = mats["sap"]
+            bs["sales_target"] = _sa.SAP_SALES_T
+            bs["cov_sales"] = _cov_pct(bs.get("pred_after"), bs["sales_target"])
+            bs["left_sales"] = max(0, bs["sales_target"] - (bs.get("pred_after") or 0))
+            bs["over_sales"] = max(0, (bs.get("pred_after") or 0) - bs["sales_target"])
+        if "tos" in mats:
+            bt = mats["tos"]
+            bt["sales_target"] = _sa.tos_target_for_scenario(_sid)
+            bt["cov_sales"] = _cov_pct(bt.get("pred_after"), bt["sales_target"])
+            bt["left_sales"] = max(0, bt["sales_target"] - (bt.get("pred_after") or 0))
+            bt["over_sales"] = max(0, (bt.get("pred_after") or 0) - bt["sales_target"])
+        for _k in ("sap", "tos", "ld"):
+            _m = mats.get(_k)
+            if _m and _m.get("sales_target"):
+                _m["plan_target"] = _m.get("target")
+                _m["target"] = _m["sales_target"]
+                _m["cov_pred"] = _m["cov_sales"]
+                _m["left"] = _m["left_sales"]
+                _m["over"] = _m["over_sales"]
+        tot["plan_target"] = tot.get("target")
+        tot["target"] = tot["sales_target"]
+        tot["cov_new_pred"] = tot["cov_sales"]
+        tot["left_new_pred"] = tot["left_sales"]
+        tot["over_new_pred"] = tot["over_sales"]
     tot["materials"] = mats
     return tot
 

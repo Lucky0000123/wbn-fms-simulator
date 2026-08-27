@@ -82,6 +82,17 @@ LIM_LD_TARGET_T = 6_644_306
 # LIM-LD: 3.0's LD line is 6,644,306 + 990,000. One total, two splits.
 LIM_LD_TARGET_30_T = LIM_LD_TARGET_T + 990_000   # 7,634,306
 HAULAGE_TOTAL_T = 17_003_193
+SAP_SALES_T = 5_718_686
+LIM_TOS_SALES_31_T = 4_640_201
+LIM_TOS_SALES_30_T = 3_650_201
+
+
+def tos_target_for_scenario(sid):
+    """LIM-TOS sales line by scenario family."""
+    s = str(sid or "").upper()
+    if s in ("S3", "S4") or "3.0" in s:
+        return LIM_TOS_SALES_30_T
+    return LIM_TOS_SALES_31_T
 
 
 def ld_target_for_scenario(sid):
