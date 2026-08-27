@@ -2810,6 +2810,33 @@ def _xlsx_road_corridor_hourly(ws, r, res, dt, source=None):
 
     follow = float((res.get("basis") or {}).get("following_distance_m")
                    or FOLLOWING_DISTANCE_M)
+    # WHO IS ON THE ROAD (owner, 2026-08-27: "it's not just the 1,281 trucks
+    # running there — the other tenants crowd the road too, show them"). The
+    # engine has always ADDED the tenant register to the occupancy numbers
+    # (tenants=True), but the header counted only our fleet, so a reader
+    # could not tell whether the 1,340 tenant DT were in the colour or not.
+    # State the whole road: ours + theirs = what the colour is priced on.
+    _ten_dt = 0
+    try:
+        _ten_dt = int(round(float((res.get("tenants") or {}).get("total_dt") or 0)))
+    except Exception:  # noqa: BLE001
+        _ten_dt = 0
+    if not _ten_dt:
+        try:
+            from congestion.tenants import TENANTS as _TREG
+            _ten_dt = int(sum(t["dt"] for t in _TREG))
+        except Exception:  # noqa: BLE001
+            _ten_dt = 0
+    if _ten_dt and dt:
+        ws.cell(row=r, column=1, value=(
+            "ON THIS ROAD: %s DT total = %s ours (plan + IWIP transit) + "
+            "%s other tenants (POSITION, HUAFEI>RSF, PMA, MHM, HSM, KR>RSF — "
+            "not ours to schedule, but they take lane space). Every number "
+            "below already includes them."
+            % (format(int(dt) + _ten_dt, ","), format(int(dt), ","),
+               format(_ten_dt, ","))))
+        ws.cell(row=r, column=1).font = _xlsx_font(True, 9, _XLSX_NAVY)
+        r += 1
     ws.cell(row=r, column=1, value=(
         "Loaded-lane trucks sitting each hour (empty is the other carriageway). "
         "Colour vs one loaded lane at %.0f m "
@@ -2995,9 +3022,22 @@ def _xlsx_append_crowding_sheet(wb, cards, used, prefix="", after_sheet=None):
             continue
         res, dt = got
         any_grid = True
+        # The title counts EVERY truck on the road, ours plus the tenant
+        # register (owner, 2026-08-27). "Dec (1,310 DT)" read as if the road
+        # held only our fleet when the colour was already priced on 2,650.
+        try:
+            from congestion.tenants import TENANTS as _TREG
+            _ten = int(sum(t["dt"] for t in _TREG))
+        except Exception:  # noqa: BLE001
+            _ten = 0
         r = _xlsx_road_corridor_hourly(
             ws, r + 1, res, dt,
-            source="%s (%d DT)" % (card.get("name") or card.get("month") or "", dt))
+            source=("%s (%s DT on the road: %s ours + %s tenants)"
+                    % (card.get("name") or card.get("month") or "",
+                       format(int(dt) + _ten, ","), format(int(dt), ","),
+                       format(_ten, ","))
+                    if _ten else
+                    "%s (%d DT)" % (card.get("name") or card.get("month") or "", dt)))
         r += 1
     if not any_grid:
         ws.cell(row=r, column=1, value="No finalised allocation to time onto the road.")
