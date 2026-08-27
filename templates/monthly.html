@@ -250,10 +250,11 @@ function pathRatesTotal(rows){
     +'<td>'+fmt2(dtB?prB/dtB:null)+'</td><td><b>'+fmt2(dtA?prA/dtA:null)+'</b></td>'
     +'<td>'+fmt(prB)+'</td><td><b>'+fmt(prA)+'</b> <span class="muted">'+pct(tgt?100*prA/tgt:null)+'</span></td></tr>';
 }
+// Two clocks (owner 2026-08-27): target and the predicted plan. The
+// pre-allocate "old predicted" series left every chart with the headline.
 const CLOCKS=[
   {name:'Target', color:'#eab308', dash:false, fill:0, hard:true},
-  {name:'Old predicted plan', color:'#ef4444', dash:true, fill:0},
-  {name:'Optimized predicted plan', color:'#ef4444', dash:false, fill:0.12},
+  {name:'Predicted plan', color:'#ef4444', dash:false, fill:0.12},
 ];
 function hexAlpha(hex,a){
   const n=parseInt(String(hex).replace('#',''),16);
@@ -326,7 +327,6 @@ function matCard(m, extraK){
     +'<div class="cov '+covClass(cov)+'">'+pct(cov)+'</div>'
     +'<div class="pair"><span>'+(sales?'Sales target':'Target')+'</span><b>'+fmt(tgt)+'</b></div>'
     +(sales?'<div class="pair"><span>Monthly plan targets (sum)</span><b>'+fmt(m.target)+'</b></div>':'')
-    +'<div class="pair"><span>Old predicted plan</span><b>'+fmt(oldP)+'</b></div>'
     +'<div class="pair"><span>Optimized predicted plan</span><b>'+fmt(pred)+'</b></div>'
     +(cov!=null&&cov<100?'<div class="pair"><span>Leaving</span><b style="color:var(--er)">'+fmt(left)+'</b></div>':'')
     +(cov!=null&&cov>100?'<div class="pair"><span>Over target</span><b style="color:var(--ok)">'+fmt(over)+'</b></div>':'')
@@ -414,12 +414,15 @@ function renderBoard(){
   });
   let html='';
   if(Y){
-    html=kpi(Y.target,'man','target · year t')
-      +kpi(Y.old_pred,'newp','old predicted plan · year t')
-      +kpi(Y.new_pred,'newp','optimized predicted plan · year t')
-      +'<div class="kpi"><div class="v '+covClass(Y.cov_new_pred)+'">'+pct(Y.cov_new_pred)+'</div><div class="k">optimized / target</div></div>'
-      +(Y.left_new_pred?kpi(Y.left_new_pred,'','leaving vs target'):'')
-      +(Y.over_new_pred?kpi(Y.over_new_pred,'gap','plan over target'):'');
+    // One clock (owner 2026-08-27, matching the Excel): sales target,
+    // predicted plan, coverage — no pre-allocate "old predicted" headline.
+    const salesT=Y.sales_target||Y.target;
+    const salesCov=Y.sales_target?Y.cov_sales:Y.cov_new_pred;
+    html=kpi(salesT,'man','sales target · year t')
+      +kpi(Y.new_pred,'newp','predicted plan · year t')
+      +'<div class="kpi"><div class="v '+covClass(salesCov)+'">'+pct(salesCov)+'</div><div class="k">predicted / sales target</div></div>'
+      +(salesT>(Y.new_pred||0)?kpi(salesT-Y.new_pred,'','leaving vs sales target'):'')
+      +((Y.new_pred||0)>salesT?kpi(Y.new_pred-salesT,'gap','plan over sales target'):'');
   }else if(tot.n){
     html=kpi(tot.p,'pred','old predicted plan · year t')
       +kpi(tot.t||null,'man','target · year t');
@@ -465,8 +468,7 @@ function renderBoard(){
         +'</div>'
         +'<div class="row3">'
         +'<div class="ln tgt"><span>Target</span><b>'+fmt(a.target_month)+'</b></div>'
-        +'<div class="ln old"><span>Old predicted plan</span><b>'+fmt(a.old_pred_month)+'</b></div>'
-        +'<div class="ln pred"><span>Optimized predicted plan</span><b>'+fmt(a.new_pred_month)+'</b></div>'
+        +'<div class="ln pred"><span>Predicted plan</span><b>'+fmt(a.new_pred_month)+'</b></div>'
         +'</div>'
         +'<div class="covs">'+pill('All',a.cov_new_pred)
           +pill('SAP',(a.materials.sap||{}).cov_pred)
@@ -475,7 +477,6 @@ function renderBoard(){
         +'</div>'
         +'<div class="bars" aria-hidden="true">'
           +'<i class="t" style="height:'+h(a.target_month)+'px"></i>'
-          +'<i class="o" style="height:'+h(a.old_pred_month)+'px"></i>'
           +'<i class="np" style="height:'+h(a.new_pred_month)+'px"></i>'
         +'</div></button>';
     }
@@ -486,7 +487,7 @@ function renderBoard(){
       +(c.built?'':' · matrix only')+'</div>'
       +'<div class="row3">'
       +'<div class="ln tgt"><span>Target</span><b>'+fmt(c.target_month)+'</b></div>'
-      +'<div class="ln pred"><span>Old predicted plan</span><b>'+fmt(c.pred_month)+'</b></div>'
+      +'<div class="ln pred"><span>Predicted plan</span><b>'+fmt(c.pred_month)+'</b></div>'
       +'</div>'
       +(c.built?('<div class="bars" aria-hidden="true"><i class="t" style="height:'+h(c.target_month)+'px"></i>'
         +'<i class="p" style="height:'+h(c.pred_month)+'px"></i></div>'):'')
@@ -518,11 +519,11 @@ function renderBoard(){
     legend:th.legend,grid:th.grid,tooltip:th.tooltip,
     xAxis:{...th.axis,data:labs},yAxis:th.yax,
     series:hasA
-      ?threeLinesLocal([clock('target_month','target_month'),clock('old_pred_month','pred_month'),
-                  clock('new_pred_month',null)])
+      ?threeLinesLocal([clock('target_month','target_month'),
+                  clock('new_pred_month','pred_month')])
       :[
         clockLine(0, cards.map(c=>c.target_month??null)),
-        clockLine(1, cards.map(c=>c.pred_month??null), {name:'Old predicted plan'}),
+        clockLine(1, cards.map(c=>c.pred_month??null)),
       ]});
 
   function matLine(id, title, mat){
@@ -533,7 +534,6 @@ function renderBoard(){
       xAxis:{...th.axis,data:labs},yAxis:th.yax,
       series:clockLines([
         matClock(mat,'target_month'),
-        matClock(mat,'pred_before_month'),
         matClock(mat,'pred_after_month'),
       ], cards)
     });
@@ -568,7 +568,7 @@ function renderBoard(){
     ]});
 
   $('mo-year-table').innerHTML=cards.length
-    ?('<tr><th>Month</th><th>Target</th><th>Old predicted plan</th><th>Optimized predicted plan</th><th>Optimized %</th>'
+    ?('<tr><th>Month</th><th>Target</th><th>Predicted plan</th><th>Predicted %</th>'
       +'<th>SAP %</th><th>LIM-TOS %</th><th>LIM-LD %</th><th>Leaving</th></tr>'
       +cards.map(c=>{
         const a=c.alloc;
@@ -578,7 +578,7 @@ function renderBoard(){
             +'<td colspan="4" class="muted">no Allocate snapshot</td></tr>';
         }
         return '<tr><td>'+c.name+(a.source_date?' <span class="muted">'+a.source_date+'</span>':'')+'</td>'
-          +'<td>'+fmt(a.target_month)+'</td><td>'+fmt(a.old_pred_month)+'</td><td><b>'+fmt(a.new_pred_month)+'</b></td>'
+          +'<td>'+fmt(a.target_month)+'</td><td><b>'+fmt(a.new_pred_month)+'</b></td>'
           +'<td>'+pct(a.cov_new_pred)+'</td>'
           +'<td>'+pct((a.materials.sap||{}).cov_pred)+'</td>'
           +'<td>'+pct((a.materials.tos||{}).cov_pred)+'</td>'
@@ -586,7 +586,7 @@ function renderBoard(){
           +'<td>'+fmt(a.left_new_pred_month)+'</td></tr>';
       }).join('')
       +(Y?('<tr><td><b>TOTAL · '+Y.n+' months</b></td><td><b>'+fmt(Y.target)+'</b></td>'
-        +'<td><b>'+fmt(Y.old_pred)+'</b></td><td><b>'+fmt(Y.new_pred)+'</b></td>'
+        +'<td><b>'+fmt(Y.new_pred)+'</b></td>'
         +'<td><b>'+pct(Y.cov_new_pred)+'</b></td>'
         +'<td><b>'+pct((mats.sap||{}).cov_pred)+'</b></td>'
         +'<td><b>'+pct((mats.tos||{}).cov_pred)+'</b></td>'
@@ -658,9 +658,8 @@ function renderMonth(){
   if(a){
     $('mo-kpis').innerHTML=
       kpi(a.target_month,'man','target · month t')
-      +kpi(a.old_pred_month,'newp','old predicted plan')
-      +kpi(a.new_pred_month,'newp','optimized predicted plan')
-      +'<div class="kpi"><div class="v '+covClass(a.cov_new_pred)+'">'+pct(a.cov_new_pred)+'</div><div class="k">optimized / target</div></div>'
+      +kpi(a.new_pred_month,'newp','predicted plan')
+      +'<div class="kpi"><div class="v '+covClass(a.cov_new_pred)+'">'+pct(a.cov_new_pred)+'</div><div class="k">predicted / target</div></div>'
       +(a.left_new_pred_month?kpi(a.left_new_pred_month,'','leaving vs target'):'')
       +(a.over_new_pred_month?kpi(a.over_new_pred_month,'gap','over target'):'')
       +kpi(a.dt_after,'','DT after · '+fmt(a.dt_before)+' before');
@@ -670,7 +669,7 @@ function renderMonth(){
     $('mo-kpis-mat').innerHTML=matCard(tog,'month')+matCard(M.sap,'month')+matCard(M.tos,'month')+matCard(M.ld,'month');
   }else{
     $('mo-kpis').innerHTML=
-      kpi(totP||null,'pred','old predicted plan · month t')
+      kpi(totP||null,'pred','predicted plan · month t')
       +kpi(totT||null,'man','target · month t')
       +(p&&m?kpi(totP-totT,'gap','predicted − target'):'');
     $('mo-kpis-mat').innerHTML='';
@@ -678,8 +677,8 @@ function renderMonth(){
 
   const th=axisTheme('t / day');
   if(a){
-    const cats=['Target','Old predicted plan','Optimized predicted plan'];
-    const vals=[a.target_day,a.old_pred_day,a.new_pred_day];
+    const cats=['Target','Predicted plan'];
+    const vals=[a.target_day,a.new_pred_day];
     chart('mo-chart-oldnew',{
       title:{...th.title,text:'Day clocks · month = day × '+ds.length+' days'},
       legend:{show:false},grid:{...th.grid,top:42},tooltip:th.tooltip,
@@ -696,8 +695,7 @@ function renderMonth(){
       xAxis:{...th.axis,data:mLabs},yAxis:th.yax,
       series:[
         barClock(0, mk.map(k=>(M[k]||{}).target_day)),
-        barClock(1, mk.map(k=>(M[k]||{}).pred_before_day)),
-        barClock(2, mk.map(k=>(M[k]||{}).pred_after_day)),
+        barClock(1, mk.map(k=>(M[k]||{}).pred_after_day)),
       ]
     });
     const covs=[{lab:'All',v:a.cov_new_pred},{lab:'SAP',v:(M.sap||{}).cov_pred},
@@ -730,21 +728,20 @@ function renderMonth(){
     xAxis:{...th.axis,data:lab},yAxis:th.yax,
     series:a?[
       clockLine(0, ds.map(d=>days[d].t??null), {showSymbol:false}),
-      clockLine(1, ds.map(d=>days[d].op??null), {showSymbol:false}),
-      clockLine(2, ds.map(d=>days[d].np??null), {showSymbol:false}),
+      clockLine(1, ds.map(d=>days[d].np??null), {showSymbol:false}),
     ]:[
-      p&&clockLine(2, ds.map(d=>days[d].p??null), {name:'Old predicted plan', showSymbol:false}),
+      p&&clockLine(1, ds.map(d=>days[d].p??null), {name:'Predicted plan', showSymbol:false}),
       clockLine(0, ds.map(d=>days[d].t??null), {showSymbol:false}),
     ].filter(Boolean)});
 
   if(a){
-    $('mo-table').innerHTML='<tr><th>Date</th><th>Target</th><th>Old predicted plan</th><th>Optimized predicted plan</th></tr>'
+    $('mo-table').innerHTML='<tr><th>Date</th><th>Target</th><th>Predicted plan</th></tr>'
       +ds.map(d=>{const r=days[d];
-        return '<tr><td>'+d+'</td><td>'+fmt(r.t)+'</td><td>'+fmt(r.op)+'</td><td>'+fmt(r.np)+'</td></tr>';}).join('')
-      +'<tr><td><b>Total</b></td><td><b>'+fmt(a.target_month)+'</b></td><td><b>'+fmt(a.old_pred_month)+'</b></td>'
+        return '<tr><td>'+d+'</td><td>'+fmt(r.t)+'</td><td>'+fmt(r.np)+'</td></tr>';}).join('')
+      +'<tr><td><b>Total</b></td><td><b>'+fmt(a.target_month)+'</b></td>'
       +'<td><b>'+fmt(a.new_pred_month)+'</b></td></tr>';
   }else{
-    $('mo-table').innerHTML='<tr><th>Date</th><th>Old predicted plan t</th><th>Target t</th></tr>'
+    $('mo-table').innerHTML='<tr><th>Date</th><th>Predicted plan t</th><th>Target t</th></tr>'
       +ds.map(d=>{const r=days[d];
         return '<tr><td>'+d+'</td><td>'+fmt(r.p)+'</td><td>'+fmt(r.t)+'</td></tr>';}).join('')
       +'<tr><td><b>Total</b></td><td><b>'+fmt(totP||null)+'</b></td><td><b>'+fmt(totT||null)+'</b></td></tr>';
@@ -779,9 +776,8 @@ function renderMonth(){
       +'<div class="sec-label">Materials · t / day</div>'
       +'<table><tr><th></th><th>SAP</th><th>LIM-TOS</th><th>LIM-LD</th><th>Together</th></tr>'
       +[['Target',k=>bkt(k).target_day,a.target_day],
-        ['Old predicted plan',k=>bkt(k).pred_before_day,a.old_pred_day],
-        ['Optimized predicted plan',k=>bkt(k).pred_after_day,a.new_pred_day],
-        ['Optimized %',k=>bkt(k).cov_pred,a.cov_new_pred]].map(row=>{
+        ['Predicted plan',k=>bkt(k).pred_after_day,a.new_pred_day],
+        ['Predicted %',k=>bkt(k).cov_pred,a.cov_new_pred]].map(row=>{
           const [lab,fn,tot]=row;
           const isPct=lab.indexOf('%')>=0;
           const cell=v=>isPct?pct(v):fmt(v);

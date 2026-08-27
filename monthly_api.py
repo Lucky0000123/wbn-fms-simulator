@@ -850,9 +850,19 @@ def _xlsx_cov_tone(pct):
 
 
 def _xlsx_paint_cov(cell, pct, size=11):
-    """Percent of target as a plain black figure (no traffic-light fill)."""
+    """Percent of target: GREEN when the target is met (>=100%), plain black
+    below. Owner 2026-08-27: "if we pass 100% of our targets make it green,
+    no matter which — total or anything." This is deliberately NOT the old
+    three-colour traffic light (removed by the 2026-08-23 ruling): under
+    100% stays a plain figure, no amber/red judgement — only success is
+    coloured."""
+    from openpyxl.styles import PatternFill
     _xlsx_pct_cell(cell, pct)
-    cell.font = _xlsx_font(True, size, _XLSX_INK)
+    if pct is not None and pct >= 100:
+        cell.font = _xlsx_font(True, size, "1B7A41")
+        cell.fill = PatternFill("solid", fgColor="D9F2E2")
+    else:
+        cell.font = _xlsx_font(True, size, _XLSX_INK)
     return cell
 
 
@@ -1261,11 +1271,11 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
         ws.cell(row=r, column=col).border = box
         ws.cell(row=r, column=col).alignment = mid
     pred_col = 8  # WMT (predicted)
-    _xlsx_pct_cell(ws.cell(row=r, column=pred_col), _cov_pct(tot["pr_a"], tot["tgt"]))
-    ws.cell(row=r, column=pred_col).font = _xlsx_font(True, 9, _XLSX_PRED)
+    _xlsx_paint_cov(ws.cell(row=r, column=pred_col),
+                    _cov_pct(tot["pr_a"], tot["tgt"]), size=9)
     if achv:
-        _xlsx_pct_cell(ws.cell(row=r, column=11), _cov_pct(tot.get("av_a"), tot["tgt"]))
-        ws.cell(row=r, column=11).font = _xlsx_font(True, 9, _XLSX_ACHV)
+        _xlsx_paint_cov(ws.cell(row=r, column=11),
+                        _cov_pct(tot.get("av_a"), tot["tgt"]), size=9)
     # Three fleets, three lines, each named: ours in TOTAL, IWIP POS-transit
     # and the other tenants beside it. Before this, IWIP was invisible because
     # it was folded INTO TOTAL DT, which is how Sep read 707 against a pool of
@@ -3177,18 +3187,32 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
     r = _xlsx_plan_source_block(ws, r, cards)
     if Y:
         mats = Y.get("materials") or {}
+        # The board is judged against the constant 17,003,193 haulage sales
+        # total (owner 2026-08-27) — the same in both scenario families, so
+        # the two books are comparable on one line. The fleet-credited sum
+        # stays as "Monthly plan targets" beside it. Audit V2 (2026-08-27):
+        # this number was previously nowhere in the workbook.
+        _sales_tot = Y.get("sales_target")
+        _sales_cov = Y.get("cov_sales")
         if achv:
             year_kpis = [
-                ("Target", Y.get("target"), _XLSX_TGT, "Year tonnes"),
+                ("Sales target", _sales_tot, _XLSX_TGT, "Year tonnes"),
+                ("Monthly plan targets", Y.get("target"), _XLSX_MUTED, "Year tonnes"),
                 ("Predicted plan", Y.get("new_pred"), _XLSX_PRED, "Year tonnes"),
                 ("Achievable", Y.get("new_achv_raw") or Y.get("new_achv"),
                  _XLSX_ACHV, "Year tonnes"),
             ]
         else:
             year_kpis = [
-                ("Target", Y.get("target"), _XLSX_TGT, "Year tonnes"),
+                ("Sales target", _sales_tot, _XLSX_TGT, "Year tonnes"),
+                ("Monthly plan targets", Y.get("target"), _XLSX_MUTED, "Year tonnes"),
                 ("Predicted plan", Y.get("new_pred"), _XLSX_PRED, "Year tonnes"),
             ]
+        if _sales_cov is not None:
+            year_kpis.append(("Sales target coverage", _sales_cov,
+                              "059669" if _sales_cov >= 100 else "D97706", "pct"))
+        if not _sales_tot:
+            year_kpis = year_kpis[1:]
         r = _xlsx_kpi_strip(ws, r, year_kpis, start=1)
         pct_kpis = [
             ("Together · % of target", Y.get("cov_new_pred"),
@@ -3299,12 +3323,15 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
             ]
             col = 5
         else:
+            # The old-pred column left this table on 2026-08-26; its TOTAL
+            # row kept writing it, shifting every % one column right and
+            # stranding an unlabelled figure past the last header (found by
+            # the 2026-08-27 audit swarm at Year!C127).
             tot_row = [
                 (2, Y.get("target"), None),
-                (3, Y.get("old_pred"), None),
-                (4, Y.get("new_pred"), None),
+                (3, Y.get("new_pred"), None),
             ]
-            col = 5
+            col = 4
         tot_row += [
             (col, None, Y.get("cov_new_pred")),
             (col + 1, None, (mats.get("sap") or {}).get("cov_pred")),
