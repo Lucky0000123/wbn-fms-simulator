@@ -1367,10 +1367,29 @@
     const clocksOk=filled.simComplete||prod.every(x=>Number.isFinite(x.achv_sim));
     const achvSim=filled.simComplete?Math.round(filled.achvSimTotal)
       :(clocksOk?prod.reduce((a,x)=>a+(x.achv_sim||0),0):null);
+    // `old` is the BEFORE snapshot and must equal what the saved rows say,
+    // or an auditor reading the file finds a header that no row supports.
+    // captureOrigTotals() runs on the first allocate pass, before the
+    // rescue/split/trim stages re-price the corridor, so its scalars drifted
+    // from the rows' own pred_before/achv_before (owner audit, 2026-08-27:
+    // day-03 +109 t, day-04 +768, day-05 achv +17,718). Derive it from the
+    // rows and keep the captured fleet count.
+    const oldCap=_origTotals||{};
+    const oldRows=rows.filter(x=>!x.foreign);
+    const sumOld=(k)=>{
+      let any=false,t=0;
+      oldRows.forEach(x=>{if(Number.isFinite(x[k])){any=true;t+=x[k];}});
+      return any?t:null;
+    };
+    const oldPred=sumOld('pred_before');
+    const oldAchv=sumOld('achv_before');
     return {
       frozen:true,
       horizon:hzLab,
-      old:_origTotals||{pred:null,achv:null,dt:filled.fleetWas},
+      old:{pred:oldPred!=null?oldPred:(oldCap.pred!=null?oldCap.pred:null),
+           achv:oldAchv!=null?Math.round(oldAchv):(oldCap.achv!=null?oldCap.achv:null),
+           achv_sim:oldCap.achv_sim!=null?oldCap.achv_sim:null,
+           dt:oldCap.dt!=null?oldCap.dt:filled.fleetWas},
       cap:'none',
       new:{pred:newPred, achv:newAchv,
         achv_sim:achvSim,
@@ -2133,24 +2152,37 @@
             if((p!==1&&p!==2)||!(x.r.targetWmt>0)||x.r.dt<=1)return;
             const tgt=x.r.targetWmt;
             if(!((predDayFor(x.id,x.r)||0)>tgt*1.01))return;
-            const rec=receiver();
-            if(!rec||rec.id===x.id)return;
+            // The receiver is re-picked FOR EVERY TRUCK. Picking it once
+            // broke the §4 POS 6 split (owner audit, 2026-08-27): the split
+            // handed RIM 149/149, then this trim pushed all 137 trim trucks
+            // into TF>HUAFEI alone and the frozen plan read 285/150 = 34.5%
+            // POS 6 instead of half. receiver() already prefers whichever
+            // split leg is behind, so re-asking it per truck keeps the two
+            // destinations level as the block grows.
             let took=0,guard=0;
+            const per={};                       // receiver id -> trucks + row
             while(x.r.dt>1&&guard++<400){
+              const rec=receiver();
+              if(!rec||rec.id===x.id)break;
               const down=predDayAt(x.id,x.r,x.r.dt-1);
               if(down==null||down<tgt*0.995)break;
               x.r.dt-=1;rec.r.dt+=1;took+=1;
+              const slot=per[rec.id]||(per[rec.id]={n:0,r:rec.r});
+              slot.n+=1;
             }
             if(took>0){
               moved+=took;trimmed+=took;
-              _allocMoves.push({contractor:cont,trucks:took,
-                from:x.r.key,from_mat:x.r.material||'',from_otype:x.r.otype||'',
-                to:rec.r.key,to_mat:rec.r.material||'',to_otype:rec.r.otype||'',
-                tag:'final trim to target → LD',reason:'final trim to target',
-                same_origin:pitOf(x)===canonSrc(String(rec.r.key).split('>')[0]),
-                dropped:false});
-              movesTxt.push(cont+' '+took+' DT: '+x.r.key+' → '+rec.r.key
-                +' (final trim — Predicted drifted over target after corridor moves)');
+              Object.keys(per).forEach(rid=>{
+                const n=per[rid].n, rr=per[rid].r;
+                _allocMoves.push({contractor:cont,trucks:n,
+                  from:x.r.key,from_mat:x.r.material||'',from_otype:x.r.otype||'',
+                  to:rr.key,to_mat:rr.material||'',to_otype:rr.otype||'',
+                  tag:'final trim to target → LD',reason:'final trim to target',
+                  same_origin:pitOf(x)===canonSrc(String(rr.key).split('>')[0]),
+                  dropped:false});
+                movesTxt.push(cont+' '+n+' DT: '+x.r.key+' → '+rr.key
+                  +' (final trim — Predicted drifted over target after corridor moves)');
+              });
             }
           });
         });
