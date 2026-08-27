@@ -37,6 +37,18 @@
   function planRulesS4Active(){
     return /^\d{4}-\d{2}-(04|06)$/.test(((q('plan-date')||{}).value||'').trim());
   }
+  // LIM-TOS 4-mo target by scenario day (owner 2026-08-27): days 05/06
+  // run the 3.1 plan (4,640,201 — the sales-table number, which already
+  // contains the ~1 Mt addition); days 03/04 run 3.0 (3,650,201).
+  function planRulesLimTosTarget(){
+    const R=(window.PLANNING_RULES||{});
+    const lt=R.limTos||{};
+    const v=((q('plan-date')||{}).value||'').trim();
+    const day=parseInt(v.split('-')[2],10);
+    if(day===5||day===6)return lt.totalTarget31||lt.totalTarget||4640201;
+    if(day===3||day===4)return lt.totalTarget30||3650201;
+    return lt.totalTarget||(R.targets||{}).limTosTotal||4640201;
+  }
   // The half-split itself starts in splitStartMonth (planning team
   // 2026-08-26: October). A September day-04/06 plan is a split-day save
   // whose split is dormant — it must allocate exactly like day 03/05.
@@ -2718,7 +2730,7 @@
         saleable:sapSaleable,saleableProj:sapSaleable*DAYS},
       feniSap:feniSap,
       tos:{tgt:tosTgt,pred:tosPred,met:tosTgt>0?tosPred>=tosTgt*0.995:null,
-        proj:tosPred*DAYS,target4mo:T.limTosTotal||4600000},
+        proj:tosPred*DAYS,target4mo:planRulesLimTosTarget()},
       ld:{pred:ldPred,proj:ldPred*DAYS,target4mo:T.limLdTotal||6644306},
       pos:{input:pt.input,output:pt.output,rows:pt.rows,
         balanced:Math.abs(pt.input-pt.output)<1},

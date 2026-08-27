@@ -116,9 +116,12 @@ what those hauled tonnes sell as.
 | Route | Material | Target | Notes |
 |-------|----------|--------|-------|
 | BLB → HUAFEI | LIM-TOS | 250,000 t/month | 1 Mt over 4 months (Sep-Dec) |
-| Other pits → HUAFEI | LIM-TOS | Calculated | Contribute to reach 4.6 Mt total |
+| Other pits → HUAFEI | LIM-TOS | Calculated | Contribute to the scenario total |
 
-Total LIM-TOS from ALL pits = 4.6 Mt. BLB adds 1 Mt (250 kt/month × 4 months). Other pits contribute the remaining 3.6 Mt.
+Owner, 2026-08-27: the sales table's LIM-TOS 4,640,201 wmt is the
+**scenario 3.1** total — it already CONTAINS the ~1 Mt addition (330,000
+t/month extra BLB LIM in October–December). Scenario 3.0 runs without that
+addition at **3,650,201** wmt. One number per scenario, never mixed.
 
 P2 fills after P1 is fully satisfied. If P1 SAP target requires more trucks than available, P2 does not get trucks.
 
@@ -186,7 +189,7 @@ Only add a POS → FeNi route if that POS dump actually receives material in the
 | Target | Value | Period | Material |
 |--------|-------|--------|----------|
 | Total LIM-LD | 6.644306 Mt | Sep-Dec 2026 (4 months) | Limonite, long-distance |
-| Total LIM-TOS (all pits) | 4.6 Mt | Sep-Dec 2026 | Limonite to TOS |
+| Total LIM-TOS (all pits) | 3.650201 Mt (3.0) / 4.640201 Mt (3.1) | Sep-Dec 2026 | Limonite to TOS |
 | BLB LIM-TOS contribution | 1 Mt (250 kt/month) | Sep-Dec 2026 | Limonite from BLB to HUAFEI |
 | SAP daily target | Per monthly plan | Daily | Saprolite to FeNi plants |
 
@@ -214,7 +217,7 @@ Show a validation summary after each run:
 VALIDATION SUMMARY
 ==================
 SAP target met:      [YES/NO]  (target: X t/day, actual: Y t/day)
-LIM-TOS target met:  [YES/NO]  (target: 4.6 Mt, actual: X Mt)
+LIM-TOS target met:  [YES/NO]  (target: scenario total, actual: X Mt)
 LIM-LD total:        X Mt  (target: 6.64 Mt)  [PASS/FAIL]
 POS transit balanced: [YES/NO]  (input: X t, output: Y t)
 ```

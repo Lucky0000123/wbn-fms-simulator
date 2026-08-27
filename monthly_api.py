@@ -2831,9 +2831,30 @@ def _xlsx_plan_sat_payload():
     return d
 
 
+def _xlsx_sat_tpd_ylim(payload):
+    """Same y window as Congestion #cong-wmtdt-chart — NOT from 0.
+
+    floor(min(data, measured−10)) … ceil(max(data, measured+5)) so 168 sits
+    in the plot and the fall to ~118 is visible. Excel otherwise autoscales
+    positive series from 0 and the curve looks like a flat line on the roof.
+    """
+    import math
+    base = payload.get("baseline") or {}
+    hist = base.get("wmt_per_dt_day")
+    ys = [p.get("wmt_per_dt_day") for p in (payload.get("curve") or [])
+          if isinstance(p.get("wmt_per_dt_day"), (int, float))]
+    if not ys:
+        return 120, 173
+    lo, hi = min(ys), max(ys)
+    if isinstance(hist, (int, float)):
+        lo = min(lo, hist - 10)
+        hi = max(hi, hist + 5)
+    return int(math.floor(lo)), int(math.ceil(hi))
+
+
 def _xlsx_sat_line_chart(ws, title, y_title, min_col, max_col, header_row,
                          last_row, anchor, cat_col, colors, y_min=None,
-                         y_fmt="#,##0", height=8.5, width=14):
+                         y_max=None, y_fmt="#,##0", height=8.5, width=14):
     """Line chart for the corridor saturation sweep. No markers — 60 points."""
     from openpyxl.chart import LineChart, Reference
     from openpyxl.chart.marker import Marker
@@ -2843,6 +2864,12 @@ def _xlsx_sat_line_chart(ws, title, y_title, min_col, max_col, header_row,
     lc.y_axis.numFmt = y_fmt
     if y_min is not None:
         lc.y_axis.scaling.min = y_min
+    if y_max is not None:
+        lc.y_axis.scaling.max = y_max
+    if y_min is not None:
+        # Default crosses="autoZero" parks the x-axis at y=0 even when the
+        # scale starts at 120, which is the "from zero" look we are killing.
+        lc.y_axis.crosses = "min"
     lc.height, lc.width = height, width
     lc.legend.position = "t"
     lc.style = None
@@ -2880,10 +2907,16 @@ def _xlsx_write_sat_sweep(ws, row, col, payload, with_origin=True):
         wmt = p.get("wmt_day")
         _xlsx_num(ws.cell(row=rr, column=col), dt, center=True)
         cell_tpd = ws.cell(row=rr, column=col + 1)
-        _xlsx_rate(cell_tpd, tpd, center=True)
-        held = hist_tpd
         cell_h = ws.cell(row=rr, column=col + 2)
-        _xlsx_rate(cell_h, held, center=True)
+        if dt == 0:
+            # Origin is only for the total-tonnes chart (0, 0). Leave t/DT
+            # blank so that series starts at the first real fleet — same as
+            # Congestion #cong-wmtdt-chart, which does not plot DT=0.
+            cell_tpd.border = _xlsx_sides()[0]
+            cell_h.border = _xlsx_sides()[0]
+        else:
+            _xlsx_rate(cell_tpd, tpd, center=True)
+            _xlsx_rate(cell_h, hist_tpd, center=True)
         _xlsx_num(ws.cell(row=rr, column=col + 3), wmt, center=True)
         held_t = (round(hist_tpd * dt) if hist_tpd is not None and dt is not None
                   else None)
@@ -2928,11 +2961,12 @@ def _xlsx_fill_saturation_block(ws, r, payload, table_col=1, chart_col=7,
     a1 = get_column_letter(chart_col) + str(r)
     a2 = get_column_letter(chart_col) + str(r + 18) if stacked \
         else get_column_letter(chart_col + 8) + str(r)
+    tpd_lo, tpd_hi = _xlsx_sat_tpd_ylim(payload)
     _xlsx_sat_line_chart(
         ws, "WMT/day per DT vs corridor fleet", "WMT/day per DT",
         table_col + 1, table_col + 2, header, last_row, a1,
         cat_col=table_col, colors=("059669", (_XLSX_TGT, True)),
-        y_min=None, y_fmt="0.0")
+        y_min=tpd_lo, y_max=tpd_hi, y_fmt="0.0")
     _xlsx_sat_line_chart(
         ws, "Total WMT/day vs corridor fleet", "WMT/day, t",
         table_col + 3, table_col + 4, header, last_row, a2,
@@ -2997,7 +3031,9 @@ def _xlsx_scenario_constraints_block(ws, start_col, scenario_label=""):
         rows.append(("T", "  %s: buffer %s -> rest DIRECT %s" % (pit, fx, rule["rest"])))
     rows += [
         ("S", "P2 — LIM-TOS"),
-        ("T", "All LIM-TOS to HUAFEI/BSE. BLB adds 250,000 t/month. Fills only after P1 is met."),
+        ("T", ("All LIM-TOS to HUAFEI/BSE. Fills only after P1 is met. Target %s"
+               % ("4,640,201 t (the sales table — includes the ~1 Mt addition)"
+                  if is_31 else "3,650,201 t (without the 3.1 addition)"))),
         ("S", "P3 — LIM-LD"),
         ("T", "Leftover trucks haul LD (Tofu dump -> HUAFEI). Sales target %s t Sep-Dec;"
               % format(_sa.LIM_LD_TARGET_T, ",")),
@@ -3023,7 +3059,7 @@ def _xlsx_scenario_constraints_block(ws, start_col, scenario_label=""):
         ("S", "Standing rules"),
         ("T", "BLB pit accepts RIM trucks only. POS is transit: inbound tonnes leave on IWIP"),
         ("T", "reclaim sized so input = output. IWIP trucks are not contractor fleet."),
-        ("T", "Targets equal the sales table: SAP 5,718,686 / LIM-TOS 4,640,201 wmt declared."),
+        ("T", "SAP target 5,718,686 wmt (sales table). LIM-TOS: sales table 4,640,201 = the 3.1 scenario."),
     ]
     # Section titles merge A:H for chrome, which puts every row's merge
     # across column G. The titles' text lives in column A, so shrinking

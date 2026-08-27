@@ -45,7 +45,12 @@ window.PLANNING_RULES = {
   limTos: {
     primaryDestination: 'HUAFEI',
     blbTarget: 250000, // t/month
-    totalTarget: 4600000, // 4.6 Mt over 4 months
+    // Owner 2026-08-27: 4,640,201 is the 3.1 total (WITH the ~1 Mt
+    // addition); 3.0 runs at 3,650,201. planRulesLimTosTarget() picks by
+    // the plan date's scenario day.
+    totalTarget: 4640201,
+    totalTarget30: 3650201,
+    totalTarget31: 4640201,
     blbRoute: 'BLB>HUAFEI'
   },
   limLd: {
@@ -84,7 +89,7 @@ window.PLANNING_RULES = {
     // Planning team sales table 2026-08-26: Limonite LD 6,644,306 wmt
     // declared (was 8 Mt). Parsed from planning_rules.md §6.
     limLdTotal: 6644306,
-    limTosTotal: 4600000, // 4.6 Mt
+    limTosTotal: 4640201, // 3.1 total; 3.0 = limTos.totalTarget30
     period: 'Sep-Dec 2026'
   },
   loaders: {
@@ -170,8 +175,17 @@ function planRulesParseMd(md){
   // §6 targets: "| Total LIM-LD | 6.644306 Mt |" / "| Total LIM-TOS (all pits) | 4.6 Mt |"
   const mLd=md.match(/Total LIM-LD\s*\|\s*([\d.]+)\s*Mt/);
   if(mLd){R.targets.limLdTotal=Math.round(parseFloat(mLd[1])*1e6);touched=true;}
-  const mTos=md.match(/Total LIM-TOS[^|]*\|\s*([\d.]+)\s*Mt/);
-  if(mTos){R.targets.limTosTotal=R.limTos.totalTarget=Math.round(parseFloat(mTos[1])*1e6);touched=true;}
+  // §6 now carries BOTH scenario totals: "| 3.650201 Mt (3.0) / 4.640201 Mt (3.1) |"
+  const mTos2=md.match(/([\d.]+)\s*Mt\s*\(3\.0\)\s*\/\s*([\d.]+)\s*Mt\s*\(3\.1\)/);
+  if(mTos2){
+    R.limTos.totalTarget30=Math.round(parseFloat(mTos2[1])*1e6);
+    R.limTos.totalTarget31=Math.round(parseFloat(mTos2[2])*1e6);
+    R.targets.limTosTotal=R.limTos.totalTarget=R.limTos.totalTarget31;
+    touched=true;
+  } else {
+    const mTos=md.match(/Total LIM-TOS[^|]*\|\s*([\d.]+)\s*Mt/);
+    if(mTos){R.targets.limTosTotal=R.limTos.totalTarget=Math.round(parseFloat(mTos[1])*1e6);touched=true;}
+  }
   const mBlbTos=md.match(/([\d,]+)\s*t\/month/);
   if(mBlbTos){R.limTos.blbTarget=parseInt(mBlbTos[1].replace(/,/g,''),10);touched=true;}
   // §10.9 loader fallback: "15 trucks/loader when unmeasured"

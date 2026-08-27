@@ -43,7 +43,7 @@
       "pit": "BLB",
       "mat": "LIM",
       "month": 10,
-      "wmt_day": 26092.0
+      "wmt_day": 15446.8387
     },
     {
       "pit": "BLB",
@@ -79,7 +79,7 @@
       "pit": "BLB",
       "mat": "LIM",
       "month": 11,
-      "wmt_day": 36122.7967
+      "wmt_day": 25122.7967
     },
     {
       "pit": "BLB",
@@ -115,7 +115,7 @@
       "pit": "BLB",
       "mat": "LIM",
       "month": 12,
-      "wmt_day": 33792.1
+      "wmt_day": 23146.9387
     },
     {
       "pit": "BLB",
@@ -150,5 +150,6 @@
   ],
   "loaded_at": "2026-08-18T08:06:47Z",
   "note_blb_limtos": "owner 2026-08-21: +250,000 t/month BLB->HUAFEI LIM-TOS on top of the imported scenario base (1 Mt over Sep-Dec, lifting total LIM-TOS ~3.6 -> ~4.6 Mt)",
-  "note_sales_table": "planning team sales table 2026-08-26: Saprolite TOS 5,718,686 / Limonite TOS 4,640,201 wmt declared over Sep-Dec. Targets scaled pro-rata (SAP x0.99371 from the imported mineplan 5,754,873) so scenario totals equal the table exactly; rounding residual absorbed in the largest row. LGS POS 3 Mt out of scope per owner. LIM-LD 6,644,306 is the target constant, not a targets row."
+  "note_sales_table": "planning team sales table 2026-08-26: Saprolite TOS 5,718,686 / Limonite TOS 4,640,201 wmt declared over Sep-Dec. Targets scaled pro-rata (SAP x0.99371 from the imported mineplan 5,754,873) so scenario totals equal the table exactly; rounding residual absorbed in the largest row. LGS POS 3 Mt out of scope per owner. LIM-LD 6,644,306 is the target constant, not a targets row.",
+  "note_31": "owner 2026-08-27 correction: 3.0 LIM-TOS target is 3,650,201 (the sales table 4,640,201 minus the 990,000 addition, which belongs to scenario 3.1). BLB LIM Oct-Dec reduced by 330,000 t/month vs the table scenario."
 }
