@@ -1816,12 +1816,16 @@ def _xlsx_append_paths_sheet(wb, year, cards, used, prefix="", achv=False,
     ws.row_dimensions[1].height = 24
 
 
-def _xlsx_month_dt_box(ws, alloc, top_row=1, col=14):
+def _xlsx_month_dt_box(ws, alloc, top_row=1, col=14, month=None):
     """Fleet-in-use box at the top right of a month sheet (owner,
     2026-08-27: "clearly mention how many DTs we are using for this
     month"). Counts the ALLOCATED rows: ours by contractor, IWIP
     POS-transit on its own line (it is not contractor fleet), tenants
-    excluded entirely (not ours)."""
+    excluded entirely (not ours). Also names the matrix POOL and the
+    idle rest (owner, 2026-08-27: "why is December showing 1190, not
+    1280?" — 1281 is the pool, 1190 is fielded, 91 SMA DT sit idle
+    because LD is already at its line and SMA cannot enter RIM-only
+    pits)."""
     from openpyxl.utils import get_column_letter
     rows = (alloc.get("rows") or []) if alloc else []
     by_c = {}
@@ -1840,11 +1844,26 @@ def _xlsx_month_dt_box(ws, alloc, top_row=1, col=14):
     total = sum(by_c.values())
     if not total and not iwip:
         return
+    # matrix pool for this month: what the pasted yearly matrix fields
+    pool_c = {}
+    try:
+        _y = _load_yearly()
+        _mo = str(int(str(month)[5:7])) if month else None
+        for e in (_y or {}).get("entries") or []:
+            v = (e.get("dt") or {}).get(_mo)
+            if v:
+                pool_c[e.get("contractor") or "?"] = \
+                    pool_c.get(e.get("contractor") or "?", 0) + v
+    except Exception:
+        pool_c = {}
+    pool = sum(pool_c.values())
     box = _xlsx_sides()[0]
     mid = _xlsx_mid()
     c0 = col
-    head = ws.cell(row=top_row, column=c0,
-                   value="DT USED THIS MONTH: %s" % format(int(round(total)), ","))
+    label = "DT USED THIS MONTH: %s" % format(int(round(total)), ",")
+    if pool and int(round(pool)) != int(round(total)):
+        label += " of %s" % format(int(round(pool)), ",")
+    head = ws.cell(row=top_row, column=c0, value=label)
     head.font = _xlsx_font(True, 14, "FFFFFF")
     head.alignment = mid
     from openpyxl.styles import PatternFill
@@ -1859,6 +1878,11 @@ def _xlsx_month_dt_box(ws, alloc, top_row=1, col=14):
                         for k, v in sorted(by_c.items()))]
     if iwip:
         parts.append("IWIP transit %s (own fleet)" % format(int(round(iwip)), ","))
+    idle = {c: pool_c[c] - by_c.get(c, 0) for c in pool_c
+            if pool_c[c] - by_c.get(c, 0) >= 1}
+    if idle:
+        parts.append("idle: " + ", ".join(
+            "%s %d" % (c, round(v)) for c, v in sorted(idle.items())))
     det = ws.cell(row=top_row + 1, column=c0, value=" · ".join(parts))
     det.font = _xlsx_font(False, 10, _XLSX_MUTED)
     det.alignment = mid
@@ -1877,7 +1901,7 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None, achv=False):
     ws["A1"] = title
     ws["A1"].font = _xlsx_font(True, 16, _XLSX_NAVY)
     ws.merge_cells("A1:M1")
-    _xlsx_month_dt_box(ws, alloc, top_row=1, col=14)
+    _xlsx_month_dt_box(ws, alloc, top_row=1, col=14, month=month)
     if achv:
         ws["A2"] = (
             "Target = matrix. Predicted plan = after Allocate DT. "
