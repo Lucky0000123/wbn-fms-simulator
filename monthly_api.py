@@ -1706,6 +1706,58 @@ def _xlsx_append_paths_sheet(wb, year, cards, used, prefix="", achv=False,
     ws.row_dimensions[1].height = 24
 
 
+def _xlsx_month_dt_box(ws, alloc, top_row=1, col=14):
+    """Fleet-in-use box at the top right of a month sheet (owner,
+    2026-08-27: "clearly mention how many DTs we are using for this
+    month"). Counts the ALLOCATED rows: ours by contractor, IWIP
+    POS-transit on its own line (it is not contractor fleet), tenants
+    excluded entirely (not ours)."""
+    from openpyxl.utils import get_column_letter
+    rows = (alloc.get("rows") or []) if alloc else []
+    by_c = {}
+    iwip = 0.0
+    for r in rows:
+        if r.get("_tenant"):
+            continue
+        dt = r.get("dt_after") or 0
+        if not dt:
+            continue
+        if r.get("foreign"):
+            iwip += dt
+        else:
+            c = r.get("contractor") or "?"
+            by_c[c] = by_c.get(c, 0) + dt
+    total = sum(by_c.values())
+    if not total and not iwip:
+        return
+    box = _xlsx_sides()[0]
+    mid = _xlsx_mid()
+    c0 = col
+    head = ws.cell(row=top_row, column=c0,
+                   value="DT USED THIS MONTH: %s" % format(int(round(total)), ","))
+    head.font = _xlsx_font(True, 14, "FFFFFF")
+    head.alignment = mid
+    from openpyxl.styles import PatternFill
+    fill = PatternFill("solid", fgColor="0F4C81")
+    ws.merge_cells(start_row=top_row, start_column=c0,
+                   end_row=top_row, end_column=c0 + 2)
+    for cc in range(c0, c0 + 3):
+        cell = ws.cell(row=top_row, column=cc)
+        cell.fill = fill
+        cell.border = box
+    parts = [" + ".join("%s %s" % (k, format(int(round(v)), ","))
+                        for k, v in sorted(by_c.items()))]
+    if iwip:
+        parts.append("IWIP transit %s (own fleet)" % format(int(round(iwip)), ","))
+    det = ws.cell(row=top_row + 1, column=c0, value=" · ".join(parts))
+    det.font = _xlsx_font(False, 10, _XLSX_MUTED)
+    det.alignment = mid
+    ws.merge_cells(start_row=top_row + 1, start_column=c0,
+                   end_row=top_row + 1, end_column=c0 + 2)
+    for cc in range(c0, c0 + 3):
+        ws.cell(row=top_row + 1, column=cc).border = box
+
+
 def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None, achv=False):
     """One month: predicted plan, materials, path table. No DT-move list.
     achv=True adds the engine's achievable everywhere predicted appears."""
@@ -1714,7 +1766,8 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None, achv=False):
     src = alloc.get("source_date") or ""
     ws["A1"] = title
     ws["A1"].font = _xlsx_font(True, 16, _XLSX_NAVY)
-    ws.merge_cells("A1:Q1")
+    ws.merge_cells("A1:M1")
+    _xlsx_month_dt_box(ws, alloc, top_row=1, col=14)
     if achv:
         ws["A2"] = (
             "Target = matrix. Predicted plan = after Allocate DT. "
@@ -1729,7 +1782,7 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None, achv=False):
             + ((" Saved %s." % src) if src else "")
             + " Month = day × %s days." % n_days)
     ws["A2"].font = _xlsx_font(False, 10, _XLSX_MUTED)
-    ws.merge_cells("A2:Q2")
+    ws.merge_cells("A2:M2")
 
     box = _xlsx_sides()[0]
     mid = _xlsx_mid()
