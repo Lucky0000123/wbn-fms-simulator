@@ -1125,22 +1125,21 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
                 for a in out_rows:
                     names = a.get("assigned") or []
                     if names:
-                        # "T15 34% ~2 min" per bridge: the bridge, this
-                        # row's share of its own trips over it, the
-                        # bridge's utilisation of its measured capacity,
-                        # and the M/M/1 queue wait (owner, 2026-08-26).
+                        # "T15 - 34% - 2min" per bridge: bridge, this
+                        # row's share of trips over it, M/M/1 wait.
+                        # Compact on purpose (owner, 2026-08-27: "keep it
+                        # simple, WB name - percentage - time, don't add
+                        # too much text"). Util dropped from the cell.
                         parts = []
-                        for b in names[:3]:
-                            parts.append("%s %d%% (util %d%%, wait %.0f min%s)" % (
+                        for b in names:
+                            if round(100 * (b.get("share") or 0)) < 1:
+                                continue   # 0% rows are noise in a compact cell
+                            parts.append("%s - %d%% - %.0fmin%s" % (
                                 b["bridge"].replace("WB_IWIP_", "").replace("WB_RIM_", "RIM "),
                                 round(100 * (b.get("share") or 0)),
-                                round(100 * (b.get("util") or 0)),
                                 b.get("wait_min") or 0,
-                                ", SATURATED" if b.get("saturated") else ""))
-                        txt = " + ".join(parts)
-                        if len(names) > 3:
-                            txt += " +%d more" % (len(names) - 3)
-                        wb_by_id[a["id"]] = txt
+                                " SAT" if b.get("saturated") else ""))
+                        wb_by_id[a["id"]] = " · ".join(parts)
     except Exception:
         wb_by_id = {}
     heads = [
@@ -1595,11 +1594,10 @@ def _wb_assignments_for_month(rows_month):
     """Weighbridge assignment for one month's path rows via the SAME
     deterministic allocator the Plan tab and month sheets use
     (simulator_api.wb_assign_rows: owner-matrix eligibility, min-max
-    water-fill). Returns {(key, contractor): text} where text lists EVERY
-    bridge with its share of the row's trips, the bridge's utilisation of
-    its measured capacity, and its M/M/1 wait — no "+N more" truncation
-    (owner, 2026-08-27: "nothing like before plus two more; define clear
-    WB number, percentage, waiting time")."""
+    water-fill). Returns {(key, contractor): text} listing EVERY bridge
+    (no "+N more" truncation — owner, 2026-08-27) in the compact
+    "name - share% - wait" form (owner, 2026-08-27: "keep it simple,
+    WB name - percentage - time, don't add too much text")."""
     try:
         import simulator_api as _sim
         basis = _sim._wb_basis()
@@ -1635,14 +1633,14 @@ def _wb_assignments_for_month(rows_month):
         for b in names:
             nm = b["bridge"]
             label = nm.replace("WB_IWIP_", "").replace("WB_RIM_", "RIM ")
-            parts.append("%s: %d%% of row · bridge util %d%% · wait %.1f min%s" % (
-                label, round(100 * (b.get("share") or 0)),
-                round(100 * (b.get("util") or 0)),
-                b.get("wait_min") or 0,
-                " SATURATED" if b.get("saturated") else ""))
+            if round(100 * (b.get("share") or 0)) >= 1:
+                parts.append("%s - %d%% - %.0fmin%s" % (
+                    label, round(100 * (b.get("share") or 0)),
+                    b.get("wait_min") or 0,
+                    " SAT" if b.get("saturated") else ""))
             if allowed and nm not in allowed:
                 off_matrix.append(label)
-        txt = "  |  ".join(parts)
+        txt = " · ".join(parts)
         if off_matrix:
             txt += "  ⚠ off-matrix: " + ", ".join(off_matrix)
         elif allowed:
@@ -1679,7 +1677,7 @@ def _xlsx_all_paths_table(ws, r, cards, achv=False):
     ]
     if achv:
         heads.append("Achievable")
-    heads += ["NB Days", "Predicted / month", "Weighbridge (share · util · wait)"]
+    heads += ["NB Days", "Predicted / month", "Weighbridge (name - share - wait)"]
     _xlsx_headers(ws, r, heads, center=True)
     navy = PatternFill("solid", fgColor=_XLSX_NAVY)
     for col in range(1, len(heads) + 1):
