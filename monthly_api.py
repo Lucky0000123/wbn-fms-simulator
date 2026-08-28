@@ -3517,6 +3517,36 @@ def _plan_rows_by_material(card):
     return rows
 
 
+def _ld_year_adjust_payload(cards):
+    """JSON-safe view of the year-level LIM-LD adjustment for the dashboard."""
+    try:
+        adj = _ld_year_adjustment(cards)
+    except Exception:  # noqa: BLE001
+        return None
+    if not adj:
+        return None
+    return {
+        "pred": round(adj["pred"]),
+        "line": round(adj["line"]),
+        "surplus": round(adj["surplus"]),
+        "cov_before": round(100 * adj["cov_before"], 1),
+        "cov_after": round(100 * adj["cov_after"], 1),
+        "freed": adj["freed"],
+        "absorbed": adj["absorbed"],
+        "park": adj["park"],
+        "removed": round(adj["removed"]),
+        "months": [{"name": p["name"], "dt": p["dt"], "absorbed": p["absorbed"],
+                    "park": p["park"], "take": round(p["take"]),
+                    "cov_before": round(100 * p["cov_before"], 1),
+                    "cov_after": round(100 * p["cov_after"], 1),
+                    "moves": [{"con": m["con"], "from": m["from"], "to": m["to"],
+                               "use": m["use"], "t": round(m["t"]),
+                               "dt_off": round(m["dt_off"]), "dt_on": round(m["dt_on"])}
+                              for m in p["moves"]]}
+                   for p in adj["plan"] if p["dt"]],
+    }
+
+
 def _xlsx_ld_park_box(ws, start_col, cards, top_row=25):
     """Right-side PARKING box (owner, 2026-08-28: "make a box on the side,
     show which month and the number of DT you parked, so we see clearly how
@@ -5338,6 +5368,10 @@ def api_monthly_year_board():
         "matrix_months": (yearly or {}).get("months") or [],
         "cards": cards,
         "alloc_year": _Y,
+        # Year-level LIM-LD adjustment: how many DT come off LD to land the
+        # YEAR on 100%, how many keep working on longer SAP hauls, and how
+        # many must park (owner, 2026-08-28). Same maths the Excel books use.
+        "ld_adjust": _ld_year_adjust_payload(cards),
     })
 
 

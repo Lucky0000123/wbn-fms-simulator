@@ -74,6 +74,20 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
 .mat-card .pair{display:flex;justify-content:space-between;font-size:12px;margin-top:4px}
 .mat-card .pair b{font-variant-numeric:tabular-nums}
 .sec-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:14px 0 6px}
+/* Parking panel (owner, 2026-08-28): how many DT come off LIM-LD to land
+   the YEAR on 100%, per month, and how many must actually park. */
+.park-box{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:#0d1117;margin:10px 0 4px}
+.park-box h3{margin:0 0 2px;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.park-box .sub{font-size:12px;color:var(--muted);margin-bottom:8px}
+.park-box table{width:100%;border-collapse:collapse;font-size:12.5px}
+.park-box th{text-align:right;font-weight:600;color:var(--muted);padding:4px 8px;border-bottom:1px solid var(--line)}
+.park-box th:first-child{text-align:left}
+.park-box td{text-align:right;padding:4px 8px;font-variant-numeric:tabular-nums}
+.park-box td:first-child{text-align:left;font-weight:600}
+.park-box tr.tot td{border-top:1px solid var(--line);font-weight:700}
+.park-box .keep{color:var(--ok)} .park-box .park{color:var(--er);font-weight:700}
+.park-box .zero{color:var(--ok);font-weight:700}
+.park-box .verdict{margin-top:8px;font-size:12.5px;font-weight:600}
 #mo-board-note:empty{display:none}
 </style>
 </head>
@@ -151,6 +165,7 @@ th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase}
   <p class="muted" id="mo-board-note" style="margin:0 0 8px"></p>
   <div class="kpis" id="mo-year-kpis"></div>
   <div class="mat-grid" id="mo-year-mats"></div>
+  <div id="mo-park-box"></div>
   <div class="cards" id="mo-cards"></div>
   <div class="chart" id="mo-chart-year" style="margin-top:16px;height:400px"></div>
   <div class="charts2">
@@ -313,6 +328,47 @@ function covClass(n){
 function kpi(v, cls, k){
   return '<div class="kpi"><div class="v '+(cls||'')+'">'+fmt(v)+'</div><div class="k">'+k+'</div></div>';
 }
+// DT TO PARK (owner, 2026-08-28): the year is the judged line, so we only
+// remove LIM-LD's YEAR surplus. Freed trucks first move to longer SAP hauls
+// (KM15->KM0, POS 12->KM0, which need more trucks for the same tonnes);
+// whatever no haul can take is what we actually park.
+function parkBox(a, cards){
+  if(!a)return '';
+  const esc=t=>String(t==null?'':t).replace(/[&<>"']/g,ch=>(
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  const rows=(a.months||[]);
+  const byName={}; rows.forEach(r=>{byName[r.name]=r;});
+  if(!a.freed){
+    return '<div class="park-box"><h3>DT to park — to land the year on 100%</h3>'
+      +'<div class="sub">LIM-LD year is '+a.cov_before+'% of its line, at or under it. '
+      +'Nothing to park.</div></div>';
+  }
+  const body=(cards||[]).map(c=>{
+    const r=byName[c.name];
+    if(!r)return '<tr><td>'+esc(c.name)+'</td><td class="muted">—</td>'
+      +'<td class="muted">—</td><td class="zero">0</td></tr>';
+    return '<tr><td>'+esc(r.name)+'</td><td>'+fmt(r.dt)+'</td>'
+      +'<td class="keep">'+fmt(r.absorbed)+'</td>'
+      +'<td class="'+(r.park?'park':'zero')+'">'+fmt(r.park)+'</td></tr>';
+  }).join('');
+  return '<div class="park-box">'
+    +'<h3>DT to park — to land the year on 100%</h3>'
+    +'<div class="sub">LIM-LD runs <b>'+a.cov_before+'%</b> of its year line. '
+    +'Take '+fmt(a.removed)+' t off LIM-LD and the year lands on <b>'+a.cov_after+'%</b>. '
+    +'Freed trucks keep working on longer SAP hauls where they fit; the rest is capacity '
+    +'we do not need. SAP and LIM-TOS are untouched.</div>'
+    +'<table><thead><tr><th>Month</th><th>DT off LD</th><th>Kept working</th><th>PARK</th></tr></thead>'
+    +'<tbody>'+body
+    +'<tr class="tot"><td>TOTAL</td><td>'+fmt(a.freed)+'</td>'
+    +'<td class="keep">'+fmt(a.absorbed)+'</td>'
+    +'<td class="'+(a.park?'park':'zero')+'">'+fmt(a.park)+'</td></tr>'
+    +'</tbody></table>'
+    +'<div class="verdict" style="color:var(--'+(a.park?'er':'ok')+')">'
+    +(a.park?('PARK '+fmt(a.park)+' DT to reach the target.')
+            :'Nothing to park — every freed truck keeps working.')
+    +'</div></div>';
+}
+
 function matCard(m, extraK){
   if(!m)return '';
   // LIM-LD year card: the headline is coverage vs the SALES target
@@ -450,6 +506,7 @@ function renderBoard(){
   $('mo-year-mats').innerHTML=Y
     ?(matCard(together,'year')+matCard(mats.sap,'year')+matCard(mats.tos,'year')+matCard(mats.ld,'year'))
     :'';
+  $('mo-park-box').innerHTML=parkBox(b.ld_adjust,cards);
 
   const max=Math.max(1,...cards.map(c=>{
     const a=c.alloc||{};
