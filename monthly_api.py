@@ -1816,6 +1816,101 @@ def _xlsx_append_paths_sheet(wb, year, cards, used, prefix="", achv=False,
     ws.row_dimensions[1].height = 24
 
 
+def _xlsx_month_park_routes(ws, r, park, month_name=""):
+    """WHICH trucks move, route by route (owner, 2026-08-28: "you are taking
+    out 70 DT in December but from which route we don't know — add it in the
+    December sheet clearly").
+
+    RED rows lose trucks (LIM-LD comes down to its year share). GREEN rows
+    gain them: the SAME SAP tonnage re-routed to a LONGER haul, which needs
+    more trucks for the same tonnes. Nothing is parked unless no longer haul
+    can take it."""
+    from openpyxl.styles import PatternFill, Alignment
+    if not park or not park.get("dt"):
+        return r
+    box = _xlsx_sides()[0]
+    mid = _xlsx_mid()
+    r = _xlsx_section(
+        ws, r, "The %d DT that come off LIM-LD — exactly which trucks" % park["dt"],
+        "To land the YEAR's LIM-LD on 100%. RED = trucks leave this route. "
+        "GREEN = they join this route, carrying the SAME SAP tonnage over a LONGER "
+        "distance, which is why it needs more trucks. Contractor never changes." )
+    _xlsx_headers(ws, r, ["Route", "Contractor", "Material", "DT before",
+                          "DT after", "Δ DT", "Why"], center=True)
+    r += 1
+    red = PatternFill("solid", fgColor="FBE9E9")
+    grn = PatternFill("solid", fgColor="D9F2E2")
+    for c in park.get("cuts") or []:
+        _xlsx_text(ws.cell(row=r, column=1), c["key"], True, "A52929", center=True)
+        _xlsx_text(ws.cell(row=r, column=2), c["con"], center=True)
+        _xlsx_text(ws.cell(row=r, column=3), "LIM-LD", center=True)
+        _xlsx_num(ws.cell(row=r, column=4), c.get("dt_before") or 0, center=True)
+        _xlsx_num(ws.cell(row=r, column=5),
+                  (c.get("dt_before") or 0) - c["n"], True, center=True)
+        _xlsx_num(ws.cell(row=r, column=6), -c["n"], True, center=True)
+        ws.cell(row=r, column=6).font = _xlsx_font(True, 11, "A52929")
+        _xlsx_text(ws.cell(row=r, column=7),
+                   "surplus LIM-LD — these trucks are freed", size=9,
+                   color=_XLSX_MUTED)
+        for col in range(1, 8):
+            ws.cell(row=r, column=col).fill = red
+            ws.cell(row=r, column=col).border = box
+        r += 1
+    for m in park.get("moves") or []:
+        _xlsx_text(ws.cell(row=r, column=1), m["from"], True, "A52929", center=True)
+        _xlsx_text(ws.cell(row=r, column=2), m["con"], center=True)
+        _xlsx_text(ws.cell(row=r, column=3), "SAP", center=True)
+        _before = m.get("src_dt_before")
+        _off = round(m["dt_off"])
+        _xlsx_num(ws.cell(row=r, column=4), _before if _before is not None else _off,
+                  center=True)
+        _xlsx_num(ws.cell(row=r, column=5),
+                  max(0, (_before or _off) - _off), True, center=True)
+        _xlsx_num(ws.cell(row=r, column=6), -_off, True, center=True)
+        ws.cell(row=r, column=6).font = _xlsx_font(True, 11, "A52929")
+        _xlsx_text(ws.cell(row=r, column=7),
+                   "%s t/day of SAP leaves this shorter haul" % format(int(round(m["t"])), ","),
+                   size=9, color=_XLSX_MUTED)
+        for col in range(1, 8):
+            ws.cell(row=r, column=col).fill = red
+            ws.cell(row=r, column=col).border = box
+        r += 1
+        _xlsx_text(ws.cell(row=r, column=1), m["to"], True, "1B7A41", center=True)
+        _xlsx_text(ws.cell(row=r, column=2), m["con"], center=True)
+        _xlsx_text(ws.cell(row=r, column=3), "SAP", center=True)
+        _xlsx_text(ws.cell(row=r, column=4), "—", color=_XLSX_MUTED, center=True)
+        _xlsx_num(ws.cell(row=r, column=5), round(m["dt_on"]), True, center=True)
+        _xlsx_num(ws.cell(row=r, column=6), m["use"], True, center=True)
+        ws.cell(row=r, column=6).font = _xlsx_font(True, 11, "1B7A41")
+        _xlsx_text(ws.cell(row=r, column=7),
+                   "same %s t/day, longer haul, so +%d trucks work here"
+                   % (format(int(round(m["t"])), ","), m["use"]),
+                   size=9, color=_XLSX_MUTED)
+        for col in range(1, 8):
+            ws.cell(row=r, column=col).fill = grn
+            ws.cell(row=r, column=col).border = box
+        r += 1
+    _xlsx_text(ws.cell(row=r, column=1), "NET", True, _XLSX_NAVY, center=True)
+    _xlsx_text(ws.cell(row=r, column=2), "", center=True)
+    _xlsx_text(ws.cell(row=r, column=3), "", center=True)
+    _xlsx_num(ws.cell(row=r, column=4), park["dt"], True, center=True)
+    _xlsx_num(ws.cell(row=r, column=5), park.get("absorbed") or 0, True, center=True)
+    _xlsx_num(ws.cell(row=r, column=6), -(park.get("park") or 0), True, center=True)
+    ws.cell(row=r, column=6).font = _xlsx_font(
+        True, 11, "A52929" if park.get("park") else "1B7A41")
+    _xlsx_text(ws.cell(row=r, column=7),
+               ("%d trucks leave LIM-LD, %d keep working on the longer SAP hauls, "
+                "PARK %d" % (park["dt"], park.get("absorbed") or 0, park.get("park") or 0))
+               if park.get("park") else
+               ("%d trucks leave LIM-LD and ALL %d keep working on the longer SAP "
+                "hauls — nothing is parked"
+                % (park["dt"], park.get("absorbed") or 0)),
+               True, "A52929" if park.get("park") else "1B7A41", size=9)
+    for col in range(1, 8):
+        _xlsx_total_border(ws.cell(row=r, column=col))
+    return r + 2
+
+
 def _xlsx_month_dt_box(ws, alloc, top_row=1, col=14, month=None, park=None):
     """Fleet-in-use box at the top right of a month sheet (owner,
     2026-08-27: "clearly mention how many DTs we are using for this
@@ -2092,6 +2187,9 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None, achv=False, park=No
         "Target vs predicted plan"
         + (" · achievable from /api/simulate." if achv else ". Same day every day."),
         points, start=1, chart_col="A", achv=achv)
+
+    # Which trucks move to land the YEAR's LIM-LD on 100% (owner 2026-08-28).
+    r = _xlsx_month_park_routes(ws, r + 2, park, month_name=month)
 
     # Weighbridge text is the LAST column; give the tail columns room.
     _xlsx_widths(ws, [16, 22, 14, 14, 14, 11, 11, 11, 11, 12, 14, 58, 58])
@@ -3442,7 +3540,8 @@ def _ld_year_adjustment(cards):
                 if ex:
                     ex[0]["n"] += k
                 else:
-                    cuts.append({"key": x["key"], "con": con, "n": k, "rate": x["rate"]})
+                    cuts.append({"key": x["key"], "con": con, "n": k,
+                                 "rate": x["rate"], "dt_before": x["dt"]})
                 rem -= k * x["rate"]
                 used[con] += k
                 budget -= k
@@ -3472,7 +3571,8 @@ def _ld_year_adjustment(cards):
                     continue
                 T = min(use / (1 / dst - 1 / src), x["t_day"])
                 moves.append({"con": con, "from": key, "to": "%s>FENI KM0" % pit,
-                              "use": use, "t": T, "dt_off": T / src, "dt_on": T / dst})
+                              "use": use, "t": T, "dt_off": T / src, "dt_on": T / dst,
+                              "src_dt_before": x["dt"], "src_t_before": x["t_day"]})
                 rest -= use
             parked[con] = rest
         out["plan"].append({
@@ -3515,6 +3615,19 @@ def _plan_rows_by_material(card):
         rows.append({"key": r.get("key"), "con": r.get("contractor"), "mat": mk,
                      "dt": dt, "t_day": pd_, "rate": pd_ / dt})
     return rows
+
+
+def _ld_headline_cov(cards, mats):
+    """LIM-LD coverage AFTER the year-level adjustment, so the board reads
+    100% like SAP and LIM-TOS. Falls back to the raw figure when nothing is
+    adjusted (owner, 2026-08-28)."""
+    try:
+        adj = _ld_year_adjustment(cards)
+        if adj and adj.get("freed"):
+            return round(100 * adj["cov_after"], 1)
+    except Exception:  # noqa: BLE001
+        pass
+    return (mats.get("ld") or {}).get("cov_pred")
 
 
 def _ld_year_adjust_payload(cards):
@@ -3584,9 +3697,10 @@ def _xlsx_ld_park_box(ws, start_col, cards, top_row=25):
             ws.cell(row=r, column=cc).border = box
         return
     sub = ws.cell(row=r, column=col, value=(
-        "LIM-LD runs %.1f%% of its year line. Take %s t off LIM-LD and the year "
-        "lands on %.1f%%. Trucks freed keep working on longer SAP hauls where "
-        "they fit; the rest is capacity we do not need."
+        "The LIM-LD headline above is ALREADY this adjustment: it was %.1f%% of its "
+        "year line, and taking %s t off LIM-LD lands it on %.1f%%. The freed trucks "
+        "do not stop — they move to LONGER SAP hauls (same tonnage, more distance, so "
+        "more trucks are needed). Only what no haul can absorb is parked."
         % (100 * adj["cov_before"], format(int(round(adj["removed"])), ","),
            100 * adj["cov_after"])))
     sub.font = _xlsx_font(False, 9, _XLSX_MUTED)
@@ -3595,7 +3709,7 @@ def _xlsx_ld_park_box(ws, start_col, cards, top_row=25):
     for cc in range(col, col + 4):
         ws.cell(row=r, column=cc).border = box
     r += 3
-    for i, h in enumerate(("Month", "DT off LD", "Kept working", "PARK")):
+    for i, h in enumerate(("Month", "DT off LD", "Moved to longer SAP haul", "PARK")):
         c = ws.cell(row=r, column=col + i, value=h)
         c.font = _xlsx_font(True, 10, "FFFFFF")
         c.alignment = mid
@@ -3789,8 +3903,11 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
              _xlsx_cov_tone((mats.get("sap") or {}).get("cov_pred"))[0] or _XLSX_MUTED, "pct"),
             ("LIM-TOS · % of target", (mats.get("tos") or {}).get("cov_pred"),
              _xlsx_cov_tone((mats.get("tos") or {}).get("cov_pred"))[0] or _XLSX_MUTED, "pct"),
-            ("LIM-LD · % of target", (mats.get("ld") or {}).get("cov_pred"),
-             _xlsx_cov_tone((mats.get("ld") or {}).get("cov_pred"))[0] or _XLSX_MUTED, "pct"),
+            # LIM-LD headlines the ADJUSTED figure (owner, 2026-08-28: "here
+            # I want to see all three at 100% and the change that got there").
+            # The raw over-target number is kept right beside it, never hidden.
+            ("LIM-LD · % of target", _ld_headline_cov(cards, mats),
+             _xlsx_cov_tone(_ld_headline_cov(cards, mats))[0] or _XLSX_MUTED, "pct"),
         ]
         if achv:
             pct_kpis.append(
