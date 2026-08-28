@@ -76,9 +76,13 @@ window.PLANNING_RULES = {
       'POS 12>FENI KM0', 'POS 12>FENI KM15',
       'POS 14>FENI KM0', 'POS 15>FENI KM0', 'POS 16>FENI KM0',
       // POS 6 transit-out (owner 2026-08-25: it is a loading point too).
-      // Real history backs both legs: POS 6>FENI(+A) 32.5k tickets,
-      // POS 6>FENI KM15 1.9k (HAULAGE_CLEAN, 2025).
-      'POS 6>FENI KM0', 'POS 6>FENI KM15'
+      // Destination is HUAFEI, not FeNi (owner, 2026-08-28: "the
+      // reclaiming of POS 6 goes to Huafei, not FeNi"). POS 6 receives
+      // LIM-LD off the TF split leg and that ore feeds Huafei/BSE. The
+      // 2025 tickets do show POS 6>FENI legs (32.5k + 1.9k), but they are
+      // not this plan's reclaim path and sent the whole POS 6 build — up
+      // to 1.4 Mt/month on the .2 scenarios — down the wrong corridor.
+      'POS 6>HUAFEI'
     ]
   },
   validation: {

@@ -174,8 +174,11 @@ Pits (BLB, KR, TF) → POS dumps (12, 14, 15, 16) → FeNi plants (KM0, KM15)
 ### POS → FeNi routes to include:
 - POS 12 → FeNi KM0
 - POS 12 → FeNi KM15
-- POS 6 → FeNi KM0
-- POS 6 → FeNi KM15
+- POS 6 → HUAFEI  (owner, 2026-08-28: "the reclaiming of POS 6 goes to
+  Huafei, not FeNi". POS 6 holds LIM-LD tipped off the TF split leg, and
+  that material is fed to Huafei/BSE, not to the FeNi kilns. It was
+  previously modelled as POS 6 → FeNi KM0 / KM15 on 2025 ticket history;
+  those legs exist in the record but are not this plan's reclaim path.)
 - POS 14 → FeNi KM0 (if POS 14 receives material)
 - POS 15 → FeNi KM0 (if POS 15 receives material)
 - POS 16 → FeNi KM0 (if POS 16 receives material)
