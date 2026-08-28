@@ -1816,7 +1816,8 @@ def _xlsx_append_paths_sheet(wb, year, cards, used, prefix="", achv=False,
     ws.row_dimensions[1].height = 24
 
 
-def _xlsx_month_park_routes(ws, r, park, month_name="", alloc=None, n_days=30):
+def _xlsx_month_park_routes(ws, r, park, month_name="", alloc=None,
+                            n_days=30, col=1):
     """The NEW predicted plan for this month: park the surplus LIM-LD trucks.
 
     Owner, 2026-08-28 (final): "Option 1 is just that we park the trucks from
@@ -1828,7 +1829,7 @@ def _xlsx_month_park_routes(ws, r, park, month_name="", alloc=None, n_days=30):
     So: trucks come off the LIM-LD rows and stop. Nothing else in the plan
     moves. SAP and LIM-TOS are untouched by construction, and the target the
     parking is sized against is the YEAR's LIM-LD line."""
-    from openpyxl.styles import PatternFill
+    from openpyxl.styles import PatternFill, Alignment
     if not park or not park.get("dt") or not alloc:
         return r
     box = _xlsx_sides()[0]
@@ -1841,16 +1842,24 @@ def _xlsx_month_park_routes(ws, r, park, month_name="", alloc=None, n_days=30):
     for c in park.get("cuts") or []:
         cut[(c["key"], c["con"])] = c["n"]
     yr = park.get("year") or {}
-    r = _xlsx_section(
-        ws, r, "NEW PREDICTED PLAN — park %d DT off LIM-LD" % park["dt"],
+    _t = ws.cell(row=r, column=col,
+                 value="NEW PREDICTED PLAN — park %d DT off LIM-LD" % park["dt"])
+    _t.font = _xlsx_font(True, 13, _XLSX_NAVY)
+    ws.merge_cells(start_row=r, start_column=col, end_row=r, end_column=col + 7)
+    r += 1
+    _sub = ws.cell(row=r, column=col, value=(
         "LIM-LD is running past its YEAR line, so %d trucks come off it and are "
         "PARKED (red). Nothing is re-routed: every other path keeps exactly the "
         "trucks and tonnes it had, which is why SAP and LIM-TOS do not move. "
         "The parking is sized on the YEAR: across Sep-Dec LIM-LD goes %.1f%% -> "
         "%.1f%% of its line."
-        % (park["dt"], yr.get("cov_before") or 0, yr.get("cov_after") or 0))
+        % (park["dt"], yr.get("cov_before") or 0, yr.get("cov_after") or 0)))
+    _sub.font = _xlsx_font(False, 9, _XLSX_MUTED)
+    _sub.alignment = Alignment(wrap_text=True, vertical="top")
+    ws.merge_cells(start_row=r, start_column=col, end_row=r + 2, end_column=col + 7)
+    r += 3
     _xlsx_headers(ws, r, ["Path", "Contractor", "Material", "DT now", "DT NEW",
-                          "Δ DT", "t/day now", "t/day NEW"], center=True)
+                          "Δ DT", "t/day now", "t/day NEW"], start=col, center=True)
     r += 1
     mats_before = {"SAP": 0.0, "LIM-TOS": 0.0, "LIM-LD": 0.0}
     mats_after = {"SAP": 0.0, "LIM-TOS": 0.0, "LIM-LD": 0.0}
@@ -1871,94 +1880,94 @@ def _xlsx_month_park_routes(ws, r, park, month_name="", alloc=None, n_days=30):
         n_cut = cut.get((key, con), 0) if mk == "LIM-LD" else 0
         new_dt = dt - n_cut
         new_t = rate * new_dt if n_cut else t_day
-        _xlsx_text(ws.cell(row=r, column=1), key, bool(n_cut), center=True)
-        _xlsx_text(ws.cell(row=r, column=2), con, center=True)
-        _xlsx_text(ws.cell(row=r, column=3), mk, center=True)
-        _xlsx_num(ws.cell(row=r, column=4), dt, center=True)
-        _xlsx_num(ws.cell(row=r, column=5), new_dt, bool(n_cut), center=True)
+        _xlsx_text(ws.cell(row=r, column=col + 0), key, bool(n_cut), center=True)
+        _xlsx_text(ws.cell(row=r, column=col + 1), con, center=True)
+        _xlsx_text(ws.cell(row=r, column=col + 2), mk, center=True)
+        _xlsx_num(ws.cell(row=r, column=col + 3), dt, center=True)
+        _xlsx_num(ws.cell(row=r, column=col + 4), new_dt, bool(n_cut), center=True)
         if n_cut:
-            _xlsx_num(ws.cell(row=r, column=6), -n_cut, True, center=True)
-            ws.cell(row=r, column=6).font = _xlsx_font(True, 11, "A52929")
+            _xlsx_num(ws.cell(row=r, column=col + 5), -n_cut, True, center=True)
+            ws.cell(row=r, column=col + 5).font = _xlsx_font(True, 11, "A52929")
         else:
-            _xlsx_text(ws.cell(row=r, column=6), "—", color=_XLSX_MUTED, center=True)
-        _xlsx_num(ws.cell(row=r, column=7), round(t_day), center=True)
-        _xlsx_num(ws.cell(row=r, column=8), round(new_t), bool(n_cut), center=True)
+            _xlsx_text(ws.cell(row=r, column=col + 5), "—", color=_XLSX_MUTED, center=True)
+        _xlsx_num(ws.cell(row=r, column=col + 6), round(t_day), center=True)
+        _xlsx_num(ws.cell(row=r, column=col + 7), round(new_t), bool(n_cut), center=True)
         if n_cut:
-            for col in range(1, 9):
-                ws.cell(row=r, column=col).fill = red
-        for col in range(1, 9):
-            ws.cell(row=r, column=col).border = box
+            for _c in range(col, col + 8):
+                ws.cell(row=r, column=_c).fill = red
+        for _c in range(col, col + 8):
+            ws.cell(row=r, column=_c).border = box
         mats_before[mk] += t_day
         mats_after[mk] += new_t
         dt_before += dt
         dt_after += new_dt
         r += 1
-    _xlsx_text(ws.cell(row=r, column=1), "PARKED", True, "A52929", center=True)
-    _xlsx_text(ws.cell(row=r, column=2), "", center=True)
-    _xlsx_text(ws.cell(row=r, column=3), "", center=True)
-    _xlsx_text(ws.cell(row=r, column=4), "—", color=_XLSX_MUTED, center=True)
-    _xlsx_num(ws.cell(row=r, column=5), park["dt"], True, center=True)
-    ws.cell(row=r, column=5).font = _xlsx_font(True, 12, "A52929")
-    _xlsx_text(ws.cell(row=r, column=6), "", center=True)
-    _xlsx_text(ws.cell(row=r, column=7), "", center=True)
-    _xlsx_text(ws.cell(row=r, column=8), "these trucks do not run", size=9,
+    _xlsx_text(ws.cell(row=r, column=col + 0), "PARKED", True, "A52929", center=True)
+    _xlsx_text(ws.cell(row=r, column=col + 1), "", center=True)
+    _xlsx_text(ws.cell(row=r, column=col + 2), "", center=True)
+    _xlsx_text(ws.cell(row=r, column=col + 3), "—", color=_XLSX_MUTED, center=True)
+    _xlsx_num(ws.cell(row=r, column=col + 4), park["dt"], True, center=True)
+    ws.cell(row=r, column=col + 4).font = _xlsx_font(True, 12, "A52929")
+    _xlsx_text(ws.cell(row=r, column=col + 5), "", center=True)
+    _xlsx_text(ws.cell(row=r, column=col + 6), "", center=True)
+    _xlsx_text(ws.cell(row=r, column=col + 7), "these trucks do not run", size=9,
                color="A52929", center=True)
-    for col in range(1, 9):
-        ws.cell(row=r, column=col).fill = red
-        ws.cell(row=r, column=col).border = box
+    for _c in range(col, col + 8):
+        ws.cell(row=r, column=_c).fill = red
+        ws.cell(row=r, column=_c).border = box
     r += 1
-    _xlsx_text(ws.cell(row=r, column=1), "TOTAL", True, _XLSX_NAVY, center=True)
-    _xlsx_text(ws.cell(row=r, column=2), "", center=True)
-    _xlsx_text(ws.cell(row=r, column=3), "", center=True)
-    _xlsx_num(ws.cell(row=r, column=4), dt_before, True, center=True)
-    _xlsx_num(ws.cell(row=r, column=5), dt_after, True, center=True)
-    _xlsx_num(ws.cell(row=r, column=6), dt_after - dt_before, True, center=True)
-    ws.cell(row=r, column=6).font = _xlsx_font(True, 11, "A52929")
-    _xlsx_num(ws.cell(row=r, column=7), round(sum(mats_before.values())), True, center=True)
-    _xlsx_num(ws.cell(row=r, column=8), round(sum(mats_after.values())), True, center=True)
-    for col in range(1, 9):
-        _xlsx_total_border(ws.cell(row=r, column=col))
+    _xlsx_text(ws.cell(row=r, column=col + 0), "TOTAL", True, _XLSX_NAVY, center=True)
+    _xlsx_text(ws.cell(row=r, column=col + 1), "", center=True)
+    _xlsx_text(ws.cell(row=r, column=col + 2), "", center=True)
+    _xlsx_num(ws.cell(row=r, column=col + 3), dt_before, True, center=True)
+    _xlsx_num(ws.cell(row=r, column=col + 4), dt_after, True, center=True)
+    _xlsx_num(ws.cell(row=r, column=col + 5), dt_after - dt_before, True, center=True)
+    ws.cell(row=r, column=col + 5).font = _xlsx_font(True, 11, "A52929")
+    _xlsx_num(ws.cell(row=r, column=col + 6), round(sum(mats_before.values())), True, center=True)
+    _xlsx_num(ws.cell(row=r, column=col + 7), round(sum(mats_after.values())), True, center=True)
+    for _c in range(col, col + 8):
+        _xlsx_total_border(ws.cell(row=r, column=_c))
     r += 2
     tgt = {}
     for k, api in (("SAP", "sap"), ("LIM-TOS", "tos"), ("LIM-LD", "ld")):
         tgt[k] = ((alloc.get("materials") or {}).get(api) or {}).get("target_day") or 0
     tot_t = sum(tgt.values())
     _xlsx_headers(ws, r, ["NEW % of target", "SAP", "LIM-TOS", "LIM-LD", "Together"],
-                  center=True)
+                  start=col, center=True)
     r += 1
-    _xlsx_text(ws.cell(row=r, column=1), "Target t/day", True, center=True)
+    _xlsx_text(ws.cell(row=r, column=col + 0), "Target t/day", True, center=True)
     for i, k in enumerate(("SAP", "LIM-TOS", "LIM-LD")):
-        _xlsx_num(ws.cell(row=r, column=2 + i), round(tgt[k]), center=True)
-    _xlsx_num(ws.cell(row=r, column=5), round(tot_t), True, center=True)
-    for col in range(1, 6):
-        ws.cell(row=r, column=col).border = box
+        _xlsx_num(ws.cell(row=r, column=col + 1 + i), round(tgt[k]), center=True)
+    _xlsx_num(ws.cell(row=r, column=col + 4), round(tot_t), True, center=True)
+    for _c in range(col, col + 5):
+        ws.cell(row=r, column=_c).border = box
     r += 1
-    _xlsx_text(ws.cell(row=r, column=1), "NEW predicted plan", True, center=True)
+    _xlsx_text(ws.cell(row=r, column=col + 0), "NEW predicted plan", True, center=True)
     for i, k in enumerate(("SAP", "LIM-TOS", "LIM-LD")):
-        _xlsx_num(ws.cell(row=r, column=2 + i), round(mats_after[k]), True, center=True)
-    _xlsx_num(ws.cell(row=r, column=5), round(sum(mats_after.values())), True, center=True)
-    for col in range(1, 6):
-        ws.cell(row=r, column=col).border = box
+        _xlsx_num(ws.cell(row=r, column=col + 1 + i), round(mats_after[k]), True, center=True)
+    _xlsx_num(ws.cell(row=r, column=col + 4), round(sum(mats_after.values())), True, center=True)
+    for _c in range(col, col + 5):
+        ws.cell(row=r, column=_c).border = box
     r += 1
-    _xlsx_text(ws.cell(row=r, column=1), "NEW % of target", True, center=True)
+    _xlsx_text(ws.cell(row=r, column=col + 0), "NEW % of target", True, center=True)
     for i, k in enumerate(("SAP", "LIM-TOS", "LIM-LD")):
-        _xlsx_paint_cov(ws.cell(row=r, column=2 + i),
+        _xlsx_paint_cov(ws.cell(row=r, column=col + 1 + i),
                         (100 * mats_after[k] / tgt[k]) if tgt[k] else None)
-    _xlsx_paint_cov(ws.cell(row=r, column=5),
+    _xlsx_paint_cov(ws.cell(row=r, column=col + 4),
                     (100 * sum(mats_after.values()) / tot_t) if tot_t else None)
-    for col in range(1, 6):
-        ws.cell(row=r, column=col).border = box
+    for _c in range(col, col + 5):
+        ws.cell(row=r, column=_c).border = box
     r += 1
-    _xlsx_text(ws.cell(row=r, column=1), "was", True, _XLSX_MUTED, center=True)
+    _xlsx_text(ws.cell(row=r, column=col + 0), "was", True, _XLSX_MUTED, center=True)
     for i, k in enumerate(("SAP", "LIM-TOS", "LIM-LD")):
-        _xlsx_pct_cell(ws.cell(row=r, column=2 + i),
+        _xlsx_pct_cell(ws.cell(row=r, column=col + 1 + i),
                        (100 * mats_before[k] / tgt[k]) if tgt[k] else None)
-        ws.cell(row=r, column=2 + i).font = _xlsx_font(False, 10, _XLSX_MUTED)
-    _xlsx_pct_cell(ws.cell(row=r, column=5),
+        ws.cell(row=r, column=col + 1 + i).font = _xlsx_font(False, 10, _XLSX_MUTED)
+    _xlsx_pct_cell(ws.cell(row=r, column=col + 4),
                    (100 * sum(mats_before.values()) / tot_t) if tot_t else None)
-    ws.cell(row=r, column=5).font = _xlsx_font(False, 10, _XLSX_MUTED)
-    for col in range(1, 6):
-        ws.cell(row=r, column=col).border = box
+    ws.cell(row=r, column=col + 4).font = _xlsx_font(False, 10, _XLSX_MUTED)
+    for _c in range(col, col + 5):
+        ws.cell(row=r, column=_c).border = box
     r += 2
     if yr.get("cov_after") is not None:
         note = ws.cell(row=r, column=1, value=(
@@ -1968,7 +1977,9 @@ def _xlsx_month_park_routes(ws, r, park, month_name="", alloc=None, n_days=30):
             "above 100%% on its own while the year is exactly on target."
             % (yr.get("cov_before") or 0, yr.get("cov_after") or 0)))
         note.font = _xlsx_font(False, 10, _XLSX_MUTED)
-        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
+        note.alignment = Alignment(wrap_text=True, vertical="top")
+        ws.merge_cells(start_row=r, start_column=col, end_row=r + 2, end_column=col + 7)
+        r += 2
         r += 2
     return r
 
@@ -2186,8 +2197,10 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None, achv=False, park=No
     _xlsx_num(ws.cell(row=r, column=5), alloc.get("left_new_pred_month"), True, center=True)
 
     rows = list(alloc.get("rows") or [])
+    _paths_top = None
     if rows:
         r += 2
+        _paths_top = r          # the NEW plan table is placed beside this one
         r = _xlsx_path_alloc_table(
             ws, r, rows, "Paths — predicted plan",
             "P1 SAP · P2 LIM-TOS · P3 LIM-LD. WMT is predicted tonnes. DT is trucks. "
@@ -2250,11 +2263,20 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None, achv=False, park=No
         points, start=1, chart_col="A", achv=achv)
 
     # Which trucks move to land the YEAR's LIM-LD on 100% (owner 2026-08-28).
-    r = _xlsx_month_park_routes(ws, r + 2, park, month_name=month,
-                                alloc=alloc, n_days=n_days)
+    # The NEW plan sits SIDE BY SIDE with the old one (owner, 2026-08-28:
+    # "move this table next to the old plan so both tables are together").
+    # Column N clears the old table's A-L span and its weighbridge tail.
+    _xlsx_month_park_routes(ws, _paths_top if _paths_top else r + 2, park,
+                            month_name=month, alloc=alloc, n_days=n_days,
+                            col=14)
 
     # Weighbridge text is the LAST column; give the tail columns room.
     _xlsx_widths(ws, [16, 22, 14, 14, 14, 11, 11, 11, 11, 12, 14, 58, 58])
+    # The NEW plan table sits in N.. beside the old one; give it real widths
+    # and a gutter so the two read as a pair (owner, 2026-08-28).
+    if park and park.get("dt"):
+        ws.column_dimensions["M"].width = 3
+        _xlsx_widths(ws, [20, 13, 13, 11, 11, 9, 13, 13], start=14)
     ws.freeze_panes = "A4"
     ws.row_dimensions[1].height = 24
     return alloc.get("new_pred_month"), alloc.get("target_month")
