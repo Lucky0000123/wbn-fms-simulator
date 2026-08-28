@@ -3599,6 +3599,17 @@ def api_plan_rain_suggest():
     })
 
 
+# Pure-function memos for the two congestion endpoints. Both answer a
+# deterministic physics question, both are asked dozens of times per plan
+# edit, and both cost ~0.4-0.9 s of GIL-serialised CPU per call. Params load
+# per request, so a recalibration needs a server restart to take effect —
+# the same rule use_reloader=False already sets for this module.
+_CURVE_MEMO = {}
+_CURVE_MEMO_MAX = 512
+_MODEL_MEMO = {}
+_MODEL_MEMO_MAX = 2048
+
+
 @bp.route('/api/congestion_model', methods=['GET'])
 def api_congestion_model():
     """Hybrid physics+queueing+BPR trips/DT prediction (owner spec 2026-08-20).
@@ -3657,6 +3668,24 @@ def api_congestion_model():
     # which of the two questions it answered via `tenant_traffic`.
     if str(a.get('tenants') or '').strip().lower() in ('1', 'true', 'yes', 'on'):
         kw['tenant_flow_hr'] = True
+    # Same memo as /api/congestion_curve, same reason: the Plan tab asks this
+    # once per route per Allocate pass (21 calls x ~0.4 s measured on the
+    # 2026-11-05 plan) and the answer is a pure function of these inputs.
+    # `others` is already quantised to 10-truck steps by _parse_others, so a
+    # one-truck plan edit re-uses the entry instead of re-running the physics.
+    # segment_fleet is DERIVED from (_others, route, n_trucks) — all three are
+    # in the key already — so excluding the dict itself is safe. Everything
+    # else is keyed by repr, not round(): `contractor` is a string and
+    # round() on it raises (caught before shipping, 2026-08-27).
+    _mk = (route, n_trucks, n_loaders,
+           tuple(sorted((k, repr(v)) for k, v in kw.items()
+                        if k != 'segment_fleet')),
+           tuple(sorted((k, round(v)) for k, v in (_others or {}).items())))
+    _hit = _MODEL_MEMO.get(_mk)
+    if _hit is not None:
+        _r = dict(_hit)
+        _r["servedFrom"] = "memo"
+        return jsonify(_r)
     try:
         out = predict(route, n_trucks, n_loaders, **kw)
     except (ValueError, ArithmeticError) as exc:
@@ -3683,6 +3712,9 @@ def api_congestion_model():
                                     else 15.0)
     except (OSError, ValueError, TypeError, ZeroDivisionError):
         out["trucks_per_loader"] = 15.0
+    if len(_MODEL_MEMO) >= _MODEL_MEMO_MAX:
+        _MODEL_MEMO.clear()
+    _MODEL_MEMO[_mk] = out
     return jsonify(out)
 
 
@@ -3837,6 +3869,17 @@ def _parse_others(raw, self_route=None):
         except (TypeError, ValueError):
             continue
         if '>' in r and v > 0:
+            # QUANTISE the background to 10-truck steps. Every plan edit used
+            # to produce a byte-new `others` map, so every downstream memo and
+            # the client's curve cache missed on a one-truck change and the
+            # whole route set re-priced from cold — measured 2026-08-27:
+            # ~30 curve sweeps x ~0.9 s of GIL-serialised CPU per PLAN EDIT,
+            # which is the "loading a plan takes minutes now" complaint.
+            # Pricing is insensitive at this grain (TF>HUAFEI @322 DT, full
+            # plan background exact vs rounded: every output field moved
+            # +0.000% at 4 dp — background fleets are already the coarse term).
+            # A small real route never silently drops: sub-10 rounds UP to 10.
+            v = round(v / 10.0) * 10.0 or 10.0
             o, _, d = r.partition('>')
             key = '%s>%s' % (_canon(o), _canon(d))
             out[key] = out.get(key, 0.0) + v
@@ -3916,6 +3959,27 @@ def api_congestion_curve():
     # response states which question it answered so a clear-road curve is never
     # mistaken for a shared-road one by absence.
     tenants = str(a.get('tenants') or '').strip().lower() in ('1', 'true', 'yes', 'on')
+    # ── memo + sweep density ──────────────────────────────────────────────
+    # A curve is 80 predict() calls (~0.9 s of pure-Python CPU), and a plan
+    # edit refetches ~30 of them; under the GIL they serialise, which is the
+    # measured "changing a plan takes minutes" (2026-08-27: 31 sweeps, 30 s).
+    # Two cuts, neither changing any served number's meaning:
+    #   * an LRU on the exact computation inputs — one plan's curves compute
+    #     once per server life across Plan, Excel exports and parity runs
+    #     (`others` is already quantised to 10-truck steps by _parse_others,
+    #     so near-identical plans share entries);
+    # A coarser (40-point) sweep for background-conditioned curves was measured
+    # too and REJECTED: it cut cold cost in half but raised linear-interpolation
+    # error ~4x (worst 0.633% on TF>POS 12). The memo already removes the repeat
+    # cost, so the density trade buys speed the cache gives for free while
+    # degrading a number — not a trade worth making.
+    memo_key = (route, n_loaders, proportional, max_trucks, round(rain_mm, 1),
+                tenants, tuple(sorted((k, round(v)) for k, v in others.items())))
+    cached = _CURVE_MEMO.get(memo_key)
+    if cached is not None:
+        resp = dict(cached)
+        resp["servedFrom"] = "memo"
+        return jsonify(resp)
     step = max(1, max_trucks // 80)
     curve = []
     for nt in range(1, max_trucks + 1, step):
@@ -3958,17 +4022,26 @@ def api_congestion_curve():
     _contractors = {name: {"ratio": v.get("ratio"),
                            "overhead_per_trip_min": v.get("overhead_per_trip_min")}
                     for name, v in (_raw.get("contractors") or {}).items()}
-    return jsonify({"ok": True, "route": route, "n_loaders": n_loaders,
-                    "calibrated_loaders": route_params(route).get("n_loaders"),
-                    "calibrated": bool(route_params(route).get("calibrated")),
-                    "segment_based": bool(others),
-                    "others_n": len(others),
-                    "tenant_traffic": bool(tenants),
-                    "overhead_per_trip_min": rp.get("overhead_per_trip_min"),
-                    "contractors": _contractors,
-                    "loaders_basis": ("proportional" if proportional
-                                      else "calibrated_faces"),
-                    "curve": curve, "knee_dt": knee})
+    payload = {"ok": True, "route": route, "n_loaders": n_loaders,
+               "calibrated_loaders": route_params(route).get("n_loaders"),
+               "calibrated": bool(route_params(route).get("calibrated")),
+               "segment_based": bool(others),
+               "others_n": len(others),
+               "tenant_traffic": bool(tenants),
+               "overhead_per_trip_min": rp.get("overhead_per_trip_min"),
+               "contractors": _contractors,
+               "loaders_basis": ("proportional" if proportional
+                                 else "calibrated_faces"),
+               "sweep_points": len(curve),
+               "curve": curve, "knee_dt": knee}
+    # Memoise on the exact computation inputs. Params are loaded per request
+    # above, so a recalibration that rewrites data/congestion_params.json is
+    # only picked up after a restart — same rule the rest of this module
+    # already lives by (use_reloader=False), and calibration is never casual.
+    if len(_CURVE_MEMO) >= _CURVE_MEMO_MAX:
+        _CURVE_MEMO.clear()
+    _CURVE_MEMO[memo_key] = payload
+    return jsonify(payload)
 
 
 # ── whole-plan saturation sweep (owner, 2026-08-26) ─────────────────────────

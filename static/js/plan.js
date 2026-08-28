@@ -370,9 +370,22 @@ function planHybridRainBucket(rain){return rain>=10?'wet':(rain>=1?'damp':'dry')
 // pass, not per walk step, so the cache stays warm during sizing walks.
 let _planSegBg=null, _planSegBgSig='';
 function planSetSegBackground(bg){
-  _planSegBg=bg&&Object.keys(bg).length?bg:null;
+  // QUANTISED to 10-truck steps, matching the server's _parse_others. A
+  // one-truck edit used to change the signature, missing every cached curve
+  // and re-pricing the whole route set from cold on EVERY plan change
+  // (~30 sweeps x ~0.9 s of server CPU — the "loading a plan takes minutes"
+  // complaint, measured 2026-08-27). Pricing moved +0.000% at 4 dp under the
+  // rounding; sub-10 routes round UP so none silently vanishes.
+  if(bg&&Object.keys(bg).length){
+    const q={};
+    Object.keys(bg).forEach(k=>{
+      const v=Math.round((bg[k]||0)/10)*10||10;
+      if(bg[k]>0)q[k]=v;
+    });
+    _planSegBg=q;
+  }else _planSegBg=null;
   _planSegBgSig=_planSegBg
-    ?Object.keys(_planSegBg).sort().map(k=>k+':'+Math.round(_planSegBg[k])).join(',')
+    ?Object.keys(_planSegBg).sort().map(k=>k+':'+_planSegBg[k]).join(',')
     :'';
 }
 function planSegOthersFor(key){
