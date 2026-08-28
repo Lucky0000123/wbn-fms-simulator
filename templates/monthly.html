@@ -346,26 +346,23 @@ function parkBox(a, cards){
   const body=(cards||[]).map(c=>{
     const r=byName[c.name];
     if(!r)return '<tr><td>'+esc(c.name)+'</td><td class="muted">—</td>'
-      +'<td class="muted">—</td><td class="zero">0</td></tr>';
+      +'<td class="zero">0</td></tr>';
     return '<tr><td>'+esc(r.name)+'</td><td>'+fmt(r.dt)+'</td>'
-      +'<td class="keep">'+fmt(r.absorbed)+'</td>'
-      +'<td class="'+(r.park?'park':'zero')+'">'+fmt(r.park)+'</td></tr>';
+      +'<td class="park">'+fmt(r.park)+'</td></tr>';
   }).join('');
   return '<div class="park-box">'
     +'<h3>DT to park — to land the year on 100%</h3>'
     +'<div class="sub">LIM-LD runs <b>'+a.cov_before+'%</b> of its year line. '
-    +'Take '+fmt(a.removed)+' t off LIM-LD and the year lands on <b>'+a.cov_after+'%</b>. '
-    +'Freed trucks keep working on longer SAP hauls where they fit; the rest is capacity '
-    +'we do not need. SAP and LIM-TOS are untouched.</div>'
-    +'<table><thead><tr><th>Month</th><th>DT off LD</th><th>Kept working</th><th>PARK</th></tr></thead>'
+    +'Parking these trucks takes '+fmt(a.removed)+' t off LIM-LD and the year lands on '
+    +'<b>'+a.cov_after+'%</b>. Nothing is re-routed — the trucks simply stop, so SAP and '
+    +'LIM-TOS are untouched.</div>'
+    +'<table><thead><tr><th>Month</th><th>DT off LIM-LD</th><th>PARKED</th></tr></thead>'
     +'<tbody>'+body
     +'<tr class="tot"><td>TOTAL</td><td>'+fmt(a.freed)+'</td>'
-    +'<td class="keep">'+fmt(a.absorbed)+'</td>'
-    +'<td class="'+(a.park?'park':'zero')+'">'+fmt(a.park)+'</td></tr>'
+    +'<td class="park">'+fmt(a.park)+'</td></tr>'
     +'</tbody></table>'
-    +'<div class="verdict" style="color:var(--'+(a.park?'er':'ok')+')">'
-    +(a.park?('PARK '+fmt(a.park)+' DT to reach the target.')
-            :'Nothing to park — every freed truck keeps working.')
+    +'<div class="verdict" style="color:var(--er)">'
+    +'PARK '+fmt(a.park)+' DT and the year\'s LIM-LD lands on '+a.cov_after+'%.'
     +'</div></div>';
 }
 
