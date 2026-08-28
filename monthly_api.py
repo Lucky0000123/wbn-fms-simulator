@@ -1816,99 +1816,191 @@ def _xlsx_append_paths_sheet(wb, year, cards, used, prefix="", achv=False,
     ws.row_dimensions[1].height = 24
 
 
-def _xlsx_month_park_routes(ws, r, park, month_name=""):
-    """WHICH trucks move, route by route (owner, 2026-08-28: "you are taking
-    out 70 DT in December but from which route we don't know — add it in the
-    December sheet clearly").
+def _xlsx_month_park_routes(ws, r, park, month_name="", alloc=None, n_days=30):
+    """The ADJUSTED plan for this month (owner, 2026-08-28: "show the new
+    predicted plan with the change in the DT, highlight that DT, and the
+    percentage of target we made — do it for every month").
 
-    RED rows lose trucks (LIM-LD comes down to its year share). GREEN rows
-    gain them: the SAME SAP tonnage re-routed to a LONGER haul, which needs
-    more trucks for the same tonnes. Nothing is parked unless no longer haul
-    can take it."""
-    from openpyxl.styles import PatternFill, Alignment
-    if not park or not park.get("dt"):
+    One table: every path as it stands, then the same path after the change,
+    with the moved DT highlighted. Trucks come OFF LIM-LD (its year share is
+    already met) and go ON to a LONGER SAP haul, so SAP tonnage is unchanged
+    while LIM-LD lands on its line. Closes with the new % of target."""
+    from openpyxl.styles import PatternFill
+    if not park or not park.get("dt") or not alloc:
         return r
     box = _xlsx_sides()[0]
-    mid = _xlsx_mid()
-    r = _xlsx_section(
-        ws, r, "The %d DT that come off LIM-LD — exactly which trucks" % park["dt"],
-        "To land the YEAR's LIM-LD on 100%. RED = trucks leave this route. "
-        "GREEN = they join this route, carrying the SAME SAP tonnage over a LONGER "
-        "distance, which is why it needs more trucks. Contractor never changes." )
-    _xlsx_headers(ws, r, ["Route", "Contractor", "Material", "DT before",
-                          "DT after", "Δ DT", "Why"], center=True)
-    r += 1
     red = PatternFill("solid", fgColor="FBE9E9")
     grn = PatternFill("solid", fgColor="D9F2E2")
+    rows = [x for x in (alloc.get("rows") or [])
+            if not x.get("foreign") and not x.get("_tenant") and (x.get("dt_after") or 0) > 0]
+    if not rows:
+        return r
+    cut = {}
     for c in park.get("cuts") or []:
-        _xlsx_text(ws.cell(row=r, column=1), c["key"], True, "A52929", center=True)
-        _xlsx_text(ws.cell(row=r, column=2), c["con"], center=True)
-        _xlsx_text(ws.cell(row=r, column=3), "LIM-LD", center=True)
-        _xlsx_num(ws.cell(row=r, column=4), c.get("dt_before") or 0, center=True)
-        _xlsx_num(ws.cell(row=r, column=5),
-                  (c.get("dt_before") or 0) - c["n"], True, center=True)
-        _xlsx_num(ws.cell(row=r, column=6), -c["n"], True, center=True)
-        ws.cell(row=r, column=6).font = _xlsx_font(True, 11, "A52929")
-        _xlsx_text(ws.cell(row=r, column=7),
-                   "surplus LIM-LD — these trucks are freed", size=9,
-                   color=_XLSX_MUTED)
-        for col in range(1, 8):
-            ws.cell(row=r, column=col).fill = red
-            ws.cell(row=r, column=col).border = box
-        r += 1
+        cut[(c["key"], c["con"], "LIM-LD")] = c["n"]
+    off, on = {}, {}
     for m in park.get("moves") or []:
-        _xlsx_text(ws.cell(row=r, column=1), m["from"], True, "A52929", center=True)
-        _xlsx_text(ws.cell(row=r, column=2), m["con"], center=True)
-        _xlsx_text(ws.cell(row=r, column=3), "SAP", center=True)
-        _before = m.get("src_dt_before")
-        _off = round(m["dt_off"])
-        _xlsx_num(ws.cell(row=r, column=4), _before if _before is not None else _off,
-                  center=True)
-        _xlsx_num(ws.cell(row=r, column=5),
-                  max(0, (_before or _off) - _off), True, center=True)
-        _xlsx_num(ws.cell(row=r, column=6), -_off, True, center=True)
-        ws.cell(row=r, column=6).font = _xlsx_font(True, 11, "A52929")
-        _xlsx_text(ws.cell(row=r, column=7),
-                   "%s t/day of SAP leaves this shorter haul" % format(int(round(m["t"])), ","),
-                   size=9, color=_XLSX_MUTED)
-        for col in range(1, 8):
-            ws.cell(row=r, column=col).fill = red
+        off[(m["from"], m["con"])] = m
+        k = (m["to"], m["con"])
+        if k in on:
+            on[k] = {"dt_on": on[k]["dt_on"] + m["dt_on"], "t": on[k]["t"] + m["t"]}
+        else:
+            on[k] = {"dt_on": m["dt_on"], "t": m["t"]}
+    r = _xlsx_section(
+        ws, r, "NEW PREDICTED PLAN — after the LIM-LD adjustment",
+        "The plan above runs LIM-LD past its year share. Here it is corrected: "
+        "%d DT come OFF LIM-LD (red) and go ON to a longer SAP haul (green), so SAP "
+        "tonnage is unchanged and LIM-LD lands on its line. Every other path is "
+        "untouched. Contractor never changes." % park["dt"])
+    _xlsx_headers(ws, r, ["Path", "Contractor", "Material", "DT now", "DT NEW",
+                          "Δ DT", "t/day now", "t/day NEW"], center=True)
+    r += 1
+    mats_before = {"SAP": 0.0, "LIM-TOS": 0.0, "LIM-LD": 0.0}
+    mats_after = {"SAP": 0.0, "LIM-TOS": 0.0, "LIM-LD": 0.0}
+    dt_before = dt_after = 0
+    order = {"LIM-LD": 0, "LIM-TOS": 1, "SAP": 2}
+    def _mk(x):
+        mat = str(x.get("material") or "").upper()
+        ot = str(x.get("otype") or "").upper()
+        return "SAP" if mat == "SAP" else ("LIM-LD" if ot == "LD" else "LIM-TOS")
+    for x in sorted(rows, key=lambda z: (order[_mk(z)], -(z.get("pred_after") or 0))):
+        mk = _mk(x)
+        key, con = x.get("key"), x.get("contractor")
+        dt = x.get("dt_after") or 0
+        t_day = x.get("pred_after") or 0
+        rate = t_day / dt if dt else 0
+        n_cut = cut.get((key, con, mk), 0)
+        mv = off.get((key, con)) if mk == "SAP" else None
+        new_dt, new_t = dt, t_day
+        tone = None
+        if n_cut:
+            new_dt = dt - n_cut
+            new_t = rate * new_dt
+            tone = red
+        elif mv:
+            new_dt = max(0, round(dt - mv["dt_off"]))
+            new_t = max(0.0, t_day - mv["t"])
+            tone = red
+        _xlsx_text(ws.cell(row=r, column=1), key, tone is not None, center=True)
+        _xlsx_text(ws.cell(row=r, column=2), con, center=True)
+        _xlsx_text(ws.cell(row=r, column=3), mk, center=True)
+        _xlsx_num(ws.cell(row=r, column=4), dt, center=True)
+        _xlsx_num(ws.cell(row=r, column=5), new_dt, tone is not None, center=True)
+        if new_dt != dt:
+            _xlsx_num(ws.cell(row=r, column=6), new_dt - dt, True, center=True)
+            ws.cell(row=r, column=6).font = _xlsx_font(True, 11, "A52929")
+        else:
+            _xlsx_text(ws.cell(row=r, column=6), "—", color=_XLSX_MUTED, center=True)
+        _xlsx_num(ws.cell(row=r, column=7), round(t_day), center=True)
+        _xlsx_num(ws.cell(row=r, column=8), round(new_t), tone is not None, center=True)
+        if tone is not None:
+            for col in range(1, 9):
+                ws.cell(row=r, column=col).fill = tone
+        for col in range(1, 9):
             ws.cell(row=r, column=col).border = box
+        mats_before[mk] += t_day
+        mats_after[mk] += new_t
+        dt_before += dt
+        dt_after += new_dt
         r += 1
-        _xlsx_text(ws.cell(row=r, column=1), m["to"], True, "1B7A41", center=True)
-        _xlsx_text(ws.cell(row=r, column=2), m["con"], center=True)
+    for (key, con), m in sorted(on.items()):
+        _xlsx_text(ws.cell(row=r, column=1), key, True, "1B7A41", center=True)
+        _xlsx_text(ws.cell(row=r, column=2), con, center=True)
         _xlsx_text(ws.cell(row=r, column=3), "SAP", center=True)
         _xlsx_text(ws.cell(row=r, column=4), "—", color=_XLSX_MUTED, center=True)
         _xlsx_num(ws.cell(row=r, column=5), round(m["dt_on"]), True, center=True)
-        _xlsx_num(ws.cell(row=r, column=6), m["use"], True, center=True)
+        _xlsx_num(ws.cell(row=r, column=6), round(m["dt_on"]), True, center=True)
         ws.cell(row=r, column=6).font = _xlsx_font(True, 11, "1B7A41")
-        _xlsx_text(ws.cell(row=r, column=7),
-                   "same %s t/day, longer haul, so +%d trucks work here"
-                   % (format(int(round(m["t"])), ","), m["use"]),
-                   size=9, color=_XLSX_MUTED)
-        for col in range(1, 8):
+        _xlsx_text(ws.cell(row=r, column=7), "—", color=_XLSX_MUTED, center=True)
+        _xlsx_num(ws.cell(row=r, column=8), round(m["t"]), True, center=True)
+        for col in range(1, 9):
             ws.cell(row=r, column=col).fill = grn
             ws.cell(row=r, column=col).border = box
+        mats_after["SAP"] += m["t"]
+        dt_after += round(m["dt_on"])
         r += 1
-    _xlsx_text(ws.cell(row=r, column=1), "NET", True, _XLSX_NAVY, center=True)
+    if park.get("park"):
+        _xlsx_text(ws.cell(row=r, column=1), "PARKED", True, "A52929", center=True)
+        for c0 in (2, 3):
+            _xlsx_text(ws.cell(row=r, column=c0), "", center=True)
+        _xlsx_num(ws.cell(row=r, column=4), park["park"], True, center=True)
+        _xlsx_num(ws.cell(row=r, column=5), 0, True, center=True)
+        _xlsx_num(ws.cell(row=r, column=6), -park["park"], True, center=True)
+        ws.cell(row=r, column=6).font = _xlsx_font(True, 11, "A52929")
+        _xlsx_text(ws.cell(row=r, column=7), "", center=True)
+        _xlsx_text(ws.cell(row=r, column=8), "no haul can take them", size=9,
+                   color="A52929", center=True)
+        for col in range(1, 9):
+            ws.cell(row=r, column=col).fill = red
+            ws.cell(row=r, column=col).border = box
+        dt_after += park["park"]
+        r += 1
+    _xlsx_text(ws.cell(row=r, column=1), "TOTAL", True, _XLSX_NAVY, center=True)
     _xlsx_text(ws.cell(row=r, column=2), "", center=True)
     _xlsx_text(ws.cell(row=r, column=3), "", center=True)
-    _xlsx_num(ws.cell(row=r, column=4), park["dt"], True, center=True)
-    _xlsx_num(ws.cell(row=r, column=5), park.get("absorbed") or 0, True, center=True)
-    _xlsx_num(ws.cell(row=r, column=6), -(park.get("park") or 0), True, center=True)
-    ws.cell(row=r, column=6).font = _xlsx_font(
-        True, 11, "A52929" if park.get("park") else "1B7A41")
-    _xlsx_text(ws.cell(row=r, column=7),
-               ("%d trucks leave LIM-LD, %d keep working on the longer SAP hauls, "
-                "PARK %d" % (park["dt"], park.get("absorbed") or 0, park.get("park") or 0))
-               if park.get("park") else
-               ("%d trucks leave LIM-LD and ALL %d keep working on the longer SAP "
-                "hauls — nothing is parked"
-                % (park["dt"], park.get("absorbed") or 0)),
-               True, "A52929" if park.get("park") else "1B7A41", size=9)
-    for col in range(1, 8):
+    _xlsx_num(ws.cell(row=r, column=4), dt_before, True, center=True)
+    _xlsx_num(ws.cell(row=r, column=5), dt_after, True, center=True)
+    _xlsx_text(ws.cell(row=r, column=6), "", center=True)
+    _xlsx_num(ws.cell(row=r, column=7), round(sum(mats_before.values())), True, center=True)
+    _xlsx_num(ws.cell(row=r, column=8), round(sum(mats_after.values())), True, center=True)
+    for col in range(1, 9):
         _xlsx_total_border(ws.cell(row=r, column=col))
-    return r + 2
+    r += 2
+    # New % of target, per material and together
+    tgt = {}
+    for k, api in (("SAP", "sap"), ("LIM-TOS", "tos"), ("LIM-LD", "ld")):
+        tgt[k] = ((alloc.get("materials") or {}).get(api) or {}).get("target_day") or 0
+    tot_t = sum(tgt.values())
+    _xlsx_headers(ws, r, ["NEW % of target", "SAP", "LIM-TOS", "LIM-LD", "Together"],
+                  center=True)
+    r += 1
+    _xlsx_text(ws.cell(row=r, column=1), "Target t/day", True, center=True)
+    for i, k in enumerate(("SAP", "LIM-TOS", "LIM-LD")):
+        _xlsx_num(ws.cell(row=r, column=2 + i), round(tgt[k]), center=True)
+    _xlsx_num(ws.cell(row=r, column=5), round(tot_t), True, center=True)
+    for col in range(1, 6):
+        ws.cell(row=r, column=col).border = box
+    r += 1
+    _xlsx_text(ws.cell(row=r, column=1), "NEW predicted plan", True, center=True)
+    for i, k in enumerate(("SAP", "LIM-TOS", "LIM-LD")):
+        _xlsx_num(ws.cell(row=r, column=2 + i), round(mats_after[k]), True, center=True)
+    _xlsx_num(ws.cell(row=r, column=5), round(sum(mats_after.values())), True, center=True)
+    for col in range(1, 6):
+        ws.cell(row=r, column=col).border = box
+    r += 1
+    _xlsx_text(ws.cell(row=r, column=1), "NEW % of target", True, center=True)
+    for i, k in enumerate(("SAP", "LIM-TOS", "LIM-LD")):
+        _xlsx_paint_cov(ws.cell(row=r, column=2 + i),
+                        (100 * mats_after[k] / tgt[k]) if tgt[k] else None)
+    _xlsx_paint_cov(ws.cell(row=r, column=5),
+                    (100 * sum(mats_after.values()) / tot_t) if tot_t else None)
+    for col in range(1, 6):
+        ws.cell(row=r, column=col).border = box
+    r += 1
+    _xlsx_text(ws.cell(row=r, column=1), "was", True, _XLSX_MUTED, center=True)
+    for i, k in enumerate(("SAP", "LIM-TOS", "LIM-LD")):
+        _xlsx_pct_cell(ws.cell(row=r, column=2 + i),
+                       (100 * mats_before[k] / tgt[k]) if tgt[k] else None)
+        ws.cell(row=r, column=2 + i).font = _xlsx_font(False, 10, _XLSX_MUTED)
+    _xlsx_pct_cell(ws.cell(row=r, column=5),
+                   (100 * sum(mats_before.values()) / tot_t) if tot_t else None)
+    ws.cell(row=r, column=5).font = _xlsx_font(False, 10, _XLSX_MUTED)
+    for col in range(1, 6):
+        ws.cell(row=r, column=col).border = box
+    r += 2
+    # Why this month can still read above 100 while the YEAR lands on it.
+    yr = park.get("year") or {}
+    if yr.get("cov_after") is not None:
+        note = ws.cell(row=r, column=1, value=(
+            "The judged line is the YEAR, not this month. Across Sep-Dec LIM-LD was "
+            "%.1f%% of its year line and this change lands it on %.1f%%. The earlier "
+            "months run under their own lines, so this month may still read above 100%% "
+            "on its own and the year is still exactly on target."
+            % (yr.get("cov_before") or 0, yr.get("cov_after") or 0)))
+        note.font = _xlsx_font(False, 10, _XLSX_MUTED)
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
+        r += 2
+    return r
 
 
 def _xlsx_month_dt_box(ws, alloc, top_row=1, col=14, month=None, park=None):
@@ -2189,7 +2281,8 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None, achv=False, park=No
         points, start=1, chart_col="A", achv=achv)
 
     # Which trucks move to land the YEAR's LIM-LD on 100% (owner 2026-08-28).
-    r = _xlsx_month_park_routes(ws, r + 2, park, month_name=month)
+    r = _xlsx_month_park_routes(ws, r + 2, park, month_name=month,
+                                alloc=alloc, n_days=n_days)
 
     # Weighbridge text is the LAST column; give the tail columns room.
     _xlsx_widths(ws, [16, 22, 14, 14, 14, 11, 11, 11, 11, 12, 14, 58, 58])
@@ -4093,10 +4186,16 @@ def _xlsx_append_month_sheets(wb, year, cards, used, prefix="", achv=False):
     # One year-level LIM-LD adjustment, split per month (owner, 2026-08-28).
     try:
         _adj = _ld_year_adjustment(cards) or {}
-        _park_by_month = {p["name"]: p for p in (_adj.get("plan") or [])}
+        _yr = {"cov_before": round(100 * _adj["cov_before"], 1),
+               "cov_after": round(100 * _adj["cov_after"], 1)} if _adj else {}
+        _park_by_month = {}
+        for _p in (_adj.get("plan") or []):
+            _p = dict(_p)
+            _p["year"] = _yr
+            _park_by_month[_p["name"]] = _p
         for _c in cards:
             _park_by_month.setdefault(_c.get("name"),
-                                      {"dt": 0, "absorbed": 0, "park": 0})
+                                      {"dt": 0, "absorbed": 0, "park": 0, "year": _yr})
     except Exception:  # noqa: BLE001
         _park_by_month = {}
     for c in cards:
