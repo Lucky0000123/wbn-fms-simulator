@@ -3034,6 +3034,7 @@ def api_plan_ai_advise():
     the local Ollama daemon (no data leaves the machine beyond Ollama's own
     cloud-model relay); if it is unreachable we say so honestly.
     """
+    import urllib.error
     import urllib.request
     body = request.get_json(force=True, silent=True) or {}
     ctx = body.get("context")
@@ -3058,20 +3059,38 @@ def api_plan_ai_advise():
     prompt = "Live plan context (JSON):\n" + json.dumps(ctx, indent=1)[:6000] \
         + "\n\nGive the planning read."
     model = os.environ.get("PLAN_AI_MODEL", "deepseek-v4-pro:cloud")
-    try:
-        req = urllib.request.Request(
-            "http://127.0.0.1:11434/api/chat",
-            data=json.dumps({
-                "model": model,
-                "think": False,   # answer directly; thinking burns the token budget
-                "messages": [{"role": "system", "content": system},
-                             {"role": "user", "content": prompt}],
-                "stream": False,
-                "options": {"temperature": 0.2, "num_predict": 1400},
-            }).encode(),
-            headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=90) as r:
-            data = json.loads(r.read().decode())
+
+    def _ask(name):
+        """(advice, error) for one model. Never raises."""
+        try:
+            req = urllib.request.Request(
+                "http://127.0.0.1:11434/api/chat",
+                data=json.dumps({
+                    "model": name,
+                    "think": False,   # answer directly; thinking burns the budget
+                    "messages": [{"role": "system", "content": system},
+                                 {"role": "user", "content": prompt}],
+                    "stream": False,
+                    "options": {"temperature": 0.2, "num_predict": 1400},
+                }).encode(),
+                headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=90) as r:
+                data = json.loads(r.read().decode())
+        except urllib.error.HTTPError as e:          # noqa: PERF203
+            # Ollama puts the ACTIONABLE part in the body, not the status line:
+            # a relayed cloud model answers 4xx with
+            # {"error": "Ollama via api key failed. Fallback available: ..."}.
+            try:
+                body = json.loads(e.read().decode()).get("error") or ""
+            except Exception:                        # noqa: BLE001
+                body = ""
+            return None, (body or "HTTP %s" % e.code)
+        except Exception as e:                       # noqa: BLE001
+            return None, str(e)
+        if data.get("error"):
+            # 200 with an error body — Ollama does this for relay failures, and
+            # it is the shape that used to read as "empty answer".
+            return None, str(data["error"])
         msg = data.get("message") or {}
         advice = (msg.get("content") or "").strip()
         if not advice:
@@ -3079,12 +3098,48 @@ def api_plan_ai_advise():
             # end of the thinking trace rather than returning nothing.
             think = (msg.get("thinking") or "").strip()
             advice = think[-700:] if think else ""
-        if not advice:
-            return jsonify({"ok": False, "error": "model returned empty answer"}), 502
-        return jsonify({"ok": True, "advice": advice, "model": model})
-    except Exception as e:  # noqa: BLE001
+        return (advice or None), (None if advice else "model returned empty answer")
+
+    # FALL BACK, because Ollama itself says a fallback is available. The
+    # configured model is a cloud relay; when its API key lapses or the relay
+    # blips it fails while the other installed models answer fine (measured
+    # 2026-08-28: all four cloud models healthy minutes after the owner saw
+    # "Ollama via api key failed. Fallback available:"). Trying the next model
+    # is what that message is telling us to do — and an advisory panel going
+    # dark on a transient relay error is exactly the "graceful fallback hides
+    # a contract mismatch" shape this repo has paid for before.
+    tried, errors = [], []
+    advice, err = _ask(model)
+    tried.append(model)
+    if not advice:
+        errors.append("%s: %s" % (model, err))
+        alts = []
+        try:
+            with urllib.request.urlopen(
+                    "http://127.0.0.1:11434/api/tags", timeout=10) as r:
+                alts = [m.get("name") for m
+                        in (json.loads(r.read().decode()).get("models") or [])
+                        if m.get("name") and m.get("name") != model]
+        except Exception:                            # noqa: BLE001
+            alts = []
+        for alt in alts[:3]:
+            advice, err = _ask(alt)
+            tried.append(alt)
+            if advice:
+                model = alt
+                break
+            errors.append("%s: %s" % (alt, err))
+    if not advice:
+        # The WHOLE error, not str(e)[:80]. The truncation cut Ollama's message
+        # off at "Fallback available:" — deleting the one part that says what
+        # to do about it (owner, 2026-08-28).
         return jsonify({"ok": False,
-                        "error": "local AI not reachable (%s)" % str(e)[:80]}), 503
+                        "error": "AI advisor failed on %d model(s) — %s"
+                                 % (len(tried), " · ".join(errors)),
+                        "tried": tried}), 503
+    return jsonify({"ok": True, "advice": advice, "model": model,
+                    "tried": tried, "fell_back": len(tried) > 1,
+                    "errors": errors or None})
 
 
 @bp.route('/api/plan/rain-outlook', methods=['GET'])
