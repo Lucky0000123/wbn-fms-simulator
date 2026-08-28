@@ -3333,6 +3333,263 @@ def _xlsx_scenario_constraints_block(ws, start_col, scenario_label=""):
     return r
 
 
+# ── Year-level LIM-LD adjustment (owner, 2026-08-28) ────────────────────
+# "Together 101.7%, SAP 100%, LIM-TOS 100%, but LIM-LD 103% — reduce LD
+# from 103 to 100 and tell me how many DTs we are NOT using. December can
+# stay at 110%; see the bigger picture, keep the rules in the months."
+#
+# THE YEAR is the judged line, not each month: remove only the year's LD
+# surplus, taken from the most-over month first, and never push a month
+# BELOW its own line. The freed trucks are optional capacity — first
+# re-absorbed by moving the SAME SAP tonnage onto a LONGER haul (KM15 ->
+# KM0, POS 12 -> KM0 need 1.34x / 1.56x the trucks for the same tonnes),
+# and only the remainder is reported as trucks we do not need.
+# Contractor walls hold: RIM works BLB/TF, SMA works KR/TF, never swapped.
+_LD_ADJ_KM15 = {"TF": {"RIM": 105.4}, "KR": {"SMA": 160.4}}
+_LD_ADJ_KM0 = {"TF": {"RIM": 78.4}, "KR": {"SMA": 102.6}}
+_LD_ADJ_P12 = {"TF": {"RIM": 113.4}, "KR": {"SMA": 201.9}}
+_LD_ADJ_P12K = {"TF": {"RIM": 63.1}, "KR": {"SMA": 120.1}}
+_LD_ADJ_PIT = {"RIM": "TF", "SMA": "KR"}
+
+
+def _ld_year_adjustment(cards):
+    """Return the year-level LD adjustment, or None when LD is under its line."""
+    Y = _year_alloc_totals(cards)
+    if not Y:
+        return None
+    ld = (Y.get("materials") or {}).get("ld") or {}
+    pred = ld.get("pred_after")
+    line = ld.get("sales_target") or ld.get("target")
+    if not pred or not line:
+        return None
+    surplus = pred - line
+    months = []
+    for c in cards:
+        m = ((c.get("alloc") or {}).get("materials") or {}).get("ld") or {}
+        p = m.get("pred_after_month") or 0
+        t = m.get("target_month") or 0
+        if not t:
+            continue
+        months.append({"card": c, "name": c.get("name"), "month": c.get("month"),
+                       "pred": p, "tgt": t, "cov": p / t, "head": max(0.0, p - t),
+                       "nd": len(_days_in(c.get("month") or ""))or 30})
+    out = {"pred": pred, "line": line, "surplus": surplus,
+           "cov_before": pred / line, "plan": [], "freed": 0,
+           "absorbed": 0, "park": 0, "removed": 0.0}
+    if surplus <= 0 or not months:
+        out["cov_after"] = out["cov_before"]
+        return out
+    need = surplus
+    for m in sorted(months, key=lambda x: -x["cov"]):
+        if need <= 0 or m["head"] <= 0:
+            continue
+        take = min(need, m["head"])
+        rows = _plan_rows_by_material(m["card"])
+        if not rows:
+            continue
+        cap = {}
+        for con in ("RIM", "SMA"):
+            pit = _LD_ADJ_PIT[con]
+            c1 = 0
+            for key, dst in (("%s>FENI KM15" % pit, _LD_ADJ_KM0[pit].get(con)),
+                             ("%s>POS 12" % pit, _LD_ADJ_P12K[pit].get(con))):
+                if not dst:
+                    continue
+                hit = [x for x in rows if x["key"] == key and x["con"] == con]
+                if hit:
+                    c1 += max(0, int(hit[0]["t_day"] / dst - hit[0]["dt"]))
+            cap[con] = c1
+        rem = take / m["nd"]
+        cuts, used = [], {"RIM": 0, "SMA": 0}
+        for con in sorted(cap, key=lambda c: -cap[c]) + ["RIM", "SMA"]:
+            if rem <= 0:
+                continue
+            budget = cap[con] - used[con]
+            if budget <= 0:
+                budget = 10 ** 6 if all(used[x] >= cap[x] for x in cap) else 0
+            for x in sorted([r for r in rows
+                             if r["mat"] == "LIM-LD" and r["con"] == con],
+                            key=lambda z: z["rate"]):
+                if rem <= 0 or budget <= 0:
+                    break
+                done = sum(c["n"] for c in cuts
+                           if c["key"] == x["key"] and c["con"] == con)
+                k = min(x["dt"] - done, budget, int(rem // x["rate"]) if x["rate"] else 0)
+                if k <= 0:
+                    continue
+                ex = [c for c in cuts if c["key"] == x["key"] and c["con"] == con]
+                if ex:
+                    ex[0]["n"] += k
+                else:
+                    cuts.append({"key": x["key"], "con": con, "n": k, "rate": x["rate"]})
+                rem -= k * x["rate"]
+                used[con] += k
+                budget -= k
+        got = sum(c["n"] * c["rate"] for c in cuts) * m["nd"]
+        free = {"RIM": 0, "SMA": 0}
+        for c in cuts:
+            free[c["con"]] += c["n"]
+        moves, parked = [], {"RIM": 0, "SMA": 0}
+        for con in ("RIM", "SMA"):
+            n = free[con]
+            if not n:
+                continue
+            pit = _LD_ADJ_PIT[con]
+            rest = n
+            for key, src, dst in (
+                    ("%s>FENI KM15" % pit, _LD_ADJ_KM15[pit].get(con), _LD_ADJ_KM0[pit].get(con)),
+                    ("%s>POS 12" % pit, _LD_ADJ_P12[pit].get(con), _LD_ADJ_P12K[pit].get(con))):
+                if rest <= 0 or not src or not dst:
+                    continue
+                hit = [x for x in rows if x["key"] == key and x["con"] == con]
+                if not hit:
+                    continue
+                x = hit[0]
+                room = max(0, int(x["t_day"] / dst - x["dt"]))
+                use = min(rest, room)
+                if use <= 0:
+                    continue
+                T = min(use / (1 / dst - 1 / src), x["t_day"])
+                moves.append({"con": con, "from": key, "to": "%s>FENI KM0" % pit,
+                              "use": use, "t": T, "dt_off": T / src, "dt_on": T / dst})
+                rest -= use
+            parked[con] = rest
+        out["plan"].append({
+            "name": m["name"], "cov_before": m["cov"],
+            "cov_after": (m["pred"] - got) / m["tgt"], "take": got,
+            "dt": sum(c["n"] for c in cuts), "cuts": cuts, "moves": moves,
+            "absorbed": sum(x["use"] for x in moves),
+            "park": sum(parked.values())})
+        need -= got
+    out["freed"] = sum(p["dt"] for p in out["plan"])
+    out["removed"] = sum(p["take"] for p in out["plan"])
+    out["absorbed"] = sum(p["absorbed"] for p in out["plan"])
+    out["park"] = sum(p["park"] for p in out["plan"])
+    out["cov_after"] = (pred - out["removed"]) / line
+    return out
+
+
+def _plan_rows_by_material(card):
+    """Allocated own rows of one month as {key, con, mat, dt, t_day, rate}."""
+    rows = []
+    src = (card.get("alloc") or {}).get("rows") or []
+    if not src:
+        d = card.get("alloc_source_date")
+        if d:
+            try:
+                with open(os.path.join(_SAVED_DIR, d + ".json"), encoding="utf-8") as fh:
+                    src = ((json.load(fh).get("allocation") or {}).get("rows")) or []
+            except Exception:  # noqa: BLE001
+                src = []
+    for r in src:
+        if r.get("foreign") or r.get("_tenant"):
+            continue
+        dt = r.get("dt_after") or 0
+        if dt <= 0:
+            continue
+        mat = str(r.get("material") or "").upper()
+        ot = str(r.get("otype") or "").upper()
+        mk = "SAP" if mat == "SAP" else ("LIM-LD" if ot == "LD" else "LIM-TOS")
+        pd_ = r.get("pred_after") or 0
+        rows.append({"key": r.get("key"), "con": r.get("contractor"), "mat": mk,
+                     "dt": dt, "t_day": pd_, "rate": pd_ / dt})
+    return rows
+
+
+def _xlsx_ld_year_adjustment_block(ws, r, cards):
+    """Print the year-level LD adjustment on the Year sheet."""
+    from openpyxl.styles import PatternFill
+    adj = _ld_year_adjustment(cards)
+    if not adj:
+        return r
+    box = _xlsx_sides()[0]
+    mid = _xlsx_mid()
+    r = _xlsx_section(
+        ws, r, "LIM-LD · bringing the YEAR to 100%",
+        "The YEAR is the judged line, not each month. Only the year's LD surplus is removed, "
+        "taken from the most-over month first, and no month is pushed below its own line. "
+        "Freed trucks are kept working by moving the SAME SAP tonnage onto a longer haul "
+        "(FeNi KM15 to KM0, POS 12 to KM0); only what no haul can take is capacity we do not need.")
+    if adj["surplus"] <= 0:
+        c = ws.cell(row=r, column=1,
+                    value="Year LIM-LD is %.1f%% of its line — already at or under it. No adjustment needed."
+                          % (100 * adj["cov_before"]))
+        c.font = _xlsx_font(True, 11, "1B7A41")
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
+        return r + 2
+    _xlsx_headers(ws, r, ["", "LIM-LD year", "Year line", "Year %",
+                          "DT freed", "Kept working", "NOT NEEDED", "Year % after"],
+                  center=True)
+    r += 1
+    _xlsx_text(ws.cell(row=r, column=1), "Year total", True, center=True)
+    _xlsx_num(ws.cell(row=r, column=2), round(adj["pred"]), True, center=True)
+    _xlsx_num(ws.cell(row=r, column=3), round(adj["line"]), center=True)
+    _xlsx_pct_cell(ws.cell(row=r, column=4), 100 * adj["cov_before"])
+    ws.cell(row=r, column=4).font = _xlsx_font(True, 11, "A52929")
+    ws.cell(row=r, column=4).fill = PatternFill("solid", fgColor="FBE9E9")
+    _xlsx_num(ws.cell(row=r, column=5), adj["freed"], True, center=True)
+    _xlsx_num(ws.cell(row=r, column=6), adj["absorbed"], True, center=True)
+    ws.cell(row=r, column=6).font = _xlsx_font(True, 11, "1B7A41")
+    _xlsx_num(ws.cell(row=r, column=7), adj["park"], True, center=True)
+    ws.cell(row=r, column=7).font = _xlsx_font(
+        True, 11, "A52929" if adj["park"] else "1B7A41")
+    ws.cell(row=r, column=7).fill = PatternFill(
+        "solid", fgColor="FBE9E9" if adj["park"] else "D9F2E2")
+    _xlsx_paint_cov(ws.cell(row=r, column=8), 100 * adj["cov_after"])
+    for col in range(1, 9):
+        ws.cell(row=r, column=col).border = box
+    r += 2
+    _xlsx_headers(ws, r, ["Month", "LIM-LD before", "LIM-LD after", "Tonnes removed",
+                          "DT freed", "Kept working", "Not needed", "Where those trucks come from"],
+                  center=True)
+    r += 1
+    for p in adj["plan"]:
+        if not p["dt"]:
+            continue
+        _xlsx_text(ws.cell(row=r, column=1), p["name"], True, center=True)
+        _xlsx_pct_cell(ws.cell(row=r, column=2), 100 * p["cov_before"])
+        ws.cell(row=r, column=2).font = _xlsx_font(True, 11, "8A6100")
+        _xlsx_paint_cov(ws.cell(row=r, column=3), 100 * p["cov_after"])
+        _xlsx_num(ws.cell(row=r, column=4), round(p["take"]), center=True)
+        _xlsx_num(ws.cell(row=r, column=5), p["dt"], True, center=True)
+        _xlsx_num(ws.cell(row=r, column=6), p["absorbed"], True, center=True)
+        _xlsx_num(ws.cell(row=r, column=7), p["park"], True, center=True)
+        mix = {}
+        for c in p["cuts"]:
+            mix[c["con"]] = mix.get(c["con"], 0) + c["n"]
+        _xlsx_text(ws.cell(row=r, column=8),
+                   " + ".join("%s %d DT" % (k, v) for k, v in sorted(mix.items()))
+                   + " off LIM-LD", size=9, color=_XLSX_MUTED)
+        for col in range(1, 9):
+            ws.cell(row=r, column=col).border = box
+        r += 1
+    moves = [(p, m) for p in adj["plan"] for m in p["moves"]]
+    if moves:
+        r += 1
+        c = ws.cell(row=r, column=1,
+                    value="Where the kept trucks work — the SAME SAP tonnage, hauled further")
+        c.font = _xlsx_font(True, 11, _XLSX_NAVY)
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
+        r += 1
+        _xlsx_headers(ws, r, ["Month", "Contractor", "Moved from", "Moved to",
+                              "SAP t/day", "DT off", "DT on", "Extra DT used"], center=True)
+        r += 1
+        for p, m in moves:
+            _xlsx_text(ws.cell(row=r, column=1), p["name"], center=True)
+            _xlsx_text(ws.cell(row=r, column=2), m["con"], True, center=True)
+            _xlsx_text(ws.cell(row=r, column=3), m["from"], color="A52929", center=True)
+            _xlsx_text(ws.cell(row=r, column=4), m["to"], True, "1B7A41", center=True)
+            _xlsx_num(ws.cell(row=r, column=5), round(m["t"]), center=True)
+            _xlsx_num(ws.cell(row=r, column=6), round(m["dt_off"]), center=True)
+            _xlsx_num(ws.cell(row=r, column=7), round(m["dt_on"]), True, center=True)
+            _xlsx_num(ws.cell(row=r, column=8), m["use"], True, center=True)
+            ws.cell(row=r, column=8).fill = PatternFill("solid", fgColor="D9F2E2")
+            for col in range(1, 9):
+                ws.cell(row=r, column=col).border = box
+            r += 1
+    return r + 1
+
+
 def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
     """Year dashboard sheet: KPIs, five-clock charts, coverage table.
     achv=True adds old / optimized achievable (Plan simulate) next to predicted."""
@@ -3543,6 +3800,7 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
               "new_achv": c.get("achv_month") if achv else None} for c in cards],
             start=1, chart_col="I", achv=achv)
 
+    r = _xlsx_ld_year_adjustment_block(ws, r + 2, cards)
     r = _xlsx_road_corridor_block(ws, r + 2, cards)
     r = _xlsx_fill_saturation_block(
         ws, r + 1, _xlsx_plan_sat_payload(),
