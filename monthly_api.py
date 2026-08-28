@@ -1816,7 +1816,7 @@ def _xlsx_append_paths_sheet(wb, year, cards, used, prefix="", achv=False,
     ws.row_dimensions[1].height = 24
 
 
-def _xlsx_month_dt_box(ws, alloc, top_row=1, col=14, month=None):
+def _xlsx_month_dt_box(ws, alloc, top_row=1, col=14, month=None, park=None):
     """Fleet-in-use box at the top right of a month sheet (owner,
     2026-08-27: "clearly mention how many DTs we are using for this
     month"). Counts the ALLOCATED rows: ours by contractor, IWIP
@@ -1886,13 +1886,34 @@ def _xlsx_month_dt_box(ws, alloc, top_row=1, col=14, month=None):
     det = ws.cell(row=top_row + 1, column=c0, value=" · ".join(parts))
     det.font = _xlsx_font(False, 10, _XLSX_MUTED)
     det.alignment = mid
+    # Parking line for THIS month (owner, 2026-08-28: "show in each month
+    # the number of DT you parked"). Filled by the year book, which is the
+    # only caller that knows the year-level LIM-LD surplus.
+    if park is not None:
+        _p_dt = int(park.get("dt") or 0)
+        _p_keep = int(park.get("absorbed") or 0)
+        _p_park = int(park.get("park") or 0)
+        if _p_dt:
+            _txt = ("TO HIT THE YEAR TARGET: %d DT come off LIM-LD · %d keep working "
+                    "on longer SAP hauls · PARK %d" % (_p_dt, _p_keep, _p_park))
+            _tone = "A52929" if _p_park else "1B7A41"
+        else:
+            _txt = "TO HIT THE YEAR TARGET: nothing to park this month"
+            _tone = "1B7A41"
+        _pc = ws.cell(row=top_row + 2, column=c0, value=_txt)
+        _pc.font = _xlsx_font(True, 10, _tone)
+        _pc.alignment = mid
+        ws.merge_cells(start_row=top_row + 2, start_column=c0,
+                       end_row=top_row + 2, end_column=c0 + 2)
+        for _cc in range(c0, c0 + 3):
+            ws.cell(row=top_row + 2, column=_cc).border = box
     ws.merge_cells(start_row=top_row + 1, start_column=c0,
                    end_row=top_row + 1, end_column=c0 + 2)
     for cc in range(c0, c0 + 3):
         ws.cell(row=top_row + 1, column=cc).border = box
 
 
-def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None, achv=False):
+def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None, achv=False, park=None):
     """One month: predicted plan, materials, path table. No DT-move list.
     achv=True adds the engine's achievable everywhere predicted appears."""
     _xlsx_sheet_setup(ws)
@@ -1901,7 +1922,7 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None, achv=False):
     ws["A1"] = title
     ws["A1"].font = _xlsx_font(True, 16, _XLSX_NAVY)
     ws.merge_cells("A1:M1")
-    _xlsx_month_dt_box(ws, alloc, top_row=1, col=14, month=month)
+    _xlsx_month_dt_box(ws, alloc, top_row=1, col=14, month=month, park=park)
     if achv:
         ws["A2"] = (
             "Target = matrix. Predicted plan = after Allocate DT. "
@@ -3496,6 +3517,107 @@ def _plan_rows_by_material(card):
     return rows
 
 
+def _xlsx_ld_park_box(ws, start_col, cards, top_row=25):
+    """Right-side PARKING box (owner, 2026-08-28: "make a box on the side,
+    show which month and the number of DT you parked, so we see clearly how
+    we reach our target and this is the DT we have to park").
+
+    Sits under the constraints panel in the same column. It answers one
+    question per month: to bring the YEAR's LIM-LD to 100%, how many trucks
+    come off LD, how many keep working on a longer haul, and how many we
+    simply do not need."""
+    from openpyxl.styles import PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    adj = _ld_year_adjustment(cards)
+    if not adj:
+        return
+    box = _xlsx_sides()[0]
+    mid = _xlsx_mid()
+    col = start_col
+    r = top_row
+    head = ws.cell(row=r, column=col, value="DT TO PARK — to land the year on 100%")
+    head.font = _xlsx_font(True, 12, "FFFFFF")
+    head.alignment = mid
+    ws.merge_cells(start_row=r, start_column=col, end_row=r, end_column=col + 3)
+    for cc in range(col, col + 4):
+        ws.cell(row=r, column=cc).fill = PatternFill("solid", fgColor=_XLSX_NAVY)
+        ws.cell(row=r, column=cc).border = box
+    r += 1
+    if adj["surplus"] <= 0:
+        c = ws.cell(row=r, column=col,
+                    value="LIM-LD year is %.1f%% — under its line. Nothing to park."
+                          % (100 * adj["cov_before"]))
+        c.font = _xlsx_font(True, 10, "1B7A41")
+        c.alignment = Alignment(wrap_text=True, vertical="center")
+        ws.merge_cells(start_row=r, start_column=col, end_row=r + 1, end_column=col + 3)
+        for cc in range(col, col + 4):
+            ws.cell(row=r, column=cc).border = box
+        return
+    sub = ws.cell(row=r, column=col, value=(
+        "LIM-LD runs %.1f%% of its year line. Take %s t off LIM-LD and the year "
+        "lands on %.1f%%. Trucks freed keep working on longer SAP hauls where "
+        "they fit; the rest is capacity we do not need."
+        % (100 * adj["cov_before"], format(int(round(adj["removed"])), ","),
+           100 * adj["cov_after"])))
+    sub.font = _xlsx_font(False, 9, _XLSX_MUTED)
+    sub.alignment = Alignment(wrap_text=True, vertical="top")
+    ws.merge_cells(start_row=r, start_column=col, end_row=r + 2, end_column=col + 3)
+    for cc in range(col, col + 4):
+        ws.cell(row=r, column=cc).border = box
+    r += 3
+    for i, h in enumerate(("Month", "DT off LD", "Kept working", "PARK")):
+        c = ws.cell(row=r, column=col + i, value=h)
+        c.font = _xlsx_font(True, 10, "FFFFFF")
+        c.alignment = mid
+        c.fill = PatternFill("solid", fgColor=_XLSX_NAVY)
+        c.border = box
+    r += 1
+    by_month = {p["name"]: p for p in adj["plan"]}
+    for c0 in cards:
+        nm = c0.get("name")
+        p = by_month.get(nm)
+        _xlsx_text(ws.cell(row=r, column=col), nm, True, center=True)
+        if not p or not p["dt"]:
+            for i, v in enumerate(("—", "—", "0")):
+                cc = ws.cell(row=r, column=col + 1 + i, value=v)
+                cc.font = _xlsx_font(i == 2, 10, "1B7A41" if i == 2 else _XLSX_MUTED)
+                cc.alignment = mid
+        else:
+            _xlsx_num(ws.cell(row=r, column=col + 1), p["dt"], True, center=True)
+            ws.cell(row=r, column=col + 1).font = _xlsx_font(True, 10, "8A6100")
+            _xlsx_num(ws.cell(row=r, column=col + 2), p["absorbed"], True, center=True)
+            ws.cell(row=r, column=col + 2).font = _xlsx_font(True, 10, "1B7A41")
+            _xlsx_num(ws.cell(row=r, column=col + 3), p["park"], True, center=True)
+            ws.cell(row=r, column=col + 3).font = _xlsx_font(
+                True, 11, "A52929" if p["park"] else "1B7A41")
+            ws.cell(row=r, column=col + 3).fill = PatternFill(
+                "solid", fgColor="FBE9E9" if p["park"] else "D9F2E2")
+        for cc in range(col, col + 4):
+            ws.cell(row=r, column=cc).border = box
+        r += 1
+    _xlsx_text(ws.cell(row=r, column=col), "TOTAL", True, _XLSX_NAVY, center=True)
+    _xlsx_num(ws.cell(row=r, column=col + 1), adj["freed"], True, center=True)
+    _xlsx_num(ws.cell(row=r, column=col + 2), adj["absorbed"], True, center=True)
+    ws.cell(row=r, column=col + 2).font = _xlsx_font(True, 11, "1B7A41")
+    _xlsx_num(ws.cell(row=r, column=col + 3), adj["park"], True, center=True)
+    ws.cell(row=r, column=col + 3).font = _xlsx_font(
+        True, 12, "A52929" if adj["park"] else "1B7A41")
+    ws.cell(row=r, column=col + 3).fill = PatternFill(
+        "solid", fgColor="FBE9E9" if adj["park"] else "D9F2E2")
+    for cc in range(col, col + 4):
+        ws.cell(row=r, column=cc).border = box
+        _xlsx_total_border(ws.cell(row=r, column=cc))
+    r += 1
+    note = ws.cell(row=r, column=col, value=(
+        "PARK %d DT to reach the target." % adj["park"] if adj["park"] else
+        "Nothing to park — every freed truck keeps working."))
+    note.font = _xlsx_font(True, 10, "A52929" if adj["park"] else "1B7A41")
+    note.alignment = Alignment(wrap_text=True, vertical="center")
+    ws.merge_cells(start_row=r, start_column=col, end_row=r, end_column=col + 3)
+    for cc in range(col, col + 4):
+        ws.cell(row=r, column=cc).border = box
+
+
 def _xlsx_ld_year_adjustment_block(ws, r, cards):
     """Print the year-level LD adjustment on the Year sheet."""
     from openpyxl.styles import PatternFill
@@ -3811,6 +3933,8 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
     # block; the panel occupies G4 downward, clear of the coverage table's
     # G/H tail which begins ~100 rows lower.
     _xlsx_scenario_constraints_block(ws, 7, scenario_label=title_prefix)
+    # Parking box under the constraints panel (owner, 2026-08-28).
+    _xlsx_ld_park_box(ws, 7, cards, top_row=26)
 
     _xlsx_widths(ws, [16, 14, 14, 14, 12, 14, 14, 12, 14, 12, 10, 12, 12, 12])
     _xlsx_widths(ws, [18, 14, 22, 14, 18], start=16)
@@ -3819,6 +3943,15 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
 
 def _xlsx_append_month_sheets(wb, year, cards, used, prefix="", achv=False):
     """One old-vs-new sheet per month card. Cards may carry alloc_raw for scenarios."""
+    # One year-level LIM-LD adjustment, split per month (owner, 2026-08-28).
+    try:
+        _adj = _ld_year_adjustment(cards) or {}
+        _park_by_month = {p["name"]: p for p in (_adj.get("plan") or [])}
+        for _c in cards:
+            _park_by_month.setdefault(_c.get("name"),
+                                      {"dt": 0, "absorbed": 0, "park": 0})
+    except Exception:  # noqa: BLE001
+        _park_by_month = {}
     for c in cards:
         month = c["month"]
         st = _load_state(month) or {"month": month}
@@ -3837,7 +3970,8 @@ def _xlsx_append_month_sheets(wb, year, cards, used, prefix="", achv=False):
                 ws, month,
                 "%s — %s" % (label.strip(),
                              "plan · predicted · achievable" if achv else "old vs new"),
-                alloc, st, achv=achv)
+                alloc, st, achv=achv,
+                park=(_park_by_month or {}).get(c.get("name")))
         elif st.get("prediction") or st.get("manual"):
             _xlsx_fill_month(
                 ws, st, "%s — production, capacity & SAP" % label.strip(), achv=achv)
