@@ -3582,11 +3582,56 @@ def _ld_year_adjustment(cards):
     if surplus <= 0 or not months:
         out["cov_after"] = out["cov_before"]
         return out
+    # FLAT FLEET (owner, 2026-08-29): park to a single RUNNING LEVEL, not a
+    # different number each month. Uneven parking (3.1.2 ran 1,216 in Nov then
+    # 1,119 in Dec) forces them to buy for the peak and leaves those trucks
+    # standing by a month later. So we find the HIGHEST level every month can
+    # hold while the YEAR's LIM-LD still lands on its line: lower level removes
+    # more tonnage, so the largest feasible level is the answer. Months whose
+    # pool is already under the level are untouched.
+    def _removable(mm, ndt):
+        """Tonnes/month removed by parking ndt trucks off this month's LD."""
+        rws = _plan_rows_by_material(mm["card"])
+        rem, t = ndt, 0.0
+        for x in sorted([z for z in rws if z["mat"] == "LIM-LD"],
+                        key=lambda z: z["rate"]):
+            if rem <= 0:
+                break
+            k = min(x["dt"], rem)
+            t += k * x["rate"]
+            rem -= k
+        return t * mm["nd"], rem
+
+    _pools = [int(mm["card"].get("dt") or 0) for mm in months]
+    _flat = None
+    if _pools:
+        for F in range(max(_pools), 0, -1):
+            tot, ok = 0.0, True
+            for mm in months:
+                pool = int(mm["card"].get("dt") or 0)
+                t, short = _removable(mm, max(0, pool - F))
+                if short > 0:
+                    ok = False
+                    break
+                tot += t
+            if ok and tot >= surplus:
+                _flat = F
+                break
+    out["flat_level"] = _flat
     need = surplus
     for m in sorted(months, key=lambda x: -x["cov"]):
-        if need <= 0 or m["head"] <= 0:
+        if need <= 0:
             continue
-        take = min(need, m["head"])
+        pool = int(m["card"].get("dt") or 0)
+        if _flat is not None:
+            take_dt = max(0, pool - _flat)
+            if take_dt <= 0:
+                continue
+            take = _removable(m, take_dt)[0]
+        else:
+            if m["head"] <= 0:
+                continue
+            take = min(need, m["head"])
         rows = _plan_rows_by_material(m["card"])
         if not rows:
             continue
@@ -3594,18 +3639,31 @@ def _ld_year_adjustment(cards):
         # ones doing least where they stand, so parking them costs the least
         # tonnage per truck. No contractor preference is needed any more —
         # nothing is re-routed, so absorption capacity does not matter.
-        rem = take / m["nd"]
         cuts = []
-        for x in sorted([r for r in rows if r["mat"] == "LIM-LD"],
-                        key=lambda z: z["rate"]):
-            if rem <= 0:
-                break
-            k = min(x["dt"], int(rem // x["rate"]) if x["rate"] else 0)
-            if k <= 0:
-                continue
-            cuts.append({"key": x["key"], "con": x["con"], "n": k,
-                         "rate": x["rate"], "dt_before": x["dt"]})
-            rem -= k * x["rate"]
+        if _flat is not None:
+            rem_dt = max(0, int(m["card"].get("dt") or 0) - _flat)
+            for x in sorted([r for r in rows if r["mat"] == "LIM-LD"],
+                            key=lambda z: z["rate"]):
+                if rem_dt <= 0:
+                    break
+                k = min(x["dt"], rem_dt)
+                if k <= 0:
+                    continue
+                cuts.append({"key": x["key"], "con": x["con"], "n": k,
+                             "rate": x["rate"], "dt_before": x["dt"]})
+                rem_dt -= k
+        else:
+            rem = take / m["nd"]
+            for x in sorted([r for r in rows if r["mat"] == "LIM-LD"],
+                            key=lambda z: z["rate"]):
+                if rem <= 0:
+                    break
+                k = min(x["dt"], int(rem // x["rate"]) if x["rate"] else 0)
+                if k <= 0:
+                    continue
+                cuts.append({"key": x["key"], "con": x["con"], "n": k,
+                             "rate": x["rate"], "dt_before": x["dt"]})
+                rem -= k * x["rate"]
         got = sum(c["n"] * c["rate"] for c in cuts) * m["nd"]
         free = {"RIM": 0, "SMA": 0}
         for c in cuts:
@@ -3689,6 +3747,7 @@ def _ld_year_adjust_payload(cards):
         "absorbed": adj["absorbed"],
         "park": adj["park"],
         "removed": round(adj["removed"]),
+        "flat_level": adj.get("flat_level"),
         "months": [{"name": p["name"], "dt": p["dt"], "absorbed": p["absorbed"],
                     "park": p["park"], "take": round(p["take"]),
                     "cov_before": round(100 * p["cov_before"], 1),
@@ -3737,20 +3796,27 @@ def _xlsx_ld_park_box(ws, start_col, cards, top_row=25):
         for cc in range(col, col + 4):
             ws.cell(row=r, column=cc).border = box
         return
+    _fl = adj.get("flat_level")
     sub = ws.cell(row=r, column=col, value=(
-        "The LIM-LD headline above is ALREADY this adjustment: it was %.1f%% of its "
-        "year line, and parking these trucks takes %s t off LIM-LD and lands it on "
-        "%.1f%%. Nothing is re-routed — the trucks simply stop, so SAP and LIM-TOS "
-        "are untouched."
-        % (100 * adj["cov_before"], format(int(round(adj["removed"])), ","),
-           100 * adj["cov_after"])))
+        ("The fleet runs at ONE LEVEL — %d DT every month — instead of a different "
+         "number each month. That is the peak they need to own: no truck is bought "
+         "for a single month and then left standing a month later. LIM-LD was %.1f%% "
+         "of its year line; parking to this level takes %s t off it and lands the "
+         "year on %.1f%%. Nothing is re-routed, so SAP and LIM-TOS are untouched."
+         % (_fl, 100 * adj["cov_before"], format(int(round(adj["removed"])), ","),
+            100 * adj["cov_after"])) if _fl else
+        ("The LIM-LD headline above is ALREADY this adjustment: it was %.1f%% of its "
+         "year line, and parking these trucks takes %s t off LIM-LD and lands it on "
+         "%.1f%%. Nothing is re-routed, so SAP and LIM-TOS are untouched."
+         % (100 * adj["cov_before"], format(int(round(adj["removed"])), ","),
+            100 * adj["cov_after"]))))
     sub.font = _xlsx_font(False, 9, _XLSX_MUTED)
     sub.alignment = Alignment(wrap_text=True, vertical="top")
     ws.merge_cells(start_row=r, start_column=col, end_row=r + 2, end_column=col + 3)
     for cc in range(col, col + 4):
         ws.cell(row=r, column=cc).border = box
     r += 3
-    for i, h in enumerate(("Month", "DT off LIM-LD", "PARKED", "")):
+    for i, h in enumerate(("Month", "PARKED", "RUNNING", "")):
         c = ws.cell(row=r, column=col + i, value=h)
         c.font = _xlsx_font(True, 10, "FFFFFF")
         c.alignment = mid
@@ -3763,34 +3829,46 @@ def _xlsx_ld_park_box(ws, start_col, cards, top_row=25):
         p = by_month.get(nm)
         _xlsx_text(ws.cell(row=r, column=col), nm, True, center=True)
         if not p or not p["dt"]:
-            for i, v in enumerate(("—", "0")):
-                cc = ws.cell(row=r, column=col + 1 + i, value=v)
-                cc.font = _xlsx_font(i == 1, 10, "1B7A41" if i == 1 else _XLSX_MUTED)
-                cc.alignment = mid
+            _pool = int(c0.get("dt") or 0)
+            cc = ws.cell(row=r, column=col + 1, value=0)
+            cc.font = _xlsx_font(True, 10, "1B7A41")
+            cc.alignment = mid
+            cc = ws.cell(row=r, column=col + 2, value=_pool or None)
+            cc.number_format = "#,##0"
+            cc.font = _xlsx_font(True, 10, _XLSX_INK)
+            cc.alignment = mid
         else:
-            _xlsx_num(ws.cell(row=r, column=col + 1), p["dt"], True, center=True)
-            ws.cell(row=r, column=col + 1).font = _xlsx_font(True, 10, "8A6100")
-            _xlsx_num(ws.cell(row=r, column=col + 2), p["park"], True, center=True)
-            ws.cell(row=r, column=col + 2).font = _xlsx_font(True, 11, "A52929")
-            ws.cell(row=r, column=col + 2).fill = PatternFill("solid", fgColor="FBE9E9")
+            _pool = int(c0.get("dt") or 0)
+            _xlsx_num(ws.cell(row=r, column=col + 1), p["park"], True, center=True)
+            ws.cell(row=r, column=col + 1).font = _xlsx_font(True, 11, "A52929")
+            ws.cell(row=r, column=col + 1).fill = PatternFill("solid", fgColor="FBE9E9")
+            _xlsx_num(ws.cell(row=r, column=col + 2), _pool - p["park"], True, center=True)
+            ws.cell(row=r, column=col + 2).font = _xlsx_font(True, 11, "1B7A41")
+            ws.cell(row=r, column=col + 2).fill = PatternFill("solid", fgColor="D9F2E2")
             _xlsx_text(ws.cell(row=r, column=col + 3), "", center=True)
         for cc in range(col, col + 4):
             ws.cell(row=r, column=cc).border = box
         r += 1
     _xlsx_text(ws.cell(row=r, column=col), "TOTAL", True, _XLSX_NAVY, center=True)
-    _xlsx_num(ws.cell(row=r, column=col + 1), adj["freed"], True, center=True)
-    _xlsx_num(ws.cell(row=r, column=col + 2), adj["park"], True, center=True)
-    ws.cell(row=r, column=col + 2).font = _xlsx_font(True, 12, "A52929")
-    ws.cell(row=r, column=col + 2).fill = PatternFill("solid", fgColor="FBE9E9")
+    _xlsx_num(ws.cell(row=r, column=col + 1), adj["park"], True, center=True)
+    ws.cell(row=r, column=col + 1).font = _xlsx_font(True, 12, "A52929")
+    ws.cell(row=r, column=col + 1).fill = PatternFill("solid", fgColor="FBE9E9")
+    if _fl:
+        _xlsx_num(ws.cell(row=r, column=col + 2), _fl, True, center=True)
+        ws.cell(row=r, column=col + 2).font = _xlsx_font(True, 12, "1B7A41")
+        ws.cell(row=r, column=col + 2).fill = PatternFill("solid", fgColor="D9F2E2")
     _xlsx_text(ws.cell(row=r, column=col + 3), "", center=True)
     for cc in range(col, col + 4):
         ws.cell(row=r, column=cc).border = box
         _xlsx_total_border(ws.cell(row=r, column=cc))
     r += 1
     note = ws.cell(row=r, column=col, value=(
-        "PARK %d DT and the year's LIM-LD lands on %.1f%%."
-        % (adj["park"], 100 * adj["cov_after"])))
-    note.font = _xlsx_font(True, 10, "A52929")
+        ("FLEET TO OWN: %d DT, held every month. Park %d DT in total and the "
+         "year's LIM-LD lands on %.1f%%."
+         % (_fl, adj["park"], 100 * adj["cov_after"])) if _fl else
+        ("PARK %d DT and the year's LIM-LD lands on %.1f%%."
+         % (adj["park"], 100 * adj["cov_after"]))))
+    note.font = _xlsx_font(True, 10, "1B7A41" if _fl else "A52929")
     note.alignment = Alignment(wrap_text=True, vertical="center")
     ws.merge_cells(start_row=r, start_column=col, end_row=r, end_column=col + 3)
     for cc in range(col, col + 4):

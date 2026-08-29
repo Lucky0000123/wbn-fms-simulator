@@ -344,25 +344,33 @@ function parkBox(a, cards){
       +'Nothing to park.</div></div>';
   }
   const body=(cards||[]).map(c=>{
-    const r=byName[c.name];
-    if(!r)return '<tr><td>'+esc(c.name)+'</td><td class="muted">—</td>'
-      +'<td class="zero">0</td></tr>';
-    return '<tr><td>'+esc(r.name)+'</td><td>'+fmt(r.dt)+'</td>'
-      +'<td class="park">'+fmt(r.park)+'</td></tr>';
+    const r=byName[c.name]; const pool=c.dt||0;
+    if(!r)return '<tr><td>'+esc(c.name)+'</td><td class="zero">0</td>'
+      +'<td>'+fmt(pool)+'</td></tr>';
+    return '<tr><td>'+esc(r.name)+'</td><td class="park">'+fmt(r.park)+'</td>'
+      +'<td class="keep">'+fmt(pool-r.park)+'</td></tr>';
   }).join('');
   return '<div class="park-box">'
     +'<h3>DT to park — to land the year on 100%</h3>'
-    +'<div class="sub">LIM-LD runs <b>'+a.cov_before+'%</b> of its year line. '
-    +'Parking these trucks takes '+fmt(a.removed)+' t off LIM-LD and the year lands on '
-    +'<b>'+a.cov_after+'%</b>. Nothing is re-routed — the trucks simply stop, so SAP and '
-    +'LIM-TOS are untouched.</div>'
-    +'<table><thead><tr><th>Month</th><th>DT off LIM-LD</th><th>PARKED</th></tr></thead>'
+    +'<div class="sub">'
+    +(a.flat_level
+      ?('The fleet runs at <b>ONE LEVEL — '+fmt(a.flat_level)+' DT every month</b> — not a '
+        +'different number each month. That is the peak they need to own, so no truck is '
+        +'bought for a single month and left standing after it. LIM-LD was <b>'+a.cov_before
+        +'%</b> of its year line; parking to this level lands the year on <b>'+a.cov_after+'%</b>.')
+      :('LIM-LD runs <b>'+a.cov_before+'%</b> of its year line. Parking these trucks takes '
+        +fmt(a.removed)+' t off LIM-LD and the year lands on <b>'+a.cov_after+'%</b>.'))
+    +' Nothing is re-routed — the trucks simply stop, so SAP and LIM-TOS are untouched.</div>'
+    +'<table><thead><tr><th>Month</th><th>PARKED</th><th>RUNNING</th></tr></thead>'
     +'<tbody>'+body
-    +'<tr class="tot"><td>TOTAL</td><td>'+fmt(a.freed)+'</td>'
-    +'<td class="park">'+fmt(a.park)+'</td></tr>'
+    +'<tr class="tot"><td>TOTAL</td><td class="park">'+fmt(a.park)+'</td>'
+    +'<td class="keep">'+(a.flat_level?fmt(a.flat_level):'—')+'</td></tr>'
     +'</tbody></table>'
-    +'<div class="verdict" style="color:var(--er)">'
-    +'PARK '+fmt(a.park)+' DT and the year\'s LIM-LD lands on '+a.cov_after+'%.'
+    +'<div class="verdict" style="color:var(--ok)">'
+    +(a.flat_level
+      ?('FLEET TO OWN: '+fmt(a.flat_level)+' DT, held every month. Park '+fmt(a.park)
+        +' DT in total and the year\'s LIM-LD lands on '+a.cov_after+'%.')
+      :('PARK '+fmt(a.park)+' DT and the year\'s LIM-LD lands on '+a.cov_after+'%.'))
     +'</div></div>';
 }
 
