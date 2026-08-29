@@ -1969,8 +1969,48 @@ def _xlsx_month_park_routes(ws, r, park, month_name="", alloc=None,
     for _c in range(col, col + 5):
         ws.cell(row=r, column=_c).border = box
     r += 2
+    # THE YEAR RESULT — the number that is actually signed off (owner,
+    # 2026-08-29: "your total yearly target should be reached 100%").
+    _ym = yr.get("materials") or {}
+    if _ym:
+        _t2 = ws.cell(row=r, column=col, value=(
+            "YEAR RESULT with this fleet (%s DT every month)"
+            % format(int(yr.get("flat_level") or 0), ",")))
+        _t2.font = _xlsx_font(True, 12, "1B7A41")
+        ws.merge_cells(start_row=r, start_column=col, end_row=r, end_column=col + 7)
+        r += 1
+        _xlsx_headers(ws, r, ["Sep–Dec total", "SAP", "LIM-TOS", "LIM-LD", "Together"],
+                      start=col, center=True)
+        r += 1
+        _tg = yr.get("together") or {}
+        _xlsx_text(ws.cell(row=r, column=col), "Sales line t", True, center=True)
+        for i, k in enumerate(("SAP", "LIM-TOS", "LIM-LD")):
+            _xlsx_num(ws.cell(row=r, column=col + 1 + i),
+                      round((_ym.get(k) or {}).get("tgt") or 0), center=True)
+        _xlsx_num(ws.cell(row=r, column=col + 4), round(_tg.get("tgt") or 0), True,
+                  center=True)
+        for _c in range(col, col + 5):
+            ws.cell(row=r, column=_c).border = box
+        r += 1
+        _xlsx_text(ws.cell(row=r, column=col), "Year predicted", True, center=True)
+        for i, k in enumerate(("SAP", "LIM-TOS", "LIM-LD")):
+            _xlsx_num(ws.cell(row=r, column=col + 1 + i),
+                      round((_ym.get(k) or {}).get("pred") or 0), True, center=True)
+        _xlsx_num(ws.cell(row=r, column=col + 4), round(_tg.get("pred") or 0), True,
+                  center=True)
+        for _c in range(col, col + 5):
+            ws.cell(row=r, column=_c).border = box
+        r += 1
+        _xlsx_text(ws.cell(row=r, column=col), "YEAR % of target", True, center=True)
+        for i, k in enumerate(("SAP", "LIM-TOS", "LIM-LD")):
+            _xlsx_paint_cov(ws.cell(row=r, column=col + 1 + i),
+                            (_ym.get(k) or {}).get("cov"))
+        _xlsx_paint_cov(ws.cell(row=r, column=col + 4), _tg.get("cov"))
+        for _c in range(col, col + 5):
+            ws.cell(row=r, column=_c).border = box
+        r += 2
     if yr.get("cov_after") is not None:
-        note = ws.cell(row=r, column=1, value=(
+        note = ws.cell(row=r, column=col, value=(
             "The judged line is the YEAR, not this month. Across Sep-Dec LIM-LD was "
             "%.1f%% of its year line and parking these trucks lands it on %.1f%%. The "
             "earlier months run under their own lines, so this month can still read "
@@ -4207,7 +4247,31 @@ def _xlsx_append_month_sheets(wb, year, cards, used, prefix="", achv=False):
     try:
         _adj = _ld_year_adjustment(cards) or {}
         _yr = {"cov_before": round(100 * _adj["cov_before"], 1),
-               "cov_after": round(100 * _adj["cov_after"], 1)} if _adj else {}
+               "cov_after": round(100 * _adj["cov_after"], 1),
+               "flat_level": _adj.get("flat_level")} if _adj else {}
+        # The YEAR result after this parking, per material — the number the
+        # owner actually signs off (2026-08-29: "your total yearly target
+        # should be reached 100%"). Same arithmetic the Year sheet uses.
+        if _adj:
+            _by = {p2["name"]: p2 for p2 in (_adj.get("plan") or [])}
+            _acc = {"SAP": [0.0, 0.0], "LIM-TOS": [0.0, 0.0], "LIM-LD": [0.0, 0.0]}
+            for _c2 in cards:
+                _mm = ((_c2.get("alloc") or {}).get("materials") or {})
+                _p2 = _by.get(_c2.get("name"))
+                for _k, _api in (("SAP", "sap"), ("LIM-TOS", "tos"), ("LIM-LD", "ld")):
+                    _t = (_mm.get(_api) or {}).get("target_month") or 0
+                    _pr = (_mm.get(_api) or {}).get("pred_after_month") or 0
+                    if _k == "LIM-LD" and _p2:
+                        _pr -= _p2["take"]
+                    _acc[_k][0] += _pr
+                    _acc[_k][1] += _t
+            _yr["materials"] = {k: {"pred": v[0], "tgt": v[1],
+                                    "cov": (100 * v[0] / v[1]) if v[1] else None}
+                                for k, v in _acc.items()}
+            _tp = sum(v[0] for v in _acc.values())
+            _tt = sum(v[1] for v in _acc.values())
+            _yr["together"] = {"pred": _tp, "tgt": _tt,
+                               "cov": (100 * _tp / _tt) if _tt else None}
         _park_by_month = {}
         for _p in (_adj.get("plan") or []):
             _p = dict(_p)
