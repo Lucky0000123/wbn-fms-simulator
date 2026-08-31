@@ -4035,6 +4035,105 @@ def _xlsx_ld_year_adjustment_block(ws, r, cards):
     return r + 1
 
 
+def _plant_consumption(cards):
+    """Tonnes delivered to each PLANT per month (owner, 2026-08-31: "a graph
+    of the evolution of the total and daily consumption of FeNi KM0, KM15 and
+    Huafei for each month").
+
+    Read straight off the allocated rows by destination, so it is the plan's
+    own delivery, not a re-derivation. Tenant rows are excluded (not our
+    tonnage). BSE is kept as its own key for when Huafei/BSE separate."""
+    PLANTS = ("FENI KM0", "FENI KM15", "HUAFEI", "BSE")
+    out = []
+    for c in cards:
+        rows = ((c.get("alloc") or {}).get("rows") or [])
+        if not rows:
+            d = c.get("alloc_source_date")
+            if d:
+                try:
+                    with open(os.path.join(_SAVED_DIR, d + ".json"), encoding="utf-8") as fh:
+                        rows = ((json.load(fh).get("allocation") or {}).get("rows")) or []
+                except Exception:  # noqa: BLE001
+                    rows = []
+        nd = c.get("n_days") or len(_days_in(c.get("month") or "")) or 30
+        per = {p: 0.0 for p in PLANTS}
+        for r in rows:
+            if r.get("_tenant"):
+                continue
+            key = str(r.get("key") or "")
+            if ">" not in key:
+                continue
+            dest = key.split(">", 1)[1].strip().upper()
+            if dest in per:
+                per[dest] += (r.get("pred_after") or 0) * nd
+        out.append({"name": c.get("name"), "month": c.get("month"), "days": nd,
+                    "plants": per, "total": sum(per.values())})
+    return out
+
+
+def _xlsx_plant_consumption_block(ws, r, cards):
+    """Plant consumption table + charts: total per month and per day."""
+    data = _plant_consumption(cards)
+    if not data or not any(d["total"] for d in data):
+        return r
+    PLANTS = ("FENI KM0", "FENI KM15", "HUAFEI", "BSE")
+    live = [p for p in PLANTS if any(d["plants"].get(p) for d in data)]
+    box = _xlsx_sides()[0]
+    r = _xlsx_section(
+        ws, r, "Plant consumption — what each plant receives",
+        "Tonnes delivered by this plan, per plant per month, and the same figure "
+        "per day. Straight off the allocated rows by destination; tenant fleets "
+        "excluded. BSE appears as its own column once Huafei/BSE separate.")
+    head_row = r
+    _xlsx_headers(ws, r, ["Month"] + live + ["TOTAL"], center=True)
+    r += 1
+    first = r
+    for d in data:
+        _xlsx_text(ws.cell(row=r, column=1), d["name"], True, center=True)
+        for i, p in enumerate(live):
+            _xlsx_num(ws.cell(row=r, column=2 + i), round(d["plants"].get(p) or 0), center=True)
+        _xlsx_num(ws.cell(row=r, column=2 + len(live)), round(d["total"]), True, center=True)
+        for cc in range(1, 3 + len(live)):
+            ws.cell(row=r, column=cc).border = box
+        r += 1
+    last = r - 1
+    _xlsx_text(ws.cell(row=r, column=1), "TOTAL", True, _XLSX_NAVY, center=True)
+    for i, p in enumerate(live):
+        _xlsx_num(ws.cell(row=r, column=2 + i),
+                  round(sum(d["plants"].get(p) or 0 for d in data)), True, center=True)
+    _xlsx_num(ws.cell(row=r, column=2 + len(live)),
+              round(sum(d["total"] for d in data)), True, center=True)
+    for cc in range(1, 3 + len(live)):
+        _xlsx_total_border(ws.cell(row=r, column=cc))
+    r += 2
+    # per-day table (same plants, tonnes / day)
+    day_head = r
+    _xlsx_headers(ws, r, ["Month · t/day"] + live + ["TOTAL"], center=True)
+    r += 1
+    day_first = r
+    for d in data:
+        _xlsx_text(ws.cell(row=r, column=1), d["name"], True, center=True)
+        for i, p in enumerate(live):
+            _xlsx_num(ws.cell(row=r, column=2 + i),
+                      round((d["plants"].get(p) or 0) / d["days"]), center=True)
+        _xlsx_num(ws.cell(row=r, column=2 + len(live)),
+                  round(d["total"] / d["days"]), True, center=True)
+        for cc in range(1, 3 + len(live)):
+            ws.cell(row=r, column=cc).border = box
+        r += 1
+    day_last = r - 1
+    try:
+        _xlsx_line_chart(ws, "Plant consumption · tonnes per month", "t / month",
+                         2, 1 + len(live), head_row, last,
+                         "A%d" % (r + 1), height=8, width=17)
+        _xlsx_line_chart(ws, "Plant consumption · tonnes per day", "t / day",
+                         2, 1 + len(live), day_head, day_last,
+                         "K%d" % (r + 1), height=8, width=17)
+    except Exception:  # noqa: BLE001
+        pass
+    return r + 18
+
+
 def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
     """Year dashboard sheet: KPIs, five-clock charts, coverage table.
     achv=True adds old / optimized achievable (Plan simulate) next to predicted."""
@@ -4263,6 +4362,7 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
             start=1, chart_col="I", achv=achv)
 
     r = _xlsx_ld_year_adjustment_block(ws, r + 2, cards)
+    r = _xlsx_plant_consumption_block(ws, r + 2, cards)
     r = _xlsx_road_corridor_block(ws, r + 2, cards)
     r = _xlsx_fill_saturation_block(
         ws, r + 1, _xlsx_plan_sat_payload(),
