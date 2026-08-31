@@ -2233,12 +2233,34 @@ def _xlsx_fill_month_alloc(ws, month, title, alloc, st=None, achv=False, park=No
     _xlsx_paint_cov(ws.cell(row=r, column=5), alloc.get("cov_new_pred"), size=13)
     ws.row_dimensions[r].height = 22
     r += 2
-    left_lab = ws.cell(row=r, column=1, value="Leaving vs target · month t")
+    left_lab = ws.cell(row=r, column=1, value="Delta vs target · month t")
     left_lab.font = _xlsx_font(False, 10, _XLSX_MUTED)
     left_lab.border = box
+
+    def _delta_cell(cell, v, bold=False):
+        """Signed gap to target: red under, green over (owner 2026-08-31)."""
+        _xlsx_num(cell, v, bold, center=True)
+        if isinstance(v, (int, float)) and v:
+            cell.number_format = "+#,##0;-#,##0"
+            cell.font = _xlsx_font(True, 11, "1B7A41" if v > 0 else "A52929")
+        return cell
+
     for i, (k, _) in enumerate(labels):
-        _xlsx_num(ws.cell(row=r, column=2 + i), (mats.get(k) or {}).get("left_pred_month"), center=True)
-    _xlsx_num(ws.cell(row=r, column=5), alloc.get("left_new_pred_month"), True, center=True)
+        _m = mats.get(k) or {}
+        _tg = _m.get("target_month")
+        _pv = _m.get("pred_after_month")
+        _d = ((_pv - _tg) if (_tg is not None and _pv is not None)
+              else _m.get("delta_pred_month"))
+        if _d is None and _m.get("left_pred_month") is not None:
+            _d = -_m["left_pred_month"]
+        _delta_cell(ws.cell(row=r, column=2 + i), _d)
+    _tgt_m = alloc.get("target_month")
+    _prd_m = alloc.get("new_pred_month")
+    _dt = ((_prd_m - _tgt_m) if (_tgt_m is not None and _prd_m is not None)
+           else alloc.get("delta_new_pred_month"))
+    if _dt is None and alloc.get("left_new_pred_month") is not None:
+        _dt = -alloc["left_new_pred_month"]
+    _delta_cell(ws.cell(row=r, column=5), _dt, True)
 
     rows = list(alloc.get("rows") or [])
     _paths_top = None
@@ -4118,7 +4140,7 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
                          "Achievable"]
         else:
             cov_heads = ["Month", "Target", "Predicted plan"]
-        cov_heads += ["Predicted %", "SAP %", "LIM-TOS %", "LIM-LD %", "Leaving"]
+        cov_heads += ["Predicted %", "SAP %", "LIM-TOS %", "LIM-LD %", "Delta"]
         if achv:
             cov_heads.append("Achievable %")
         r = _xlsx_section(
@@ -4149,7 +4171,19 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
                                 ((a.get("materials") or {}).get("tos") or {}).get("cov_pred"))
                 _xlsx_paint_cov(ws.cell(row=r, column=col + 3),
                                 ((a.get("materials") or {}).get("ld") or {}).get("cov_pred"))
-                _xlsx_num(ws.cell(row=r, column=col + 4), a.get("left_new_pred_month"))
+                # Always derive from the CURRENT target/predicted on the card,
+                # so the sales rescale can never leave a stale or blank delta.
+                _tg = a.get("target_month")
+                _pv = a.get("new_pred_month")
+                _dv = ((_pv - _tg) if (_tg is not None and _pv is not None)
+                       else a.get("delta_new_pred_month"))
+                if _dv is None and a.get("left_new_pred_month") is not None:
+                    _dv = -a["left_new_pred_month"]
+                _dc = ws.cell(row=r, column=col + 4)
+                _xlsx_num(_dc, _dv)
+                if isinstance(_dv, (int, float)) and _dv:
+                    _dc.number_format = "+#,##0;-#,##0"
+                    _dc.font = _xlsx_font(True, 11, "1B7A41" if _dv > 0 else "A52929")
                 if achv:
                     _xlsx_paint_cov(
                         ws.cell(row=r, column=col + 5),
@@ -5264,6 +5298,11 @@ def _alloc_view(alloc, n_days, source_date=None, include_detail=False):
             "cov_achv": _cov_pct(aa_sim, tgt),
             "cov_achv_raw": _cov_pct(aa_sim, tgt),
             "left_pred_month": rnd(max(0, tgt - pa) * n) if tgt is not None and pa is not None else None,
+            # DELTA is signed (owner, 2026-08-31: "replace the column Leaving
+            # by Delta to also consider the part over the plan"). Negative =
+            # short of target, positive = over it. `left_*` stays for callers
+            # that want the one-sided shortfall.
+            "delta_pred_month": rnd((pa - tgt) * n) if tgt is not None and pa is not None else None,
             "over_pred_month": rnd(max(0, pa - tgt) * n) if tgt is not None and pa is not None else None,
         }
     op, np_ = day(old.get("pred")), day(new.get("pred"))
@@ -5338,6 +5377,7 @@ def _alloc_view(alloc, n_days, source_date=None, include_detail=False):
         "cov_new_credited_pred": _cov_pct(credited_na, tgt),
         "cov_new_achv_raw": _cov_pct(na_sim, tgt),
         "left_new_pred_month": rnd(max(0, tgt - np_) * n) if tgt is not None and np_ is not None else None,
+        "delta_new_pred_month": rnd((np_ - tgt) * n) if tgt is not None and np_ is not None else None,
         "over_new_pred_month": rnd(max(0, np_ - tgt) * n) if tgt is not None and np_ is not None else None,
         "over_new_achv_month": rnd(max(0, na_sim - na) * n) if na_sim is not None and na is not None else None,
         "moved_total": alloc.get("moved_total"),
@@ -5626,6 +5666,7 @@ def _rescale_cards_to_sales(cards, Y):
             a["target_month"] = int(round(a["target_month"] * ss / ps))
             a["cov_new_pred"] = _cov_pct(a.get("new_pred_month"), a["target_month"])
             a["left_new_pred_month"] = max(0, a["target_month"] - (a.get("new_pred_month") or 0))
+            a["delta_new_pred_month"] = (a.get("new_pred_month") or 0) - a["target_month"]
             a["over_new_pred_month"] = max(0, (a.get("new_pred_month") or 0) - a["target_month"])
             if a.get("target_day") is not None:
                 a["target_day"] = int(round(a["target_day"] * ss / ps))
