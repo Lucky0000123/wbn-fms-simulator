@@ -74,6 +74,11 @@ window.PLANNING_RULES = {
     inputMustEqualOutput: true,
     routes: [
       'POS 12>FENI KM0', 'POS 12>FENI KM15',
+      // Scenario 4.1 (owner + Huafei meeting, 2026-08-31): POS 6 is not
+      // ready, so ALL LD goes TF>POS 12 and reclaims onward to HUAFEI.
+      // The LD share of POS 12 inflow rides this leg; the SAP buffer share
+      // keeps the FeNi legs above. Material-aware split in posTransit.
+      'POS 12>HUAFEI',
       'POS 14>FENI KM0', 'POS 15>FENI KM0', 'POS 16>FENI KM0',
       // POS 6 transit-out (owner 2026-08-25: it is a loading point too).
       // Destination is HUAFEI, not FeNi (owner, 2026-08-28: "the

@@ -2594,7 +2594,11 @@
     // curves — the legacy fallback path is what inflated the Dec saves
     await planRulesApplyLoaders();
     await planRulesWarmCurves();
-    const inflow={};
+    // Inflow is tracked PER MATERIAL now (owner, 2026-08-31): LD tipped into
+    // a POS reclaims to HUAFEI (it feeds Huafei/BSE), everything else keeps
+    // the FeNi legs. Without the split, 4.1's LD-to-POS-12 would have been
+    // smeared across the FeNi routes — the wrong corridor for kiln feed.
+    const inflow={}, inflowLd={};
     Object.keys(d).forEach(id=>{
       const r=d[id];
       if(!r||r.foreign)return;
@@ -2603,17 +2607,35 @@
       const dt=workingDt(r);
       if(!(dt>0))return;
       const p=predDayAt(id,r,dt);
-      if(p>0)inflow[dest]=(inflow[dest]||0)+p;
+      if(p>0){
+        const isLd=String(r.otype||'').toUpperCase()==='LD';
+        if(isLd)inflowLd[dest]=(inflowLd[dest]||0)+p;
+        else inflow[dest]=(inflow[dest]||0)+p;
+      }
     });
-    const dumps=Object.keys(inflow);
+    const dumps=[...new Set([...Object.keys(inflow),...Object.keys(inflowLd)])];
     _posTransitInfo={rows:[],input:0,output:0};
     for(const dump of dumps){
-      // only dumps that actually receive material get outflow rows (§5), and
-      // a dump's outflow splits evenly across its listed FeNi routes
-      const routes=(R.posTransit.routes||[]).filter(k=>k.indexOf(dump+'>')===0);
-      if(!routes.length)continue;
-      const share=inflow[dump]/routes.length;
-      for(const key of routes){
+      // only dumps that actually receive material get outflow rows (§5).
+      // LD inflow rides the dump's HUAFEI leg; other inflow splits evenly
+      // across its FeNi legs, as before.
+      const all=(R.posTransit.routes||[]).filter(k=>k.indexOf(dump+'>')===0);
+      const hbLegs=all.filter(k=>/HUAFEI|BSE/i.test(k.split('>')[1]||''));
+      const feLegs=all.filter(k=>!/HUAFEI|BSE/i.test(k.split('>')[1]||''));
+      const jobs=[];
+      const ldIn=inflowLd[dump]||0, otherIn=inflow[dump]||0;
+      if(ldIn>0&&hbLegs.length){
+        for(const key of hbLegs)jobs.push([key,ldIn/hbLegs.length]);
+      }else if(ldIn>0&&feLegs.length){
+        // no HUAFEI leg for this dump — do not silently drop the tonnage
+        for(const key of feLegs)jobs.push([key,ldIn/feLegs.length]);
+      }
+      if(otherIn>0&&feLegs.length){
+        for(const key of feLegs)jobs.push([key,otherIn/feLegs.length]);
+      }else if(otherIn>0&&hbLegs.length){
+        for(const key of hbLegs)jobs.push([key,otherIn/hbLegs.length]);
+      }
+      for(const [key,share] of jobs){
         const est=await planRulesTripsFor(key,share);
         _posTransitInfo.rows.push({dump:dump,key:key,tonnes:share,dt:est.dt,
           loaders:est.loaders,tripsPerDt:est.tripsPerDt,payload:est.payload,

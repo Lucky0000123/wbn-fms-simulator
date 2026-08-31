@@ -138,10 +138,20 @@ def ld_target_for_scenario(sid):
         return LIM_LD_TARGET_30_T
     return LIM_LD_TARGET_T
 LIM_LD_CAP_T = LIM_LD_TARGET_T  # back-compat alias (old name, same number)
-# P3 LIM-LD always runs Tofu limonite dump -> Huafei. Named once so the
-# draft-plan sizing and the LD rows cannot disagree about which road the
-# leftover fleet joins.
+# P3 LIM-LD route. 3.x: Tofu limonite dump -> Huafei. 4.1 (owner + Huafei
+# meeting, 2026-08-31): POS 6 will not be ready in time, so ALL the LD goes
+# to POS 12 and only the fresh LIM rides direct to Huafei — the LD then
+# reclaims POS 12 -> HUAFEI on IWIP trucks (§5 input=output). Named per
+# scenario so the draft sizing and the LD rows cannot disagree.
 LD_ROUTE_KEY = "TF>HUAFEI"
+LD_ROUTE_KEY_41 = "TF>POS 12"
+
+
+def ld_route_for_scenario(sid):
+    s2 = str(sid or "").upper()
+    if s2 == "S7" or "4.1" in s2:
+        return LD_ROUTE_KEY_41
+    return LD_ROUTE_KEY
 RIM_ONLY_PITS = ("BLB",)
 
 # SAP routing for imported scenarios (owner, 2026-08-26 — INVERTING the
@@ -1666,7 +1676,8 @@ def _scenario_draft_paths(sc, mnum, yearly):
             rk = _wf_route_key(a)
             k = "%s>%s" % (rk[0], rk[1])
             combined[k] = combined.get(k, 0.0) + sized[i]
-        combined[LD_ROUTE_KEY] = combined.get(LD_ROUTE_KEY, 0.0) + ld_fleet
+        _ldk = ld_route_for_scenario(sc.get("id"))
+        combined[_ldk] = combined.get(_ldk, 0.0) + ld_fleet
         used = {c: 0.0 for c in pool}
         warnings, nxt = [], {}
         for i in order:
@@ -1719,9 +1730,10 @@ def _scenario_draft_paths(sc, mnum, yearly):
         if free < 0.5:
             continue
         rate = ld_rate.get(contractor, 120.0 if contractor == "RIM" else 100.0)
-        paths["%s|%s|LIM|LD" % (contractor, LD_ROUTE_KEY)] = {
-            "key": LD_ROUTE_KEY, "dt": int(round(free)), "contractor": contractor,
-            "source": LD_ROUTE_KEY.split(">")[0], "dest": LD_ROUTE_KEY.split(">")[1],
+        _ldk = ld_route_for_scenario(sc.get("id"))
+        paths["%s|%s|LIM|LD" % (contractor, _ldk)] = {
+            "key": _ldk, "dt": int(round(free)), "contractor": contractor,
+            "source": _ldk.split(">")[0], "dest": _ldk.split(">")[1],
             "material": "LIM", "otype": "LD",
             "targetWmt": int(round(free * rate)),
             "_targetManual": True,

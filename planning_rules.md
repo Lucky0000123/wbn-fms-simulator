@@ -174,6 +174,11 @@ Pits (BLB, KR, TF) → POS dumps (12, 14, 15, 16) → FeNi plants (KM0, KM15)
 ### POS → FeNi routes to include:
 - POS 12 → FeNi KM0
 - POS 12 → FeNi KM15
+- POS 12 → HUAFEI  (scenario 4.1, owner + Huafei meeting 2026-08-31: POS 6
+  is not ready in time, so ALL the LIM-LD goes TF → POS 12 and reclaims
+  onward to Huafei; only the fresh LIM rides direct. The LD share of
+  POS 12 inflow takes this leg — material-aware split — while the SAP
+  buffer share keeps the FeNi legs.)
 - POS 6 → HUAFEI  (owner, 2026-08-28: "the reclaiming of POS 6 goes to
   Huafei, not FeNi". POS 6 holds LIM-LD tipped off the TF split leg, and
   that material is fed to Huafei/BSE, not to the FeNi kilns. It was
