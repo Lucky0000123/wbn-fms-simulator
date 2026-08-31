@@ -1111,14 +1111,19 @@ def _xlsx_path_alloc_table(ws, r, rows, title, sub, achv=False):
         if _basis:
             _req = []
             for x in rows:
-                if _is_tenant_row(x):
-                    continue
+                # Tenant rows are PASSED IN now (owner, 2026-08-31): they are
+                # still never allocated a bridge, but their trucks queue on the
+                # same bridges, so they must load them before our water-fill.
+                _tenant = _is_tenant_row(x)
                 _rates = _path_rates(x)
                 _tr = _rates.get("trips_after") or 0
+                if not _tr and _tenant:
+                    _tr = x.get("trips") or 0
                 if _tr and x.get("key"):
                     _req.append({"id": x.get("id") or x.get("key"),
                                  "route": x.get("key"), "trips": _tr,
-                                 "foreign": bool(x.get("foreign"))})
+                                 "foreign": bool(x.get("foreign")),
+                                 "tenant": _tenant})
             if _req:
                 out_rows, _pb, _fl, _uv = _sim.wb_assign_rows(_basis, _req,
                                                               hours=20.0)
@@ -1607,13 +1612,12 @@ def _wb_assignments_for_month(rows_month):
         return {}
     req = []
     for x in rows_month:
-        if x.get("_tenant"):
-            continue
         tr = x.get("trips") or 0
         if tr and x.get("key"):
             req.append({"id": "%s|%s" % (x.get("key"), x.get("contractor")),
                         "route": x.get("key"), "trips": tr,
-                        "foreign": bool(x.get("foreign"))})
+                        "foreign": bool(x.get("foreign")),
+                        "tenant": bool(x.get("_tenant"))})
     if not req:
         return {}
     try:
@@ -4056,11 +4060,13 @@ def _xlsx_fill_year_dashboard(ws, year, cards, title_prefix="", achv=False):
              _xlsx_cov_tone((mats.get("sap") or {}).get("cov_pred"))[0] or _XLSX_MUTED, "pct"),
             ("LIM-TOS · % of target", (mats.get("tos") or {}).get("cov_pred"),
              _xlsx_cov_tone((mats.get("tos") or {}).get("cov_pred"))[0] or _XLSX_MUTED, "pct"),
-            # LIM-LD headlines the ADJUSTED figure (owner, 2026-08-28: "here
-            # I want to see all three at 100% and the change that got there").
-            # The raw over-target number is kept right beside it, never hidden.
-            ("LIM-LD · % of target", _ld_headline_cov(cards, mats),
-             _xlsx_cov_tone(_ld_headline_cov(cards, mats))[0] or _XLSX_MUTED, "pct"),
+            # LIM-LD shows the SAME clock as the rest of this strip: the plan
+            # BEFORE the adjustment. Owner, 2026-08-31: "do not mix the
+            # scenarios - the table says 101.7% (before removing DT) but LD
+            # 99.9% (after removing DT); it should be 103%." The adjusted
+            # figure lives in the DT-TO-PARK box, which is labelled as such.
+            ("LIM-LD · % of target", (mats.get("ld") or {}).get("cov_pred"),
+             _xlsx_cov_tone((mats.get("ld") or {}).get("cov_pred"))[0] or _XLSX_MUTED, "pct"),
         ]
         if achv:
             pct_kpis.append(

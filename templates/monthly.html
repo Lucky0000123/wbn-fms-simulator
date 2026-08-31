@@ -393,8 +393,8 @@ function matCard(m, extraK){
     +'<div class="pair"><span>Predicted plan</span><b>'+fmt(pred)+'</b></div>'
     +(cov!=null&&cov<100?'<div class="pair"><span>Leaving</span><b style="color:var(--er)">'+fmt(left)+'</b></div>':'')
     +(cov!=null&&cov>100?'<div class="pair"><span>Over target</span><b style="color:var(--ok)">'+fmt(over)+'</b></div>':'')
-    +(m._wasCov!=null?'<div class="pair"><span>was, before adjustment</span>'
-      +'<b style="color:var(--warn)">'+pct(m._wasCov)+'</b></div>':'')
+    +(m._afterCov!=null?'<div class="pair"><span>after parking DT</span>'
+      +'<b style="color:var(--ok)">'+pct(m._afterCov)+'</b></div>':'')
     +'</div>';
 }
 
@@ -513,12 +513,13 @@ function renderBoard(){
   // LIM-LD headlines the ADJUSTED coverage so the board reads ~100% across
   // all three materials (owner, 2026-08-28); the raw figure stays visible as
   // "was", and the panel below shows exactly which trucks got it there.
+  // ONE CLOCK per card row (owner, 2026-08-31: "do not mix the scenarios").
+  // These cards are the plan BEFORE the adjustment, so LIM-LD shows its raw
+  // figure like Together/SAP/LIM-TOS do. The after-state is in the park panel
+  // below, which says so on its face.
   const _adj=b.ld_adjust;
   const ldCard=(mats.ld&&_adj&&_adj.freed)
-    ?Object.assign({},mats.ld,{cov_sales:_adj.cov_after,cov_pred:_adj.cov_after,
-        _wasCov:_adj.cov_before,
-        pred_after:(mats.ld.pred_after||0)-(_adj.removed||0),
-        over_sales:0,left_sales:0,over:0,left:0})
+    ?Object.assign({},mats.ld,{_afterCov:_adj.cov_after})
     :mats.ld;
   $('mo-year-mats').innerHTML=Y
     ?(matCard(together,'year')+matCard(mats.sap,'year')+matCard(mats.tos,'year')+matCard(ldCard,'year'))

@@ -2320,7 +2320,7 @@ def _wb_eligible(basis, route, foreign):
     return [], "no eligible bridges — matrix, history and destination fallback all empty"
 
 
-def wb_assign_rows(basis, rows, hours=20.0):
+def wb_assign_rows(basis, rows, hours=20.0, tenants=True, max_bridges=3):
     """Deterministic weighbridge assignment for plan rows (importable core).
 
     Same algorithm the endpoint documents: greedy min-max water-fill in
@@ -2342,13 +2342,41 @@ def wb_assign_rows(basis, rows, hours=20.0):
     cap = {name: (b.get("p99_hr") or fallback_cap) for name, b in bridges.items()}
     load = {name: 0.0 for name in bridges}
 
+    # OTHER COMPANIES ON THE SAME BRIDGES (owner, 2026-08-31: "can you assign
+    # the other companies to the WB also? Maybe it will decrease the efficiency
+    # of our DT if it is not taken into account yet.")
+    #
+    # Their trucks are not ours to schedule, so they are still never ALLOCATED
+    # a bridge — but they do queue at one, and until now the model pretended
+    # the bridges were empty when our trucks arrived. They now enter as a
+    # background LOAD on the bridges their route can legally use, spread by
+    # capacity, before our own water-fill starts. Every utilisation and M/M/1
+    # wait our rows see is therefore the wait behind their trucks as well.
+    tenant_load = {name: 0.0 for name in bridges}
+    if tenants:
+        for r in rows:
+            if not r.get("tenant"):
+                continue
+            trips = float(r.get("trips") or r.get("trips_day") or 0)
+            if not (trips > 0):
+                continue
+            elig, _why = _wb_eligible(basis, str(r.get("route") or "").strip(), True)
+            if not elig:
+                continue
+            tot_cap = sum(max(cap[n], 1e-9) for n in elig)
+            for n in elig:
+                share = max(cap[n], 1e-9) / tot_cap
+                tenant_load[n] += (trips / hours) * share
+        for n in bridges:
+            load[n] += tenant_load[n]
+
     prepared, out_rows, flags = [], [], []
     for r in rows:
         route = str(r.get("route") or "").strip()
         rid = r.get("id") or route
         if r.get("tenant"):
             out_rows.append({"id": rid, "route": route, "assigned": [],
-                             "why": "tenant fleet — never allocated"})
+                             "why": "tenant fleet — queues on the bridges, never allocated"})
             continue
         trips = float(r.get("trips") or r.get("trips_day") or 0)
         if not (trips > 0) or not route:
@@ -2365,16 +2393,28 @@ def wb_assign_rows(basis, rows, hours=20.0):
                          "alloc": {name: 0.0 for name in elig}})
 
     QUANTUM = 0.25
+    # AT MOST `max_bridges` PER PATH (owner, 2026-08-31: "limit the number of
+    # WB per path to 3 for our DT. We need clear plans to share with the
+    # contractors and it will also be in the contracts."). A driver can be told
+    # three bridges; a spread across six is not a instruction anyone can follow.
+    # The cap is applied per row: once a row is using `max_bridges` distinct
+    # bridges, further quanta may only go to those.
     for row in sorted(prepared, key=lambda x: (len(x["elig"]), -x["demand_hr"])):
         remaining = row["demand_hr"]
+        used = []
         while remaining > 1e-9:
             q = min(QUANTUM, remaining)
-            best = min(row["elig"],
+            pool = row["elig"]
+            if max_bridges and len(used) >= max_bridges:
+                pool = used
+            best = min(pool,
                        key=lambda n: ((load[n] + q) / max(cap[n], 1e-9),
                                       load[n] / max(cap[n], 1e-9),
                                       row["elig"].index(n)))
             load[best] += q
             row["alloc"][best] += q
+            if best not in used:
+                used.append(best)
             remaining -= q
 
     def _wait_min(name):
@@ -2411,6 +2451,7 @@ def wb_assign_rows(basis, rows, hours=20.0):
     for name in bridges:
         if load[name] <= 1e-9:
             continue
+        _tl = tenant_load.get(name, 0.0)
         w_min, sat = _wait_min(name)
         per_bridge[name] = {
             "num": (bridges.get(name) or {}).get("num"),
@@ -2418,6 +2459,8 @@ def wb_assign_rows(basis, rows, hours=20.0):
             "cap_hr": cap[name],
             "cap_basis": ("measured p99/hr" if (bridges.get(name) or {}).get("p99_hr")
                           else "fallback %g/hr (unmeasured)" % fallback_cap),
+            "tenant_load_hr": round(_tl, 2),
+            "ours_load_hr": round(load[name] - _tl, 2),
             "util": round(load[name] / max(cap[name], 1e-9), 3),
             "wait_min": round(w_min, 1),
             "saturated": sat,
