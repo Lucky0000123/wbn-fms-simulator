@@ -1,0 +1,154 @@
+{
+ "id": "S7",
+ "label": "Scenario 4.1",
+ "source": "manager ROM table 2026-08-31 (mine plan 20260828 Scen 3 no-IPPKH6 LimRec80% R01)",
+ "targets": [
+  {
+   "pit": "BLB",
+   "mat": "SAP",
+   "month": 9,
+   "wmt_day": 3340.6
+  },
+  {
+   "pit": "BLB",
+   "mat": "LIM",
+   "month": 9,
+   "wmt_day": 12895.0
+  },
+  {
+   "pit": "BLB",
+   "mat": "SAP",
+   "month": 10,
+   "wmt_day": 19979.8
+  },
+  {
+   "pit": "BLB",
+   "mat": "LIM",
+   "month": 10,
+   "wmt_day": 30342.9
+  },
+  {
+   "pit": "BLB",
+   "mat": "SAP",
+   "month": 11,
+   "wmt_day": 37920.3
+  },
+  {
+   "pit": "BLB",
+   "mat": "LIM",
+   "month": 11,
+   "wmt_day": 39991.7
+  },
+  {
+   "pit": "BLB",
+   "mat": "SAP",
+   "month": 12,
+   "wmt_day": 50926.5
+  },
+  {
+   "pit": "BLB",
+   "mat": "LIM",
+   "month": 12,
+   "wmt_day": 33313.9
+  },
+  {
+   "pit": "TOFU",
+   "mat": "SAP",
+   "month": 9,
+   "wmt_day": 11510.8
+  },
+  {
+   "pit": "TOFU",
+   "mat": "LIM",
+   "month": 9,
+   "wmt_day": 5017.3
+  },
+  {
+   "pit": "TOFU",
+   "mat": "SAP",
+   "month": 10,
+   "wmt_day": 11750.3
+  },
+  {
+   "pit": "TOFU",
+   "mat": "LIM",
+   "month": 10,
+   "wmt_day": 8006.1
+  },
+  {
+   "pit": "TOFU",
+   "mat": "SAP",
+   "month": 11,
+   "wmt_day": 12392.7
+  },
+  {
+   "pit": "TOFU",
+   "mat": "LIM",
+   "month": 11,
+   "wmt_day": 6665.0
+  },
+  {
+   "pit": "TOFU",
+   "mat": "SAP",
+   "month": 12,
+   "wmt_day": 14760.5
+  },
+  {
+   "pit": "TOFU",
+   "mat": "LIM",
+   "month": 12,
+   "wmt_day": 6146.3
+  },
+  {
+   "pit": "KRENE",
+   "mat": "SAP",
+   "month": 9,
+   "wmt_day": 8355.2
+  },
+  {
+   "pit": "KRENE",
+   "mat": "LIM",
+   "month": 9,
+   "wmt_day": 571.5
+  },
+  {
+   "pit": "KRENE",
+   "mat": "SAP",
+   "month": 10,
+   "wmt_day": 14179.4
+  },
+  {
+   "pit": "KRENE",
+   "mat": "LIM",
+   "month": 10,
+   "wmt_day": 2009.0
+  },
+  {
+   "pit": "KRENE",
+   "mat": "SAP",
+   "month": 11,
+   "wmt_day": 11681.4
+  },
+  {
+   "pit": "KRENE",
+   "mat": "LIM",
+   "month": 11,
+   "wmt_day": 2400.0
+  },
+  {
+   "pit": "KRENE",
+   "mat": "SAP",
+   "month": 12,
+   "wmt_day": 11867.8
+  },
+  {
+   "pit": "KRENE",
+   "mat": "LIM",
+   "month": 12,
+   "wmt_day": 2598.6
+  }
+ ],
+ "loaded_at": "2026-08-31T07:12:26Z",
+ "note_sales_table": "Sales lines: SAP 6,383,425 (SAP ROM 6,541,121; TOFU grizzly keeps ~10% of ROM in TOFU so 6.5 Mt mined -> 6.38 Mt hauled; the pit ROM shape is scaled 1.0954x so the haulage line lands exactly), LIM-TOS 4,581,137 (LIM ORE, exact), LIM-LD 6,035,439 (stockpile reclaim TF dump -> HUAFEI: 7,243,968 recovered stock available = TOFU 8,009,107 x 88% + BLB/CBB/CSW 217,727 x 90%), TOTAL 17,000,001. Pit x month ROM reconciles to the manager bottom lines to the tonne.",
+ "note_41": "Killian 2026-08-31: better if RIM goes to FeNi instead of other contractors - RIM preferentially hauls the FeNi routes; SMA takes KR + HUAFEI legs. All 3.x rules carry over: contractor walls (BLB=RIM, KR=SMA, TF open), P1 SAP -> P2 TOS -> P3 LD, POS 6 reclaims to HUAFEI, one 17 Mt clock, year is the judged line."
+}

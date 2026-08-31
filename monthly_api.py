@@ -5577,7 +5577,7 @@ def _year_alloc_totals(cards):
             if src and len(str(src)) == 10:
                 _day = int(str(src)[8:10])
                 break
-        _sid = {3: "S3", 4: "S4", 5: "S5", 6: "S6"}.get(_day, "")
+        _sid = {3: "S3", 4: "S4", 5: "S5", 6: "S6", 7: "S7"}.get(_day, "")
         b["sales_target"] = _sa.ld_target_for_scenario(_sid)
         b["cov_sales"] = _cov_pct(b["pred_after"], b["sales_target"])
         b["left_sales"] = max(0, b["sales_target"] - b["pred_after"])
@@ -5586,7 +5586,7 @@ def _year_alloc_totals(cards):
         # total should remain 17 million"): SAP + LIM-TOS + LIM-LD sales
         # lines sum to the SAME constant in both scenario families, because
         # 3.0's smaller TOS is exactly offset by its larger LD.
-        tot["sales_target"] = _sa.HAULAGE_TOTAL_T
+        tot["sales_target"] = _sa.total_target_for_scenario(_sid)
         tot["cov_sales"] = _cov_pct(tot.get("new_pred"), tot["sales_target"])
         tot["left_sales"] = max(0, tot["sales_target"] - (tot.get("new_pred") or 0))
         tot["over_sales"] = max(0, (tot.get("new_pred") or 0) - tot["sales_target"])
@@ -5598,7 +5598,7 @@ def _year_alloc_totals(cards):
         # for anyone who needs the old clock, but nothing headlines them.
         if "sap" in mats:
             bs = mats["sap"]
-            bs["sales_target"] = _sa.SAP_SALES_T
+            bs["sales_target"] = _sa.sap_target_for_scenario(_sid)
             bs["cov_sales"] = _cov_pct(bs.get("pred_after"), bs["sales_target"])
             bs["left_sales"] = max(0, bs["sales_target"] - (bs.get("pred_after") or 0))
             bs["over_sales"] = max(0, (bs.get("pred_after") or 0) - bs["sales_target"])
@@ -5639,7 +5639,7 @@ def _year_alloc_totals(cards):
 DEFAULT_SCENARIO_DAY = 1
 # Planning-team names 2026-08-26: 03=3.0.1, 04=3.0.2, 05=3.1.1, 06=3.1.2.
 _SCENARIO_FOR_DAY = {1: "S1", 3: "S3 (3.0.1)", 4: "S4 (3.0.2)",
-                     5: "S5 (3.1.1)", 6: "S6 (3.1.2)"}
+                     5: "S5 (3.1.1)", 6: "S6 (3.1.2)", 7: "S7 (4.1)"}
 
 
 def _scenario_label_for_day(day):

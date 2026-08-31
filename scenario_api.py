@@ -86,10 +86,44 @@ SAP_SALES_T = 5_718_686
 LIM_TOS_SALES_31_T = 4_640_201
 LIM_TOS_SALES_30_T = 3_650_201
 
+# ── Scenario 4.1 (manager's ROM table, 2026-08-31) ──────────────────────
+# From the 20260828 mine plan "Scen 3 (Without IPPKH6) LimRec80%" ROM sheet:
+#   SAP 6,383,425  = SAP ORE 5,756,186 (ROM 6,541,121 x 88% ore-sales
+#                    recovery; the TOFU grizzly keeps ~10% of ROM as reject
+#                    in TOFU, hence 6.5 Mt mined -> 6.38 Mt hauled)
+#                    + 627,239 topped up from HGS stock
+#   LIM-TOS 4,581,137 = the LIM ORE line, fresh limonite from the pit (exact)
+#   LIM-LD 6,035,439  = drawn from the LIM stockpile (7,243,968 recovered
+#                    available: TOFU 8,009,107 x 88% + BLB/CBB/CSW x 90%)
+#   TOTAL 17,000,001 — one clock, same as ever.
+# Hauling rule (Killian, 2026-08-31): RIM preferentially works the FeNi
+# routes; other contractors' fleets take the HUAFEI legs where walls allow.
+SAP_SALES_41_T = 6_383_425
+LIM_TOS_SALES_41_T = 4_581_137
+LIM_LD_SALES_41_T = 6_035_439
+HAULAGE_TOTAL_41_T = SAP_SALES_41_T + LIM_TOS_SALES_41_T + LIM_LD_SALES_41_T
+
+
+def sap_target_for_scenario(sid):
+    """SAP sales line by scenario: 4.1 carries the ROM-table SAP."""
+    s = str(sid or "").upper()
+    if s == "S7" or "4.1" in s:
+        return SAP_SALES_41_T
+    return SAP_SALES_T
+
+
+def total_target_for_scenario(sid):
+    s = str(sid or "").upper()
+    if s == "S7" or "4.1" in s:
+        return HAULAGE_TOTAL_41_T
+    return HAULAGE_TOTAL_T
+
 
 def tos_target_for_scenario(sid):
     """LIM-TOS sales line by scenario family."""
     s = str(sid or "").upper()
+    if s == "S7" or "4.1" in s:
+        return LIM_TOS_SALES_41_T
     if s in ("S3", "S4") or "3.0" in s:
         return LIM_TOS_SALES_30_T
     return LIM_TOS_SALES_31_T
@@ -98,6 +132,8 @@ def tos_target_for_scenario(sid):
 def ld_target_for_scenario(sid):
     """LD sales line by scenario family: 3.0 carries the transferred ~1 Mt."""
     s = str(sid or "").upper()
+    if s == "S7" or "4.1" in s:
+        return LIM_LD_SALES_41_T
     if s in ("S3", "S4") or "3.0" in s:
         return LIM_LD_TARGET_30_T
     return LIM_LD_TARGET_T
@@ -1129,11 +1165,12 @@ def _exportable_scenario_ids():
 # the convention and are plain daily plans) into phantom scenarios S5/S7/S13 —
 # measured, all three appeared. Adding a scenario day must be a deliberate edit
 # here, not an accident of someone saving a plan on the 9th.
-_DAY_SCENARIOS = {1: "S1", 3: "S3", 4: "S4", 5: "S5", 6: "S6"}
+_DAY_SCENARIOS = {1: "S1", 3: "S3", 4: "S4", 5: "S5", 6: "S6", 7: "S7"}
 # Planning-team names (2026-08-26): mining plan 3.0 = as-is, 3.1 = +1 Mt BLB
 # LIM Oct-Dec; hauling .1 = all leftovers HUAFEI/BSE, .2 = half to POS 6 from
 # October. The day convention stays the machine key; these are the labels.
-SCENARIO_DISPLAY = {"S3": "3.0.1", "S4": "3.0.2", "S5": "3.1.1", "S6": "3.1.2"}
+SCENARIO_DISPLAY = {"S3": "3.0.1", "S4": "3.0.2", "S5": "3.1.1", "S6": "3.1.2",
+                    "S7": "4.1"}
 
 
 def _saved_day_scenario_ids():

@@ -243,8 +243,18 @@ def j84_board_one_basis():
 # ---------------------------------------------------------------- J85
 def j85_excel_total_dt():
     import openpyxl
-    st, body, _ = _get("/api/monthly/export-year?year=2026&day=4&achv=1", timeout=600)
+    html = open(os.path.join(ROOT, "templates", "monthly.html"), encoding="utf-8").read()
+    ok("J85 download refuses a non-xlsx body",
+       "u8[0]===0x50" in html and "u8[1]===0x4B" in html,
+       "moExportYear must check zip magic so an HTML timeout is not saved as .xlsx")
+    ok("J85 download names the file .xlsx",
+       'if(!/\\.xlsx$/i.test(name)) name+=\'.xlsx\'' in html
+       or 'name+=\'.xlsx\'' in html)
+    st, body, hdrs = _get("/api/monthly/export-year?year=2026&day=4&achv=1", timeout=600)
     ok("J85 export-year day=4 serves", st == 200, "status %s" % st)
+    ok("J85 export-year is an xlsx zip, not HTML",
+       isinstance(body, (bytes, bytearray)) and body[:2] == b"PK",
+       (hdrs, body[:60] if isinstance(body, (bytes, bytearray)) else type(body)))
     wb = openpyxl.load_workbook(io.BytesIO(body))
 
     import monthly_api as ma
@@ -297,10 +307,11 @@ def j86_every_scenario_exportable():
     ok("J86 S4 is offered", "S4" in ids, "exportable ids = %s" % ids)
     # ... NEGATIVE: and legacy August dailies are NOT invented as scenarios.
     ok("J86 no phantom scenarios",
-       # S5/S6 became deliberate scenarios on 2026-08-26 (3.1.1 / 3.1.2 —
-       # planning team's +1 Mt BLB LIM family). The phantom sentinels are
-       # the legacy August daily saves that must NEVER surface: 07 and 13.
-       not ({"S7", "S13"} & set(ids)),
+       # S5/S6 became deliberate scenarios on 2026-08-26 (3.1.1 / 3.1.2) and
+       # S7 became deliberate on 2026-08-31 (4.1 — the manager's ROM-table
+       # targets, day-07 saves). The remaining phantom sentinel is the legacy
+       # August daily save that must NEVER surface: 13.
+       not ({"S13"} & set(ids)),
        "legacy August daily saves surfaced as scenarios: %s" % ids)
 
     st, body, hdrs = _get(
