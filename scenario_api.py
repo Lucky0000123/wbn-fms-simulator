@@ -566,8 +566,19 @@ def waterfall(sc, yearly=None, ld_cap=LIM_LD_TARGET_T):
         # filled in chronological order. Capacity above it is reported as
         # unused/excess, never folded into headline production.
         explicit_month_target = ld_targets.get(m)
+        # The LD line belongs to the SCENARIO's months only. S7 starts in
+        # September, but the chronological fill ran over _MONTHS (Aug-Dec)
+        # and August's backfilled S1 pool quietly drank 1,288,393 t of the
+        # 6,035,439 line before September existed - the frozen saves then
+        # carried LD targets summing 4.75 Mt while every Year surface said
+        # 6.04 Mt (owner-caught, 2026-08-31: "there is some issues with the
+        # file"). A month outside the scenario gets NO share of the line.
+        scen_ld_months = {int(t["month"]) for t in (sc.get("targets") or [])}
+        outside = scen_ld_months and m not in scen_ld_months
         if explicit_month_target is not None:
             target_month = max(0.0, explicit_month_target * _DAYS[m])
+        elif outside:
+            target_month = 0.0
         elif ld_cap is not None:
             target_month = max(0.0, float(ld_cap) - ld_cum)
         else:
@@ -1722,6 +1733,16 @@ def _scenario_draft_paths(sc, mnum, yearly):
             "_targetManual": mat == "LIM",
         }
     unused, capacity = {}, {}
+    # Contractor weights for splitting the month's planned LD t/day. Computed
+    # BEFORE the loop below: capacity{} is filled inside it, so reading it
+    # there gave the first contractor a 100% share (RIM saw SMA as 0).
+    _w = {}
+    for c2, have2 in pool.items():
+        cap2 = max(0.0, have2 - used.get(c2, 0.0))
+        free2 = min(cap2, float(p3_plan.get(c2) or 0.0))
+        _w[c2] = free2 * ld_rate.get(c2, 120.0 if c2 == "RIM" else 100.0)
+    _wsum = sum(_w.values()) or 1.0
+    _ld_day = float(mo.get("ld_t_day_planned") or 0)
     for contractor, have in sorted(pool.items()):
         capacity_dt = max(0.0, have - used.get(contractor, 0.0))
         capacity[contractor] = capacity_dt
@@ -1731,11 +1752,19 @@ def _scenario_draft_paths(sc, mnum, yearly):
             continue
         rate = ld_rate.get(contractor, 120.0 if contractor == "RIM" else 100.0)
         _ldk = ld_route_for_scenario(sc.get("id"))
+        # TARGET = this month's share of the LD LINE, not free x demonstrated
+        # rate. The rate-product was a CAPACITY guess (the matrix's 120/100
+        # t/DT), and stamping it as the target made the four saves' LD
+        # targets sum to 4.75 Mt while every Year surface divided by the
+        # 6.04 Mt line - two clocks in one workbook (owner-caught,
+        # 2026-08-31). The waterfall already spread the line over the
+        # scenario's months chronologically; each contractor takes the
+        # month's planned t/day in proportion to its rated share.
         paths["%s|%s|LIM|LD" % (contractor, _ldk)] = {
             "key": _ldk, "dt": int(round(free)), "contractor": contractor,
             "source": _ldk.split(">")[0], "dest": _ldk.split(">")[1],
             "material": "LIM", "otype": "LD",
-            "targetWmt": int(round(free * rate)),
+            "targetWmt": int(round(_ld_day * _w[contractor] / _wsum)),
             "_targetManual": True,
         }
     if not paths:

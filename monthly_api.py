@@ -3517,6 +3517,7 @@ def _xlsx_scenario_constraints_block(ws, start_col, scenario_label=""):
     lab = scenario_label or ""
     is_split = "3.0.2" in lab or "3.1.2" in lab or lab.startswith("S4") or lab.startswith("S6")
     is_31 = "3.1" in lab
+    is_41 = "4.1" in lab or lab.startswith("S7")
     rows = [
         ("H", "Scenario constraints%s" % ((" — " + lab) if lab else "")),
         ("S", "P1 — SAP routing (owner 2026-08-26)"),
@@ -3525,19 +3526,34 @@ def _xlsx_scenario_constraints_block(ws, start_col, scenario_label=""):
     for pit, rule in sorted(_sa.SAP_ROUTING.items()):
         fx = ", ".join("%s @ %s t/day" % (d, format(int(v), ",")) for d, v in rule["fixed"])
         rows.append(("T", "  %s: buffer %s -> rest DIRECT %s" % (pit, fx, rule["rest"])))
-    rows += [
-        ("S", "P2 — LIM-TOS"),
-        ("T", ("All LIM-TOS to HUAFEI/BSE. Fills only after P1 is met. Target %s"
-               % ("4,640,201 t (the sales table — includes the ~1 Mt addition)"
-                  if is_31 else "3,650,201 t (without the 3.1 addition)"))),
-        ("S", "P3 — LIM-LD"),
-        ("T", "Leftover trucks haul LD (Tofu dump -> HUAFEI). Sales target %s t Sep-Dec"
-              % format(_sa.LIM_LD_TARGET_T if is_31 else _sa.LIM_LD_TARGET_30_T, ",")),
-        ("T", ("(3.1: the ~1 Mt addition sits in LIM-TOS)" if is_31 else
-               "(3.0: includes the ~1 Mt transferred from LIM-TOS — total stays 17.0 Mt);")),
-        ("T", "capacity above target stays visible as excess, never folded into the credited number."),
-    ]
-    if is_split:
+    if is_41:
+        rows += [
+            ("S", "P2 — LIM-TOS"),
+            ("T", "Fresh LIM direct to HUAFEI/BSE. Fills only after P1 is met. Target %s t"
+                  % format(_sa.LIM_TOS_SALES_41_T, ",")),
+            ("S", "P3 — LIM-LD"),
+            ("T", "ALL LD goes TF -> POS 12 (Huafei meeting 2026-08-31: POS 6 not ready),"),
+            ("T", "then reclaims POS 12 -> HUAFEI on IWIP trucks (input = output)."),
+            ("T", "Sales target %s t Sep-Dec (stockpile reclaim, 20260828 mine plan);"
+                  % format(_sa.LIM_LD_SALES_41_T, ",")),
+            ("T", "capacity above target stays visible as excess, never folded into the credited number."),
+        ]
+    else:
+        rows += [
+            ("S", "P2 — LIM-TOS"),
+            ("T", ("All LIM-TOS to HUAFEI/BSE. Fills only after P1 is met. Target %s"
+                   % ("4,640,201 t (the sales table — includes the ~1 Mt addition)"
+                      if is_31 else "3,650,201 t (without the 3.1 addition)"))),
+            ("S", "P3 — LIM-LD"),
+            ("T", "Leftover trucks haul LD (Tofu dump -> HUAFEI). Sales target %s t Sep-Dec"
+                  % format(_sa.LIM_LD_TARGET_T if is_31 else _sa.LIM_LD_TARGET_30_T, ",")),
+            ("T", ("(3.1: the ~1 Mt addition sits in LIM-TOS)" if is_31 else
+                   "(3.0: includes the ~1 Mt transferred from LIM-TOS — total stays 17.0 Mt);")),
+            ("T", "capacity above target stays visible as excess, never folded into the credited number."),
+        ]
+    if is_41:
+        pass
+    elif is_split:
         rows += [
             ("S", "Hauling variant .2 — POS 6 split"),
             ("T", "Half of the leftover LD trucks go TF -> POS 6 instead of HUAFEI/BSE,"),
@@ -3557,7 +3573,9 @@ def _xlsx_scenario_constraints_block(ws, start_col, scenario_label=""):
         ("S", "Standing rules"),
         ("T", "BLB pit accepts RIM trucks only. POS is transit: inbound tonnes leave on IWIP"),
         ("T", "reclaim sized so input = output. IWIP trucks are not contractor fleet."),
-        ("T", "SAP target 5,718,686 wmt (sales table). LIM-TOS: sales table 4,640,201 = the 3.1 scenario."),
+        ("T", ("SAP target %s wmt (20260828 mine plan ROM table: 6,541,121 ROM x 88%% + 627,239 HGS stock)."
+               % format(_sa.SAP_SALES_41_T, ",")) if is_41 else
+              "SAP target 5,718,686 wmt (sales table). LIM-TOS: sales table 4,640,201 = the 3.1 scenario."),
     ]
     # Section titles merge A:H for chrome, which puts every row's merge
     # across column G. The titles' text lives in column A, so shrinking
