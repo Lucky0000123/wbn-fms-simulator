@@ -1063,6 +1063,16 @@
     const c=typeof planContractor==='function'?planContractor(r.contractor):null;
     const e=typeof planTripsPerDT==='function'?planTripsPerDT(r.key,n,rainMm(),c,typeof planTripOpts==='function'?planTripOpts(id):{selfId:id,nLoaders:r.loaders||2}):null;
     const pay=typeof planPayload==='function'?planPayload(r.key,c):{tf:50};
+    // IWIP POS-transit rows sit OUTSIDE the path model, so planTripsPerDT
+    // prices them at zero and the frozen allocation (and the Paths sheet's
+    // Trips column) read 0 for POS 12>FENI KM15 / POS 14>FENI KM0 while
+    // their siblings showed real trips. The sizing rate was stored on the
+    // row for exactly this reason (weighbridge case, 2026-08-26) — use it
+    // as the fallback clock. Daily basis: x hz/2 mirrors e.shift*hzN.
+    if((!e||!(e.shift>0))&&r.foreign&&Number.isFinite(r._transitTripsPerDt)){
+      // _transitTripsPerDt is a DAY rate (hz 2); halve for one shift.
+      return {trips:n*r._transitTripsPerDt*(hzN/2),pred:null};
+    }
     if(!e)return {trips:null,pred:null};
     const trips=n*e.shift*hzN;
     return {trips:trips,pred:r.foreign?null:trips*(pay.tf||0)};
