@@ -1,0 +1,155 @@
+{
+ "id": "S9",
+ "label": "Scenario 4.2.1",
+ "source": "commercial + client plant-split table 2026-09-01, on the 20260828 mine plan (same pit ROM as 4.1) + owner 2026-09-01: balance POS 12/POS 6 from Nov to land 100% with the SAME fleet",
+ "targets": [
+  {
+   "pit": "BLB",
+   "mat": "SAP",
+   "month": 9,
+   "wmt_day": 3340.6
+  },
+  {
+   "pit": "BLB",
+   "mat": "LIM",
+   "month": 9,
+   "wmt_day": 12895.0
+  },
+  {
+   "pit": "BLB",
+   "mat": "SAP",
+   "month": 10,
+   "wmt_day": 19979.8
+  },
+  {
+   "pit": "BLB",
+   "mat": "LIM",
+   "month": 10,
+   "wmt_day": 30342.9
+  },
+  {
+   "pit": "BLB",
+   "mat": "SAP",
+   "month": 11,
+   "wmt_day": 37920.3
+  },
+  {
+   "pit": "BLB",
+   "mat": "LIM",
+   "month": 11,
+   "wmt_day": 39991.7
+  },
+  {
+   "pit": "BLB",
+   "mat": "SAP",
+   "month": 12,
+   "wmt_day": 50926.5
+  },
+  {
+   "pit": "BLB",
+   "mat": "LIM",
+   "month": 12,
+   "wmt_day": 33313.9
+  },
+  {
+   "pit": "TOFU",
+   "mat": "SAP",
+   "month": 9,
+   "wmt_day": 11510.8
+  },
+  {
+   "pit": "TOFU",
+   "mat": "LIM",
+   "month": 9,
+   "wmt_day": 5017.3
+  },
+  {
+   "pit": "TOFU",
+   "mat": "SAP",
+   "month": 10,
+   "wmt_day": 11750.3
+  },
+  {
+   "pit": "TOFU",
+   "mat": "LIM",
+   "month": 10,
+   "wmt_day": 8006.1
+  },
+  {
+   "pit": "TOFU",
+   "mat": "SAP",
+   "month": 11,
+   "wmt_day": 12392.7
+  },
+  {
+   "pit": "TOFU",
+   "mat": "LIM",
+   "month": 11,
+   "wmt_day": 6665.0
+  },
+  {
+   "pit": "TOFU",
+   "mat": "SAP",
+   "month": 12,
+   "wmt_day": 14760.5
+  },
+  {
+   "pit": "TOFU",
+   "mat": "LIM",
+   "month": 12,
+   "wmt_day": 6146.3
+  },
+  {
+   "pit": "KRENE",
+   "mat": "SAP",
+   "month": 9,
+   "wmt_day": 8355.2
+  },
+  {
+   "pit": "KRENE",
+   "mat": "LIM",
+   "month": 9,
+   "wmt_day": 571.5
+  },
+  {
+   "pit": "KRENE",
+   "mat": "SAP",
+   "month": 10,
+   "wmt_day": 14179.4
+  },
+  {
+   "pit": "KRENE",
+   "mat": "LIM",
+   "month": 10,
+   "wmt_day": 2009.0
+  },
+  {
+   "pit": "KRENE",
+   "mat": "SAP",
+   "month": 11,
+   "wmt_day": 11681.4
+  },
+  {
+   "pit": "KRENE",
+   "mat": "LIM",
+   "month": 11,
+   "wmt_day": 2400.0
+  },
+  {
+   "pit": "KRENE",
+   "mat": "SAP",
+   "month": 12,
+   "wmt_day": 11867.8
+  },
+  {
+   "pit": "KRENE",
+   "mat": "LIM",
+   "month": 12,
+   "wmt_day": 2598.6
+  }
+ ],
+ "loaded_at": "2026-09-01",
+ "note_sales_table": "Sales lines: SAP 6,383,425 (unchanged from 4.1). LIM-TOS 4,581,137 split by plant 2/3 Huafei (3,054,091) : 1/3 BSE (1,527,046) every month - client monthly table: Sep 369,679/184,839, Oct 834,062/417,031, Nov 981,136/490,568, Dec 869,215/434,607. LIM-LD 8,000,000 (client totals): direct-to-yard 2,000,000 (Huafei 1,500,000 + BSE 500,000) + via-POS 6,000,000 (Huafei 4,000,000 + BSE 2,000,000). TOTAL 18,964,562. Client checks: Huafei Yard 4.5 Mt approx = TOS 3,054,091 + LD-yard 1,500,000; BSE 4 Mt approx 50/50 = yard 2,027,046 + POS 2,000,000.",
+ "note_42": "POS switch (owner 2026-09-01): from Nov 1 LIM is NOT stocked in POS 12 - both plants' LD transits POS 6 (km 12.0). Sep/Oct keep TF>POS 12. SAP buffers are SAP, not LIM: they keep POS 12/14 all year. BSE = second HPAL plant, coastal cluster between Huafei and POS 14, reachable via the POS 14 road and the west road after Huafei; measured Jan-Apr 2026 ~360 kt to BSE tips (POS 12 reclaim 245 kt + TF direct 82 kt), TF>BSE 1.31 trips/DT/day vs TF>HUAFEI 1.40 in tickets. All 4.1 rules carry over: contractor walls, P1 SAP -> P2 TOS -> P3 LD, RIM preferentially FeNi (Killian), one clock, year is the judged line.",
+ "note_421": "4.2.1 (owner, after Hugo agreed 4.2): the fleet is the LIMIT - no trucks added. 4.2 left LD at 97.7% (~185 kt short: Oct 77 + Nov 93 + Dec 26; Sep runs 12 kt over) because from Nov ALL via-POS LD used the slower POS 6 corridor (SMA 115.6 t/DT/day frozen-sim vs 173.6 on POS 12) and the direct-yard legs are longer hauls. 4.2.1 keeps every client line and the plant split, and from Nov 1 sends 65% of the via-POS LD back to POS 12 (35% to POS 6) so the year lands 100%. The share is calibrated against the frozen simulation: first probe at 0.65 landed LD 7,999,170/8,000,000 and the year 100.3%."
+}

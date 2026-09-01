@@ -140,10 +140,29 @@ LD_SPLIT_42 = (
 )
 LD_POS_SWITCH_MONTH_42 = 11           # Nov 1: POS 12 -> POS 6 for LIM
 
+# ── Scenario 4.2.1 (owner, 2026-09-01, after Hugo agreed 4.2) ────────────
+# Same fleet, same client lines as 4.2 - the fleet is the LIMIT ("we can't
+# add more trucks"). 4.2's Nov-Dec all-POS-6 transit leaves LD at 97.7%
+# (~185 kt, mostly Oct-Nov): the direct-yard legs are longer hauls and
+# POS 6 is a slower corridor for SMA (105 vs 163 t/DT/day on POS 12 at
+# 150 DT). 4.2.1 finds the BALANCE: from Nov, a share of the via-POS LD
+# goes back to POS 12 and only the rest to POS 6, sized so the year lands
+# ~100% - not a fixed 50/50, the number below is TUNED against the frozen
+# simulation and carries its calibration history in the commit.
+POS12_SHARE_NOVDEC_421 = 0.65
+
+
+def is_421(sid):
+    s = str(sid or "").upper()
+    return s == "S9" or "4.2.1" in s
+
 
 def is_42(sid):
     s = str(sid or "").upper()
-    return s == "S8" or "4.2" in s
+    # S9/4.2.1 is the SAME commercial family (same lines, same plant split);
+    # only the Nov-Dec POS balance differs, handled in
+    # ld_routes_for_scenario_month below.
+    return s in ("S8", "S9") or "4.2" in s
 
 
 def ld_pos_dump_for_month_42(month):
@@ -159,13 +178,23 @@ def ld_routes_for_scenario_month(sid, month):
     dump = ld_pos_dump_for_month_42(month)
     out = []
     for kind, plant, share in LD_SPLIT_42:
-        route = ("TF>%s" % plant) if kind == "direct" else ("TF>%s" % dump)
-        for i, (k, f) in enumerate(out):
-            if k == route:
-                out[i] = (k, f + share)
-                break
+        if kind == "direct":
+            pieces = [("TF>%s" % plant, share)]
+        elif is_421(sid) and int(month) >= LD_POS_SWITCH_MONTH_42:
+            # 4.2.1 (owner: fleet is the limit, so reach 100% by the
+            # corridor, not the fleet): from Nov the via-POS LD splits
+            # POS 12 / POS 6 at the tuned balance instead of all-POS 6.
+            pieces = [("TF>POS 12", share * POS12_SHARE_NOVDEC_421),
+                      ("TF>POS 6", share * (1.0 - POS12_SHARE_NOVDEC_421))]
         else:
-            out.append((route, share))
+            pieces = [("TF>%s" % dump, share)]
+        for route, sh in pieces:
+            for i, (k, f) in enumerate(out):
+                if k == route:
+                    out[i] = (k, f + sh)
+                    break
+            else:
+                out.append((route, sh))
     return out
 
 

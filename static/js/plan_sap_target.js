@@ -52,7 +52,7 @@
     // day-07 = 4.1 (owner 2026-09-01: 8,035,439); day-08 = 4.2 (client
     // table: 8,000,000 = 2.0 Mt direct-yard + 6.0 Mt via POS).
     if(day===7)return 8035439;
-    if(day===8)return 8000000;
+    if(day===8||day===9)return 8000000; // 4.2 and 4.2.1 share the client lines
     return base;
   }
   function planRulesLimTosTarget(){
@@ -62,7 +62,7 @@
     const day=parseInt(v.split('-')[2],10);
     if(day===5||day===6)return lt.totalTarget31||lt.totalTarget||4640201;
     if(day===3||day===4)return lt.totalTarget30||3650201;
-    if(day===7||day===8)return 4581137; // 4.1/4.2: the mine-plan LIM ORE line
+    if(day===7||day===8||day===9)return 4581137; // 4.1/4.2/4.2.1: the mine-plan LIM ORE line
     return lt.totalTarget||(R.targets||{}).limTosTotal||4640201;
   }
   // The half-split itself starts in splitStartMonth (planning team
@@ -2636,7 +2636,7 @@
     // so the BSE legs are filtered OUT of their leg set - an even split
     // would have quietly re-routed a third of 4.1's reclaim on the next
     // refreeze.
-    const is42Day=/^\d{4}-\d{2}-08$/.test(((q('plan-date')||{}).value||'').trim());
+    const is42Day=/^\d{4}-\d{2}-0[89]$/.test(((q('plan-date')||{}).value||'').trim()); // day-08 (4.2) + day-09 (4.2.1)
     for(const dump of dumps){
       // only dumps that actually receive material get outflow rows (§5).
       // LD inflow rides the dump's HUAFEI leg; other inflow splits evenly

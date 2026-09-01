@@ -3518,7 +3518,8 @@ def _xlsx_scenario_constraints_block(ws, start_col, scenario_label=""):
     is_split = "3.0.2" in lab or "3.1.2" in lab or lab.startswith("S4") or lab.startswith("S6")
     is_31 = "3.1" in lab
     is_41 = "4.1" in lab or lab.startswith("S7")
-    is_42 = "4.2" in lab or lab.startswith("S8")
+    is_42 = "4.2" in lab or lab.startswith("S8") or lab.startswith("S9")
+    is_421 = "4.2.1" in lab or lab.startswith("S9")
     rows = [
         ("H", "Scenario constraints%s" % ((" — " + lab) if lab else "")),
         ("S", "P1 — SAP routing (owner 2026-08-26)"),
@@ -3537,8 +3538,14 @@ def _xlsx_scenario_constraints_block(ws, start_col, scenario_label=""):
             ("T", "LD line %s t: DIRECT to yard 2,000,000 (Huafei 1,500,000 + BSE 500,000)"
                   % format(_sa.LIM_LD_SALES_42_T, ",")),
             ("T", "+ via POS 6,000,000 (Huafei 4,000,000 + BSE 2,000,000), reclaimed on IWIP (input = output)."),
-            ("T", "POS switch (owner 2026-09-01): Sep-Oct LD transits TF -> POS 12; from Nov 1 LIM is"),
-            ("T", "NOT stocked in POS 12 - both plants' LD transits POS 6. SAP buffers keep POS 12/14."),
+            ("T", ("POS balance 4.2.1 (owner): Sep-Oct all via-POS LD transits POS 12; from Nov 1 a "
+                   "%d%% share stays on POS 12 and %d%% goes to POS 6 - tuned so the year lands 100%%"
+                   " with the SAME fleet (no trucks added)."
+                   % (round(_sa.POS12_SHARE_NOVDEC_421 * 100),
+                      round((1 - _sa.POS12_SHARE_NOVDEC_421) * 100))) if is_421 else
+             "POS switch (owner 2026-09-01): Sep-Oct LD transits TF -> POS 12; from Nov 1 LIM is"),
+            ("T", "" if is_421 else
+             "NOT stocked in POS 12 - both plants' LD transits POS 6. SAP buffers keep POS 12/14."),
             ("T", "capacity above target stays visible as excess, never folded into the credited number."),
         ]
     elif is_41:
@@ -5610,7 +5617,7 @@ def _year_alloc_totals(cards):
             if src and len(str(src)) == 10:
                 _day = int(str(src)[8:10])
                 break
-        _sid = {3: "S3", 4: "S4", 5: "S5", 6: "S6", 7: "S7", 8: "S8"}.get(_day, "")
+        _sid = {3: "S3", 4: "S4", 5: "S5", 6: "S6", 7: "S7", 8: "S8", 9: "S9"}.get(_day, "")
         b["sales_target"] = _sa.ld_target_for_scenario(_sid)
         b["cov_sales"] = _cov_pct(b["pred_after"], b["sales_target"])
         b["left_sales"] = max(0, b["sales_target"] - b["pred_after"])
@@ -5673,7 +5680,7 @@ DEFAULT_SCENARIO_DAY = 1
 # Planning-team names 2026-08-26: 03=3.0.1, 04=3.0.2, 05=3.1.1, 06=3.1.2.
 _SCENARIO_FOR_DAY = {1: "S1", 3: "S3 (3.0.1)", 4: "S4 (3.0.2)",
                      5: "S5 (3.1.1)", 6: "S6 (3.1.2)", 7: "S7 (4.1)",
-                     8: "S8 (4.2)"}
+                     8: "S8 (4.2)", 9: "S9 (4.2.1)"}
 
 
 def _scenario_label_for_day(day):

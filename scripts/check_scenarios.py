@@ -163,11 +163,15 @@ check("target-capped prediction has an explicit credited field",
 
 print("\n=== the importer reads the real workbook shape ===")
 hdr = ["Scenario", "Month", "Nb Days", "Mining Pit", "Material", "Type Ore", "wmt ROM"]
+# Scratch id S25 (day 25, forever unused): this demo SAVES AND DELETES the
+# file, and when it was "Scenario 9" it deleted the REAL S9 (4.2.1) minutes
+# after that scenario was born (2026-09-01). Scratch ids must live outside
+# the range scenarios can ever occupy.
 demo = [hdr,
-        ["Scenario 9", "Sept", 30, "BLB", "SAP", "TOS", 300000],
-        ["Scenario 9", "Sept", 30, "TOFU", "LIM", "TOS", 150000],
-        ["Scenario 9", "Sept", 30, "TOFU", "LIM", "LD", 240000],
-        ["Scenario 9", "Oct", 31, "KRENE", "SAP", "TOS", 310000]]
+        ["Scenario 25", "Sept", 30, "BLB", "SAP", "TOS", 300000],
+        ["Scenario 25", "Sept", 30, "TOFU", "LIM", "TOS", 150000],
+        ["Scenario 25", "Sept", 30, "TOFU", "LIM", "LD", 240000],
+        ["Scenario 25", "Oct", 31, "KRENE", "SAP", "TOS", 310000]]
 scens, err = sa._parse_mine_plan_db(demo, "demo")
 check("long-format rows parse", err is None and len(scens) == 1, err)
 if scens:
@@ -175,7 +179,7 @@ if scens:
     check("wmt ROM / Nb Days becomes t/day",
           any(abs(t["wmt_day"] - 10000) < 1 for t in s9["targets"]),
           s9["targets"][:2])
-    check("scenario id normalised to S9", s9["id"] == "S9", s9["id"])
+    check("scenario id normalised to S25", s9["id"] == "S25", s9["id"])
     check("import preserves LIM-LD as a P3 target",
           any(t.get("otype") == "LD" and abs(t["wmt_day"] - 8000) < 1
               for t in s9["targets"]), s9["targets"])
@@ -186,7 +190,7 @@ print("\n=== re-import of identical targets keeps its stamp (the J59 lesson) ===
 if scens:
     import copy
     os.makedirs(sa._SCEN_DIR, exist_ok=True)
-    p9 = sa._scen_path("S9")
+    p9 = sa._scen_path("S25")
     try:
         sa._save_scenario(s9)
         stamp1 = os.path.getmtime(p9)
@@ -318,11 +322,59 @@ try:
         wb = load_workbook(_io.BytesIO(rv.data), read_only=True)
         # "Paths" (the all-months path list, added 2026-08-19) is optional;
         # the month sheets must be Year-then-months in order.
-        got = [s for s in wb.sheetnames if s != "Paths"]
+        got = [s for s in wb.sheetnames if s not in ("Paths", "Saturation")]
         check("S3 sheets are Year + Road crowding + Sep–Dec (no August)",
               got == want_s3, wb.sheetnames)
         check("S3 workbook has Road crowding sheet",
               "Road crowding" in wb.sheetnames, wb.sheetnames)
+        check("S3 workbook ends with Saturation (both corridor curves)",
+              wb.sheetnames[-1] == "Saturation", wb.sheetnames)
+        yr_s3 = wb["Year"]
+        yr_a = [c.value for row in yr_s3.iter_rows(min_row=1, max_col=1)
+                for c in row]
+        check("S3 Year sheet names corridor saturation",
+              any(isinstance(v, str) and "Corridor saturation" in v for v in yr_a),
+              [v for v in yr_a if isinstance(v, str) and "saturat" in v.lower()][:3])
+        sat = wb["Saturation"]
+        sat_heads = [row for row in sat.iter_rows(min_row=1, max_row=20, max_col=5,
+                                                    values_only=True)
+                     if row and row[0] == "Corridor fleet DT"]
+        check("S3 Saturation sheet has the sweep header", bool(sat_heads), sat_heads[:1])
+        if sat_heads:
+            check("S3 Saturation columns are t/DT and t/day (both curves)",
+                  sat_heads[0][1] == "Model t/DT" and sat_heads[0][3] == "Model t/day",
+                  sat_heads[0])
+        sat_rows = [row for row in sat.iter_rows(min_row=1, max_col=5, values_only=True)
+                    if row and isinstance(row[0], (int, float)) and row[0] > 0]
+        check("S3 Saturation sweep has real DT points to 6000",
+              len(sat_rows) >= 50 and any(r[0] == 6000 for r in sat_rows),
+              "n=%s last=%s" % (len(sat_rows), sat_rows[-1][:4] if sat_rows else None))
+        if sat_rows:
+            last_sat = sat_rows[-1]
+            check("S3 Saturation last point bends below 168 t/DT × fleet",
+                  isinstance(last_sat[1], (int, float)) and last_sat[1] < 160
+                  and isinstance(last_sat[3], (int, float))
+                  and isinstance(last_sat[4], (int, float))
+                  and last_sat[3] < last_sat[4] * 0.85,
+                  last_sat)
+        # Charts are not in read_only workbooks. The t/DT card on Congestion
+        # zooms ~120–173; Excel defaulting to 0 is the defect this pins.
+        wb_ch = load_workbook(_io.BytesIO(rv.data), read_only=False)
+        sat_ch = wb_ch["Saturation"]._charts
+        check("S3 Saturation has both corridor charts",
+              len(sat_ch) >= 2, len(sat_ch))
+        if len(sat_ch) >= 2:
+            ymin = sat_ch[0].y_axis.scaling.min
+            check("S3 Saturation t/DT chart y-axis is zoomed (not from 0)",
+                  ymin is not None and ymin > 50,
+                  (ymin, sat_ch[0].y_axis.scaling.max))
+            check("S3 Saturation total t/day chart y-axis starts at 0",
+                  sat_ch[1].y_axis.scaling.min == 0,
+                  sat_ch[1].y_axis.scaling.min)
+        year_mins = [c.y_axis.scaling.min for c in wb_ch["Year"]._charts]
+        check("S3 Year t/DT chart y-axis is zoomed (not from 0)",
+              any(m is not None and m > 50 for m in year_mins), year_mins)
+        wb_ch.close()
         check("S3 workbook has no August sheet",
               "Aug" not in wb.sheetnames, wb.sheetnames)
         sep = wb["Sep"]
@@ -424,6 +476,11 @@ try:
     # at September. Both directions: S3/S4 have no Aug AND S1/day=1 still has it.
     rv1 = c.get("/api/monthly/export-year?year=%s&day=1" % yr)
     if rv1.status_code == 200:
+        check("S1 year Excel is a zip (PK), not HTML",
+              rv1.data[:2] == b"PK", (rv1.content_type, rv1.data[:40]))
+        check("S1 year Excel filename is .xlsx",
+              ".xlsx" in (rv1.headers.get("Content-Disposition") or "").lower(),
+              rv1.headers.get("Content-Disposition"))
         wb1 = load_workbook(_io.BytesIO(rv1.data), read_only=True)
         check("S1 year Excel still has August",
               "Aug" in wb1.sheetnames, wb1.sheetnames)
@@ -438,11 +495,18 @@ try:
             check("%s year Excel (day=%d) returns xlsx" % (label, day),
                   False, rvd.status_code)
             continue
+        check("%s year Excel is a zip (PK), not HTML" % label,
+              rvd.data[:2] == b"PK", (rvd.content_type, rvd.data[:40]))
+        check("%s year Excel filename is .xlsx" % label,
+              ".xlsx" in (rvd.headers.get("Content-Disposition") or "").lower(),
+              rvd.headers.get("Content-Disposition"))
         wbd = load_workbook(_io.BytesIO(rvd.data), read_only=True)
         names_d = wbd.sheetnames
         check("%s year Excel has no August sheet" % label,
               "Aug" not in names_d, names_d)
-        months_d = [s for s in names_d if s not in ("Year", "Paths", "Road crowding")]
+        check("%s year Excel ends with Saturation" % label,
+              names_d[-1] == "Saturation", names_d)
+        months_d = [s for s in names_d if s not in ("Year", "Paths", "Road crowding", "Saturation")]
         check("%s year Excel months start at September" % label,
               months_d[:1] == ["Sep"], months_d)
         yr_ws = wbd["Year"]
@@ -454,7 +518,7 @@ try:
         # corridor × 07..06, mean concurrent trucks. Both directions: the
         # title is present AND a real occupancy number lands (a title-only
         # stub would pass the first and fail the second).
-        month_sheets = [s for s in names_d if s not in ("Year", "Paths", "Road crowding")]
+        month_sheets = [s for s in names_d if s not in ("Year", "Paths", "Road crowding", "Saturation")]
         n_grid = 0
         n_occ = 0
         n_dest = 0
