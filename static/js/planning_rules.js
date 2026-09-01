@@ -79,6 +79,14 @@ window.PLANNING_RULES = {
       // The LD share of POS 12 inflow rides this leg; the SAP buffer share
       // keeps the FeNi legs above. Material-aware split in posTransit.
       'POS 12>HUAFEI',
+      // Scenario 4.2 (commercial/client, 2026-09-01): POS reclaim feeds
+      // BOTH plants, 2/3 Huafei : 1/3 BSE (LD via POS = 4.0 Mt HUA +
+      // 2.0 Mt BSE). These legs are DAY-08 ONLY - plan_sap_target's
+      // posTransit gates them so 3.x/4.1 saves keep their HUAFEI-only
+      // reclaim. From Nov 1 LIM stops stocking POS 12 (POS 6 instead);
+      // the POS 6 legs below then carry the same 2:1 split.
+      'POS 12>BSE',
+      'POS 6>BSE',
       'POS 14>FENI KM0', 'POS 15>FENI KM0', 'POS 16>FENI KM0',
       // POS 6 transit-out (owner 2026-08-25: it is a loading point too).
       // Destination is HUAFEI, not FeNi (owner, 2026-08-28: "the

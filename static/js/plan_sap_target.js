@@ -49,6 +49,10 @@
     const v=((q('plan-date')||{}).value||'').trim();
     const day=parseInt(v.split('-')[2],10);
     if(day===3||day===4)return base+990000;
+    // day-07 = 4.1 (owner 2026-09-01: 8,035,439); day-08 = 4.2 (client
+    // table: 8,000,000 = 2.0 Mt direct-yard + 6.0 Mt via POS).
+    if(day===7)return 8035439;
+    if(day===8)return 8000000;
     return base;
   }
   function planRulesLimTosTarget(){
@@ -58,6 +62,7 @@
     const day=parseInt(v.split('-')[2],10);
     if(day===5||day===6)return lt.totalTarget31||lt.totalTarget||4640201;
     if(day===3||day===4)return lt.totalTarget30||3650201;
+    if(day===7||day===8)return 4581137; // 4.1/4.2: the mine-plan LIM ORE line
     return lt.totalTarget||(R.targets||{}).limTosTotal||4640201;
   }
   // The half-split itself starts in splitStartMonth (planning team
@@ -2625,17 +2630,29 @@
     });
     const dumps=[...new Set([...Object.keys(inflow),...Object.keys(inflowLd)])];
     _posTransitInfo={rows:[],input:0,output:0};
+    // Scenario 4.2 (day-08 saves): LD reclaim out of a POS feeds BOTH
+    // plants, 2/3 Huafei : 1/3 BSE (client table 2026-09-01: via-POS LD =
+    // 4.0 Mt HUA + 2.0 Mt BSE). Every other day keeps HUAFEI-only reclaim,
+    // so the BSE legs are filtered OUT of their leg set - an even split
+    // would have quietly re-routed a third of 4.1's reclaim on the next
+    // refreeze.
+    const is42Day=/^\d{4}-\d{2}-08$/.test(((q('plan-date')||{}).value||'').trim());
     for(const dump of dumps){
       // only dumps that actually receive material get outflow rows (§5).
       // LD inflow rides the dump's HUAFEI leg; other inflow splits evenly
       // across its FeNi legs, as before.
       const all=(R.posTransit.routes||[]).filter(k=>k.indexOf(dump+'>')===0);
-      const hbLegs=all.filter(k=>/HUAFEI|BSE/i.test(k.split('>')[1]||''));
+      let hbLegs=all.filter(k=>/HUAFEI|BSE/i.test(k.split('>')[1]||''));
+      if(!is42Day)hbLegs=hbLegs.filter(k=>!/BSE/i.test(k.split('>')[1]||''));
       const feLegs=all.filter(k=>!/HUAFEI|BSE/i.test(k.split('>')[1]||''));
       const jobs=[];
       const ldIn=inflowLd[dump]||0, otherIn=inflow[dump]||0;
       if(ldIn>0&&hbLegs.length){
-        for(const key of hbLegs)jobs.push([key,ldIn/hbLegs.length]);
+        // 4.2: weighted 2:1 HUAFEI:BSE; otherwise even (one leg in practice).
+        const wts=hbLegs.map(k=>(is42Day&&/BSE/i.test(k.split('>')[1]||''))?1:
+          (is42Day?2:1));
+        const wsum=wts.reduce((a,b)=>a+b,0)||1;
+        hbLegs.forEach((key,i)=>jobs.push([key,ldIn*wts[i]/wsum]));
       }else if(ldIn>0&&feLegs.length){
         // no HUAFEI leg for this dump — do not silently drop the tonnage
         for(const key of feLegs)jobs.push([key,ldIn/feLegs.length]);

@@ -108,10 +108,72 @@ LIM_TOS_SALES_41_T = 4_581_137
 LIM_LD_SALES_41_T = 8_035_439
 HAULAGE_TOTAL_41_T = SAP_SALES_41_T + LIM_TOS_SALES_41_T + LIM_LD_SALES_41_T
 
+# ── Scenario 4.2 (commercial + client plant split, 2026-09-01) ──────────
+# Same mine plan as 4.1; the RECEIVING side is now split by plant. The
+# client's table reconciles against the 4.1 lines to the tonne on TOS:
+#   LIM-TOS 4,581,137 split 2/3 Huafei (3,054,091) : 1/3 BSE (1,527,046)
+#   every month (the monthly figures in the table are exactly 2:1).
+#   LIM-LD 8,000,000 flat (the client's own totals - NOT 4.1's 8,035,439):
+#     direct to yard 2,000,000  = Huafei 1,500,000 + BSE 500,000
+#     via POS       6,000,000  = Huafei 4,000,000 + BSE 2,000,000
+#   "4.5 Mt LIM to Huafei Yard" = TOS 3,054,091 + LD-yard 1,500,000.
+#   "4 Mt to BSE, 50% yard/50% POS" = TOS 1,527,046 + LD-yard 500,000
+#     (yard 2,027,046) + LD-via-POS 2,000,000.
+# POS switch (owner, 2026-09-01): from Nov 1 LIM is NOT stocked in POS 12
+# any more - both plants' LD transits POS 6 instead. Sep/Oct keep POS 12.
+# The SAP buffer (~2 kt/day/pit) is SAP, not LIM: it keeps POS 12 all year.
+# BSE location: the second HPAL plant, coastal cluster between Huafei and
+# POS 14 (map, Hugo 2026-09-01). Measured Jan-Apr 2026: ~360 kt delivered
+# to the BSE tips, mostly POS 12 reclaim + TF direct; TF>BSE cycles like
+# TF>HUAFEI (1.31 vs 1.40 trips/DT/day in tickets).
+SAP_SALES_42_T = SAP_SALES_41_T
+LIM_TOS_SALES_42_T = LIM_TOS_SALES_41_T
+LIM_LD_SALES_42_T = 8_000_000
+HAULAGE_TOTAL_42_T = SAP_SALES_42_T + LIM_TOS_SALES_42_T + LIM_LD_SALES_42_T
+TOS_BSE_SHARE_42 = 1.0 / 3.0          # of every month's TOS line
+# LD components: (route-kind, plant, share of the 8.0 Mt line)
+LD_SPLIT_42 = (
+    ("direct", "HUAFEI", 1_500_000 / 8_000_000),
+    ("direct", "BSE",      500_000 / 8_000_000),
+    ("pos",    "HUAFEI", 4_000_000 / 8_000_000),
+    ("pos",    "BSE",    2_000_000 / 8_000_000),
+)
+LD_POS_SWITCH_MONTH_42 = 11           # Nov 1: POS 12 -> POS 6 for LIM
+
+
+def is_42(sid):
+    s = str(sid or "").upper()
+    return s == "S8" or "4.2" in s
+
+
+def ld_pos_dump_for_month_42(month):
+    """The POS a 4.2 LD tonne transits in this month."""
+    return "POS 6" if int(month) >= LD_POS_SWITCH_MONTH_42 else "POS 12"
+
+
+def ld_routes_for_scenario_month(sid, month):
+    """4.2: [(route, tonnage_fraction), ...] for the month's LD line.
+    Other scenarios: the single ld_route_for_scenario() at fraction 1.0."""
+    if not is_42(sid):
+        return [(ld_route_for_scenario(sid), 1.0)]
+    dump = ld_pos_dump_for_month_42(month)
+    out = []
+    for kind, plant, share in LD_SPLIT_42:
+        route = ("TF>%s" % plant) if kind == "direct" else ("TF>%s" % dump)
+        for i, (k, f) in enumerate(out):
+            if k == route:
+                out[i] = (k, f + share)
+                break
+        else:
+            out.append((route, share))
+    return out
+
 
 def sap_target_for_scenario(sid):
     """SAP sales line by scenario: 4.1 carries the ROM-table SAP."""
     s = str(sid or "").upper()
+    if is_42(s):
+        return SAP_SALES_42_T
     if s == "S7" or "4.1" in s:
         return SAP_SALES_41_T
     return SAP_SALES_T
@@ -119,6 +181,8 @@ def sap_target_for_scenario(sid):
 
 def total_target_for_scenario(sid):
     s = str(sid or "").upper()
+    if is_42(s):
+        return HAULAGE_TOTAL_42_T
     if s == "S7" or "4.1" in s:
         return HAULAGE_TOTAL_41_T
     return HAULAGE_TOTAL_T
@@ -127,6 +191,8 @@ def total_target_for_scenario(sid):
 def tos_target_for_scenario(sid):
     """LIM-TOS sales line by scenario family."""
     s = str(sid or "").upper()
+    if is_42(s):
+        return LIM_TOS_SALES_42_T
     if s == "S7" or "4.1" in s:
         return LIM_TOS_SALES_41_T
     if s in ("S3", "S4") or "3.0" in s:
@@ -137,6 +203,8 @@ def tos_target_for_scenario(sid):
 def ld_target_for_scenario(sid):
     """LD sales line by scenario family: 3.0 carries the transferred ~1 Mt."""
     s = str(sid or "").upper()
+    if is_42(s):
+        return LIM_LD_SALES_42_T
     if s == "S7" or "4.1" in s:
         return LIM_LD_SALES_41_T
     if s in ("S3", "S4") or "3.0" in s:
@@ -454,7 +522,49 @@ def waterfall(sc, yearly=None, ld_cap=LIM_LD_TARGET_T):
     # solver the draft sizing inverts. The rate is ~flat in fleet size
     # (109.9→109.2 t/DT over 100→450 DT), so a 300-DT probe is honest.
     _ldk_rate = ld_route_for_scenario(sc.get("id"))
-    if _ldk_rate != LD_ROUTE_KEY:
+    ld_rate_m = {}
+    if is_42(sc.get("id")):
+        # 4.2's LD line rides a MIX per month (direct yards + the POS leg,
+        # which itself moves POS 12 -> POS 6 in November). Capacity per
+        # contractor is the harmonic blend of the component routes' rates
+        # weighted by tonnage share: DT-days per tonne add across legs.
+        try:
+            import monthly_api as _ma
+            _pm, _fl, _cb = _ma._path_model_context()
+            _cache = {}
+
+            def _probe_rate(route, c):
+                k = (route, c)
+                if k not in _cache:
+                    try:
+                        _s, _d = route.split(">", 1)
+                        # 150 DT: inside the measured envelope of EVERY 4.2
+                        # leg (TF>POS 6 max-ever 187 DT, TF>HUAFEI 167). A
+                        # 300-DT probe fell into the legacy beyond-fleet
+                        # decay (TF>POS 6 81.5 t/DT vs 121.2 in-range) that
+                        # the hybrid curve - the model pricing the frozen
+                        # plan - contradicts (flat 2.608 trips/DT to 500 DT,
+                        # loader-bound). That decay priced the 4.2 blend at
+                        # 6.66 Mt against the 8.0 Mt line: two clocks again.
+                        p = _ma._path_row_wmt(_s, _d, c, 150, 150, _pm, _fl, _cb)
+                        w = p.get("wmt")
+                        _cache[k] = (w / 150.0) if w and w > 0 else None
+                    except Exception:
+                        _cache[k] = None
+                return _cache[k]
+
+            for _m in _MONTHS:
+                rates = {}
+                for c, base in ld_rate.items():
+                    denom = 0.0
+                    for route, frac in ld_routes_for_scenario_month(
+                            sc.get("id"), _m):
+                        denom += frac / (_probe_rate(route, c) or base)
+                    rates[c] = (1.0 / denom) if denom > 0 else base
+                ld_rate_m[_m] = rates
+        except Exception:
+            pass  # no path model reachable: keep the matrix rates
+    elif _ldk_rate != LD_ROUTE_KEY:
         try:
             import monthly_api as _ma
             _pm, _fl, _cb = _ma._path_model_context()
@@ -587,7 +697,8 @@ def waterfall(sc, yearly=None, ld_cap=LIM_LD_TARGET_T):
             used[c] = pool[c]
         free = {c: max(0.0, pool[c] - used[c]) for c in pool}
         # CAPACITY (never clipped): what every free truck could move on LD.
-        ld_day_capacity = sum(free[c] * ld_rate.get(c, 100.0) for c in free)
+        _lr = ld_rate_m.get(m, ld_rate) if ld_rate_m else ld_rate
+        ld_day_capacity = sum(free[c] * _lr.get(c, 100.0) for c in free)
         ld_month_capacity = ld_day_capacity * _DAYS[m]
         ld_capacity_total += ld_month_capacity
         # CREDITED (bounded by the supplied target): a month-specific imported
@@ -1688,6 +1799,28 @@ def _scenario_draft_paths(sc, mnum, yearly):
     path_models, fleet, contr_by = ma._path_model_context()
     pool = {c: float(v) for c, v in (mo.get("pool") or {}).items()}
     wf_rows = mo.get("rows") or []
+    # 4.2 (commercial/client, 2026-09-01): every fresh-LIM tonne is split by
+    # RECEIVING PLANT, 2/3 Huafei : 1/3 BSE - the client's monthly TOS table
+    # is exactly 2:1 and sums to the 4,581,137 line. The waterfall's TOS rows
+    # land on HUAFEI (the matrix's plant); here each row becomes two, same
+    # contractor, tonnage and fleet split 2:1.
+    if is_42(sc.get("id")):
+        split_rows = []
+        for a in wf_rows:
+            if a.get("mat") == "LIM" and (a.get("otype") or "TOS") == "TOS" \
+                    and str(a.get("dest") or "").upper().startswith("HUAFEI"):
+                for dest2, f2 in (("HUAFEI", 1.0 - TOS_BSE_SHARE_42),
+                                  ("BSE", TOS_BSE_SHARE_42)):
+                    b = dict(a)
+                    b["dest"] = dest2
+                    for fld in ("wmt_day", "dt", "dt_target",
+                                "wmt_day_credited"):
+                        b[fld] = round(float(a.get(fld) or 0) * f2,
+                                       1 if "dt" in fld else 0)
+                    split_rows.append(b)
+            else:
+                split_rows.append(a)
+        wf_rows = split_rows
     p3_plan = mo.get("p3") or mo.get("free") or {}
     ld_rate = {}
     for r in _yearly_rows(yearly):
@@ -1706,6 +1839,8 @@ def _scenario_draft_paths(sc, mnum, yearly):
     # point: everyone is priced on the fleet everyone ends up sharing.
     sized = {i: float(a["dt"]) for i, a in enumerate(wf_rows)}
     ld_fleet = sum(float(v or 0) for v in p3_plan.values())
+    # LD legs this month rides (4.2: direct yards + the POS leg; else one).
+    ld_legs = ld_routes_for_scenario_month(sc.get("id"), int(mnum))
     order = sorted(range(len(wf_rows)),
                    key=lambda i: (wf_rows[i]["prio"], wf_rows[i]["pit"],
                                   wf_rows[i]["dest"]))
@@ -1716,8 +1851,8 @@ def _scenario_draft_paths(sc, mnum, yearly):
             rk = _wf_route_key(a)
             k = "%s>%s" % (rk[0], rk[1])
             combined[k] = combined.get(k, 0.0) + sized[i]
-        _ldk = ld_route_for_scenario(sc.get("id"))
-        combined[_ldk] = combined.get(_ldk, 0.0) + ld_fleet
+        for _ldk, _f in ld_legs:
+            combined[_ldk] = combined.get(_ldk, 0.0) + ld_fleet * _f
         used = {c: 0.0 for c in pool}
         warnings, nxt = [], {}
         for i in order:
@@ -1780,7 +1915,6 @@ def _scenario_draft_paths(sc, mnum, yearly):
         if free < 0.5:
             continue
         rate = ld_rate.get(contractor, 120.0 if contractor == "RIM" else 100.0)
-        _ldk = ld_route_for_scenario(sc.get("id"))
         # TARGET = this month's share of the LD LINE, not free x demonstrated
         # rate. The rate-product was a CAPACITY guess (the matrix's 120/100
         # t/DT), and stamping it as the target made the four saves' LD
@@ -1789,13 +1923,28 @@ def _scenario_draft_paths(sc, mnum, yearly):
         # 2026-08-31). The waterfall already spread the line over the
         # scenario's months chronologically; each contractor takes the
         # month's planned t/day in proportion to its rated share.
-        paths["%s|%s|LIM|LD" % (contractor, _ldk)] = {
-            "key": _ldk, "dt": int(round(free)), "contractor": contractor,
-            "source": _ldk.split(">")[0], "dest": _ldk.split(">")[1],
-            "material": "LIM", "otype": "LD",
-            "targetWmt": int(round(_ld_day * _w[contractor] / _wsum)),
-            "_targetManual": True,
-        }
+        # 4.2 splits the contractor's LD block across the month's legs by
+        # tonnage share (direct yards + the POS leg); other scenarios have
+        # ONE leg at fraction 1.0 so this loop degenerates to the old row.
+        _c_target = _ld_day * _w[contractor] / _wsum
+        _dt_left, _t_left = int(round(free)), 0
+        _legs = ld_routes_for_scenario_month(sc.get("id"), int(mnum))
+        for _j, (_ldk, _f) in enumerate(_legs):
+            last = _j == len(_legs) - 1
+            leg_dt = _dt_left if last else int(round(free * _f))
+            leg_t = (int(round(_c_target)) - _t_left) if last \
+                else int(round(_c_target * _f))
+            _dt_left -= leg_dt
+            _t_left += leg_t
+            if leg_dt < 1 and leg_t < 1:
+                continue
+            paths["%s|%s|LIM|LD" % (contractor, _ldk)] = {
+                "key": _ldk, "dt": leg_dt, "contractor": contractor,
+                "source": _ldk.split(">")[0], "dest": _ldk.split(">")[1],
+                "material": "LIM", "otype": "LD",
+                "targetWmt": leg_t,
+                "_targetManual": True,
+            }
     if not paths:
         return None, "no routes with targets for month %s" % mnum
     return {"paths": paths, "warnings": warnings,

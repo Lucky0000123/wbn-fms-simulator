@@ -3518,6 +3518,7 @@ def _xlsx_scenario_constraints_block(ws, start_col, scenario_label=""):
     is_split = "3.0.2" in lab or "3.1.2" in lab or lab.startswith("S4") or lab.startswith("S6")
     is_31 = "3.1" in lab
     is_41 = "4.1" in lab or lab.startswith("S7")
+    is_42 = "4.2" in lab or lab.startswith("S8")
     rows = [
         ("H", "Scenario constraints%s" % ((" — " + lab) if lab else "")),
         ("S", "P1 — SAP routing (owner 2026-08-26)"),
@@ -3526,7 +3527,21 @@ def _xlsx_scenario_constraints_block(ws, start_col, scenario_label=""):
     for pit, rule in sorted(_sa.SAP_ROUTING.items()):
         fx = ", ".join("%s @ %s t/day" % (d, format(int(v), ",")) for d, v in rule["fixed"])
         rows.append(("T", "  %s: buffer %s -> rest DIRECT %s" % (pit, fx, rule["rest"])))
-    if is_41:
+    if is_42:
+        rows += [
+            ("S", "P2 — LIM-TOS (plant split, client 2026-09-01)"),
+            ("T", "Fresh LIM split by RECEIVING plant every month: 2/3 Huafei (3,054,091 t)"),
+            ("T", "+ 1/3 BSE (1,527,046 t) = the %s t line. Fills only after P1 is met."
+                  % format(_sa.LIM_TOS_SALES_42_T, ",")),
+            ("S", "P3 — LIM-LD (yard + POS split)"),
+            ("T", "LD line %s t: DIRECT to yard 2,000,000 (Huafei 1,500,000 + BSE 500,000)"
+                  % format(_sa.LIM_LD_SALES_42_T, ",")),
+            ("T", "+ via POS 6,000,000 (Huafei 4,000,000 + BSE 2,000,000), reclaimed on IWIP (input = output)."),
+            ("T", "POS switch (owner 2026-09-01): Sep-Oct LD transits TF -> POS 12; from Nov 1 LIM is"),
+            ("T", "NOT stocked in POS 12 - both plants' LD transits POS 6. SAP buffers keep POS 12/14."),
+            ("T", "capacity above target stays visible as excess, never folded into the credited number."),
+        ]
+    elif is_41:
         rows += [
             ("S", "P2 — LIM-TOS"),
             ("T", "Fresh LIM direct to HUAFEI/BSE. Fills only after P1 is met. Target %s t"
@@ -3551,7 +3566,7 @@ def _xlsx_scenario_constraints_block(ws, start_col, scenario_label=""):
                    "(3.0: includes the ~1 Mt transferred from LIM-TOS — total stays 17.0 Mt);")),
             ("T", "capacity above target stays visible as excess, never folded into the credited number."),
         ]
-    if is_41:
+    if is_41 or is_42:
         pass
     elif is_split:
         rows += [
@@ -3574,7 +3589,7 @@ def _xlsx_scenario_constraints_block(ws, start_col, scenario_label=""):
         ("T", "BLB pit accepts RIM trucks only. POS is transit: inbound tonnes leave on IWIP"),
         ("T", "reclaim sized so input = output. IWIP trucks are not contractor fleet."),
         ("T", ("SAP target %s wmt (20260828 mine plan ROM table: 6,541,121 ROM x 88%% + 627,239 HGS stock)."
-               % format(_sa.SAP_SALES_41_T, ",")) if is_41 else
+               % format(_sa.SAP_SALES_41_T, ",")) if (is_41 or is_42) else
               "SAP target 5,718,686 wmt (sales table). LIM-TOS: sales table 4,640,201 = the 3.1 scenario."),
     ]
     # Section titles merge A:H for chrome, which puts every row's merge
@@ -5595,7 +5610,7 @@ def _year_alloc_totals(cards):
             if src and len(str(src)) == 10:
                 _day = int(str(src)[8:10])
                 break
-        _sid = {3: "S3", 4: "S4", 5: "S5", 6: "S6", 7: "S7"}.get(_day, "")
+        _sid = {3: "S3", 4: "S4", 5: "S5", 6: "S6", 7: "S7", 8: "S8"}.get(_day, "")
         b["sales_target"] = _sa.ld_target_for_scenario(_sid)
         b["cov_sales"] = _cov_pct(b["pred_after"], b["sales_target"])
         b["left_sales"] = max(0, b["sales_target"] - b["pred_after"])
@@ -5657,7 +5672,8 @@ def _year_alloc_totals(cards):
 DEFAULT_SCENARIO_DAY = 1
 # Planning-team names 2026-08-26: 03=3.0.1, 04=3.0.2, 05=3.1.1, 06=3.1.2.
 _SCENARIO_FOR_DAY = {1: "S1", 3: "S3 (3.0.1)", 4: "S4 (3.0.2)",
-                     5: "S5 (3.1.1)", 6: "S6 (3.1.2)", 7: "S7 (4.1)"}
+                     5: "S5 (3.1.1)", 6: "S6 (3.1.2)", 7: "S7 (4.1)",
+                     8: "S8 (4.2)"}
 
 
 def _scenario_label_for_day(day):

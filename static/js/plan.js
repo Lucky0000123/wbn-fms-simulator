@@ -528,7 +528,33 @@ function planHybridTripsAt(curveData,nTrucks){
   return c[c.length-1];
 }
 function planTripsPerDT(key,dt,rain,contractor,opts){
-  const m=_pathResp&&_pathResp[key];if(!m)return null;
+  const m=_pathResp&&_pathResp[key];
+  if(!m){
+    // Route OUTSIDE the measured path list (LITE 3 keeps paths with >=25
+    // day-rows; TF>BSE has 19, KR>BSE 4). The calibrated hybrid curve
+    // still prices it — the same physics that owns every other route.
+    // Returning null here made every such row predict ZERO, and Allocate
+    // then poured the whole leftover fleet into rows chasing unreachable
+    // targets (measured 2026-09-01: the first 4.2 freeze put 476 DT on a
+    // 2,222 t/day TF>BSE TOS row and drained every LD row to 1 DT).
+    if(opts&&opts.noHybrid)return null;
+    const nL=(opts&&Number.isFinite(opts.nLoaders)&&opts.nLoaders>=1)?Math.round(opts.nLoaders):2;
+    const hyb=planHybridCurveFor(key,nL,rain,{proportional:true});
+    if(!hyb)return null;                    // curve still loading: caller retries
+    const pt=planHybridTripsAt(hyb,dt);
+    if(!pt||!Number.isFinite(pt.trips_per_dt)||!(pt.trips_per_dt>0))return null;
+    const cPrice=planContractorTrips(hyb,pt.trips_per_dt,contractor);
+    const tr0=cPrice.trips;
+    const sf0=planShiftFactor();
+    return {daily:tr0,shift:tr0*sf0,shiftFree:tr0*sf0,rainDelta:0,otherDelta:0,
+      secDelta:0,secExcess:0,wbFactor:1,wbRows:null,slope:0,
+      modelVersion:hyb.segment_based?'hybrid_segment':'hybrid',
+      cycleTimeMin:Math.round(pt.cycle_time_min),rho:pt.rho,hybridKnee:hyb.knee_dt,
+      contractorBasis:cPrice.basis,contractorRatio:cPrice.ratio,
+      satFactor:1,dayBasis:false,m:null,nLoaders:nL,
+      congestionStatus:(pt.rho>=1?'overloaded':(pt.rho>=0.7?'saturated':'free')),
+      bottleneck:pt.bottleneck};
+  }
   // ── Fleet-size response, DAY-LEVEL model (owner 2026-08-12 rebuild) ────────
   // Basis analysis (241 days, TF→FENI KM0, full 20-month history):
   //   • Day-level trips/DT is FLAT with fleet size: 2.0/day at 0-20 DT,
@@ -2459,6 +2485,5 @@ function computePlan(){
   if(typeof planRenderComingDays==='function')planRenderComingDays();
   planLimitsMaybeOpen(hasForeign||(_planOtherTrips||0)>0);
 }
-
 
 
