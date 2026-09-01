@@ -93,14 +93,19 @@ LIM_TOS_SALES_30_T = 3_650_201
 #                    in TOFU, hence 6.5 Mt mined -> 6.38 Mt hauled)
 #                    + 627,239 topped up from HGS stock
 #   LIM-TOS 4,581,137 = the LIM ORE line, fresh limonite from the pit (exact)
-#   LIM-LD 6,035,439  = drawn from the LIM stockpile (7,243,968 recovered
-#                    available: TOFU 8,009,107 x 88% + BLB/CBB/CSW x 90%)
-#   TOTAL 17,000,001 — one clock, same as ever.
+#   LIM-LD 8,035,439  = drawn from the LIM stockpile, ALL from the TOFU
+#                    dump (owner, 2026-09-01: +2,000,000 t on the original
+#                    6,035,439 reclaim line, sourced from TOFU LD).
+#                    CAVEAT: the mine plan's recovered stock available is
+#                    7,243,968 (TOFU 8,009,107 x 88% + BLB/CBB/CSW x 90%),
+#                    so this line overdraws it by ~791 kt — flagged, the
+#                    extra stock source is the manager's to confirm.
+#   TOTAL 19,000,001 — one clock, same as ever.
 # Hauling rule (Killian, 2026-08-31): RIM preferentially works the FeNi
 # routes; other contractors' fleets take the HUAFEI legs where walls allow.
 SAP_SALES_41_T = 6_383_425
 LIM_TOS_SALES_41_T = 4_581_137
-LIM_LD_SALES_41_T = 6_035_439
+LIM_LD_SALES_41_T = 8_035_439
 HAULAGE_TOTAL_41_T = SAP_SALES_41_T + LIM_TOS_SALES_41_T + LIM_LD_SALES_41_T
 
 
@@ -438,6 +443,30 @@ def waterfall(sc, yearly=None, ld_cap=LIM_LD_TARGET_T):
             ld_rate[r["contractor"]] = rt
     ld_rate.setdefault("RIM", 120.0)
     ld_rate.setdefault("SMA", 100.0)
+    # 4.1 prices LD capacity on the route it actually RIDES (TF>POS 12).
+    # The matrix LD rows are TF>HUAFEI history (63.7 km); pricing the
+    # 40.8 km POS 12 leg at those demonstrated rates understated rated
+    # capacity to 7.756 Mt against the 8,035,439 line, so the
+    # chronological fill left the month targets summing 279 kt short of
+    # the line every Year surface divides by — two clocks in one
+    # workbook, the exact defect of 2026-08-31 (rule 5). Contractor
+    # pricing has ONE owner: the path model via monthly_api, the same
+    # solver the draft sizing inverts. The rate is ~flat in fleet size
+    # (109.9→109.2 t/DT over 100→450 DT), so a 300-DT probe is honest.
+    _ldk_rate = ld_route_for_scenario(sc.get("id"))
+    if _ldk_rate != LD_ROUTE_KEY:
+        try:
+            import monthly_api as _ma
+            _pm, _fl, _cb = _ma._path_model_context()
+            _src, _dst = _ldk_rate.split(">", 1)
+            for _c in list(ld_rate):
+                _probe = _ma._path_row_wmt(_src, _dst, _c, 300, 300,
+                                           _pm, _fl, _cb)
+                _w = _probe.get("wmt")
+                if _w and _w > 0:
+                    ld_rate[_c] = _w / 300.0
+        except Exception:
+            pass  # no path model reachable: keep the matrix rates
 
     months_out, violations = [], []
     ld_cum = 0.0
