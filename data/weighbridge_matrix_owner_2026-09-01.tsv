@@ -8,12 +8,12 @@ BLB	HUAFEI	1				1	1
 KR	POS 12												1	1
 KR	POS 6											1	1	1
 KR	FeNi KM15									1	1	1	1	1
-KR	FeNi KM0							1	1	1	1	1	1	1
-KR	BSE							1	1	1	1	1	1	1
-KR	HUAFEI							1	1	1	1	1	1	1
+KR	FeNi KM0							1	1			1	1	1
+KR	BSE							1	1			1	1	1
+KR	HUAFEI							1	1			1	1	1
 TF	POS 12												1	1
 TF	POS 6											1	1	1
 TF	FeNi KM15									1	1	1	1	1
-TF	FeNi KM0							1	1	1	1	1	1	1
-TF	BSE							1	1	1	1	1	1	1
-TF	HUAFEI							1	1	1	1	1	1	1
+TF	FeNi KM0							1	1			1	1	1
+TF	BSE							1	1			1	1	1
+TF	HUAFEI							1	1			1	1	1
