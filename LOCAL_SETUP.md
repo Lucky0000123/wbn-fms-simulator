@@ -2,7 +2,7 @@
 
 This is the starting point. Clone from GitHub, run it on that machine, open it in a browser. You do not need this laptop.
 
-**Current code on both remotes:** `56eb880` (`main`).
+**Pull latest `main`.** After this work, `git grep WBN_FMS_SIMULATOR_SAVED_PLANS` must find the SQL table. If it does not, you have an old clone.
 
 | Remote | Clone this |
 |---|---|
@@ -83,48 +83,57 @@ A clone will boot, but it will **not** look like the planner laptop:
 
 That is not a failed install. Git never contains the plans.
 
-## 6. Connect saved plans (copy files, then Load in the UI)
+## 5. Connect saved plans
 
-There is no database table and no extra config key. The app reads JSON files from:
+The Plan object is unchanged (same JSON, same Save / Load / Allocate). Two ways to get that JSON onto another PC:
 
-```
-data/saved_plans/YYYY-MM-DD.json
-```
+### A — SQL Server (shared; this is the intended path)
 
-On a clone that folder is empty (or missing). `/api/plan/saved/list` then returns no dates, so the Plan tab **Saved…** picker says `(0)`.
+Separate table in **WBN_DATABASE** only — not haulage, GPS, or weighbridge:
 
-**Step A — copy the files onto this PC** (from the machine that already has plans). Do this while `serve.py` is stopped, or restart it after the copy.
+`dbo.WBN_FMS_SIMULATOR_SAVED_PLANS`
+
+One row per date. `plan_json` is the exact saved-plan object (`paths`, allocation, rain, …). The app creates the table on first use.
+
+**On the planner laptop** (has `data/saved_plans/*.json` and `.env`):
 
 ```bash
-mkdir -p data/saved_plans
-# From a USB stick, AirDrop, scp, etc. Example:
-scp user@planner-laptop:/path/to/wbn-fms-simulator/data/saved_plans/*.json data/saved_plans/
+.venv/bin/python scripts/upload_saved_plans.py
+.venv/bin/python scripts/upload_saved_plans.py --check
 ```
 
-Only `YYYY-MM-DD.json` files count (name length 15). Backup folders inside `data/saved_plans/` are ignored.
+After that, **Save plan** in the UI also writes SQL when `FMS_DB_*` is set. Disk is still always written.
 
-**Step B — confirm the server can see them**
+**On the other PC:** put the same `.env` next to `serve.py` (never commit it), start the app, open Plan → **Saved…**. GET reads SQL when the local file is missing or older, then caches a JSON file so Load still works if the VPN drops.
 
 ```bash
 curl -s http://127.0.0.1:5055/api/plan/saved/list
-# {"ok": true, "dates": ["2026-12-09", "2026-12-08", ...]}
+# dates from SQL + any local files
 ```
 
-If `dates` is still `[]`, the files are not in this checkout’s `data/saved_plans/`, or you are looking at a different `serve.py`.
+Optional hand DDL: `scripts/sql/WBN_FMS_SIMULATOR_SAVED_PLANS.sql`
 
-**Step C — load in the Plan tab**
+### B — copy JSON files (no database)
 
-1. Open `/simulator` → **Plan**.
-2. Use the **Saved…** dropdown (top right of the sticky bar) and pick a date — that sets the plan date and loads the file.
-3. Or type the date in **Plan date** and click **Load saved**.
+```bash
+mkdir -p data/saved_plans
+scp user@planner-laptop:/path/to/wbn-fms-simulator/data/saved_plans/*.json data/saved_plans/
+```
 
-Day number is the scenario convention: **01 = S1**, **03 = S3**, **04 = S4** (day 02 is reserved; do not save there). Example: `2026-09-03.json` is September S3.
+Restart `serve.py`. Only `YYYY-MM-DD.json` counts (name length 15).
 
-Do **not** `git add data/saved_plans/`. Those files carry real allocations and tonnages; both remotes are public.
+**Load in the UI** (same for A or B)
 
-For numbers to match the planner laptop, also copy (privately) `data/congestion_params.json`, `data/monthly_plans/`, and `data/*.pkl`. Paths and DT will load from the JSON alone; pricing may differ until those artifacts are present.
+1. `/simulator` → **Plan**.
+2. **Saved…** dropdown, or set **Plan date** and **Load saved**.
 
-## 5. Do not
+Day number: **01 = S1**, **03 = S3**, **04 = S4**. Example: `2026-09-03` is September S3.
+
+Do **not** `git add data/saved_plans/`.
+
+For numbers to match the planner laptop, also copy (privately) `data/congestion_params.json`, `data/monthly_plans/`, and `data/*.pkl`.
+
+## 6. Do not
 
 - Do not `git add -A` — that can publish `.env`, GPS, and tonnages.
 - Do not commit credentials or `geofences.json`.

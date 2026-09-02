@@ -3314,7 +3314,14 @@ def api_plan_material_mix():
 
 
 # ── Saved holding plans (local disk; keyed by plan date) ─────────────────────
+# Disk is the original store and still always written. SQL Server is an extra
+# copy so another PC with FMS_DB_* can load the same plans. The JSON object is
+# unchanged. Tests set _SAVED_PLANS_SQL = False so they never touch the live DB.
 _SAVED_PLANS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "saved_plans")
+_SAVED_PLANS_SQL = True
+_SAVED_PLANS_SQL_DB = "WBN_DATABASE"
+_SAVED_PLANS_SQL_TABLE = "WBN_FMS_SIMULATOR_SAVED_PLANS"
+_SAVED_PLANS_SQL_ENSURED = False
 
 
 def _saved_plan_path(date_s):
@@ -3327,6 +3334,179 @@ def _saved_plan_path(date_s):
     if len(date_s) != 10 or date_s[4] != "-" or date_s[7] != "-":
         return None
     return os.path.join(_SAVED_PLANS_DIR, date_s + ".json")
+
+
+def _saved_plans_use_sql():
+    return bool(_SAVED_PLANS_SQL) and _db_ready()
+
+
+def _saved_plan_disk_read(date_s):
+    path = _saved_plan_path(date_s)
+    if not path or not os.path.isfile(path):
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _saved_plan_disk_write(date_s, plan):
+    path = _saved_plan_path(date_s)
+    if not path:
+        raise ValueError("bad date")
+    os.makedirs(_SAVED_PLANS_DIR, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(plan, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+    return path
+
+
+def _saved_plan_disk_delete(date_s):
+    path = _saved_plan_path(date_s)
+    if path and os.path.isfile(path):
+        os.remove(path)
+
+
+def _saved_plan_disk_list():
+    dates = []
+    if os.path.isdir(_SAVED_PLANS_DIR):
+        for name in os.listdir(_SAVED_PLANS_DIR):
+            if name.endswith(".json") and len(name) == 15:
+                dates.append(name[:-5])
+    return dates
+
+
+def _saved_plan_sql_ddl():
+    return (
+        "IF OBJECT_ID(N'dbo.%s', N'U') IS NULL "
+        "CREATE TABLE dbo.%s ("
+        "plan_date DATE NOT NULL, "
+        "plan_json NVARCHAR(MAX) NOT NULL, "
+        "saved_at DATETIME2 NULL, "
+        "uploaded_at DATETIME2 NOT NULL "
+        "CONSTRAINT DF_%s_uploaded DEFAULT (SYSUTCDATETIME()), "
+        "CONSTRAINT PK_%s PRIMARY KEY (plan_date)"
+        ")"
+    ) % (
+        _SAVED_PLANS_SQL_TABLE,
+        _SAVED_PLANS_SQL_TABLE,
+        _SAVED_PLANS_SQL_TABLE,
+        _SAVED_PLANS_SQL_TABLE,
+    )
+
+
+def _saved_plan_sql_ensure(conn):
+    """Create the simulator-only table if it is missing. Idempotent."""
+    global _SAVED_PLANS_SQL_ENSURED
+    if _SAVED_PLANS_SQL_ENSURED:
+        return
+    cur = conn.cursor()
+    cur.execute(_saved_plan_sql_ddl())
+    conn.commit()
+    _SAVED_PLANS_SQL_ENSURED = True
+
+
+def _saved_plan_sql_get(date_s):
+    """Return the stored plan dict, or None if the row is absent."""
+    conn = _conn(_SAVED_PLANS_SQL_DB)
+    try:
+        _saved_plan_sql_ensure(conn)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT plan_json FROM dbo.%s WHERE plan_date = %%s"
+            % _SAVED_PLANS_SQL_TABLE,
+            (date_s,),
+        )
+        row = cur.fetchone()
+        if not row or row[0] is None:
+            return None
+        raw = row[0]
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        return json.loads(raw)
+    finally:
+        conn.close()
+
+
+def _saved_plan_sql_put(date_s, plan):
+    """Upsert the exact plan object. Does not reshape paths/allocation.
+
+    The JSON timestamp lives in plan_json. The DATETIME2 columns are the
+    row's own clocks (ISO-with-Z from the file is not a DATETIME2 literal).
+    """
+    blob = json.dumps(plan, ensure_ascii=False)
+    conn = _conn(_SAVED_PLANS_SQL_DB)
+    try:
+        _saved_plan_sql_ensure(conn)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT plan_date FROM dbo.%s WHERE plan_date = %%s"
+            % _SAVED_PLANS_SQL_TABLE,
+            (date_s,),
+        )
+        if cur.fetchone():
+            cur.execute(
+                "UPDATE dbo.%s SET plan_json = %%s, "
+                "saved_at = SYSUTCDATETIME(), uploaded_at = SYSUTCDATETIME() "
+                "WHERE plan_date = %%s"
+                % _SAVED_PLANS_SQL_TABLE,
+                (blob, date_s),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO dbo.%s (plan_date, plan_json, saved_at) "
+                "VALUES (%%s, %%s, SYSUTCDATETIME())" % _SAVED_PLANS_SQL_TABLE,
+                (date_s, blob),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _saved_plan_sql_delete(date_s):
+    conn = _conn(_SAVED_PLANS_SQL_DB)
+    try:
+        _saved_plan_sql_ensure(conn)
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM dbo.%s WHERE plan_date = %%s" % _SAVED_PLANS_SQL_TABLE,
+            (date_s,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _saved_plan_sql_list():
+    conn = _conn(_SAVED_PLANS_SQL_DB)
+    try:
+        _saved_plan_sql_ensure(conn)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT CONVERT(varchar(10), plan_date, 23) FROM dbo.%s"
+            % _SAVED_PLANS_SQL_TABLE
+        )
+        return [r[0] for r in cur.fetchall() if r and r[0]]
+    finally:
+        conn.close()
+
+
+def _saved_plan_pick(disk_plan, sql_plan):
+    """Choose disk vs SQL without reshaping. Newer saved_at wins.
+
+    Disk-only (SQL down or first run): original file. SQL-only (other PC):
+    download. Both present: a failed SQL write must not overwrite a newer
+    local file, and a stale local cache must not hide a newer shared row.
+    """
+    if disk_plan is None:
+        return (sql_plan, "sql") if sql_plan is not None else (None, None)
+    if sql_plan is None:
+        return disk_plan, "disk"
+    def ts(p):
+        return str((p or {}).get("saved_at") or "")
+    if ts(sql_plan) > ts(disk_plan):
+        return sql_plan, "sql"
+    return disk_plan, "disk"
 
 
 def _frozen_allocation_error(alloc):
@@ -3369,19 +3549,38 @@ def _frozen_allocation_error(alloc):
 
 @bp.route('/api/plan/saved', methods=['GET', 'POST', 'DELETE'])
 def api_plan_saved():
-    """Save / load / delete a holding plan for a calendar date (local JSON)."""
+    """Save / load / delete a holding plan for a calendar date.
+
+    The plan object is the same as before. Disk under data/saved_plans/ is
+    still written. When FMS_DB_* is set, WBN_DATABASE.dbo.WBN_FMS_SIMULATOR_SAVED_PLANS
+    is the shared copy another PC reads. SQL failure falls back to disk — the
+    VPN dropping must not hide a plan that is already on disk.
+    """
     if request.method == 'GET':
         date_s = (request.args.get("date") or "").strip()[:10]
         path = _saved_plan_path(date_s)
         if not path:
             return jsonify({"ok": False, "error": "supply date=YYYY-MM-DD"}), 400
-        if not os.path.isfile(path):
-            return jsonify({"ok": True, "date": date_s, "plan": None, "exists": False})
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                plan = json.load(f)
+            disk_plan = _saved_plan_disk_read(date_s)
         except Exception as e:  # noqa: BLE001
             return jsonify({"ok": False, "error": "read failed: %s" % e}), 500
+        sql_plan = None
+        if _saved_plans_use_sql():
+            try:
+                sql_plan = _saved_plan_sql_get(date_s)
+            except Exception:
+                sql_plan = None
+        plan, src = _saved_plan_pick(disk_plan, sql_plan)
+        if plan is None:
+            return jsonify({"ok": True, "date": date_s, "plan": None, "exists": False})
+        if src == "sql":
+            try:
+                _saved_plan_disk_write(date_s, plan)
+            except Exception:
+                pass
+            return jsonify({"ok": True, "date": date_s, "plan": plan,
+                            "exists": True, "servedFrom": "sql"})
         return jsonify({"ok": True, "date": date_s, "plan": plan, "exists": True})
 
     if request.method == 'DELETE':
@@ -3389,11 +3588,15 @@ def api_plan_saved():
         path = _saved_plan_path(date_s)
         if not path:
             return jsonify({"ok": False, "error": "supply date=YYYY-MM-DD"}), 400
-        if os.path.isfile(path):
+        try:
+            _saved_plan_disk_delete(date_s)
+        except Exception as e:  # noqa: BLE001
+            return jsonify({"ok": False, "error": "delete failed: %s" % e}), 500
+        if _saved_plans_use_sql():
             try:
-                os.remove(path)
-            except Exception as e:  # noqa: BLE001
-                return jsonify({"ok": False, "error": "delete failed: %s" % e}), 500
+                _saved_plan_sql_delete(date_s)
+            except Exception:
+                pass
         return jsonify({"ok": True, "date": date_s, "deleted": True})
 
     # POST
@@ -3423,27 +3626,31 @@ def api_plan_saved():
         alloc["calculation_status"] = "complete"
         plan["allocation"] = alloc
     try:
-        os.makedirs(_SAVED_PLANS_DIR, exist_ok=True)
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(plan, f, indent=2)
-            f.write("\n")
-        os.replace(tmp, path)
+        _saved_plan_disk_write(date_s, plan)
     except Exception as e:  # noqa: BLE001
         return jsonify({"ok": False, "error": "write failed: %s" % e}), 500
-    return jsonify({"ok": True, "date": date_s, "plan": plan, "exists": True})
+    stored = ["disk"]
+    if _saved_plans_use_sql():
+        try:
+            _saved_plan_sql_put(date_s, plan)
+            stored.append("sql")
+        except Exception:
+            pass
+    return jsonify({"ok": True, "date": date_s, "plan": plan, "exists": True,
+                    "storedIn": stored})
 
 
 @bp.route('/api/plan/saved/list', methods=['GET'])
 def api_plan_saved_list():
     """List recently saved plan dates (newest first)."""
-    dates = []
-    if os.path.isdir(_SAVED_PLANS_DIR):
-        for name in os.listdir(_SAVED_PLANS_DIR):
-            if name.endswith(".json") and len(name) == 15:
-                dates.append(name[:-5])
-    dates.sort(reverse=True)
-    return jsonify({"ok": True, "dates": dates[:60]})
+    dates = set(_saved_plan_disk_list())
+    if _saved_plans_use_sql():
+        try:
+            dates.update(_saved_plan_sql_list())
+        except Exception:
+            pass
+    out = sorted(dates, reverse=True)
+    return jsonify({"ok": True, "dates": out[:60]})
 
 
 @bp.route('/api/plan/corridor-hours', methods=['GET'])

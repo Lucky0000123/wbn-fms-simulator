@@ -26,7 +26,9 @@ def main():
 
     tmp = tempfile.mkdtemp(prefix="saved_plans_")
     old = sa._SAVED_PLANS_DIR
+    old_sql = sa._SAVED_PLANS_SQL
     sa._SAVED_PLANS_DIR = tmp
+    sa._SAVED_PLANS_SQL = False  # never write harness dates into live SQL
     try:
         r = client.get("/api/plan/saved")
         check("GET without date is 400", r.status_code == 400)
@@ -54,6 +56,7 @@ def main():
         r = client.post("/api/plan/saved", json=body)
         j = r.get_json()
         check("POST ok", r.status_code == 200 and j.get("ok") and j.get("exists"))
+        check("POST stores disk only when SQL off", j.get("storedIn") == ["disk"])
         check("POST returns paths", j["plan"]["paths"]["RIM|TF>FENI KM15"]["dt"] == 42)
         check("file written", os.path.isfile(os.path.join(tmp, "2026-08-05.json")))
 
@@ -172,11 +175,77 @@ def main():
         r = client.delete("/api/plan/saved?date=2026-08-14")
         check("cleanup sentinel date", r.get_json().get("ok"))
 
+        # SQL mirror (in-memory): same JSON, no reshape. Live FMS_DB is not used.
+        store = {}
+        orig_ready = sa._db_ready
+        orig_get = sa._saved_plan_sql_get
+        orig_put = sa._saved_plan_sql_put
+        orig_del = sa._saved_plan_sql_delete
+        orig_list = sa._saved_plan_sql_list
+        sa._SAVED_PLANS_SQL = True
+        sa._db_ready = lambda: True
+        sa._saved_plan_sql_get = lambda d: json.loads(store[d]) if d in store else None
+        sa._saved_plan_sql_put = lambda d, plan: store.__setitem__(d, json.dumps(plan))
+        sa._saved_plan_sql_delete = lambda d: store.pop(d, None)
+        sa._saved_plan_sql_list = lambda: list(store.keys())
+        try:
+            body_sql = {
+                "date": "2026-08-15",
+                "paths": {
+                    "RIM|TF>POS 12": {
+                        "key": "TF>POS 12", "dt": 12, "contractor": "RIM",
+                    }
+                },
+                "rain_mm": 0,
+                "hours": 12,
+                "meta": {},
+            }
+            r = client.post("/api/plan/saved", json=body_sql)
+            j = r.get_json()
+            check("POST stores disk+sql", j.get("storedIn") == ["disk", "sql"])
+            check("SQL blob keeps dt",
+                  json.loads(store["2026-08-15"])["paths"]["RIM|TF>POS 12"]["dt"] == 12)
+            r = client.get("/api/plan/saved?date=2026-08-15")
+            j = r.get_json()
+            check("GET uses disk when timestamps equal",
+                  j.get("exists") is True and j.get("servedFrom") != "sql")
+            os.remove(os.path.join(tmp, "2026-08-15.json"))
+            r = client.get("/api/plan/saved?date=2026-08-15")
+            j = r.get_json()
+            check("GET sql when disk empty",
+                  j.get("exists") is True and j.get("servedFrom") == "sql")
+            check("GET sql paths unchanged",
+                  j["plan"]["paths"]["RIM|TF>POS 12"]["dt"] == 12)
+            check("GET sql caches disk",
+                  os.path.isfile(os.path.join(tmp, "2026-08-15.json")))
+            stale = json.loads(store["2026-08-15"])
+            stale["saved_at"] = "2020-01-01T00:00:00Z"
+            stale["paths"]["RIM|TF>POS 12"]["dt"] = 1
+            with open(os.path.join(tmp, "2026-08-15.json"), "w", encoding="utf-8") as f:
+                json.dump(stale, f)
+            r = client.get("/api/plan/saved?date=2026-08-15")
+            j = r.get_json()
+            check("GET sql when disk is older",
+                  j.get("servedFrom") == "sql"
+                  and j["plan"]["paths"]["RIM|TF>POS 12"]["dt"] == 12)
+            r = client.get("/api/plan/saved/list")
+            check("list includes sql date", "2026-08-15" in (r.get_json().get("dates") or []))
+            r = client.delete("/api/plan/saved?date=2026-08-15")
+            check("DELETE removes sql row", "2026-08-15" not in store)
+        finally:
+            sa._db_ready = orig_ready
+            sa._saved_plan_sql_get = orig_get
+            sa._saved_plan_sql_put = orig_put
+            sa._saved_plan_sql_delete = orig_del
+            sa._saved_plan_sql_list = orig_list
+            sa._SAVED_PLANS_SQL = False
+
         # path helper
         check("path helper ok", sa._saved_plan_path("2026-01-01").endswith("2026-01-01.json"))
         check("path helper rejects junk", sa._saved_plan_path("../x") is None)
     finally:
         sa._SAVED_PLANS_DIR = old
+        sa._SAVED_PLANS_SQL = old_sql
         shutil.rmtree(tmp, ignore_errors=True)
 
     print("all plan-saved gates pass")
