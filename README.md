@@ -3,6 +3,9 @@
 > **New agent or new contributor?** Start with
 > [reports/HANDOVER.md](reports/HANDOVER.md) — full project handover:
 > setup, database, file tree, engine internals, gates, known traps.
+>
+> **Another PC / local install?** Start with [LOCAL_SETUP.md](LOCAL_SETUP.md).
+> Clone from GitHub, `python serve.py`, open `http://127.0.0.1:5055/simulator`.
 
 Predicts haul-truck productivity for mine plans at the WBN nickel operation, Halmahera.
 
@@ -176,18 +179,19 @@ curl https://wbn-fms-simulator.ngrok-free.app/health
 
 ## Git deployment
 
+**Run it on another PC yourself:** [LOCAL_SETUP.md](LOCAL_SETUP.md).
+
+Both remotes carry the same `main`. Clone either:
+
 ```bash
-cd /Users/rdinkelmann/simulator-standalone
-git pull --ff-only origin main
-git status
-git add serve.py simulator_api.py templates fixtures README.md requirements.txt
-git commit -m "Describe the simulator change"
-git push origin main
-launchctl kickstart -k gui/$(id -u)/com.wbn.simulator
+git clone https://github.com/Lucky0000123/wbn-fms-simulator.git
+# or
+git clone https://github.com/rdinkelmann/wbn-fms-simulator.git
 ```
 
-Only commit the files changed for the simulator task. The launch agents and ngrok credentials remain
-local to the Mac and are not stored in Git.
+The old Rudolf-Mac-only pull (`/Users/rdinkelmann/simulator-standalone` + launchd + ngrok) is a different machine. Do not treat that as the local-install path.
+
+Only commit the files changed for the simulator task. Credentials, `.env`, and `data/saved_plans/` stay off git.
 
 ## Files
 
