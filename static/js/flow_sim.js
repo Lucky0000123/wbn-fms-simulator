@@ -345,123 +345,67 @@ function updateFlowSimulator(){
   const tint=Math.max(0,Math.min(1,1-_flowSimRatio));
   s.routes.forEach(r=>buildFlowMotion(r,s.inputs,Math.max(s.liveCongestion||0,tint*0.85)));
   const shiftTrips=_flowMode==='plan'?s.achievedTrips:s.dbTrips,completed=shiftTrips*s.hour/FLOW_SHIFT_HOURS;
-  const moving=[];s.routes.forEach((r,i)=>{for(let j=0;j<r.particles;j++){const id=i+'-'+j,el=flowQ('flow-p-'+id),depart=r.departures[j]||0;if(!el)continue;if(s.hour<depart){el.setAttribute('visibility','hidden');continue;}const active=Math.max(0,Math.min(FLOW_SHIFT_HOURS,s.hour-depart)),cycleTime=(r.startTimes[j]+(active?r.achievedTr*active/FLOW_SHIFT_HOURS:0))%1,phase=flowMotionPhase(r,cycleTime),pt=flowPointAt(r,phase);el.setAttribute('visibility','visible');moving.push({id,el,x:pt.x,y:pt.y,minX:r.corrX1!=null?r.corrX1:r.sourceX,maxX:r.corrX2!=null?r.corrX2:r.destX,weight:r.particleWeight,lat:pt.lat,lng:pt.lng,km:pt.km,road:pt.road,roadKm:pt.roadKm,spur:!!pt.spur});}});
+  // Element handles cached on the route (1,700 getElementById per frame
+  // was ~2 ms); visibility written only on change.
+  const setVis=(el,v)=>{if(el._vis!==v){el.setAttribute('visibility',v);el._vis=v;}};
+  const moving=[];s.routes.forEach((r,i)=>{const els=r._els||(r._els=[]);for(let j=0;j<r.particles;j++){const id=i+'-'+j,el=els[j]||(els[j]=flowQ('flow-p-'+id)),depart=r.departures[j]||0;if(!el)continue;if(s.hour<depart){setVis(el,'hidden');continue;}const active=Math.max(0,Math.min(FLOW_SHIFT_HOURS,s.hour-depart)),cycleTime=(r.startTimes[j]+(active?r.achievedTr*active/FLOW_SHIFT_HOURS:0))%1,phase=flowMotionPhase(r,cycleTime),pt=flowPointAt(r,phase);setVis(el,'visible');moving.push({id,el,x:pt.x,y:pt.y,minX:r.corrX1!=null?r.corrX1:r.sourceX,maxX:r.corrX2!=null?r.corrX2:r.destX,weight:r.particleWeight,lat:pt.lat,lng:pt.lng,km:pt.km,road:pt.road,roadKm:pt.roadKm,spur:!!pt.spur});}});
   // Non-WBN white trucks join the SAME convoy as WBN (one physical lane → nobody overtakes). Hidden off.
   if(s.otherRoutes)s.otherRoutes.forEach((r,i)=>{for(let j=0;j<r.particles;j++){const el=flowQ('flow-op-'+i+'-'+j);if(!el)continue;if(!_otherInModel){el.setAttribute('visibility','hidden');continue;}const cycleTime=(r.startTimes[j]+r.achievedTr*s.hour/FLOW_SHIFT_HOURS)%1,pt=flowPointAt(r,flowMotionPhase(r,cycleTime));el.setAttribute('visibility','visible');moving.push({id:'o'+i+'-'+j,el,x:pt.x,y:pt.y,minX:r.sourceX,maxX:r.destX,weight:1});}});
-  // Persistent one-lane convoy order. Existing members never get re-sorted, so a follower cannot
-  // exchange identity/order with its leader. New arrivals merge by physical position; if there is
-  // no safe room at their endpoint they remain hidden in that endpoint's release reservoir.
-  const states=s.vehicleStates||(s.vehicleStates={}),orders=s.laneOrders||(s.laneOrders={loaded:[],empty:[]}),byId=new Map(moving.map(p=>[p.id,p])),laneOf=p=>Math.abs(p.y-180)<.8?'loaded':Math.abs(p.y-210)<.8?'empty':null;
-  moving.forEach(p=>{const st=states[p.id]||(states[p.id]={lane:null,lastX:p.x,drawnX:NaN}),lane=laneOf(p);if(st.lane!==lane){st.lane=lane;st.lastX=p.x;st.drawnX=NaN;}});
-  // One physical lane means one convoy order across ALL routes. A leader constrains a follower only
-  // while their route intervals overlap, preventing overtaking without pulling a TF truck out of the
-  // TF–KR leg merely because a KR-origin truck has already left that shared interval.
-  // ONE-LANE FOLLOW RULE (rewritten 2026-09-03; owner: "the movement of the
-  // dots, KR to TOFU on the empty lane, doesn't look like it's working").
+  // ── ONE-LANE FOLLOW RULE ──────────────────────────────────────────────
+  // (Rewritten 2026-09-03. Owner: "the movement of the dots, especially
+  // going back to TOFU, is not real, it's not calculated.")
   //
-  // The previous rule kept a persistent convoy ORDER (entry order, never
-  // re-sorted) and held each truck behind every "leader" earlier in that
-  // list whose route span overlapped, using its own last drawn x as a
-  // floor. List order is not road order: a TF>HUAFEI truck that entered
-  // the empty lane at HUAFEI sat in the list behind a KR>POS 12 truck that
-  // entered at POS 12 and was pinned 2 px behind it for the rest of the
-  // shift. Measured on the Nov plan after 4 sim hours: the empty lane
-  // KR→POS 12 was one rigid 2.4 px train of 30 trucks from five routes, TF
-  // trucks whose own motion put them 200-360 px further west were drawn
-  // at KR, and nothing crossed KR toward TF. And the lastX floor meant a
-  // truck slowed once could never re-open its gap.
+  // Every truck has a FREE position from its own motion model: GPS
+  // segment speeds, dump/load dwell, and the residual wait that makes the
+  // measured trips/DT come out. That is the calculated part. The road is
+  // one lane each way with no overtaking, so the only thing this pass may
+  // do is HOLD a truck behind a slower one. It may never advance a truck
+  // past its free position, never reverse it, and never let it pass.
   //
-  // Invariant now, per lane, per frame, in road order (furthest along in
-  // the direction of travel first):
-  //   drawn(i) = clamp( free(i),
-  //                     lo = drawn_prev(i)              never backwards
-  //                     hi = min(drawn_prev(i) + 3,     never a leap
-  //                              drawn(i-1) - gap) )    never overtake
-  // with lo winning when the walls cross (hold position). "Never
-  // overtake" then holds by construction: drawn(i) <= drawn(i-1) - gap
-  // unless lo forbade it, and lo = drawn_prev(i) < drawn_prev(i-1) - gap
-  // <= drawn(i-1) - gap by the same invariant one frame earlier. A
-  // newcomer (no drawn_prev on this lane) has no lo/hi of its own and
-  // simply queues behind whatever is ahead. Trucks within one node radius
-  // of their own endpoint are in the yard: neither held nor leaders.
+  // Per lane, in road order (furthest along in the direction of travel
+  // first):   drawn = min_dir( free,  drawn_prev + step,  drawn_ahead - gap )
+  //           drawn = max_dir( drawn, drawn_prev )
+  // gap  = 1.2 px (~85 m at 72 m/px). The Nov plan has ~250 loaded TF>POS
+  //        12 trucks on 569 px of road at once (701 DT x 2.7 h / 7.7 h
+  //        cycle): 2.3 px each. A larger gap cannot fit the plan on the
+  //        road and holds every truck behind its own motion (measured at
+  //        2.4 px: all routes 150-560 px back).
+  // step = 3x the fastest free speed, so a truck released from a queue
+  //        closes on its motion visibly but never teleports.
+  // Yard: a truck is off the lane (neither held nor a leader) while its
+  //        free motion sits at its entry (loading/waiting) or it is drawn
+  //        within one node radius of its exit (turning in).
+  // Road order comes from last DRAWN x, so a truck held behind a slower
+  // one cannot be re-sorted past it when its free x moves ahead.
+  const states=s.vehicleStates||(s.vehicleStates={}),laneOf=p=>Math.abs(p.y-180)<.8?'loaded':Math.abs(p.y-210)<.8?'empty':null;
+  moving.forEach(p=>{const st=states[p.id]||(states[p.id]={lane:null,drawnX:NaN}),lane=laneOf(p);if(st.lane!==lane){st.lane=lane;st.drawnX=NaN;}});
   ['loaded','empty'].forEach(lane=>{
-    const current=moving.filter(p=>laneOf(p)===lane);
-    const fwd=lane==='loaded'?1:-1;              // loaded runs +x (TF→FENI), empty −x
-    // step = max catch-up per frame once released from a queue. Free-motion
-    // speeds on this stick reach ~13 px/frame on the empty leg at 1x; a 3
-    // px cap left released trucks visibly lagging their own motion for
-    // seconds (the KR→TF "not moving" look). 2x the fastest free speed
-    // closes a re-opened gap quickly without reading as a teleport, and it
-    // scales with the playback rate so 4x replay does not re-create the lag.
-    // step = max catch-up per frame once released from a queue: 3x the
-    // corridor's fastest free speed at 1x (~13 px/frame on the empty leg),
-    // scaled with playback so a 4x replay does not re-create the lag a
-    // fixed cap gave (measured: released trucks trailed their own motion
-    // for seconds at 3 px/frame, which is what "not moving" looked like).
-    const gap=2.4, step=Math.max(8,13*flowPlaybackRate());
+    const fwd=lane==='loaded'?1:-1, gap=1.2, step=Math.max(8,13*flowPlaybackRate());
     const prevOf=p=>{const st=states[p.id];return (st&&st.lane===lane&&Number.isFinite(st.drawnX))?st.drawnX:null;};
-    // "In the yard" = DRAWN within one node radius of this lane's EXIT end
-    // (loaded exits at maxX, empty at minX). Judged on the free position it
-    // released trucks whose motion had "arrived" while they were still
-    // drawn 120 px back in a queue - they then drove through everything
-    // ahead (the 400 gap violations / 50 overtakes per 300 frames). The
-    // entry end is not a yard for this rule: a truck emerging there must
-    // still queue behind passing traffic (the reservoir hides it if not).
-    // Two yard tests: DRAWN near the exit end (the truck is turning in) OR
-    // free motion already AT the exit end (parked in the yard's dwell /
-    // residual-wait, drawn position irrelevant). The second case was the
-    // KR→TF empty-lane blocker: KR>POS 12 trucks sit ~30% of their cycle
-    // parked at KR (free x = minX exactly); judged only by drawn x they
-    // counted as lane traffic and pinned every TF truck behind KR.
-    const atOwnEnd=p=>{const k=prevOf(p)??p.x;const exitX=fwd>0?p.maxX:p.minX;return Math.abs(k-exitX)<6;};
-    // Road order by last DRAWN position (free order would swap a held truck
-    // with the slower one ahead of it).
-    // A newcomer (no drawn position on this lane yet) is sorted by its free
-    // x, which after a lane change is its ENTRY point - the yard it just
-    // left - so it correctly queues behind the through traffic already
-    // past that point. (Sorting it by a later free x would drop it into
-    // the middle of a queue and pin the truck behind it forever: measured
-    // as one TF>POS 12 truck stuck 120 px behind its free x behind two KR
-    // trucks it should have been ahead of.)
+    const inYard=p=>{const entryX=fwd>0?p.minX:p.maxX,exitX=fwd>0?p.maxX:p.minX;if(Math.abs(p.x-entryX)<.5)return true;const k=prevOf(p)??p.x;return Math.abs(k-exitX)<6;};
+    const current=moving.filter(p=>laneOf(p)===lane);
     current.sort((a,b)=>{const ka=prevOf(a)??a.x,kb=prevOf(b)??b.x;return fwd*(kb-ka);});
     let leadX=null;
     current.forEach(p=>{
       const prev=prevOf(p);
-      if(atOwnEnd(p)){
-        if(prev!=null&&fwd*(p.x-prev)>step)p.x=prev+fwd*step;
-        return;
-      }
-      // Ceiling: own pace (<= step/frame from last drawn x) AND the gap to
-      // the truck ahead. Floor: last drawn x. When the ceiling is below
-      // the floor the truck ahead has moved back into this truck's space;
-      // the gap is the physical constraint, so the truck follows the
-      // ceiling down - but at most one step, so a queue compresses one
-      // truck-length per frame from the front and never snaps.
-      // Ceiling = min(own pace, gap to the truck ahead). Floor = last drawn
-      // x: a truck never rolls backwards. When the ceiling is under the
-      // floor the truck ahead has closed into this truck's gap; this truck
-      // HOLDS (it cannot reverse) and the gap is temporarily short. The
-      // truck ahead was itself floored one step earlier, so it cannot pass
-      // through - the gap re-opens as soon as it moves. Any compressing
-      // variant (backing the follower up 2-3 px/frame) reads as the whole
-      // queue reversing, which was exactly the "not working" complaint.
+      if(inYard(p)){if(prev!=null&&fwd*(p.x-prev)>step)p.x=prev+fwd*step;return;}
       let hi=prev!=null?prev+fwd*step:p.x;
       if(leadX!=null){const wall=leadX-fwd*gap;if(fwd*(wall-hi)<0)hi=wall;}
       if(prev!=null&&fwd*(hi-prev)<0)hi=prev;
       if(fwd*(p.x-hi)>0)p.x=hi;
       if(prev!=null&&fwd*(p.x-prev)<0)p.x=prev;
-      if(p.x<p.minX-.01||p.x>p.maxX+.01){p.x=fwd>0?p.minX:p.maxX;p.el.setAttribute('visibility','hidden');return;}
-      // Leaves the lane as a leader once it is inside one node radius of
-      // its own exit: it is turning into the yard, and through traffic
-      // behind it should flow past the junction rather than queue on a
-      // truck that is no longer on the road. (KR>POS 12 trucks parked 2 px
-      // short of KR were pinning the whole TF-bound empty lane at KR.)
+      if(p.x<p.minX-.01||p.x>p.maxX+.01){p.x=fwd>0?p.minX:p.maxX;setVis(p.el,'hidden');return;}
       const exitX=fwd>0?p.maxX:p.minX;
       if(Math.abs(p.x-exitX)>=6)leadX=p.x;
     });
-    current.forEach(p=>{const st=states[p.id];if(st){st.lastX=p.x;st.drawnX=p.el.getAttribute('visibility')==='hidden'?NaN:p.x;}});
+    current.forEach(p=>{const st=states[p.id];if(st)st.drawnX=p.el._vis==='hidden'?NaN:p.x;});
   });
-  moving.forEach(p=>{p.el.setAttribute('transform',`translate(${p.x.toFixed(1)} ${p.y.toFixed(1)})`);
+  moving.forEach(p=>{
+    // Write the transform only when it changes: with 1,300 visible trucks
+    // the DOM attribute set is the largest per-frame cost, and ~40% of
+    // them are parked in a yard or held in a queue on any given frame.
+    const tr=`translate(${p.x.toFixed(1)} ${p.y.toFixed(1)})`;
+    if(p.el._tr!==tr){p.el.setAttribute('transform',tr);p.el._tr=tr;}
     // Highlight a truck while it's crossing between the loaded and empty lanes (the dump/load turnaround)
     // so the state change is clearly visible instead of an instant lane-swap.
     const cross=!p.spur&&Math.abs(p.y-180)>=.8&&Math.abs(p.y-210)>=.8;
@@ -477,7 +421,7 @@ function updateFlowSimulator(){
       p.el._k=k;
     }
   });
-  const visNow=moving.filter(p=>p.el.getAttribute('visibility')!=='hidden');
+  const visNow=moving.filter(p=>p.el._vis!=='hidden');
   const loadedNow=visNow.filter(p=>Math.abs(p.y-180)<.8).length,emptyNow=visNow.filter(p=>Math.abs(p.y-210)<.8).length,crossoverNow=visNow.filter(p=>!p.spur&&Math.abs(p.y-180)>=.8&&Math.abs(p.y-210)>=.8).length;
   const onRoadEl=flowQ('flow-onroad');
   if(onRoadEl){
@@ -516,7 +460,7 @@ function updateFlowSimulator(){
   }
   const ranges={1:[67.8,39],2:[39,27],3:[27,17],4:[17,0]},activeRanges=[..._gSelSec].map(id=>ranges[+id]).filter(Boolean),kmAt=x=>s.corridorKm-(x-s.roadLeft)/(s.roadRight-s.roadLeft)*s.corridorKm,densities=activeRanges.map(z=>{const weight=moving.reduce((n,p)=>{if(p.spur)return n;const km=Number.isFinite(p.km)?p.km:kmAt(p.x),onLane=Math.abs(p.y-180)<.8||Math.abs(p.y-210)<.8;return n+(onLane&&km<=z[0]&&km>=z[1]?p.weight:0);},0);return weight/Math.max(.1,z[0]-z[1]);}),density=Math.max(0,...densities),pressure=Math.max(0,Math.min(1,(density-2)/4));s.liveCongestion=(s.liveCongestion||0)+.08*(pressure-(s.liveCongestion||0));s.liveDensity=density;
   // Project visible particles onto the GPS polyline map (chainage → lat/lng, or spur coords).
-  flowMapSync(moving.filter(p=>p.el.getAttribute('visibility')!=='hidden').map(p=>{
+  flowMapSync(moving.filter(p=>p.el._vis!=='hidden').map(p=>{
     const c=p.el._c||p.el.querySelector('circle:not(.fp-halo)');
     return {id:p.id,km:p.km,road:p.road,roadKm:p.roadKm,lat:p.lat,lng:p.lng,loaded:Math.abs(p.y-180)<.8,col:(c&&c.getAttribute('fill'))||'#38bdf8'};
   }));
@@ -742,7 +686,8 @@ function buildFlowMotion(r,p,vc){
   const total=segments.reduce((s,x)=>s+x.hours,0)||1;let time=0,g=0,travelledLoaded=0,travelledEmpty=0;r.motion=[{t:0,g:0}];
   segments.forEach(x=>{time+=x.hours/total;if(x.cross==='dump')g=gDump;else if(x.cross==='load')g=1;else if(x.cross==='wait')g=1;else if(x.loaded){travelledLoaded+=x.km;g=gLoaded*travelledLoaded/dist;}else{travelledEmpty+=x.km;g=gDump+(gEmpty-gDump)*travelledEmpty/dist;}r.motion.push({t:time,g});});
   r.destTimeFraction=segments.filter(x=>x.loaded).reduce((s,x)=>s+x.hours,0)/total;
-  r.startTimes=r.startTimes.map((_,j)=>p.start==='destination'?r.destTimeFraction:p.start==='split'&&j%2?r.destTimeFraction:0);
+  // Plan host keeps its per-truck cycle phases (set once at render).
+  if(_flowHost!=='plan')r.startTimes=r.startTimes.map((_,j)=>p.start==='destination'?r.destTimeFraction:p.start==='split'&&j%2?r.destTimeFraction:0);
   return total;
 }
 // ── Official road geometry — the ONE capacity basis ─────────────────────────
@@ -1228,7 +1173,28 @@ function renderFlowSimulator(P,colours){
   // One global release sequence prevents simultaneous source pulses. Paths are round-robin, but each
   // element is released at the source belonging to its own path. Weighted elements are spread over
   // the full 12-hour shift and never emitted as a batch.
-  let releaseOrder=[],maxParticles=Math.max(...routes.map(r=>r.particles));for(let j=0;j<maxParticles;j++)routes.forEach(r=>{if(j<r.particles)releaseOrder.push({r,j});});let releaseSeconds=0;const shiftStep=FLOW_SHIFT_HOURS*3600/releaseOrder.length;releaseOrder.forEach(x=>{x.r.departures[x.j]=releaseSeconds/3600;releaseSeconds+=Math.max(shiftStep,Math.max(fp.headway,fp.stagger*60)*x.r.particleWeight);});
+  let releaseOrder=[],maxParticles=Math.max(...routes.map(r=>r.particles));for(let j=0;j<maxParticles;j++)routes.forEach(r=>{if(j<r.particles)releaseOrder.push({r,j});});
+  if(_flowHost==='plan'){
+    // PLAN HOST: THE FLEET IS ALREADY AT WORK AT 07:00. The Capability
+    // release below drips trucks out of the pit one at a time at a 90 s
+    // headway; with 1,700 planned DT the last one left at hour 42 of a
+    // 12-hour shift, so at 18:00 only 176 loaded trucks were on the road
+    // and 14 empties between KR and TF - a trickle that read as a game,
+    // not the plan (owner, 2026-09-03). A shift does not start with 1,280
+    // parked trucks: the night shift hands over on the road. Each truck
+    // starts at a phase of ITS OWN cycle - stratified (n trucks at n even
+    // phases, shuffled) and seeded per route, so the picture is stable
+    // and the cycle is covered uniformly. Nothing here invents a trip.
+    routes.forEach(r=>{
+      let seed=0;for(const ch of r.key)seed=(seed*31+ch.charCodeAt(0))>>>0;
+      const rnd=()=>{seed=(seed*1664525+1013904223)>>>0;return seed/4294967296;};
+      const n=r.particles,ph=Array.from({length:n},(_,k)=>(k+rnd())/n);
+      for(let k=n-1;k>0;k--){const m=Math.floor(rnd()*(k+1));[ph[k],ph[m]]=[ph[m],ph[k]];}
+      for(let j=0;j<n;j++){r.departures[j]=0;r.startTimes[j]=ph[j];}
+    });
+  }else{
+    let releaseSeconds=0;const shiftStep=FLOW_SHIFT_HOURS*3600/releaseOrder.length;releaseOrder.forEach(x=>{x.r.departures[x.j]=releaseSeconds/3600;releaseSeconds+=Math.max(shiftStep,Math.max(fp.headway,fp.stagger*60)*x.r.particleWeight);});
+  }
   const avgSection=_avg(scenarioP,p=>p.section),groups=c3LoadGroups(P),band=(groups.find(g=>avgSection>=g.min&&avgSection<=g.max)||groups.reduce((a,b)=>Math.abs(b.section-avgSection)<Math.abs(a.section-avgSection)?b:a,groups[0])).label,pipeCol=band==='Congested'?'#ef4444':'#22c55e',left=30,right=975,length=corridor.lengthKm||Math.max(...corridor.nodes.map(n=>n.km)),X=km=>left+(length-km)/length*(right-left);
   const usedSpurs=[];
   routes.forEach(r=>{
