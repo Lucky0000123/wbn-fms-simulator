@@ -1147,13 +1147,16 @@ function renderFlowSimulator(P,colours){
   const spurH=hangingSpurs.length?Math.max(...hangingSpurs.map(s=>flowSpurH(s))):0;
   const famOf=o=>o.startsWith('TF')||o.startsWith('TOFU')?0:o.startsWith('KR')?1:o.startsWith('BLB')?2:3;
   let baseH=300;
-  if(_otherCtx&&_otherCtx.paths&&_otherCtx.paths.length&&_flowHost!=='plan')baseH=Math.max(baseH,392);
+  if(_otherCtx&&_otherCtx.paths&&_otherCtx.paths.length&&_flowHost!=='plan')baseH=Math.max(baseH,330+14*Math.min(6,_otherCtx.paths.length)+8);
   // Canvas ends 44 px under the deepest branch bulb (bulb + two caption
   // lines), not a fixed 48 under the road: the old value left a dead band.
   const viewH=hangingSpurs.length?Math.max(baseH,Math.round(226+spurH+15+44)):baseH;
   // Legend is HTML above the SVG. Crop the unused ledger band on Plan so the
   // road fills the restored 560 px panel (crop + tiny CSS was the empty look).
-  const cropTop=_flowHost==='plan'?80:0;
+  // Both hosts crop the old in-SVG legend band (the legend is HTML above
+  // the SVG on both since 2026-08-25). Capability kept crop 0 and showed a
+  // ~140 px dead band between the caption and the node labels.
+  const cropTop=80;
   const capY=cropTop+16;
   svg.setAttribute('viewBox','0 '+cropTop+' 1000 '+(viewH-cropTop));
   let out='<title>07:00 to 19:00 finite-truck road simulation</title><desc>Every particle represents one average selected DT for a 12-hour shift. Loaded and empty trucks share one no-overtaking left-hand-traffic road. BLB (17.4 km) and HUAFEI (0.9 km) hang off the stick as branches at km 2.5 and km 5.5 (survey, J80).</desc>';
@@ -1382,8 +1385,8 @@ function renderFlowSimulator(P,colours){
     otherRoutes.forEach((r,i)=>{for(let j=0;j<r.particles;j++){out+=`<g id="${pid('flow-op-'+i+'-'+j)}" visibility="hidden"><title>Other road user (IWIP / Position) · ${escH(r.label)}</title><circle r="1.35" fill="#f8fafc" opacity="0.92" stroke="#334155" stroke-width="0.35"/></g>`;}});
     // IWIP / Position paths shown as a clean white legend BELOW the corridor (mirrors the WBN top legend),
     // each a white span with an origin dot + arrowhead toward the destination.
-    out+=`<text x="${left}" y="316" fill="#94a3b8" font-size="8.5">◻ IWIP / Position paths (white trucks share this road)</text>`;
-    _otherCtx.paths.slice(0,6).forEach((p,i)=>{const xo=X(p.oKm),xd=X(p.dKm),lo=Math.min(xo,xd),hi=Math.max(xo,xd),gy=328+i*10,rt=xd>=xo;
+    out+=`<text x="${left}" y="312" fill="#64748b" font-size="8" font-weight="600" letter-spacing=".04em">OTHER ROAD USERS · IWIP / Position (white trucks share this road)</text>`;
+    _otherCtx.paths.slice(0,6).forEach((p,i)=>{const xo=X(p.oKm),xd=X(p.dKm),lo=Math.min(xo,xd),hi=Math.max(xo,xd),gy=330+i*14,rt=xd>=xo;
       out+=`<line x1="${lo.toFixed(1)}" y1="${gy}" x2="${hi.toFixed(1)}" y2="${gy}" stroke="#e2e8f0" stroke-width="1.3" opacity=".7"/><circle cx="${xo.toFixed(1)}" cy="${gy}" r="2.1" fill="#e2e8f0" opacity=".85"/><path d="M ${(rt?xd-3:xd+3).toFixed(1)} ${(gy-3).toFixed(1)} L ${(rt?xd+2:xd-2).toFixed(1)} ${gy} L ${(rt?xd-3:xd+3).toFixed(1)} ${(gy+3).toFixed(1)} Z" fill="#e2e8f0" opacity=".85"/><text x="${((lo+hi)/2).toFixed(1)}" y="${(gy-2.5).toFixed(1)}" fill="#cbd5e1" font-size="7.5" text-anchor="middle">${escH(p.label)}</text>`;});
   }
   // Nodes remain at true proportional chainage; labels alternate sides to keep POS 10 / FENI 15 legible.

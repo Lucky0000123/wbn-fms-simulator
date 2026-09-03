@@ -302,7 +302,7 @@ tbody tr:hover{background:var(--panel-hover)}
 .flow-illus-tuning{margin:10px 0 0;padding:8px 10px;border:1px solid var(--line-light);border-radius:8px;background:rgba(100,116,139,.06)}
 .flow-illus-tuning>summary{cursor:pointer;font-size:11px;color:var(--txt-muted);font-weight:600}
 .flow-illus-tuning[open]>summary{color:var(--txt-secondary);margin-bottom:4px}
-#c3-flow-svg{height:480px;overflow:visible;display:block;width:100%}
+#c3-flow-svg{height:auto;max-height:520px;overflow:visible;display:block;width:100%}
 .c3-flow-map{height:320px;margin:0;border-radius:8px;overflow:hidden;background:#0b1220;border:1px solid var(--line)}
 .flow-visuals{display:flex;flex-direction:column;gap:10px;margin:8px 0 4px}
 .flow-stick{border-radius:8px;overflow:hidden;background:#0b1220;border:1px solid var(--line)}
