@@ -101,7 +101,15 @@ function flowJoins(){
 function flowLocate(name){
   const n=flowNormName(name);
   if(!n)return null;
-  const extra=[{label:'POS 14',km:26.1,aliases:['POS 14','POS14']},{label:'POS 15',km:32.1,aliases:['POS 15','POS15']},{label:'POS 16',km:31.7,aliases:['POS 16','POS16']}];
+  // BSE (the second HPAL plant, coastal cluster between Huafei and POS 14 —
+  // owner's map, 2026-09-01) sits at the coast end of the stick, where
+  // congestion/segments.py already puts it (NODE_KM 'BSE': 0.0). Without
+  // this alias every 4.2/4.2.1 BSE route was filtered out of the animation
+  // ("not mapped to the haul-road survey") and the stick showed a plan
+  // missing ~1/3 of its LIM traffic. No survey polyline exists for the
+  // BSE spur yet, so it rides the corridor to km 0; the tooltip says so.
+  const extra=[{label:'POS 14',km:26.1,aliases:['POS 14','POS14']},{label:'POS 15',km:32.1,aliases:['POS 15','POS15']},{label:'POS 16',km:31.7,aliases:['POS 16','POS16']},
+               {label:'BSE',km:0,aliases:['BSE','BSE-1','BSE1','BSE2','BSE5','BSE02','PT.BSE']}];
   const nodes=((((_D&&_D.corridor)||{}).nodes)||[]).concat(extra);
   const hit=nodes.find(nd=>(nd.aliases||[nd.label]).some(a=>flowNormName(a)===n));
   if(hit)return {kind:'corridor',label:hit.label,km:hit.km};
@@ -1412,6 +1420,15 @@ function renderFlowSimulator(P,colours){
   routes.forEach(r=>{
     [r.originLoc,r.destLoc].forEach(loc=>{
       if(!loc||loc.kind!=='corridor'||!Number.isFinite(loc.km))return;
+      if(loc.label==='BSE'){
+        // Shares km 0 with FENI 0 (no BSE survey polyline yet), so it would
+        // vanish into that node. Name it once, below the coast end, in the
+        // same amber as the other off-node stops.
+        if(seenExtra.has('BSE'))return;seenExtra.add('BSE');
+        const x=X(0);
+        out+=`<line x1="${x.toFixed(1)}" y1="226" x2="${x.toFixed(1)}" y2="250" stroke="#f59e0b" opacity=".55"/><text x="${(x+4).toFixed(1)}" y="262" fill="#f59e0b" font-size="10" font-weight="700" text-anchor="end">BSE</text><text x="${(x+4).toFixed(1)}" y="274" fill="#64748b" font-size="9" text-anchor="end">coast · at FENI 0</text>`;
+        return;
+      }
       if(corridor.nodes.some(n=>Math.abs(n.km-loc.km)<0.35))return;
       const k=loc.km.toFixed(1);if(seenExtra.has(k))return;seenExtra.add(k);
       const x=X(loc.km);
