@@ -52,6 +52,12 @@ app.register_blueprint(monthly_api.bp)
 import scenario_api
 app.register_blueprint(scenario_api.bp)
 
+# Grok voice assistant (/voice): read-only questions about the scenarios,
+# answered by tools that call this app's own endpoints. Auth = the owner's
+# Grok subscription login (~/.grok/auth.json), or XAI_API_KEY if set.
+import voice_api
+app.register_blueprint(voice_api.bp)
+
 # Phase 2 prediction service (/api/predict, /api/retrain, /api/model-info).
 # Optional: if scikit-learn or pandas isn't installed the simulator still runs,
 # it just has no ML predictions.

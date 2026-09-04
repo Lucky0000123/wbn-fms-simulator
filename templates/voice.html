@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WBN Haulage · Voice</title>
+<style>
+  :root{--bg:#0b1220;--panel:#111a2b;--line:#1f2b40;--txt:#e2e8f0;--muted:#94a3b8;--acc:#38bdf8;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.5 -apple-system,Inter,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:900px;margin:0 auto;padding:28px 20px 60px}
+  h1{font-size:20px;margin:0 0 4px;letter-spacing:.01em}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:22px}
+  .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+  .btn{border:1px solid var(--line);background:var(--panel);color:var(--txt);padding:10px 16px;border-radius:10px;font:600 14px inherit;cursor:pointer}
+  .btn:hover{border-color:var(--acc)}
+  .btn.primary{background:var(--acc);color:#04121f;border-color:var(--acc)}
+  .btn.live{background:var(--bad);color:#fff;border-color:var(--bad)}
+  .btn:disabled{opacity:.5;cursor:default}
+  select{background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font:14px inherit}
+  .status{font-size:12.5px;color:var(--muted);display:flex;gap:10px;align-items:center}
+  .dot{width:9px;height:9px;border-radius:50%;background:#475569}
+  .dot.on{background:var(--ok);box-shadow:0 0 0 3px rgba(34,197,94,.18)}
+  .dot.talk{background:var(--acc);box-shadow:0 0 0 3px rgba(56,189,248,.18)}
+  .meter{height:6px;width:120px;background:#1e293b;border-radius:3px;overflow:hidden}
+  .meter i{display:block;height:100%;width:0;background:var(--acc);transition:width .08s}
+  .log{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-height:280px;max-height:520px;overflow:auto}
+  .msg{margin:0 0 10px;padding:9px 12px;border-radius:10px;max-width:86%;white-space:pre-wrap}
+  .msg.user{background:#1e293b;margin-left:auto}
+  .msg.agent{background:#0f2a3a;border:1px solid #164e63}
+  .msg.tool{background:transparent;border:1px dashed var(--line);color:var(--muted);font-size:12px;font-family:ui-monospace,Menlo,monospace;max-width:100%}
+  .msg .who{display:block;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:3px}
+  .hint{color:var(--muted);font-size:12.5px;margin-top:14px}
+  .hint code{background:#1e293b;padding:1px 6px;border-radius:5px}
+  .err{color:var(--bad)}
+  input.text{flex:1;min-width:220px;background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:14px inherit}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>WBN Haulage · Voice assistant</h1>
+  <div class="sub">Ask about scenarios 4.1, 4.2 and 4.2.1: year results, months, route rates, weighbridges. Read-only. Powered by Grok voice via your subscription.</div>
+
+  <div class="row">
+    <button class="btn primary" id="btn-start">Start</button>
+    <button class="btn" id="btn-stop" disabled>Stop</button>
+    <select id="voice" title="Voice">
+      <option value="rigel" selected>rigel · precise, professional</option>
+      <option value="eve">eve · energetic</option>
+      <option value="atlas">atlas · confident</option>
+      <option value="celeste">celeste · reassuring</option>
+      <option value="lumen">lumen · warm, articulate</option>
+      <option value="leo">leo · authoritative</option>
+    </select>
+    <div class="status"><span class="dot" id="dot"></span><span id="st">idle</span><span class="meter"><i id="mic"></i></span></div>
+  </div>
+  <div class="row">
+    <input class="text" id="txt" placeholder="…or type a question and press Enter (works without a microphone)">
+    <button class="btn" id="btn-send" disabled>Send</button>
+  </div>
+
+  <div class="log" id="log"></div>
+  <div class="hint">Try: <code>what is the year result for 4.2.1</code> · <code>how many trucks are parked in November on 4.1</code> · <code>trips per truck for RIM on TF to POS 12 with 600 trucks</code> · <code>which weighbridges can KR to POS 12 use</code></div>
+</div>
+
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  const log=$('log'),st=$('st'),dot=$('dot'),mic=$('mic');
+  let ws=null,ac=null,micStream=null,proc=null,playHead=0,agentMsgEl=null,userMsgEl=null,sessionCfg=null;
+  const RATE=24000;
+
+  function say(cls,who,text){const d=document.createElement('div');d.className='msg '+cls;d.innerHTML='<span class="who">'+who+'</span>'+esc(text);log.appendChild(d);log.scrollTop=log.scrollHeight;return d;}
+  function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+  function status(t,mode){st.textContent=t;dot.className='dot'+(mode?' '+mode:'');}
+
+  // ── audio out: schedule PCM16 chunks back to back ──
+  function playPcm(b64){
+    if(!ac)return;
+    const bin=atob(b64),n=bin.length/2,f=new Float32Array(n);
+    for(let i=0;i<n;i++){const lo=bin.charCodeAt(2*i),hi=bin.charCodeAt(2*i+1);let v=(hi<<8)|lo;if(v>=0x8000)v-=0x10000;f[i]=v/32768;}
+    const buf=ac.createBuffer(1,n,RATE);buf.getChannelData(0).set(f);
+    const src=ac.createBufferSource();src.buffer=buf;src.connect(ac.destination);
+    const t=Math.max(ac.currentTime+0.02,playHead);src.start(t);playHead=t+buf.duration;
+  }
+  function stopPlayback(){playHead=0;}
+
+  // ── audio in: mic → PCM16 24k → base64 append ──
+  async function startMic(){
+    micStream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,sampleRate:RATE,echoCancellation:true,noiseSuppression:true}});
+    const src=ac.createMediaStreamSource(micStream);
+    proc=ac.createScriptProcessor(2048,1,1);
+    src.connect(proc);proc.connect(ac.destination);
+    proc.onaudioprocess=e=>{
+      if(!ws||ws.readyState!==1)return;
+      const inp=e.inputBuffer.getChannelData(0);
+      // resample if the context rate differs from 24k
+      const ratio=ac.sampleRate/RATE,outN=Math.floor(inp.length/ratio),pcm=new Int16Array(outN);
+      let peak=0;
+      for(let i=0;i<outN;i++){const v=inp[Math.floor(i*ratio)];const c=Math.max(-1,Math.min(1,v));pcm[i]=c<0?c*0x8000:c*0x7fff;if(Math.abs(c)>peak)peak=Math.abs(c);}
+      mic.style.width=Math.min(100,peak*180)+'%';
+      const bytes=new Uint8Array(pcm.buffer);let s='';for(let i=0;i<bytes.length;i+=8192)s+=String.fromCharCode.apply(null,bytes.subarray(i,i+8192));
+      ws.send(JSON.stringify({type:'input_audio_buffer.append',audio:btoa(s)}));
+    };
+  }
+  function stopMic(){if(proc){proc.disconnect();proc=null;}if(micStream){micStream.getTracks().forEach(t=>t.stop());micStream=null;}mic.style.width='0';}
+
+  // ── tools: run on the server, return the result to the model ──
+  async function runTool(call){
+    const el=say('tool','tool · '+call.name,JSON.stringify(call.arguments||{}));
+    let result;
+    try{
+      const r=await fetch('/api/voice/tool',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:call.name,arguments:call.arguments})});
+      const j=await r.json();result=j.ok?j.result:{error:j.error||'tool failed'};
+    }catch(e){result={error:String(e)};}
+    el.innerHTML='<span class="who">tool · '+esc(call.name)+'</span>'+esc(JSON.stringify(result));
+    ws.send(JSON.stringify({type:'conversation.item.create',item:{type:'function_call_output',call_id:call.call_id,output:JSON.stringify(result)}}));
+    ws.send(JSON.stringify({type:'response.create'}));
+  }
+
+  const pendingCalls={},ranCalls=new Set();
+  function onEvent(ev){
+    const t=ev.type;
+    if(t==='session.created'){ws.send(JSON.stringify({type:'session.update',session:sessionCfg}));return;}
+    if(t==='session.updated'){status('listening','on');return;}
+    if(t==='input_audio_buffer.speech_started'){status('you are speaking','talk');stopPlayback();return;}
+    if(t==='input_audio_buffer.speech_stopped'){status('thinking','on');return;}
+    if(t==='conversation.item.input_audio_transcription.completed'||t==='conversation.item.input_audio_transcription.delta'){
+      const txt=ev.transcript||ev.delta||'';if(!txt)return;
+      if(!userMsgEl)userMsgEl=say('user','you','');
+      if(t.endsWith('completed')){userMsgEl.innerHTML='<span class="who">you</span>'+esc(txt);userMsgEl=null;}
+      else userMsgEl.innerHTML='<span class="who">you</span>'+esc((userMsgEl.dataset.t=(userMsgEl.dataset.t||'')+txt));
+      return;
+    }
+    if(t==='response.created'){agentMsgEl=null;return;}
+    if(t==='response.output_audio_transcript.delta'||t==='response.audio_transcript.delta'){
+      if(!agentMsgEl)agentMsgEl=say('agent','grok','');
+      agentMsgEl.dataset.t=(agentMsgEl.dataset.t||'')+(ev.delta||'');
+      agentMsgEl.innerHTML='<span class="who">grok</span>'+esc(agentMsgEl.dataset.t);log.scrollTop=log.scrollHeight;return;
+    }
+    if(t==='response.output_audio.delta'||t==='response.audio.delta'){playPcm(ev.delta);status('speaking','talk');return;}
+    if(t==='response.function_call_arguments.delta'){const c=pendingCalls[ev.call_id]||(pendingCalls[ev.call_id]={name:ev.name,args:''});c.args+=ev.delta||'';if(ev.name)c.name=ev.name;return;}
+    if(t==='response.function_call_arguments.done'){
+      const c=pendingCalls[ev.call_id]||{};delete pendingCalls[ev.call_id];
+      if(ranCalls.has(ev.call_id))return;ranCalls.add(ev.call_id);
+      let args={};try{args=JSON.parse(ev.arguments||c.args||'{}');}catch(_){}
+      runTool({call_id:ev.call_id,name:ev.name||c.name,arguments:args});return;
+    }
+    if(t==='response.output_item.done'&&ev.item&&ev.item.type==='function_call'){
+      // Fallback only: xAI sends *_arguments.done first (measured), so this
+      // is a no-op unless a server skips that event. Once per call_id.
+      if(ranCalls.has(ev.item.call_id))return;ranCalls.add(ev.item.call_id);
+      let args={};try{args=JSON.parse(ev.item.arguments||'{}');}catch(_){}
+      runTool({call_id:ev.item.call_id,name:ev.item.name,arguments:args});return;
+    }
+    if(t==='response.done'){status('listening','on');return;}
+    if(t==='error'){say('tool','error',JSON.stringify(ev.error||ev));status('error','');return;}
+  }
+
+  async function start(){
+    $('btn-start').disabled=true;
+    try{
+      status('getting session…','');
+      const r=await fetch('/api/voice/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({voice:$('voice').value})});
+      const j=await r.json();
+      if(!j.ok)throw new Error(j.error||'session failed');
+      sessionCfg=j.session;
+      say('tool','session','auth: '+j.auth_source+' · voice: '+j.session.voice);
+      ac=new (window.AudioContext||window.webkitAudioContext)({sampleRate:RATE});
+      ws=new WebSocket(j.url,['xai-client-secret.'+j.client_secret]);
+      ws.onopen=()=>{status('connected','on');$('btn-stop').disabled=false;$('btn-send').disabled=false;};
+      ws.onmessage=m=>{try{onEvent(JSON.parse(m.data));}catch(e){}};
+      ws.onerror=()=>{status('socket error','');};
+      ws.onclose=e=>{status('closed'+(e.reason?' · '+e.reason:''),'');stopMic();$('btn-start').disabled=false;$('btn-stop').disabled=true;$('btn-send').disabled=true;};
+      try{await startMic();}catch(e){say('tool','mic','no microphone: '+e.message+' — you can still type.');}
+    }catch(e){status('failed','');say('tool','error',String(e.message||e));$('btn-start').disabled=false;}
+  }
+  function stop(){stopMic();if(ws){ws.close();ws=null;}if(ac){ac.close();ac=null;}status('idle','');}
+  function sendText(){
+    const v=$('txt').value.trim();if(!v||!ws||ws.readyState!==1)return;
+    $('txt').value='';say('user','you',v);
+    ws.send(JSON.stringify({type:'conversation.item.create',item:{type:'message',role:'user',content:[{type:'input_text',text:v}]}}));
+    ws.send(JSON.stringify({type:'response.create'}));
+  }
+  $('btn-start').onclick=start;$('btn-stop').onclick=stop;$('btn-send').onclick=sendText;
+  $('txt').addEventListener('keydown',e=>{if(e.key==='Enter')sendText();});
+})();
+</script>
+</body>
+</html>

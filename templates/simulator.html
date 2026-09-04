@@ -48,6 +48,7 @@
         <button class="sim-tab" id="tabbtn-cong" onclick="setSimTab('cong')">🔬 Congestion Model</button>
         <button class="sim-tab" id="tabbtn-plan" onclick="setSimTab('plan')">🧭 Plan</button>
         <a href="/monthly" class="sim-tab" style="text-decoration:none" title="Paste the yearly matrix — target, old predicted plan and optimized predicted plan for each month">📅 Monthly</a>
+        <a href="/voice" class="sim-tab" style="text-decoration:none;margin-left:auto" title="Ask the scenarios by voice — read-only, Grok voice via the owner's subscription">🎙 Voice</a>
       </div>
       <div id="tab-sim">
 
@@ -195,7 +196,8 @@
         <div class="flow-visuals" id="c3-flow-visuals">
           <div id="c3-flow-map" class="c3-flow-map" role="img" aria-label="GPS haul-road corridor with measured speeds and animated trucks"></div>
           <div class="flow-stick" id="c3-flow-stick">
-            <div class="flow-stick-label">Schematic chainage stick · ribbons + particles</div>
+            <div class="flow-stick-label">Chainage stick <span class="muted">· hover a route</span></div>
+            <div class="flow-stick-legend" id="c3-flow-legend"></div>
             <svg id="c3-flow-svg" viewBox="0 0 1000 390" role="img" aria-label="Weighted trace particles sharing one two-way left-hand-traffic road on the proportional TF to FENI corridor"></svg>
           </div>
         </div>
@@ -696,6 +698,14 @@
                   <h3>Holding plan on GPS corridor</h3>
                   <button class="btn" id="plan-c3-flow-play" onclick="flowSetHost('plan');flowRunOrPause()">▶ Run</button>
                   <button class="ms-btn" style="min-width:0" onclick="flowSetHost('plan');flowReset()">Reset</button>
+                  <div class="flow-play-rate" role="group" aria-label="Playback speed">
+                    <span class="muted">Speed</span>
+                    <button type="button" class="ms-btn" data-flow-rate="0.5" onclick="flowSetPlaybackRate(0.5)">0.5×</button>
+                    <button type="button" class="ms-btn on" data-flow-rate="1" onclick="flowSetPlaybackRate(1)">1×</button>
+                    <button type="button" class="ms-btn" data-flow-rate="2" onclick="flowSetPlaybackRate(2)">2×</button>
+                    <button type="button" class="ms-btn" data-flow-rate="4" onclick="flowSetPlaybackRate(4)">4×</button>
+                    <button type="button" class="ms-btn" data-flow-rate="8" onclick="flowSetPlaybackRate(8)">8×</button>
+                  </div>
                 </div>
                 <div class="plan-test-prod" id="plan-test-prod" aria-live="polite">
                   <div class="plan-test-prod-head">
@@ -745,11 +755,12 @@
                 <div class="flow-visuals" id="plan-c3-flow-visuals">
                   <div id="plan-c3-flow-map" class="c3-flow-map" role="img" aria-label="Plan illustration GPS corridor"></div>
                   <div class="flow-stick" id="plan-c3-flow-stick">
-                    <div class="flow-stick-label">Schematic chainage stick · TF–FENI + BLB/HUAFEI branches · ribbons + particles</div>
+                    <div class="flow-stick-label">Chainage stick <span class="muted">· hover a route</span></div>
+                    <div class="flow-stick-legend" id="plan-c3-flow-legend"></div>
                     <svg id="plan-c3-flow-svg" viewBox="0 0 1000 390" role="img" aria-label="Plan illustration stick"></svg>
                   </div>
                 </div>
-                <p class="muted plan-corridor-hint" id="plan-corridor-hint">After capacity check, press <b>▶ Run</b> to load road crowding by hour (this plan's trucks, IWIP optional). Illustration only — does not change tonnes.</p>
+                <p class="muted plan-corridor-hint" id="plan-corridor-hint">After capacity check, press <b>▶ Run</b> to load road crowding by hour (this plan's trucks, IWIP optional). Map and stick show the <b>same trucks</b> — one dot per planned DT, GPS speeds, survey polyline. Playback speed is the cartoon clock only — it does not change trips or tonnes.</p>
               </div>
             </section>
 
