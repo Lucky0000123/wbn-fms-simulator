@@ -1,50 +1,64 @@
 /* ============================================================================
-   WBN FMS Simulator — industrial dark theme
+   WBN FMS Simulator — industrial dispatch-board theme
    Visual layer only: no JS, IDs or class names depend on anything here except
    the CSS custom properties below, which JS-generated markup reads via var().
+
+   Direction: a haul-road dispatch console, not a generic dark-mode app —
+   deep graphite panels (no blue/purple cast), a caution-amber accent doing
+   the work a hazard light does on real haul equipment, and tabular-numeral
+   monospace on every measured figure so tonnages and DT counts read like
+   telemetry, not prose. No web fonts: this tool is demoed on-site without
+   internet, so the type stack is the OS's own UI/mono pairing, tuned with
+   explicit tracking and weight rather than an imported face.
    ========================================================================== */
 :root{
-  /* Base */
-  --bg:#0d1117;
-  --panel:#161b22;
-  --panel-hover:#1c2128;
-  --line:#30363d;
-  --line-light:#21262d;
+  /* Base — graphite, not GitHub-dark's blue-black */
+  --bg:#0b0e12;
+  --panel:#141920;
+  --panel-hover:#1a2129;
+  --line:#2b323b;
+  --line-light:#1c222a;
 
   /* Text */
-  --txt:#e6edf3;
-  --txt-secondary:#8b949e;
-  --txt-muted:#6e7681;
+  --txt:#eef1f5;
+  --txt-secondary:#96a1ac;
+  --txt-muted:#66707b;
 
-  /* Accent — industrial amber */
-  --accent:#f0883e;
-  --accent-hover:#ff9e4d;
-  --accent-dim:rgba(240,136,62,.15);
+  /* Accent — hazard-light amber */
+  --accent:#f5943d;
+  --accent-hover:#ffab5c;
+  --accent-dim:rgba(245,148,61,.16);
 
   /* Status */
-  --good:#3fb950;   --good-dim:rgba(63,185,80,.15);
-  --amber:#d29922;  --amber-dim:rgba(210,153,34,.15);
-  --halt:#f85149;   --halt-dim:rgba(248,81,73,.15);
+  --good:#3ecf8e;   --good-dim:rgba(62,207,142,.15);
+  --amber:#e0a53a;  --amber-dim:rgba(224,165,58,.15);
+  --halt:#f0574e;   --halt-dim:rgba(240,87,78,.15);
 
-  /* Interactive */
-  --highlight:#58a6ff;
-  --highlight-dim:rgba(88,166,255,.15);
+  /* Interactive — telemetry cyan-blue */
+  --highlight:#4fa6ff;
+  --highlight-dim:rgba(79,166,255,.15);
 
-  --shadow:0 4px 12px rgba(0,0,0,.4);
-  --shadow-heavy:0 8px 24px rgba(0,0,0,.5);
+  /* Layered shadows read as a considered light source, not a flat blur */
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 12px rgba(0,0,0,.35);
+  --shadow-heavy:0 2px 6px rgba(0,0,0,.35),0 12px 28px rgba(0,0,0,.5);
 
   /* Back-compat aliases — charts.js / flow_sim.js emit var(--muted) and
      var(--muted2) into generated SVG and table markup. Keep them mapped so a
-     palette rename can never blank out JS-rendered text. */
+     palette rename can never blank out JS-rendered text. Several plan_*.js
+     files also emit var(--bad,#e5534b) / var(--warn,#d29922) inline with a
+     literal fallback baked in from before this token existed; defining them
+     here overrides those stale literals everywhere without a JS change. */
   --muted:var(--txt-secondary);
   --muted2:var(--txt-muted);
+  --bad:var(--halt);
+  --warn:var(--amber);
 
   --font-ui:'Segoe UI',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
   --font-num:'SF Mono',SFMono-Regular,Monaco,Menlo,ui-monospace,monospace;
 }
 *{box-sizing:border-box}
 html,body{width:100%;max-width:100%}
-body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--font-ui);font-size:14px;-webkit-font-smoothing:antialiased}
+body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--font-ui);font-size:14px;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
 #content{width:100%;min-width:0}
 a{color:var(--highlight);text-decoration:none;transition:color .15s ease}
 a:hover{color:var(--accent)}
@@ -80,12 +94,12 @@ input[type=number]{font-family:var(--font-num)}
 input[type=checkbox]{appearance:none;-webkit-appearance:none;width:15px;height:15px;min-width:15px;padding:0;border:1px solid var(--line);border-radius:4px;background:var(--bg);cursor:pointer;position:relative;transition:all .15s ease}
 input[type=checkbox]:hover{border-color:var(--accent)}
 input[type=checkbox]:checked{background:var(--accent);border-color:var(--accent)}
-input[type=checkbox]:checked::after{content:'';position:absolute;left:4px;top:1px;width:4px;height:8px;border:solid #0d1117;border-width:0 2px 2px 0;transform:rotate(45deg)}
+input[type=checkbox]:checked::after{content:'';position:absolute;left:4px;top:1px;width:4px;height:8px;border:solid var(--bg);border-width:0 2px 2px 0;transform:rotate(45deg)}
 
 /* ── Buttons ────────────────────────────────────────────────────────────── */
-.btn{background:var(--accent);border:none;color:#fff;font-weight:600;font-size:14px;font-family:inherit;padding:8px 16px;border-radius:8px;cursor:pointer;transition:all .15s ease}
-.btn:hover{background:var(--accent-hover);transform:translateY(-1px)}
-.btn:active{transform:translateY(0)}
+.btn{background:var(--accent);border:none;color:#100b06;font-weight:700;font-size:14px;font-family:inherit;padding:8px 16px;border-radius:8px;cursor:pointer;letter-spacing:.01em;transition:all .15s ease}
+.btn:hover{background:var(--accent-hover);transform:translateY(-1px);box-shadow:0 4px 14px rgba(245,148,61,.3)}
+.btn:active{transform:translateY(0);box-shadow:none}
 .mode-btn{background:transparent;border:0;color:var(--txt-secondary);font-size:13px;font-weight:600;font-family:inherit;padding:7px 16px;cursor:pointer;transition:all .15s ease}
 .mode-btn:hover{color:var(--txt)}
 .mode-btn.on{background:var(--accent-dim);color:var(--accent)}
