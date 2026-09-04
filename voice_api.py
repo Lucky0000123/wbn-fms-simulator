@@ -64,8 +64,11 @@ _ALIASES = {"s7": "4.1", "s8": "4.2", "s9": "4.2.1", "s3": "3.0.1", "s4": "3.0.2
 # ── token ───────────────────────────────────────────────────────────────────
 
 def _read_auth_file():
-    with open(_AUTH_FILE, encoding="utf-8") as f:
-        d = json.load(f)
+    try:
+        with open(_AUTH_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return None
     # one entry: "https://auth.x.ai::<client_id>"
     for k, v in d.items():
         if isinstance(v, dict) and v.get("key"):
@@ -124,13 +127,18 @@ def xai_bearer():
             return _CACHE["access"], _CACHE["source"]
         entry = _read_auth_file()
         if not entry:
-            raise RuntimeError("no Grok login found in ~/.grok/auth.json "
-                               "(run `grok login`) and XAI_API_KEY is not set")
+            raise RuntimeError("Not signed in to Grok. Run `grok login` in a "
+                               "terminal (or set XAI_API_KEY), then press Start again.")
         tok = entry["key"]
         exp = _jwt_exp(tok)
         src = "grok-subscription"
         if exp - now <= 120 and entry.get("refresh_token"):
-            tok = _refresh(entry)
+            try:
+                tok = _refresh(entry)
+            except Exception as e:
+                raise RuntimeError("Grok login has expired and could not be "
+                                   "refreshed (%s). Run `grok login` again."
+                                   % str(e)[:80])
             exp = _jwt_exp(tok) or (now + 900)
             src = "grok-subscription (refreshed)"
         _CACHE.update(access=tok, exp=exp, source=src)
