@@ -3,78 +3,207 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>WBN Haulage · Voice</title>
+<title>Voice agent · WBN FMS</title>
+<link rel="stylesheet" href="/static/css/style.css">
 <style>
-  :root{--bg:#0b1220;--panel:#111a2b;--line:#1f2b40;--txt:#e2e8f0;--muted:#94a3b8;--acc:#38bdf8;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444}
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.5 -apple-system,Inter,Segoe UI,Roboto,sans-serif}
-  .wrap{max-width:900px;margin:0 auto;padding:28px 20px 60px}
-  h1{font-size:20px;margin:0 0 4px;letter-spacing:.01em}
-  .sub{color:var(--muted);font-size:13px;margin-bottom:22px}
-  .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
-  .btn{border:1px solid var(--line);background:var(--panel);color:var(--txt);padding:10px 16px;border-radius:10px;font:600 14px inherit;cursor:pointer}
-  .btn:hover{border-color:var(--acc)}
-  .btn.primary{background:var(--acc);color:#04121f;border-color:var(--acc)}
-  .btn.live{background:var(--bad);color:#fff;border-color:var(--bad)}
-  .btn:disabled{opacity:.5;cursor:default}
-  select{background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:9px 12px;font:14px inherit}
-  .status{font-size:12.5px;color:var(--muted);display:flex;gap:10px;align-items:center}
-  .dot{width:9px;height:9px;border-radius:50%;background:#475569}
-  .dot.on{background:var(--ok);box-shadow:0 0 0 3px rgba(34,197,94,.18)}
-  .dot.talk{background:var(--acc);box-shadow:0 0 0 3px rgba(56,189,248,.18)}
-  .meter{height:6px;width:120px;background:#1e293b;border-radius:3px;overflow:hidden}
-  .meter i{display:block;height:100%;width:0;background:var(--acc);transition:width .08s}
-  .log{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-height:280px;max-height:520px;overflow:auto}
-  .msg{margin:0 0 10px;padding:9px 12px;border-radius:10px;max-width:86%;white-space:pre-wrap}
-  .msg.user{background:#1e293b;margin-left:auto}
-  .msg.agent{background:#0f2a3a;border:1px solid #164e63}
-  .msg.tool{background:transparent;border:1px dashed var(--line);color:var(--muted);font-size:12px;font-family:ui-monospace,Menlo,monospace;max-width:100%}
-  .msg .who{display:block;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:3px}
-  .hint{color:var(--muted);font-size:12.5px;margin-top:14px}
-  .hint code{background:#1e293b;padding:1px 6px;border-radius:5px}
-  .err{color:var(--bad)}
-  input.text{flex:1;min-width:220px;background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:14px inherit}
+  /* ── page chrome: same tab bar as Monthly ─────────────────────────────── */
+  .vo-chrome{position:sticky;top:0;z-index:10;background:var(--bg);border-bottom:1px solid var(--line)}
+  .sim-tabs{display:flex;gap:4px;margin:0;padding:0 18px;border-bottom:1px solid var(--line);background:var(--bg)}
+  .sim-tabs a{text-decoration:none}
+  .vo-wrap{max-width:1120px;margin:0 auto;padding:22px 18px 48px;display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:18px}
+  @media(max-width:900px){.vo-wrap{grid-template-columns:1fr}}
+
+  /* ── conversation panel ───────────────────────────────────────────────── */
+  .vo-main{display:flex;flex-direction:column;min-height:calc(100vh - 140px)}
+  .vo-head{display:flex;align-items:center;gap:14px;margin-bottom:14px}
+  .vo-head h1{margin:0;font-size:19px;font-weight:700;letter-spacing:.01em}
+  .vo-head .sub{color:var(--txt-secondary);font-size:12.5px;margin-top:2px}
+  .vo-badge{margin-left:auto;display:inline-flex;align-items:center;gap:7px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--txt-secondary);border:1px solid var(--line);border-radius:999px;padding:5px 10px;background:var(--panel)}
+  .vo-badge i{width:8px;height:8px;border-radius:50%;background:var(--txt-muted);flex:none}
+  .vo-badge.on i{background:var(--good);box-shadow:0 0 0 3px var(--good-dim)}
+  .vo-badge.talk i{background:var(--highlight);box-shadow:0 0 0 3px var(--highlight-dim)}
+  .vo-badge.err i{background:var(--halt);box-shadow:0 0 0 3px var(--halt-dim)}
+
+  .vo-log{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;overflow:auto;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:12px;min-height:360px;max-height:62vh}
+  .vo-empty{margin:auto;text-align:center;color:var(--txt-secondary);max-width:460px}
+  .vo-empty b{display:block;color:var(--txt);font-size:15px;margin-bottom:6px}
+  .vo-empty p{margin:0;font-size:13px;line-height:1.55}
+  .vo-msg{max-width:78%;padding:11px 14px;border-radius:14px;font-size:14px;line-height:1.5;white-space:pre-wrap;position:relative;animation:vo-in .18s ease}
+  @keyframes vo-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  .vo-msg .who{display:block;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px;opacity:.75}
+  .vo-msg.user{align-self:flex-end;background:var(--panel-hover);border:1px solid var(--line);border-bottom-right-radius:4px}
+  .vo-msg.user .who{color:var(--txt-secondary)}
+  .vo-msg.agent{align-self:flex-start;background:linear-gradient(180deg,rgba(240,136,62,.10),rgba(240,136,62,.04));border:1px solid rgba(240,136,62,.35);border-bottom-left-radius:4px}
+  .vo-msg.agent .who{color:var(--accent)}
+  .vo-msg.tool{align-self:flex-start;max-width:100%;background:transparent;border:1px dashed var(--line);color:var(--txt-secondary);font-family:var(--font-num);font-size:11.5px;padding:8px 12px}
+  .vo-msg.tool .who{color:var(--txt-muted)}
+  .vo-msg.tool summary{cursor:pointer;list-style:none;color:var(--txt-secondary)}
+  .vo-msg.tool summary::-webkit-details-marker{display:none}
+  .vo-msg.tool pre{margin:8px 0 0;white-space:pre-wrap;word-break:break-word;color:var(--txt-muted);max-height:180px;overflow:auto}
+  .vo-msg.err{align-self:center;max-width:100%;background:var(--halt-dim);border:1px solid rgba(248,81,73,.4);color:var(--txt);font-size:13px}
+  .vo-msg.note{align-self:center;max-width:100%;background:transparent;color:var(--txt-muted);font-size:12px;padding:2px 8px}
+
+  /* ── composer ─────────────────────────────────────────────────────────── */
+  .vo-composer{margin-top:12px;display:flex;gap:10px;align-items:center}
+  .vo-composer input{flex:1;padding:12px 14px;border-radius:12px;font-size:14px}
+  .vo-composer input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim);outline:none}
+  .vo-send{padding:11px 16px;border-radius:12px;border:1px solid var(--line);background:var(--panel);color:var(--txt);font-weight:600;font-family:inherit;cursor:pointer}
+  .vo-send:hover{border-color:var(--accent);color:var(--accent)}
+  .vo-send:disabled{opacity:.45;cursor:default}
+
+  /* ── side panel: orb + controls ───────────────────────────────────────── */
+  .vo-side{display:flex;flex-direction:column;gap:14px}
+  .vo-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:var(--shadow)}
+  .vo-card h3{margin:0 0 10px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-secondary)}
+  .vo-orbwrap{display:flex;flex-direction:column;align-items:center;gap:14px;padding:8px 0 4px}
+  .vo-orb{width:132px;height:132px;border-radius:50%;position:relative;display:grid;place-items:center;cursor:pointer;border:none;background:radial-gradient(circle at 35% 30%,#1f2733,#0d1117 70%);box-shadow:inset 0 0 0 1px var(--line),0 10px 30px rgba(0,0,0,.45);transition:transform .15s ease}
+  .vo-orb:hover{transform:scale(1.03)}
+  .vo-orb .ring{position:absolute;inset:-6px;border-radius:50%;border:2px solid transparent;transition:border-color .2s ease}
+  .vo-orb svg{width:44px;height:44px;fill:none;stroke:var(--txt-secondary);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;transition:stroke .2s ease}
+  .vo-orb.on{background:radial-gradient(circle at 35% 30%,#3a2412,#1a120a 70%)}
+  .vo-orb.on .ring{border-color:var(--accent);animation:vo-pulse 1.8s ease-in-out infinite}
+  .vo-orb.on svg{stroke:var(--accent)}
+  .vo-orb.talk .ring{border-color:var(--highlight);animation:vo-pulse .9s ease-in-out infinite}
+  .vo-orb.talk svg{stroke:var(--highlight)}
+  .vo-orb.speak .ring{border-color:var(--good);animation:vo-pulse 1.1s ease-in-out infinite}
+  .vo-orb.speak svg{stroke:var(--good)}
+  @keyframes vo-pulse{0%,100%{transform:scale(1);opacity:.9}50%{transform:scale(1.08);opacity:.45}}
+  .vo-level{width:100%;height:5px;background:var(--line-light);border-radius:3px;overflow:hidden}
+  .vo-level i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent-hover));transition:width .07s}
+  .vo-state{font-size:12.5px;color:var(--txt-secondary);text-align:center;min-height:18px}
+  .vo-btns{display:flex;gap:8px;width:100%}
+  .vo-btn{flex:1;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--txt);font-weight:600;font-family:inherit;cursor:pointer;transition:all .15s ease}
+  .vo-btn.primary{background:var(--accent);border-color:var(--accent);color:#1a0f05}
+  .vo-btn.primary:hover{background:var(--accent-hover)}
+  .vo-btn:hover{border-color:var(--txt-secondary)}
+  .vo-btn:disabled{opacity:.4;cursor:default}
+  .vo-field{display:flex;flex-direction:column;gap:5px;margin-top:10px}
+  .vo-field label{font-size:11px;color:var(--txt-muted);letter-spacing:.04em;text-transform:uppercase}
+  .vo-field select{width:100%}
+  .vo-chips{display:flex;flex-direction:column;gap:6px}
+  .vo-chip{text-align:left;padding:8px 10px;border-radius:9px;border:1px solid var(--line-light);background:var(--bg);color:var(--txt-secondary);font-size:12.5px;font-family:inherit;cursor:pointer;line-height:1.35;transition:all .15s ease}
+  .vo-chip:hover{border-color:var(--accent);color:var(--txt);background:var(--accent-dim)}
+  .vo-chip:disabled{opacity:.45;cursor:default}
+  .vo-meta{font-size:11.5px;color:var(--txt-muted);line-height:1.5}
+  .vo-meta b{color:var(--txt-secondary);font-weight:600}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>WBN Haulage · Voice assistant</h1>
-  <div class="sub">Ask about scenarios 4.1, 4.2 and 4.2.1: year results, months, route rates, weighbridges. Read-only. Powered by Grok voice via your subscription.</div>
-
-  <div class="row">
-    <button class="btn primary" id="btn-start">Start</button>
-    <button class="btn" id="btn-stop" disabled>Stop</button>
-    <select id="voice" title="Voice">
-      <option value="rigel" selected>rigel · precise, professional</option>
-      <option value="eve">eve · energetic</option>
-      <option value="atlas">atlas · confident</option>
-      <option value="celeste">celeste · reassuring</option>
-      <option value="lumen">lumen · warm, articulate</option>
-      <option value="leo">leo · authoritative</option>
-    </select>
-    <div class="status"><span class="dot" id="dot"></span><span id="st">idle</span><span class="meter"><i id="mic"></i></span></div>
+<header class="vo-chrome">
+  <div class="sim-tabs" role="navigation" aria-label="App sections">
+    <a href="/simulator?tab=sim" class="sim-tab">Capability &amp; Scenario</a>
+    <a href="/simulator?tab=cong" class="sim-tab">🔬 Congestion Model</a>
+    <a href="/simulator?tab=plan" class="sim-tab">🧭 Plan</a>
+    <a href="/monthly" class="sim-tab">📅 Monthly</a>
+    <a href="/voice" class="sim-tab on" aria-current="page">🎙 Voice agent</a>
   </div>
-  <div class="row">
-    <input class="text" id="txt" placeholder="…or type a question and press Enter (works without a microphone)">
-    <button class="btn" id="btn-send" disabled>Send</button>
-  </div>
+</header>
 
-  <div class="log" id="log"></div>
-  <div class="hint">Try: <code>what is the year result for 4.2.1</code> · <code>how many trucks are parked in November on 4.1</code> · <code>trips per truck for RIM on TF to POS 12 with 600 trucks</code> · <code>which weighbridges can KR to POS 12 use</code></div>
+<div class="vo-wrap">
+  <section class="vo-main">
+    <div class="vo-head">
+      <div>
+        <h1>Voice agent</h1>
+        <div class="sub">Ask about scenarios 4.1, 4.2 and 4.2.1 — year results, months, route rates, weighbridges. Read-only; answers come from this app's own plan data.</div>
+      </div>
+      <span class="vo-badge" id="badge"><i></i><span id="st">idle</span></span>
+    </div>
+
+    <div class="vo-log" id="log">
+      <div class="vo-empty" id="empty">
+        <b>Press the orb to start talking</b>
+        <p>It listens continuously and answers out loud. Everything it says is looked up in the live plan first, so the figures match the Year sheet. You can also type below.</p>
+      </div>
+    </div>
+
+    <div class="vo-composer">
+      <input id="txt" placeholder="Type a question, or just talk…" autocomplete="off">
+      <button class="vo-send" id="btn-send" disabled>Send</button>
+    </div>
+  </section>
+
+  <aside class="vo-side">
+    <div class="vo-card">
+      <div class="vo-orbwrap">
+        <button class="vo-orb" id="orb" title="Start / stop">
+          <span class="ring"></span>
+          <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/><path d="M8 21h8"/></svg>
+        </button>
+        <div class="vo-level"><i id="mic"></i></div>
+        <div class="vo-state" id="state">Not connected</div>
+        <div class="vo-btns">
+          <button class="vo-btn primary" id="btn-start">Start</button>
+          <button class="vo-btn" id="btn-stop" disabled>Stop</button>
+        </div>
+      </div>
+      <div class="vo-field">
+        <label for="voice">Voice</label>
+        <select id="voice">
+          <option value="rigel" selected>Rigel · precise, professional</option>
+          <option value="atlas">Atlas · confident</option>
+          <option value="celeste">Celeste · reassuring</option>
+          <option value="lumen">Lumen · warm, articulate</option>
+          <option value="eve">Eve · energetic</option>
+          <option value="leo">Leo · authoritative</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="vo-card">
+      <h3>Try asking</h3>
+      <div class="vo-chips" id="chips">
+        <button class="vo-chip" disabled data-q="What is the year result for scenario 4.2.1?">What is the year result for scenario 4.2.1?</button>
+        <button class="vo-chip" disabled data-q="How many trucks are parked in scenario 4.1?">How many trucks are parked in 4.1?</button>
+        <button class="vo-chip" disabled data-q="Give me November on scenario 4.2.">Give me November on 4.2</button>
+        <button class="vo-chip" disabled data-q="Trips per truck for RIM on TF to POS 12 with 600 trucks.">Trips per truck, RIM, TF to POS 12, 600 trucks</button>
+        <button class="vo-chip" disabled data-q="Which weighbridges can KR to POS 12 use?">Which weighbridges can KR to POS 12 use?</button>
+        <button class="vo-chip" disabled data-q="What is the difference between 4.2 and 4.2.1?">What is the difference between 4.2 and 4.2.1?</button>
+      </div>
+    </div>
+
+    <div class="vo-card">
+      <h3>About</h3>
+      <div class="vo-meta" id="meta">
+        Grok voice (xAI Realtime) on the owner's subscription. Audio streams browser ↔ xAI directly; the login token never leaves the server. <b>Read-only</b>: it cannot change a plan.
+      </div>
+    </div>
+  </aside>
 </div>
 
 <script>
 (function(){
   const $=id=>document.getElementById(id);
-  const log=$('log'),st=$('st'),dot=$('dot'),mic=$('mic');
-  let ws=null,ac=null,micStream=null,proc=null,playHead=0,agentMsgEl=null,userMsgEl=null,sessionCfg=null;
+  const log=$('log'),st=$('st'),badge=$('badge'),mic=$('mic'),orb=$('orb'),stateEl=$('state'),empty=$('empty');
+  let ws=null,ac=null,micStream=null,proc=null,playHead=0,agentMsgEl=null,userMsgEl=null,sessionCfg=null,live=false;
   const RATE=24000;
+  const pendingCalls={},ranCalls=new Set();
 
-  function say(cls,who,text){const d=document.createElement('div');d.className='msg '+cls;d.innerHTML='<span class="who">'+who+'</span>'+esc(text);log.appendChild(d);log.scrollTop=log.scrollHeight;return d;}
   function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
-  function status(t,mode){st.textContent=t;dot.className='dot'+(mode?' '+mode:'');}
+  function say(cls,who,text){
+    if(empty)empty.remove();
+    const d=document.createElement('div');d.className='vo-msg '+cls;
+    d.innerHTML='<span class="who">'+esc(who)+'</span>'+esc(text);
+    log.appendChild(d);log.scrollTop=log.scrollHeight;return d;
+  }
+  function toolMsg(name,args){
+    if(empty)empty.remove();
+    const d=document.createElement('div');d.className='vo-msg tool';
+    d.innerHTML='<details><summary><span class="who">looked up · '+esc(name)+'</span>'+esc(JSON.stringify(args||{}))+'</summary><pre>…</pre></details>';
+    log.appendChild(d);log.scrollTop=log.scrollHeight;return d;
+  }
+  function status(t,mode){
+    st.textContent=t;badge.className='vo-badge'+(mode?' '+mode:'');
+    orb.className='vo-orb'+(live?(mode==='talk'?' talk':mode==='speak'?' speak':' on'):'');
+    stateEl.textContent=t.charAt(0).toUpperCase()+t.slice(1);
+  }
+  function setLive(on){
+    live=on;
+    $('btn-start').disabled=on;$('btn-stop').disabled=!on;$('btn-send').disabled=!on;
+    document.querySelectorAll('.vo-chip').forEach(b=>b.disabled=!on);
+    if(!on){orb.className='vo-orb';mic.style.width='0';}
+  }
 
-  // ── audio out: schedule PCM16 chunks back to back ──
+  // ── audio out ──
   function playPcm(b64){
     if(!ac)return;
     const bin=atob(b64),n=bin.length/2,f=new Float32Array(n);
@@ -85,7 +214,7 @@
   }
   function stopPlayback(){playHead=0;}
 
-  // ── audio in: mic → PCM16 24k → base64 append ──
+  // ── audio in ──
   async function startMic(){
     micStream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,sampleRate:RATE,echoCancellation:true,noiseSuppression:true}});
     const src=ac.createMediaStreamSource(micStream);
@@ -94,10 +223,9 @@
     proc.onaudioprocess=e=>{
       if(!ws||ws.readyState!==1)return;
       const inp=e.inputBuffer.getChannelData(0);
-      // resample if the context rate differs from 24k
       const ratio=ac.sampleRate/RATE,outN=Math.floor(inp.length/ratio),pcm=new Int16Array(outN);
       let peak=0;
-      for(let i=0;i<outN;i++){const v=inp[Math.floor(i*ratio)];const c=Math.max(-1,Math.min(1,v));pcm[i]=c<0?c*0x8000:c*0x7fff;if(Math.abs(c)>peak)peak=Math.abs(c);}
+      for(let i=0;i<outN;i++){const c=Math.max(-1,Math.min(1,inp[Math.floor(i*ratio)]));pcm[i]=c<0?c*0x8000:c*0x7fff;if(Math.abs(c)>peak)peak=Math.abs(c);}
       mic.style.width=Math.min(100,peak*180)+'%';
       const bytes=new Uint8Array(pcm.buffer);let s='';for(let i=0;i<bytes.length;i+=8192)s+=String.fromCharCode.apply(null,bytes.subarray(i,i+8192));
       ws.send(JSON.stringify({type:'input_audio_buffer.append',audio:btoa(s)}));
@@ -105,20 +233,19 @@
   }
   function stopMic(){if(proc){proc.disconnect();proc=null;}if(micStream){micStream.getTracks().forEach(t=>t.stop());micStream=null;}mic.style.width='0';}
 
-  // ── tools: run on the server, return the result to the model ──
+  // ── tools ──
   async function runTool(call){
-    const el=say('tool','tool · '+call.name,JSON.stringify(call.arguments||{}));
+    const el=toolMsg(call.name,call.arguments);
     let result;
     try{
       const r=await fetch('/api/voice/tool',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:call.name,arguments:call.arguments})});
       const j=await r.json();result=j.ok?j.result:{error:j.error||'tool failed'};
     }catch(e){result={error:String(e)};}
-    el.innerHTML='<span class="who">tool · '+esc(call.name)+'</span>'+esc(JSON.stringify(result));
+    el.querySelector('pre').textContent=JSON.stringify(result,null,1);
     ws.send(JSON.stringify({type:'conversation.item.create',item:{type:'function_call_output',call_id:call.call_id,output:JSON.stringify(result)}}));
     ws.send(JSON.stringify({type:'response.create'}));
   }
 
-  const pendingCalls={},ranCalls=new Set();
   function onEvent(ev){
     const t=ev.type;
     if(t==='session.created'){ws.send(JSON.stringify({type:'session.update',session:sessionCfg}));return;}
@@ -134,11 +261,11 @@
     }
     if(t==='response.created'){agentMsgEl=null;return;}
     if(t==='response.output_audio_transcript.delta'||t==='response.audio_transcript.delta'){
-      if(!agentMsgEl)agentMsgEl=say('agent','grok','');
+      if(!agentMsgEl)agentMsgEl=say('agent','agent','');
       agentMsgEl.dataset.t=(agentMsgEl.dataset.t||'')+(ev.delta||'');
-      agentMsgEl.innerHTML='<span class="who">grok</span>'+esc(agentMsgEl.dataset.t);log.scrollTop=log.scrollHeight;return;
+      agentMsgEl.innerHTML='<span class="who">agent</span>'+esc(agentMsgEl.dataset.t);log.scrollTop=log.scrollHeight;return;
     }
-    if(t==='response.output_audio.delta'||t==='response.audio.delta'){playPcm(ev.delta);status('speaking','talk');return;}
+    if(t==='response.output_audio.delta'||t==='response.audio.delta'){playPcm(ev.delta);status('speaking','speak');return;}
     if(t==='response.function_call_arguments.delta'){const c=pendingCalls[ev.call_id]||(pendingCalls[ev.call_id]={name:ev.name,args:''});c.args+=ev.delta||'';if(ev.name)c.name=ev.name;return;}
     if(t==='response.function_call_arguments.done'){
       const c=pendingCalls[ev.call_id]||{};delete pendingCalls[ev.call_id];
@@ -147,43 +274,43 @@
       runTool({call_id:ev.call_id,name:ev.name||c.name,arguments:args});return;
     }
     if(t==='response.output_item.done'&&ev.item&&ev.item.type==='function_call'){
-      // Fallback only: xAI sends *_arguments.done first (measured), so this
-      // is a no-op unless a server skips that event. Once per call_id.
       if(ranCalls.has(ev.item.call_id))return;ranCalls.add(ev.item.call_id);
       let args={};try{args=JSON.parse(ev.item.arguments||'{}');}catch(_){}
       runTool({call_id:ev.item.call_id,name:ev.item.name,arguments:args});return;
     }
     if(t==='response.done'){status('listening','on');return;}
-    if(t==='error'){say('tool','error',JSON.stringify(ev.error||ev));status('error','');return;}
+    if(t==='error'){say('err','error',JSON.stringify(ev.error||ev));status('error','err');return;}
   }
 
   async function start(){
     $('btn-start').disabled=true;
     try{
-      status('getting session…','');
+      status('connecting…','');
       const r=await fetch('/api/voice/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({voice:$('voice').value})});
       const j=await r.json();
       if(!j.ok)throw new Error(j.error||'session failed');
       sessionCfg=j.session;
-      say('tool','session','auth: '+j.auth_source+' · voice: '+j.session.voice);
+      $('meta').innerHTML='Signed in via <b>'+esc(j.auth_source)+'</b> · voice <b>'+esc(j.session.voice)+'</b>. Audio streams browser ↔ xAI directly; the login token never leaves the server. <b>Read-only</b>: it cannot change a plan.';
       ac=new (window.AudioContext||window.webkitAudioContext)({sampleRate:RATE});
       ws=new WebSocket(j.url,['xai-client-secret.'+j.client_secret]);
-      ws.onopen=()=>{status('connected','on');$('btn-stop').disabled=false;$('btn-send').disabled=false;};
+      ws.onopen=()=>{setLive(true);status('connected','on');};
       ws.onmessage=m=>{try{onEvent(JSON.parse(m.data));}catch(e){}};
-      ws.onerror=()=>{status('socket error','');};
-      ws.onclose=e=>{status('closed'+(e.reason?' · '+e.reason:''),'');stopMic();$('btn-start').disabled=false;$('btn-stop').disabled=true;$('btn-send').disabled=true;};
-      try{await startMic();}catch(e){say('tool','mic','no microphone: '+e.message+' — you can still type.');}
-    }catch(e){status('failed','');say('tool','error',String(e.message||e));$('btn-start').disabled=false;}
+      ws.onerror=()=>{status('socket error','err');};
+      ws.onclose=e=>{stopMic();setLive(false);status('disconnected'+(e.reason?' · '+e.reason:''),'');};
+      try{await startMic();}catch(e){say('note','','No microphone ('+e.message+'). You can still type.');}
+    }catch(e){status('failed','err');say('err','error',String(e.message||e));setLive(false);}
   }
-  function stop(){stopMic();if(ws){ws.close();ws=null;}if(ac){ac.close();ac=null;}status('idle','');}
-  function sendText(){
-    const v=$('txt').value.trim();if(!v||!ws||ws.readyState!==1)return;
+  function stop(){stopMic();if(ws){ws.close();ws=null;}if(ac){ac.close();ac=null;}setLive(false);status('idle','');}
+  function sendText(v){
+    v=(v!=null?v:$('txt').value).trim();if(!v||!ws||ws.readyState!==1)return;
     $('txt').value='';say('user','you',v);
     ws.send(JSON.stringify({type:'conversation.item.create',item:{type:'message',role:'user',content:[{type:'input_text',text:v}]}}));
     ws.send(JSON.stringify({type:'response.create'}));
   }
-  $('btn-start').onclick=start;$('btn-stop').onclick=stop;$('btn-send').onclick=sendText;
+  $('btn-start').onclick=start;$('btn-stop').onclick=stop;$('btn-send').onclick=()=>sendText();
+  orb.onclick=()=>{live?stop():start();};
   $('txt').addEventListener('keydown',e=>{if(e.key==='Enter')sendText();});
+  document.querySelectorAll('.vo-chip').forEach(b=>b.onclick=()=>sendText(b.getAttribute('data-q')));
 })();
 </script>
 </body>
